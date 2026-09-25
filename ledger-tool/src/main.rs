@@ -971,6 +971,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
         exit(1);
     }
     process_options.halt_at_slot = Some(snapshot_slot);
+    process_options.fail_on_hard_fork_conflict = true;
 
     let ending_slot = if is_minimized {
         let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);

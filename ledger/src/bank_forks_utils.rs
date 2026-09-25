@@ -19,12 +19,14 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::move_and_async_delete_path_contents,
     },
+    solana_clock::Slot,
     solana_genesis_config::GenesisConfig,
     solana_runtime::{
-        bank_forks::BankForks, snapshot_bank_utils, snapshot_utils,
+        bank::Bank, bank_forks::BankForks, snapshot_bank_utils, snapshot_utils,
         transaction_execution::TransactionStatusSender,
     },
     std::{
+        collections::HashSet,
         path::{Path, PathBuf},
         sync::{Arc, RwLock, atomic::AtomicBool},
     },
@@ -60,6 +62,19 @@ pub enum BankForksUtilsError {
 
     #[error("failed to process blockstore from genesis: {0}")]
     ProcessBlockstoreFromGenesis(#[source] BlockstoreProcessorError),
+
+    #[error(
+        "hard fork at slot {slot} is already registered on the bank loaded at slot {bank_slot}; \
+         registering it again changes the shred version. Drop --hard-fork, or load a snapshot \
+         that does not already carry it"
+    )]
+    HardForkAlreadyRegistered { slot: Slot, bank_slot: Slot },
+
+    #[error(
+        "hard fork at slot {slot} cannot be registered on the bank loaded at slot {bank_slot}, so \
+         it would be left out of the snapshot entirely"
+    )]
+    HardForkIgnored { slot: Slot, bank_slot: Slot },
 }
 
 pub type BankAndHashes = (Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>);
@@ -75,6 +90,47 @@ pub fn discard_previous_run_state(bank_snapshots_dir: &Path, account_run_paths: 
         move_and_async_delete_path_contents(account_run_path);
     }
     snapshot_utils::wipe_account_snapshot_dirs(account_run_paths);
+}
+
+fn register_hard_forks(
+    bank: &Bank,
+    process_options: &ProcessOptions,
+) -> Result<(), BankForksUtilsError> {
+    let Some(new_hard_forks) = process_options.new_hard_forks.as_ref() else {
+        return Ok(());
+    };
+
+    let bank_slot = bank.slot();
+    let loaded_hard_forks: HashSet<Slot> =
+        bank.hard_forks().iter().map(|(slot, _)| *slot).collect();
+
+    for &slot in new_hard_forks {
+        let conflict = if loaded_hard_forks.contains(&slot) {
+            Some(BankForksUtilsError::HardForkAlreadyRegistered { slot, bank_slot })
+        } else if slot < bank_slot || (slot == bank_slot && bank.is_frozen()) {
+            Some(BankForksUtilsError::HardForkIgnored { slot, bank_slot })
+        } else {
+            None
+        };
+
+        if let Some(conflict) = conflict {
+            if process_options.fail_on_hard_fork_conflict {
+                return Err(conflict);
+            }
+            // Bank::register_hard_fork already warns about the forks it ignores, but says
+            // nothing about the ones it registers a second time.
+            if matches!(
+                conflict,
+                BankForksUtilsError::HardForkAlreadyRegistered { .. }
+            ) {
+                warn!("{conflict}");
+            }
+        }
+    }
+
+    bank.register_hard_forks(Some(new_hard_forks));
+
+    Ok(())
 }
 
 /// Load the banks via genesis
@@ -102,7 +158,7 @@ pub fn load_bank_forks_from_genesis(
     .map_err(BankForksUtilsError::ProcessBlockstoreFromGenesis)?;
 
     let root_bank = bank_forks.read().unwrap().root_bank();
-    root_bank.register_hard_forks(process_options.new_hard_forks.as_ref());
+    register_hard_forks(&root_bank, process_options)?;
 
     Ok((bank_forks, None))
 }
@@ -299,10 +355,128 @@ pub fn try_load_bank_forks_from_snapshot(
         full: full_snapshot_hash,
         incremental: incremental_snapshot_hash,
     };
-    bank.register_hard_forks(process_options.new_hard_forks.as_ref());
+    register_hard_forks(&bank, process_options)?;
 
     Ok(Some((
         BankForks::new_rw_arc(bank),
         Some(starting_snapshot_hashes),
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        solana_runtime::bank::SlotLeader,
+    };
+
+    fn bank_at_slot(slot: Slot) -> Arc<Bank> {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
+        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        if slot == 0 {
+            return bank0;
+        }
+
+        let child = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+
+        bank_forks
+            .write()
+            .unwrap()
+            .insert(child)
+            .clone_without_scheduler()
+    }
+
+    fn process_options(new_hard_forks: Vec<Slot>, fail_on_conflict: bool) -> ProcessOptions {
+        ProcessOptions {
+            new_hard_forks: Some(new_hard_forks),
+            fail_on_hard_fork_conflict: fail_on_conflict,
+            ..ProcessOptions::default()
+        }
+    }
+
+    fn hard_fork_slots(bank: &Bank) -> Vec<(Slot, usize)> {
+        bank.hard_forks().iter().copied().collect()
+    }
+
+    #[test]
+    fn test_register_hard_forks_ahead_of_bank() {
+        let bank = bank_at_slot(10);
+        register_hard_forks(&bank, &process_options(vec![11], true)).unwrap();
+
+        assert_eq!(hard_fork_slots(&bank), vec![(11, 1)]);
+    }
+
+    #[test]
+    fn test_register_hard_forks_none_requested() {
+        let bank = bank_at_slot(10);
+        register_hard_forks(&bank, &ProcessOptions::default()).unwrap();
+
+        assert!(hard_fork_slots(&bank).is_empty());
+    }
+
+    #[test]
+    fn test_register_hard_forks_repeated_on_one_command_line() {
+        let bank = bank_at_slot(10);
+        register_hard_forks(&bank, &process_options(vec![11, 11], true)).unwrap();
+
+        assert_eq!(hard_fork_slots(&bank), vec![(11, 2)]);
+    }
+
+    #[test]
+    fn test_register_hard_forks_already_registered() {
+        let bank = bank_at_slot(10);
+        bank.register_hard_fork(11);
+
+        let err = register_hard_forks(&bank, &process_options(vec![11], true)).unwrap_err();
+        assert!(matches!(
+            err,
+            BankForksUtilsError::HardForkAlreadyRegistered {
+                slot: 11,
+                bank_slot: 10
+            }
+        ));
+        assert_eq!(hard_fork_slots(&bank), vec![(11, 1)]);
+    }
+
+    #[test]
+    fn test_register_hard_forks_already_registered_without_fail_on_conflict() {
+        let bank = bank_at_slot(10);
+        bank.register_hard_fork(11);
+
+        register_hard_forks(&bank, &process_options(vec![11], false)).unwrap();
+        assert_eq!(hard_fork_slots(&bank), vec![(11, 2)]);
+    }
+
+    #[test]
+    fn test_register_hard_forks_at_frozen_bank_slot() {
+        let bank = bank_at_slot(10);
+        bank.freeze();
+
+        let err = register_hard_forks(&bank, &process_options(vec![10], true)).unwrap_err();
+        assert!(matches!(
+            err,
+            BankForksUtilsError::HardForkIgnored {
+                slot: 10,
+                bank_slot: 10
+            }
+        ));
+        assert!(hard_fork_slots(&bank).is_empty());
+    }
+
+    #[test]
+    fn test_register_hard_forks_behind_bank() {
+        let bank = bank_at_slot(10);
+
+        let err = register_hard_forks(&bank, &process_options(vec![9], true)).unwrap_err();
+        assert!(matches!(
+            err,
+            BankForksUtilsError::HardForkIgnored {
+                slot: 9,
+                bank_slot: 10
+            }
+        ));
+        assert!(hard_fork_slots(&bank).is_empty());
+    }
 }
