@@ -631,7 +631,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_slot)
             .multiple(true)
             .takes_value(true)
-            .help("Add a hard fork at this slot"),
+            .help(
+                "Add a hard fork at this slot. May be repeated. Repeating the same slot is \
+                 significant: each registration increments a per-slot count that is hashed into \
+                 the shred version, so registering a slot twice yields a different shred version \
+                 than registering it once. Hard forks already present in the loaded snapshot \
+                 count toward that total.",
+            ),
     )
     .arg(
         Arg::with_name("known_validators")
