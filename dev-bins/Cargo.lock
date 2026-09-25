@@ -426,7 +426,6 @@ name = "agave-snapshots"
 version = "4.5.0-alpha.0"
 dependencies = [
  "agave-fs",
- "bincode",
  "bzip2",
  "crossbeam-channel",
  "log",
@@ -8950,7 +8949,6 @@ name = "solana-transaction-status-client-types"
 version = "4.5.0-alpha.0"
 dependencies = [
  "base64 0.23.1",
- "bincode",
  "bs58",
  "serde",
  "serde_json",
