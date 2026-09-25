@@ -13,6 +13,7 @@ use {
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
     },
     solana_pubkey::Pubkey,
+    solana_sbpf::elf_parser::consts::ELFMAG,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_timings::ExecuteTimings,
@@ -196,10 +197,15 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
         ProgramCacheEntryOwner::LoaderV1 | ProgramCacheEntryOwner::LoaderV2 => {
             // V1 & V2 programs are immutable and hold no deployment metadata.
             // As long as there is *some* kind of ELF present, return slot 0.
-            if program.data().is_empty() {
-                Err(TransactionError::ProgramAccountNotFound)
-            } else {
+            if program
+                .data()
+                .get(0..4)
+                .map(|magic| magic == ELFMAG)
+                .unwrap_or(false)
+            {
                 Ok(0)
+            } else {
+                Err(TransactionError::ProgramAccountNotFound)
             }
         }
         ProgramCacheEntryOwner::LoaderV3 => {
@@ -1059,7 +1065,7 @@ mod tests {
             );
 
             // Success
-            account.set_data_from_slice(&[1u8; 4]);
+            account.set_data_from_slice(&ELFMAG);
             assert_eq!(
                 get_program_deployment_slot(&mock_bank, &account, loader).unwrap(),
                 0 // <-- slot is always zero for both loaders
@@ -1250,10 +1256,12 @@ mod tests {
                 .account_shared_data
                 .borrow_mut()
                 .insert(loader_ids[i], AccountSharedData::new(1, 1, &program_ids[3]));
+            let mut program = AccountSharedData::new(4, 1, &loader_ids[i]);
+            program.set_data_from_slice(&ELFMAG);
             mock_bank
                 .account_shared_data
                 .borrow_mut()
-                .insert(program_ids[i], AccountSharedData::new(1, 1, &loader_ids[i]));
+                .insert(program_ids[i], program);
             mock_bank.account_shared_data.borrow_mut().insert(
                 account_ids[i],
                 AccountSharedData::new(1, 1, &program_ids[i]),
@@ -1402,15 +1410,22 @@ mod tests {
                 .insert(key, empty);
             assert!(filter_executable_program_accounts(&mock_bank, &batch, keys.iter()).is_empty());
 
-            // Any non-empty data is considered to *maybe* be a program.
+            // Same goes for non-empty but zero filled data.
             let mut account = AccountSharedData::default();
             account.set_owner(owner);
-            account.set_data_from_slice(&[1u8; 4]);
+            account.set_data_from_slice(&[0u8; 4]);
+            mock_bank
+                .account_shared_data
+                .borrow_mut()
+                .insert(key, account.clone());
+            assert!(filter_executable_program_accounts(&mock_bank, &batch, keys.iter()).is_empty());
+
+            // Account must start with ELFMAG to be considered a program.
+            account.set_data_from_slice(&ELFMAG);
             mock_bank
                 .account_shared_data
                 .borrow_mut()
                 .insert(key, account);
-
             let result = filter_executable_program_accounts(&mock_bank, &batch, keys.iter());
             assert_eq!(result.len(), 1);
             let program_to_load = result.first().unwrap();
