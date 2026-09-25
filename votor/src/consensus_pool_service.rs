@@ -632,7 +632,7 @@ impl ConsensusPoolService {
         Self::send_certs(ctx, certs_to_send, stats)?;
         stats.footer_certs_received += footer_certs_received;
         if footer_certs_received >= MAX_MESSAGES_PER_RECEIVE {
-            stats.own_message_receive_limit_reached += 1;
+            stats.footer_message_receive_limit_reached += 1;
         }
         Ok(())
     }
@@ -1210,7 +1210,7 @@ mod tests {
 
         assert_eq!(ctx.ctx.footer_certs_receiver.len(), 1);
         assert_eq!(stats.footer_certs_received.0, MAX_MESSAGES_PER_RECEIVE);
-        assert_eq!(stats.own_message_receive_limit_reached.0, 1);
+        assert_eq!(stats.footer_message_receive_limit_reached.0, 1);
     }
 
     #[test]
