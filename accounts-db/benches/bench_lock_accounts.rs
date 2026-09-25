@@ -52,7 +52,7 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
             account_metas.push(account_meta);
         }
 
-        let instruction = Instruction::new_with_bincode(system_program::id(), &(), account_metas);
+        let instruction = Instruction::new_with_bytes(system_program::id(), &[], account_metas);
         let transaction = Transaction::new_with_payer(&[instruction], None);
 
         transactions.push(SanitizedTransaction::from_transaction_for_tests(
