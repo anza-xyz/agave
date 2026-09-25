@@ -200,8 +200,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
             if program
                 .data()
                 .get(0..4)
-                .map(|magic| magic == ELFMAG)
-                .unwrap_or(false)
+                .is_some_and(|magic| magic == ELFMAG)
             {
                 Ok(0)
             } else {
