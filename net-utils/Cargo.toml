@@ -22,6 +22,7 @@ name = "solana_net_utils"
 agave-unstable-api = []
 dev-context-only-utils = ["dep:anyhow", "dep:pcap-file", "dep:hxdmp"]
 shuttle-test = ["dep:shuttle", "solana-svm-type-overrides/shuttle-test"]
+stable-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [dependencies]
 agave-xdp = { workspace = true }
@@ -39,6 +40,8 @@ rand = { workspace = true }
 serde = { workspace = true }
 shuttle = { workspace = true, optional = true }
 socket2 = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-serde = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 thiserror = { workspace = true }

@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH, bind_to_unspecified},
     log::*,
@@ -50,12 +52,28 @@ impl Drop for ConnectionCleanup {
     }
 }
 
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample, PartialEq),
+    frozen_abi(
+        abi_digest = "4WNVCd86MjzMaRMEjbWEUDJgMXvynPA1VVoGFS9Su1Qd",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub(crate) struct IpEchoServerMessage {
     tcp_ports: [u16; MAX_PORT_COUNT_PER_MESSAGE], // Fixed size list of ports to avoid vec serde
     udp_ports: [u16; MAX_PORT_COUNT_PER_MESSAGE], // Fixed size list of ports to avoid vec serde
 }
 
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "W5tqLfJoZojQh6E9LfTwqGr5hu4g94QDEqi5UY78MYL",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IpEchoServerResponse {
     // Public IP address of request echoed back to the node.
