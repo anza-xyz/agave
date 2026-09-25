@@ -302,7 +302,11 @@ fn check_vote_account(
 
 #[derive(Error, Debug)]
 pub enum GetRpcNodeError {
-    #[error("Unable to find any RPC peers")]
+    #[error(
+        "Unable to find any RPC peers. By default, snapshots and genesis are downloaded only from \
+         trusted --known-validator nodes; specify one or more --known-validator, or pass \
+         --unsafely-allow-unknown-rpc to download from peers discovered via gossip."
+    )]
     NoRpcPeersFound,
 
     #[error("Giving up, did not get newer snapshots from the cluster")]
@@ -1254,8 +1258,9 @@ fn download_snapshot(
                     warn!(
                         "The snapshot download is too slow, throughput: {} < min speed {} \
                          bytes/sec, but will NOT abort and try a different node as it is the only \
-                         known validator and the --only-known-rpc flag is set. Abort count: {}, \
-                         Progress detail: {:?}",
+                         known validator and downloads are restricted to known validators \
+                         (--unsafely-allow-unknown-rpc is not set). Abort count: {}, Progress \
+                         detail: {:?}",
                         download_progress.last_throughput,
                         minimal_snapshot_download_speed,
                         download_abort_count,
