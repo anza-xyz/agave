@@ -1,5 +1,8 @@
 use {
-    crate::cluster_info_metrics::should_report_message_signature,
+    crate::{
+        cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY,
+        cluster_info_metrics::should_report_message_signature, crds_value::CrdsValue,
+    },
     indexmap::IndexMap,
     lazy_lru::LruCache,
     rand::{CryptoRng, Rng},
@@ -67,6 +70,8 @@ pub struct PingCache<const N: usize> {
     pongs: LruCache<(Pubkey, SocketAddr), Instant>,
     // Timestamp of last ping message sent to a remote IP.
     ping_times: LruCache<IpAddr, Instant>,
+    // ContactInfo received from a remote node while its ping is outstanding.
+    pending_contact_infos: Option<LruCache<(Pubkey, SocketAddr), CrdsValue>>,
 }
 
 /// max number of slots in [`PingCache::pings`] to probe when looking for a
@@ -75,6 +80,10 @@ pub struct PingCache<const N: usize> {
 /// `1 - (1 - f)^MAX_PING_PROBES`, where `f` is the fraction of entries that
 /// have timed out. E.g. with `f = 0.5` that is `1 - 0.5^8` ~ 99.6%.
 const MAX_PING_PROBES: usize = 8;
+
+/// Capacity of [`PingCache::pending_contact_infos`]: one entry per staked node
+/// with a ping outstanding, at most.
+const MAX_PENDING_CONTACT_INFOS: usize = CRDS_UNIQUE_PUBKEY_CAPACITY / 4;
 
 impl<const N: usize> Ping<N> {
     pub fn new(token: [u8; N], keypair: &Keypair) -> Self {
@@ -180,7 +189,23 @@ impl<const N: usize> PingCache<N> {
             pings: IndexMap::with_capacity(max_pings),
             pongs: LruCache::new(max_pings),
             ping_times: LruCache::new(max_pings),
+            pending_contact_infos: None,
         }
+    }
+
+    /// Keeps a signed ContactInfo until the outstanding ping to `node` is answered.
+    pub fn stash_pending_contact_info(&mut self, node: (Pubkey, SocketAddr), value: CrdsValue) {
+        if !self.pings.contains_key(&node) {
+            return;
+        }
+        self.pending_contact_infos
+            .get_or_insert_with(|| LruCache::new(MAX_PENDING_CONTACT_INFOS))
+            .put(node, value);
+    }
+
+    /// Returns the ContactInfo stashed for `node`, once `add` accepted its pong.
+    pub fn take_pending_contact_info(&mut self, node: (Pubkey, SocketAddr)) -> Option<CrdsValue> {
+        self.pending_contact_infos.as_mut()?.pop(&node)
     }
 
     /// Checks if the pong hash matches a ping message sent out previously.
@@ -250,7 +275,11 @@ impl<const N: usize> PingCache<N> {
                 if let Some((_, (expiry, _))) = self.pings.get_index(idx)
                     && now >= *expiry
                 {
-                    self.pings.swap_remove_index(idx);
+                    if let Some((node, _)) = self.pings.swap_remove_index(idx)
+                        && let Some(pending) = self.pending_contact_infos.as_mut()
+                    {
+                        pending.pop(&node);
+                    }
                     evicted = true;
                     break;
                 }
@@ -332,8 +361,10 @@ fn hash_ping_token<const N: usize>(token: &[u8; N]) -> Hash {
 mod tests {
     use {
         super::*,
-        crate::cluster_info::{
-            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL,
+        crate::{
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
+            contact_info::ContactInfo,
+            crds_data::CrdsData,
         },
         std::{
             collections::HashSet,
@@ -624,5 +655,41 @@ mod tests {
             ping.is_some(),
             "Should generate ping to re-verify expired node"
         );
+    }
+
+    #[test]
+    fn test_pending_contact_info_released_by_pong() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 10, 10, 10), 8000));
+        let remote_node = (remote_keypair.pubkey(), remote_socket);
+        let value = CrdsValue::new(
+            CrdsData::ContactInfo(ContactInfo::new_localhost(&remote_keypair.pubkey(), 0)),
+            &remote_keypair,
+        );
+        let now = Instant::now();
+        let mut cache = PingCache::<32>::new(
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            /*cap=*/ 1000,
+        );
+
+        // Nothing is kept while no ping is outstanding.
+        cache.stash_pending_contact_info(remote_node, value.clone());
+        assert!(cache.take_pending_contact_info(remote_node).is_none());
+
+        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_node);
+        assert!(!check);
+        cache.stash_pending_contact_info(remote_node, value.clone());
+
+        // The pong releases the value, once.
+        assert!(cache.add(
+            &Pong::new(&ping.unwrap(), &remote_keypair),
+            remote_socket,
+            now
+        ));
+        assert_eq!(cache.take_pending_contact_info(remote_node), Some(value));
+        assert!(cache.take_pending_contact_info(remote_node).is_none());
     }
 }

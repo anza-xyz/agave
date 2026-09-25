@@ -1670,13 +1670,15 @@ impl ClusterInfo {
         now: Instant,
         rng: &'a mut R,
         packet_batch: &'a mut BytesPacketBatch,
+        stakes: &'a HashMap<Pubkey, u64>,
     ) -> impl FnMut(&PullRequest) -> bool + 'a
     where
         R: Rng + CryptoRng,
     {
         let mut cache = HashMap::<(Pubkey, SocketAddr), bool>::new();
         let mut ping_cache = self.ping_cache.lock().unwrap();
-        let mut hard_check = move |node| {
+        let mut hard_check = move |request: &PullRequest| {
+            let node = (request.caller.pubkey(), request.addr);
             let (check, ping) = ping_cache.check(rng, &self.keypair(), now, node);
             if let Some(ping) = ping {
                 let ping = Protocol::PingMessage(ping);
@@ -1687,7 +1689,15 @@ impl ClusterInfo {
             if !check {
                 self.stats
                     .pull_request_ping_pong_check_failed_count
-                    .add_relaxed(1)
+                    .add_relaxed(1);
+                // Keep the caller's contact info only if it advertises the
+                // address the pong verifies.
+                if stakes.get(&node.0).is_some_and(|stake| *stake > 0)
+                    && request.caller.contact_info().and_then(ContactInfo::gossip)
+                        == Some(request.addr)
+                {
+                    ping_cache.stash_pending_contact_info(node, request.caller.clone());
+                }
             }
             check
         };
@@ -1696,8 +1706,8 @@ impl ClusterInfo {
         // opposed to caller.gossip address).
         move |request| {
             ContactInfo::is_valid_address(&request.addr, &self.socket_addr_space) && {
-                let node = (request.pubkey, request.addr);
-                *cache.entry(node).or_insert_with(|| hard_check(node))
+                let node = (request.caller.pubkey(), request.addr);
+                *cache.entry(node).or_insert_with(|| hard_check(request))
             }
         }
     }
@@ -1733,7 +1743,7 @@ impl ClusterInfo {
         let mut rng = rand::rng();
         requests.retain({
             let now = Instant::now();
-            self.check_pull_request(now, &mut rng, &mut packet_batch)
+            self.check_pull_request(now, &mut rng, &mut packet_batch, stakes)
         });
         let now = timestamp();
         let self_id = self.id();
@@ -1923,17 +1933,32 @@ impl ClusterInfo {
         send_gossip_packets(pongs, response_sender, &self.stats);
     }
 
-    fn handle_batch_pong_messages<I>(&self, pongs: I, now: Instant)
+    fn handle_batch_pong_messages<I>(&self, pongs: I, now: Instant, stakes: &HashMap<Pubkey, u64>)
     where
         I: IntoIterator<Item = (SocketAddr, Pong)>,
     {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pong_messages_time);
         let mut pongs = pongs.into_iter().peekable();
-        if pongs.peek().is_some() {
+        if pongs.peek().is_none() {
+            return;
+        }
+        // Contact infos stashed while the node was unverified, released by its pong.
+        let verified_values: Vec<CrdsValue> = {
             let mut ping_cache = self.ping_cache.lock().unwrap();
-            for (addr, pong) in pongs {
-                ping_cache.add(&pong, addr, now);
-            }
+            pongs
+                .filter_map(|(addr, pong)| {
+                    ping_cache
+                        .add(&pong, addr, now)
+                        .then(|| ping_cache.take_pending_contact_info((pong.pubkey(), addr)))
+                        .flatten()
+                })
+                .collect()
+        };
+        if !verified_values.is_empty() {
+            self.stats
+                .pending_contact_infos_released_on_pong
+                .add_relaxed(verified_values.len() as u64);
+            self.handle_batch_pull_responses(verified_values, stakes);
         }
     }
 
@@ -2088,6 +2113,7 @@ impl ClusterInfo {
                 &self.socket_addr_space,
                 &self.ping_cache,
                 &mut pings,
+                stakes,
             ) {
                 true
             } else {
@@ -2110,12 +2136,11 @@ impl ClusterInfo {
                         continue;
                     }
                     let request = PullRequest {
-                        pubkey: caller.pubkey(),
                         addr: from_addr,
-                        wallclock: caller.wallclock(),
                         filter,
+                        caller,
                     };
-                    if request.pubkey == self_pubkey {
+                    if request.caller.pubkey() == self_pubkey {
                         self.stats.window_request_loopback.add_relaxed(1);
                     } else {
                         pull_requests.push(request);
@@ -2156,7 +2181,7 @@ impl ClusterInfo {
         self.handle_batch_push_messages(push_messages, thread_pool, stakes, response_sender);
         self.handle_batch_pull_responses(pull_responses, stakes);
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
-        self.handle_batch_pong_messages(pong_messages, Instant::now());
+        self.handle_batch_pong_messages(pong_messages, Instant::now(), stakes);
         self.handle_batch_pull_requests(pull_requests, stakes, response_sender);
         Ok(())
     }
@@ -2571,6 +2596,7 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
     pings: &mut Vec<(SocketAddr, Ping)>,
+    stakes: &HashMap<Pubkey, u64>,
 ) -> bool {
     let (pubkey, addr) = match value.data() {
         CrdsData::ContactInfo(node) => (node.pubkey(), node.gossip()),
@@ -2583,7 +2609,12 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     let (out, ping) = {
         let node = (*pubkey, addr);
         let mut ping_cache = ping_cache.lock().unwrap();
-        ping_cache.check(rng, keypair, Instant::now(), node)
+        let (out, ping) = ping_cache.check(rng, keypair, Instant::now(), node);
+        // A staked node's contact info is kept until its pong arrives, then inserted.
+        if !out && stakes.get(pubkey).is_some_and(|stake| *stake > 0) {
+            ping_cache.stash_pending_contact_info(node, value.clone());
+        }
+        (out, ping)
     };
     if let Some(ping) = ping {
         pings.push((addr, ping));
@@ -2731,20 +2762,22 @@ mod tests {
             ),
             GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT,
         );
+        let caller = Keypair::new();
         let request = PullRequest {
-            pubkey: Pubkey::new_unique(),
             addr: SocketAddr::from(([127, 0, 0, 1], 12_345)),
-            wallclock: timestamp(),
             filter: CrdsFilter::new_rand(
                 crds_gossip_pull::MIN_NUM_BLOOM_ITEMS,
                 solana_packet::PACKET_DATA_SIZE,
             ),
+            caller: CrdsValue::new(
+                CrdsData::ContactInfo(ContactInfo::new_localhost(&caller.pubkey(), timestamp())),
+                &caller,
+            ),
         };
         let second_ip_request = PullRequest {
-            pubkey: request.pubkey,
             addr: SocketAddr::from(([127, 0, 0, 2], request.addr.port())),
-            wallclock: request.wallclock,
             filter: request.filter.clone(),
+            caller: request.caller.clone(),
         };
         request.filter.sanitize().unwrap();
         let crds_len = crds_gossip_pull::MIN_NUM_BLOOM_ITEMS;
@@ -2865,7 +2898,8 @@ mod tests {
             .map(|(ping, (keypair, socket))| (*socket, Pong::new(ping, keypair)))
             .collect();
         let now = now + Duration::from_millis(1);
-        cluster_info.handle_batch_pong_messages(pongs, now);
+        let unstaked = HashMap::default();
+        cluster_info.handle_batch_pong_messages(pongs, now, &unstaked);
         // Assert that remote nodes now pass the ping/pong check.
         {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
@@ -2937,6 +2971,128 @@ mod tests {
         let entrypoint = ContactInfo::new_localhost(&pubkey, timestamp());
         let entrypoint_crdsvalue = CrdsValue::new_unsigned(CrdsData::from(entrypoint));
         vec![entrypoint_crdsvalue]
+    }
+
+    #[test]
+    fn test_pull_request_caller_inserted_on_pong() {
+        // One pull request from an unverified caller, then its pong. Is its contact info in CRDS?
+        // `request_addr` overrides the address the request comes from.
+        fn caller_in_crds_after_pong(
+            stakes: &HashMap<Pubkey, u64>,
+            caller: &Keypair,
+            request_addr: Option<SocketAddr>,
+        ) -> bool {
+            let this_node = Arc::new(Keypair::new());
+            let cluster_info = ClusterInfo::new(
+                ContactInfo::new_localhost(&this_node.pubkey(), timestamp()),
+                this_node,
+                SocketAddrSpace::Unspecified,
+            );
+            let caller_info = ContactInfo::new_localhost(&caller.pubkey(), timestamp());
+            let caller_addr = request_addr.unwrap_or_else(|| caller_info.gossip().unwrap());
+            let request = PullRequest {
+                addr: caller_addr,
+                filter: CrdsFilter::default(),
+                caller: CrdsValue::new(CrdsData::ContactInfo(caller_info), caller),
+            };
+            // The unverified request gets no response, only a ping.
+            let packets = cluster_info.handle_pull_requests(vec![request], stakes);
+            assert_eq!(packets.len(), 1);
+            let packet = packets.iter().next().unwrap();
+            let Protocol::PingMessage(ping) =
+                deserialize_protocol(packet.data(..).unwrap()).unwrap()
+            else {
+                panic!("expected a ping");
+            };
+            assert!(
+                cluster_info
+                    .lookup_contact_info(&caller.pubkey(), |_| ())
+                    .is_none()
+            );
+            let pong = Pong::new(&ping, caller);
+            cluster_info.handle_batch_pong_messages(
+                vec![(caller_addr, pong)],
+                Instant::now(),
+                stakes,
+            );
+            cluster_info
+                .lookup_contact_info(&caller.pubkey(), |_| ())
+                .is_some()
+        }
+        let caller = Keypair::new();
+        let staked = HashMap::from([(caller.pubkey(), 1u64)]);
+        let unstaked = HashMap::default();
+        assert!(caller_in_crds_after_pong(&staked, &caller, None));
+        assert!(!caller_in_crds_after_pong(&unstaked, &caller, None));
+        // The pong verifies the request's source address, so a contact info
+        // advertising a different gossip address is not kept.
+        let other_addr = SocketAddr::from(([127, 0, 0, 1], 9_999));
+        assert!(!caller_in_crds_after_pong(
+            &staked,
+            &caller,
+            Some(other_addr)
+        ));
+    }
+
+    #[test]
+    fn test_verify_gossip_addr_keeps_staked_contact_info_until_pong() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let ping_cache = Mutex::new(PingCache::new(
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            GOSSIP_PING_CACHE_CAPACITY,
+        ));
+        let socket_addr_space = SocketAddrSpace::Unspecified;
+        let unstaked = HashMap::default();
+        let contact_info = |keypair: &Keypair| {
+            let node = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+            let addr = node.gossip().unwrap();
+            (CrdsValue::new(CrdsData::ContactInfo(node), keypair), addr)
+        };
+        let mut check = |value: &CrdsValue, stakes: &HashMap<Pubkey, u64>| {
+            let mut pings = Vec::new();
+            let out = verify_gossip_addr(
+                &mut rng,
+                &this_node,
+                value,
+                &socket_addr_space,
+                &ping_cache,
+                &mut pings,
+                stakes,
+            );
+            (out, pings)
+        };
+
+        // Staked owner, not verified yet: dropped, pinged, contact info kept for the pong.
+        let owner = Keypair::new();
+        let (value, addr) = contact_info(&owner);
+        let stakes = HashMap::from([(owner.pubkey(), 1u64)]);
+        let (out, mut pings) = check(&value, &stakes);
+        assert!(!out);
+        let (ping_addr, ping) = pings.pop().unwrap();
+        assert_eq!(ping_addr, addr);
+        {
+            let mut ping_cache = ping_cache.lock().unwrap();
+            assert!(ping_cache.add(&Pong::new(&ping, &owner), addr, Instant::now()));
+            assert_eq!(
+                ping_cache.take_pending_contact_info((owner.pubkey(), addr)),
+                Some(value)
+            );
+        }
+
+        // Unstaked owner: dropped and pinged, nothing kept.
+        let owner = Keypair::new();
+        let (value, addr) = contact_info(&owner);
+        let (out, pings) = check(&value, &unstaked);
+        assert!(!out);
+        assert_eq!(pings.len(), 1);
+        let mut ping_cache = ping_cache.lock().unwrap();
+        assert!(
+            ping_cache
+                .take_pending_contact_info((owner.pubkey(), addr))
+                .is_none()
+        );
     }
 
     #[test]
