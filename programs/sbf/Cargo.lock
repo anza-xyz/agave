@@ -7601,15 +7601,15 @@ dependencies = [
 
 [[package]]
 name = "solana-program"
-version = "4.1.0"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c9f2e1b36b5f1c407cff098a383a45890268e848481af32540064986e7397a6"
+checksum = "5da562590d2c2efe2d9cf0aa445b8e72a394afa216152364ef6970b6e27c5a77"
 dependencies = [
  "solana-account-info",
  "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-borsh",
- "solana-clock 3.2.1",
+ "solana-clock 4.0.0",
  "solana-cpi",
  "solana-define-syscall 5.2.0",
  "solana-epoch-rewards",
@@ -7618,9 +7618,9 @@ dependencies = [
  "solana-example-mocks",
  "solana-fee-calculator",
  "solana-hash",
- "solana-instruction 3.5.1",
- "solana-instruction-error 2.5.0",
- "solana-instructions-sysvar 4.0.0",
+ "solana-instruction 4.0.0",
+ "solana-instruction-error 3.1.0",
+ "solana-instructions-sysvar 5.0.0",
  "solana-keccak-hasher",
  "solana-last-restart-slot",
  "solana-msg",
@@ -7635,13 +7635,13 @@ dependencies = [
  "solana-sdk-ids",
  "solana-secp256k1-recover",
  "solana-serde-varint",
- "solana-serialize-utils 3.1.2",
+ "solana-serialize-utils 4.0.0",
  "solana-sha256-hasher",
  "solana-short-vec",
- "solana-slot-hashes 3.2.0",
+ "solana-slot-hashes 4.0.0",
  "solana-slot-history",
- "solana-stable-layout 3.0.1",
- "solana-sysvar 4.3.0",
+ "solana-stable-layout 4.0.0",
+ "solana-sysvar 5.0.0",
  "solana-sysvar-id",
 ]
 
@@ -9251,8 +9251,6 @@ version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "007d6bc909599eea325c9d09f7ff16ef6166c134876ff47a6a122d693d058dad"
 dependencies = [
- "serde",
- "serde_derive",
  "solana-get-sysvar",
  "solana-hash",
  "solana-sdk-ids",
@@ -9316,8 +9314,6 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c814b4e2570f8c343eb1d4f968ff981bdf518afc3643d070d8e5a28158e85a4b"
 dependencies = [
- "serde",
- "serde_derive",
  "solana-clock 3.2.1",
  "solana-get-sysvar",
  "solana-sdk-ids",
@@ -9668,12 +9664,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "552f9d54ec9597f5a17469df500a1ac345c262e5a9859938ef5e5541844fdac5"
 dependencies = [
  "base64 0.22.1",
- "bincode",
  "bytemuck",
  "bytemuck_derive",
  "lazy_static",
- "serde",
- "serde_derive",
  "solana-account-info",
  "solana-clock 3.2.1",
  "solana-define-syscall 5.2.0",
@@ -9705,6 +9698,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bcfc1dead2b328974e09500feb2e413fc2be82bb3ffebc87132804cdce87d31b"
 dependencies = [
  "base64 0.22.1",
+ "bytemuck",
+ "bytemuck_derive",
  "lazy_static",
  "serde",
  "serde_derive",
