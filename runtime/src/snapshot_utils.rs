@@ -4,9 +4,9 @@ use {
     crate::{
         bank::BankFieldsToDeserialize,
         serde_snapshot::{
-            self, AccountsDbFields, ExtraFieldsToSerialize, SerdeObsoleteAccountsMap,
-            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams, StartupHints,
-            StoragesList,
+            self, AccountsDbFields, ExtraFieldsToSerialize, LegacyObsoleteAccountsMap,
+            SerdeObsoleteAccountsMap, SnapshotAccountsDbFields, SnapshotBankFields,
+            SnapshotStreams, StartupHints, StoragesList,
         },
         snapshot_package::BankSnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
@@ -89,14 +89,13 @@ const AUX_SNAPSHOT_FILE_READ_BUF_SIZE: usize = 4 * 1024 * 1024;
 //         Snapshots created with version 2.0.0 will not fastboot to older versions
 //         Snapshots created with versions <2.0.0 will fastboot to version 2.0.0
 // 3.0.0 - Storages List file added, replaces the per-storage hardlink dirs.
-//         3.0.0 validators can still fastboot from 2.0.0 snapshots: the legacy hardlinks are
-//         migrated back into the account run dirs at load time (see `migrate_legacy_hardlinks`),
-//         and the next teardown writes the new-format storages list.
 //         Note: 2.0.0 validators cannot fastboot from 3.0.0 snapshots because the per-storage
 //         hardlink dirs they rely on are no longer written; they must fall back to archive.
 // 3.1.0 - Startup hints file added. Optional tuning state, so snapshots fastboot in either
 //         direction between 3.0.0 and 3.1.0; a validator finding no hints just skips the tuning.
-const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(3, 1, 0);
+// 4.0.0 - Obsolete accounts store u32 logical offsets instead of u64 AppendVec file offsets.
+//         Version 3 is converted in memory when loading; older validators cannot load v4.
+const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(4, 0, 0);
 
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.
@@ -373,7 +372,7 @@ fn is_snapshot_fastboot_compatible(
     version: &Version,
 ) -> std::result::Result<bool, SnapshotFastbootError> {
     match version.major {
-        // Current format: storages list lives next to the bank snapshot file.
+        4 => Ok(true),
         3 => Ok(true),
         v if v > SNAPSHOT_FASTBOOT_VERSION.major => {
             Err(SnapshotFastbootError::IncompatibleVersion(version.clone()))
@@ -738,6 +737,7 @@ fn serialize_obsolete_accounts(
 fn deserialize_obsolete_accounts(
     bank_snapshot_dir: impl AsRef<Path>,
     maximum_obsolete_accounts_file_size: u64,
+    fastboot_version: &Version,
 ) -> Result<SerdeObsoleteAccountsMap> {
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
@@ -759,9 +759,21 @@ fn deserialize_obsolete_accounts(
         return Err(IoError::other(error_message).into());
     }
 
-    Ok(serde_snapshot::deserialize_wincode_from(
-        obsolete_accounts_reader,
-    )?)
+    match fastboot_version.major {
+        4 => Ok(serde_snapshot::deserialize_wincode_from(
+            obsolete_accounts_reader,
+        )?),
+        3 => {
+            let legacy: LegacyObsoleteAccountsMap =
+                serde_snapshot::deserialize_wincode_from(obsolete_accounts_reader)?;
+            Ok(SerdeObsoleteAccountsMap::try_from(legacy)?)
+        }
+        _ => Err(IoError::new(
+            io::ErrorKind::InvalidData,
+            SnapshotFastbootError::IncompatibleVersion(fastboot_version.clone()),
+        )
+        .into()),
+    }
 }
 
 pub fn write_storages_list_to_snapshot(
@@ -1426,7 +1438,8 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
 ) -> Result<(AccountStorageMap, BankFieldsToDeserialize, AccountsDbFields)> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
 
-    if !matches!(snapshot_info.fastboot_version.as_ref(), Some(version) if version.major == 3) {
+    if !matches!(snapshot_info.fastboot_version.as_ref(), Some(version) if matches!(version.major, 3 | 4))
+    {
         return Err(IoError::other("unsupported fastboot snapshot version").into());
     }
 
@@ -1436,8 +1449,13 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
     let obsolete_accounts = snapshot_info
         .fastboot_version
         .as_ref()
-        .is_some_and(|fastboot_version| fastboot_version.major >= 2)
-        .then(|| deserialize_obsolete_accounts(bank_snapshot_dir, MAX_OBSOLETE_ACCOUNTS_FILE_SIZE))
+        .map(|fastboot_version| {
+            deserialize_obsolete_accounts(
+                bank_snapshot_dir,
+                MAX_OBSOLETE_ACCOUNTS_FILE_SIZE,
+                fastboot_version,
+            )
+        })
         .transpose()
         .map_err(|err| {
             IoError::other(format!(
@@ -2619,6 +2637,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_is_snapshot_fastboot_compatible() {
+        for major in 0..=2 {
+            assert!(!is_snapshot_fastboot_compatible(&Version::new(major, 0, 0)).unwrap());
+        }
+        for major in 3..=SNAPSHOT_FASTBOOT_VERSION.major {
+            assert!(is_snapshot_fastboot_compatible(&Version::new(major, 0, 0)).unwrap());
+        }
+        assert!(
+            is_snapshot_fastboot_compatible(&Version::new(
+                SNAPSHOT_FASTBOOT_VERSION.major + 1,
+                0,
+                0,
+            ))
+            .is_err()
+        );
+    }
+
     #[test_case(0)]
     #[test_case(1)]
     #[test_case(10)]
@@ -2651,10 +2687,13 @@ mod tests {
         .unwrap();
 
         // Deserialize
-        let mut deserialized_accounts =
-            deserialize_obsolete_accounts(bank_snapshot_dir, MAX_OBSOLETE_ACCOUNTS_FILE_SIZE)
-                .unwrap()
-                .into_hashmap();
+        let mut deserialized_accounts = deserialize_obsolete_accounts(
+            bank_snapshot_dir,
+            MAX_OBSOLETE_ACCOUNTS_FILE_SIZE,
+            &SNAPSHOT_FASTBOOT_VERSION,
+        )
+        .unwrap()
+        .into_hashmap();
 
         // Verify
         for storage in &snapshot_storages {
@@ -2732,7 +2771,7 @@ mod tests {
 
         // Set a very low maximum file size for deserialization
         // This should panic
-        deserialize_obsolete_accounts(bank_snapshot_dir, 100).unwrap();
+        deserialize_obsolete_accounts(bank_snapshot_dir, 100, &SNAPSHOT_FASTBOOT_VERSION).unwrap();
     }
 
     #[test]
