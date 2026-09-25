@@ -1,2 +1,3 @@
-# Nightly toolchain for CI jobs needing unstable features: frozen-abi, benches.
+# Nightly toolchain for CI jobs needing unstable features: rustfmt options, miri,
+# eBPF build-std and `-Z threads=8`. Coverage also uses it for llvm-tools.
 nightly = "2026-07-16"

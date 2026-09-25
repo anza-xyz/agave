@@ -26,7 +26,7 @@ _ rumdl check CHANGELOG.md
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree
 
-# fmt
+# fmt; nightly for the unstable import and string options in rustfmt.toml
 _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 
 # run cargo check for all rust files in this monorepo for faster turnaround in
@@ -34,7 +34,7 @@ _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 
 # Only force up-to-date lock files on edge
 if [[ $CI_BASE_BRANCH = "$EDGE_CHANNEL" ]]; then
-  if _ scripts/cargo-for-all-lock-files.sh "+${rust_nightly}" check \
+  if _ scripts/cargo-for-all-lock-files.sh check \
     --locked --workspace --all-targets --features dummy-for-ci-check,stable-abi; then
     true
   else

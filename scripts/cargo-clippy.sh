@@ -15,5 +15,6 @@ set -o errexit
 
 here="$(dirname "$0")"
 
-# nightly
-"$here/cargo-clippy-nightly.sh"
+"$here/cargo-for-all-lock-files.sh" -- clippy \
+  --workspace --all-targets --features dummy-for-ci-check,stable-abi -- \
+  --deny=warnings
