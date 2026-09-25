@@ -8291,7 +8291,7 @@ dependencies = [
  "solana-account",
  "solana-account-info",
  "solana-client-traits",
- "solana-clock 3.2.1",
+ "solana-clock 4.0.0",
  "solana-cluster-type",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
@@ -8920,7 +8920,7 @@ name = "solana-sbf-rust-simulation"
 version = "4.5.0-alpha.0"
 dependencies = [
  "solana-account-info",
- "solana-clock 3.2.1",
+ "solana-clock 4.0.0",
  "solana-msg",
  "solana-program-entrypoint",
  "solana-program-error",
