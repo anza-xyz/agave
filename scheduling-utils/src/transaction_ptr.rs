@@ -2,9 +2,8 @@ use {
     agave_scheduler_bindings::{
         MAX_TRANSACTIONS_PER_MESSAGE, SharableTransactionBatchRegion, SharableTransactionRegion,
     },
-    core::ptr::NonNull,
+    core::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull},
     rts_alloc::Allocator,
-    std::marker::PhantomData,
 };
 
 #[derive(Debug)]
@@ -78,6 +77,60 @@ impl TransactionPtr {
     /// - Inner `ptr` must not have been previously freed.
     pub unsafe fn free(self, allocator: &Allocator) {
         unsafe { allocator.free(self.ptr) }
+    }
+}
+
+/// Frees a transaction unless ownership is transferred with [`Self::into_inner`].
+pub struct OwnedTransactionPtr<'a> {
+    transaction: ManuallyDrop<TransactionPtr>,
+    allocator: &'a Allocator,
+}
+
+impl<'a> OwnedTransactionPtr<'a> {
+    /// # Safety
+    /// The pointer must describe an initialized allocation exclusively owned by the caller
+    /// in `allocator`. The caller transfers ownership to this guard.
+    pub unsafe fn new(transaction: TransactionPtr, allocator: &'a Allocator) -> Self {
+        Self {
+            transaction: ManuallyDrop::new(transaction),
+            allocator,
+        }
+    }
+
+    /// # Safety
+    /// The region must describe an initialized allocation exclusively owned by the caller
+    /// in `allocator`. The caller transfers ownership to this guard.
+    pub unsafe fn from_region(region: SharableTransactionRegion, allocator: &'a Allocator) -> Self {
+        // SAFETY: the caller guarantees a valid initialized region.
+        let transaction =
+            unsafe { TransactionPtr::from_sharable_transaction_region(&region, allocator) };
+        // SAFETY: the caller transfers exclusive ownership of the allocation.
+        unsafe { Self::new(transaction, allocator) }
+    }
+
+    /// Returns the shared region without transferring ownership.
+    pub fn to_region(&self) -> SharableTransactionRegion {
+        // SAFETY: the guard's constructor guarantees the allocation belongs to this allocator.
+        unsafe {
+            self.transaction
+                .to_sharable_transaction_region(self.allocator)
+        }
+    }
+
+    /// Transfers the pointer to the caller without freeing its allocation.
+    pub fn into_inner(self) -> TransactionPtr {
+        let mut this = ManuallyDrop::new(self);
+        // SAFETY: the guard will not run Drop; its pointer is transferred exactly once.
+        unsafe { ManuallyDrop::take(&mut this.transaction) }
+    }
+}
+
+impl Drop for OwnedTransactionPtr<'_> {
+    fn drop(&mut self) {
+        // SAFETY: the pointer is taken only here and cannot be accessed after Drop.
+        let transaction = unsafe { ManuallyDrop::take(&mut self.transaction) };
+        // SAFETY: the guard exclusively owns this live allocation.
+        unsafe { transaction.free(self.allocator) };
     }
 }
 
@@ -345,6 +398,21 @@ mod tests {
         unsafe { batch.free_with_transactions() };
         // SAFETY: the rejected transaction remains exclusively ours and belongs to this allocator.
         unsafe { rejected.free(&allocator) };
+        assert_eq!(allocator.outstanding_allocation_bytes(), 0);
+    }
+
+    #[test]
+    fn owned_transaction_frees_unless_transferred() {
+        let allocator = allocator();
+        // SAFETY: the helper creates an initialized allocation exclusively owned by this test.
+        let owned = unsafe { OwnedTransactionPtr::new(transaction(&allocator), &allocator) };
+        let region = owned.to_region();
+        let transaction = owned.into_inner();
+        assert_eq!(transaction.as_ref(), &[0]);
+        assert_ne!(allocator.outstanding_allocation_bytes(), 0);
+        // SAFETY: into_inner returned ownership of this still-live allocation.
+        let owned = unsafe { OwnedTransactionPtr::from_region(region, &allocator) };
+        drop(owned);
         assert_eq!(allocator.outstanding_allocation_bytes(), 0);
     }
 }
