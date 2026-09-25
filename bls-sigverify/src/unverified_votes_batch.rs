@@ -28,8 +28,7 @@ use {
     },
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
-    std::{num::NonZero, sync::Arc},
+    std::num::NonZero,
 };
 
 /// A batch of votes to verify.
@@ -39,7 +38,6 @@ pub(crate) struct UnverifiedBatch {
     vote_payload_to_sign: VotePayloadToSign,
     batch: Vec<UnverifiedVotePayload>,
     sender_vote_account_pubkeys: Vec<Pubkey>,
-    rank_map: Arc<BLSPubkeyToRankMap>,
 }
 
 impl UnverifiedBatch {
@@ -47,18 +45,16 @@ impl UnverifiedBatch {
         vote_payload_to_sign: VotePayloadToSign,
         payload: UnverifiedVotePayload,
         sender_vote_account_pubkey: Pubkey,
-        rank_map: Arc<BLSPubkeyToRankMap>,
     ) -> Self {
         Self {
             vote_payload_to_sign,
             batch: vec![payload],
             sender_vote_account_pubkeys: vec![sender_vote_account_pubkey],
-            rank_map,
         }
     }
 
-    pub(crate) fn rank_map(&self) -> &BLSPubkeyToRankMap {
-        &self.rank_map
+    pub(crate) fn len(&self) -> usize {
+        self.batch.len()
     }
 
     pub(crate) fn push(
@@ -71,12 +67,9 @@ impl UnverifiedBatch {
             .push(sender_vote_account_pubkey);
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.batch.len()
-    }
-
     pub(crate) fn verify(
         &mut self,
+        max_validators: usize,
         ban_sender: &BanSender,
         thread_pool: &ThreadPool,
     ) -> (Option<VerifiedBatch>, VoteVerificationStats) {
@@ -88,7 +81,7 @@ impl UnverifiedBatch {
                 let serialized_vote = wincode::serialize(&self.vote_payload_to_sign).unwrap();
                 let sender_identity_pubkey = unverified_vote.sender_identity_pubkey;
                 (
-                    unverified_vote.verify(self.rank_map.len(), Either::Left(&serialized_vote)),
+                    unverified_vote.verify(max_validators, Either::Left(&serialized_vote)),
                     sender_identity_pubkey,
                 )
             });
@@ -127,7 +120,7 @@ impl UnverifiedBatch {
                 stats.optimistic_verification_succeeded += 1;
                 stats.optimistic_batch.add_sample(self.batch.len() as u64);
                 let vote_aggregate = VoteAggregate::new_from_verified_votes(
-                    self.rank_map.len(),
+                    max_validators,
                     self.vote_payload_to_sign,
                     self.batch.iter().map(|v| (v.rank, v.stake)),
                     signature,
@@ -147,7 +140,7 @@ impl UnverifiedBatch {
                 let ((verified_batch, invalid_remote_pubkeys), time_us) =
                     measure_us!(verify_individual_votes(
                         Vote::from(self.vote_payload_to_sign),
-                        self.rank_map.len(),
+                        max_validators,
                         &self.batch,
                         sender_vote_account_pubkeys,
                         &hashed_msg,

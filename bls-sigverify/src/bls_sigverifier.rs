@@ -3,13 +3,13 @@
 use {
     crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
-        bls_vote_sigverify::verify_and_send_votes,
+        bls_vote_sigverify::{Batch, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
         rewards::{RewardInput, rewards_wants_vote},
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
-        unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
+        unverified_votes_batch::UnverifiedVotePayload,
         vote_pool::{VotePool, VotePoolError},
     },
     agave_votor_messages::{
@@ -250,7 +250,7 @@ impl SigVerifier {
         &mut self,
         my_pubkey: &Pubkey,
         datagrams: &[Datagram],
-        votes_buffer: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
+        votes_buffer: &mut HashMap<VotePayloadToSign, Batch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
     ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
@@ -343,7 +343,7 @@ impl SigVerifier {
         &mut self,
         my_pubkey: &Pubkey,
         datagrams: &[Datagram],
-        votes_buffer: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
+        votes_buffer: &mut HashMap<VotePayloadToSign, Batch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
     ) -> HashMap<CertificateType, Vec<CertPayload>> {
@@ -441,7 +441,7 @@ impl SigVerifier {
         migration_slot: Option<Slot>,
         max_vote_slot: Slot,
         root_bank: &Bank,
-        votes: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
+        votes: &mut HashMap<VotePayloadToSign, Batch>,
         unverified_vote: UnverifiedVoteMessage,
     ) {
         // votes from self take a different pathway.
@@ -504,12 +504,13 @@ impl SigVerifier {
                 };
                 match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
                     Some((payload, sender_vote_account_pubkey)) => {
-                        e.insert(UnverifiedBatch::new(
+                        let batch = Batch::new(
                             vote_payload_to_sign,
                             payload,
                             sender_vote_account_pubkey,
                             rank_map,
-                        ));
+                        );
+                        e.insert(batch);
                     }
                     None => {
                         self.stats.num_keep_vote_failed += 1;
@@ -1307,6 +1308,28 @@ mod tests {
             });
         assert_eq!(total_aggregates, 2);
         assert_eq!(total_votes_verified, num_votes);
+        assert_eq!(
+            ctx.verifier.stats.vote_stats.votes_to_sig_verify.0,
+            num_votes
+        );
+        assert_eq!(
+            ctx.verifier
+                .stats
+                .vote_stats
+                .vote_verification_stats
+                .optimistic_verification_succeeded
+                .0,
+            2
+        );
+        assert_eq!(
+            ctx.verifier
+                .stats
+                .vote_stats
+                .vote_verification_stats
+                .optimistic_batch
+                .count(),
+            2
+        );
         assert_eq!(
             ctx.verifier.stats.vote_stats.distinct_votes_stats.count(),
             1
