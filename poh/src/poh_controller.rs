@@ -104,7 +104,12 @@ impl PohController {
         message: PohServiceMessage,
     ) -> Result<(), SendError<PohServiceMessage>> {
         self.pending_message.fetch_add(1, Ordering::AcqRel);
-        self.sender.send(message)?;
+        if let Err(err) = self.sender.send(message) {
+            // The receiver is gone, the message will never be processed. Roll the
+            // pending count back so waiters on has_pending_message() are not wedged.
+            self.pending_message.fetch_sub(1, Ordering::AcqRel);
+            return Err(err);
+        }
 
         Ok(())
     }
@@ -143,13 +148,14 @@ impl PohServiceMessageGuard<'_> {
 
 impl Drop for PohServiceMessageGuard<'_> {
     fn drop(&mut self) {
-        // If the message was taken (processed), decrement the pending count.
-        if self.message.is_none() {
-            self.message_receiver
-                .pending_message
-                .fetch_sub(1, Ordering::AcqRel);
-        } else {
-            panic!("PohServiceMessageGuard dropped without processing the message");
-        }
+        // Roll the pending count back whether or not the message was processed.
+        // The service intentionally skips handling a message once the exit signal
+        // is set, so a guard can be dropped without processing on a legitimate
+        // path; the message will never be handled, so the count must be released
+        // either way. Panicking here would wedge waiters on has_pending_message().
+        self.message = None;
+        self.message_receiver
+            .pending_message
+            .fetch_sub(1, Ordering::AcqRel);
     }
 }
