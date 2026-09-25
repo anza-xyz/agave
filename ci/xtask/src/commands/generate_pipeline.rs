@@ -145,7 +145,7 @@ struct PullRequestPipelineFlags {
     checks: bool,
     feature_check: bool,
     miri: bool,
-    frozen_abi: bool,
+    stable_abi: bool,
     stable: bool,
     local_cluster: bool,
     docs: bool,
@@ -199,11 +199,11 @@ impl PullRequestPipelineFlags {
                 || changed_files
                     .iter()
                     .any(|file| file.ends_with("ci/test-miri.sh")),
-            frozen_abi: trigger_all
+            stable_abi: trigger_all
                 || rust_changed
                 || changed_files
                     .iter()
-                    .any(|file| file.ends_with("ci/test-frozen-abi.sh")),
+                    .any(|file| file.ends_with("ci/test-stable-abi.sh")),
             stable: trigger_all
                 || rust_changed
                 || changed_files.iter().any(|file| {
@@ -295,8 +295,8 @@ async fn generate_pull_request_pipeline(
     if flags.miri {
         pipeline.add_step(default_miri_step());
     }
-    if flags.frozen_abi {
-        pipeline.add_step(default_frozen_abi_step());
+    if flags.stable_abi {
+        pipeline.add_step(default_stable_abi_step());
     }
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -343,7 +343,7 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(default_checks_step());
     pipeline.add_step(default_feature_check_step(5));
     pipeline.add_step(default_miri_step());
-    pipeline.add_step(default_frozen_abi_step());
+    pipeline.add_step(default_stable_abi_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
@@ -448,10 +448,10 @@ fn default_miri_step() -> buildkite::Step {
     })
 }
 
-fn default_frozen_abi_step() -> buildkite::Step {
+fn default_stable_abi_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
-        name: String::from("frozen-abi"),
-        command: String::from("ci/docker-run-default-image.sh ci/test-frozen-abi.sh"),
+        name: String::from("stable-abi"),
+        command: String::from("ci/docker-run-default-image.sh ci/test-stable-abi.sh"),
         agents: Some(queue_agents()),
         timeout_in_minutes: Some(30),
         ..Default::default()
@@ -657,7 +657,7 @@ mod tests {
         assert!(!f.checks);
         assert!(!f.feature_check);
         assert!(!f.miri);
-        assert!(!f.frozen_abi);
+        assert!(!f.stable_abi);
         assert!(!f.stable);
         assert!(!f.local_cluster);
         assert!(!f.docs);
@@ -674,7 +674,7 @@ mod tests {
         assert!(f.checks);
         assert!(f.feature_check);
         assert!(f.miri);
-        assert!(f.frozen_abi);
+        assert!(f.stable_abi);
         assert!(f.stable);
         assert!(f.local_cluster);
         assert!(f.docs);
@@ -691,7 +691,7 @@ mod tests {
         assert!(f.checks);
         assert!(f.feature_check);
         assert!(f.miri);
-        assert!(f.frozen_abi);
+        assert!(f.stable_abi);
         assert!(f.stable);
         assert!(f.local_cluster);
         assert!(f.docs);
@@ -708,7 +708,7 @@ mod tests {
         assert!(f.checks);
         assert!(f.feature_check);
         assert!(f.miri);
-        assert!(f.frozen_abi);
+        assert!(f.stable_abi);
         assert!(f.stable);
         assert!(f.local_cluster);
         assert!(f.docs);
@@ -739,7 +739,7 @@ mod tests {
         assert!(!f.checks);
         assert!(!f.feature_check);
         assert!(!f.miri);
-        assert!(!f.frozen_abi);
+        assert!(!f.stable_abi);
         assert!(!f.stable);
         assert!(!f.local_cluster);
         assert!(!f.docs);
@@ -758,7 +758,7 @@ mod tests {
         assert!(!f.checks);
         assert!(!f.feature_check);
         assert!(!f.miri);
-        assert!(!f.frozen_abi);
+        assert!(!f.stable_abi);
         assert!(!f.stable);
         assert!(!f.local_cluster);
         assert!(!f.localnet);
