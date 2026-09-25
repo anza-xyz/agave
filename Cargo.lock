@@ -262,7 +262,6 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-precompiles",
- "bincode",
  "bytemuck",
  "criterion",
  "ed25519-dalek 1.0.1",
@@ -279,6 +278,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-secp256k1-program",
  "solana-secp256r1-program",
+ "wincode",
 ]
 
 [[package]]
@@ -10395,6 +10395,7 @@ dependencies = [
  "solana-keccak-hasher",
  "solana-sdk-ids",
  "solana-signature",
+ "wincode",
 ]
 
 [[package]]
