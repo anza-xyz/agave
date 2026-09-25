@@ -26,7 +26,7 @@ fn invoker_process_instruction(
     let account_info_iter = &mut accounts.iter();
     let invoked_program_info = next_account_info(account_info_iter)?;
     invoke(
-        &Instruction::new_with_bincode(
+        &Instruction::new_with_wincode(
             *invoked_program_info.key,
             &[0],
             vec![AccountMeta::new_readonly(*invoked_program_info.key, false)],
@@ -48,7 +48,7 @@ fn invoker_dupes_process_instruction(
     let account_info_iter = &mut accounts.iter();
     let invoked_program_info = next_account_info(account_info_iter)?;
     invoke(
-        &Instruction::new_with_bincode(
+        &Instruction::new_with_wincode(
             *invoked_program_info.key,
             &[0],
             vec![
@@ -132,7 +132,7 @@ async fn cpi() {
     );
 
     let context = program_test.start_with_context().await;
-    let instructions = vec![Instruction::new_with_bincode(
+    let instructions = vec![Instruction::new_with_wincode(
         invoker_program_id,
         &[0],
         vec![AccountMeta::new_readonly(invoked_program_id, false)],
@@ -168,7 +168,7 @@ async fn cpi_dupes() {
     );
 
     let context = program_test.start_with_context().await;
-    let instructions = vec![Instruction::new_with_bincode(
+    let instructions = vec![Instruction::new_with_wincode(
         invoker_program_id,
         &[0],
         vec![
@@ -204,7 +204,7 @@ async fn cpi_create_account() {
 
     let create_account_keypair = Keypair::new();
     let context = program_test.start_with_context().await;
-    let instructions = vec![Instruction::new_with_bincode(
+    let instructions = vec![Instruction::new_with_wincode(
         create_account_program_id,
         &[0],
         vec![

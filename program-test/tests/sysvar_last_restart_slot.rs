@@ -51,7 +51,7 @@ async fn check_with_program(
     program_id: Pubkey,
     expected_last_restart_slot: u64,
 ) {
-    let instructions = vec![Instruction::new_with_bincode(
+    let instructions = vec![Instruction::new_with_wincode(
         program_id,
         &expected_last_restart_slot.to_le_bytes(),
         vec![AccountMeta::new(last_restart_slot::id(), false)],

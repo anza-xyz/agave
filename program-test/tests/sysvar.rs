@@ -70,7 +70,7 @@ async fn get_sysvar() {
 
     let mut context = program_test.start_with_context().await;
     context.warp_to_slot(42).unwrap();
-    let instructions = vec![Instruction::new_with_bincode(program_id, &(), vec![])];
+    let instructions = vec![Instruction::new_with_wincode(program_id, &(), vec![])];
 
     let transaction = Transaction::new_signed_with_payer(
         &instructions,
@@ -131,7 +131,7 @@ async fn get_epoch_rewards_sysvar() {
     context.warp_to_slot(last_slot_before_new_epoch).unwrap();
 
     // outside of reward interval, set input[0] == 0, so that the program assert that epoch_rewards sysvar doesn't exist.
-    let instructions = vec![Instruction::new_with_bincode(program_id, &[0u8], vec![])];
+    let instructions = vec![Instruction::new_with_wincode(program_id, &[0u8], vec![])];
     let transaction = Transaction::new_signed_with_payer(
         &instructions,
         Some(&context.payer.pubkey()),
@@ -150,7 +150,7 @@ async fn get_epoch_rewards_sysvar() {
     context.warp_to_slot(first_slot_in_new_epoch).unwrap();
 
     // inside of reward interval, set input[0] == 1, so that the program assert that epoch_rewards sysvar exist.
-    let instructions = vec![Instruction::new_with_bincode(program_id, &[1u8], vec![])];
+    let instructions = vec![Instruction::new_with_wincode(program_id, &[1u8], vec![])];
     let transaction = Transaction::new_signed_with_payer(
         &instructions,
         Some(&context.payer.pubkey()),
@@ -194,7 +194,7 @@ async fn clock_sol_get_sysvar() {
 
     let mut context = program_test.start_with_context().await;
     context.warp_to_slot(42).unwrap();
-    let instructions = vec![Instruction::new_with_bincode(program_id, &(), vec![])];
+    let instructions = vec![Instruction::new_with_wincode(program_id, &(), vec![])];
 
     let transaction = Transaction::new_signed_with_payer(
         &instructions,
