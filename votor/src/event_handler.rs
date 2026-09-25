@@ -334,11 +334,11 @@ impl EventHandler {
                     &mut local_context.received_shred,
                     &mut local_context.stats,
                 );
-                if let Some(parent_block) =
+                if let Some((parent_ready_slot, parent_block)) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
                     Self::handle_parent_ready_event(
-                        slot,
+                        parent_ready_slot,
                         parent_block,
                         vctx,
                         ctx,
@@ -484,11 +484,11 @@ impl EventHandler {
                     );
                 }
 
-                if let Some(parent_block) =
+                if let Some((parent_ready_slot, parent_block)) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
                     Self::handle_parent_ready_event(
-                        block.slot,
+                        parent_ready_slot,
                         parent_block,
                         vctx,
                         ctx,
@@ -590,31 +590,28 @@ impl EventHandler {
     /// While B is stuck because it is waiting for >60% of the votes to finalize slot 9.
     /// The cluster will get stuck.
     /// After we add the following function, C will see that block 9 is finalized yet
-    /// it never had parent ready for slot 9, so it will trigger parent ready for slot 9,
-    /// this means C will immediately vote Notarize for  slot 9, then vote Notarize for
-    /// all later slots. So B and C together can keep finalizing the blocks and unstuck the
-    /// cluster. If we get a finalization cert for later slots of the window and we have the
-    /// block replayed, trace back to the first slot of the window and emit parent ready.
+    /// it never had parent ready for slot 8. It will trace the replayed block back to
+    /// the first slot of the window and trigger parent ready for slot 8. C can then vote
+    /// Notarize for slots 8 and 9. B and C together can keep finalizing blocks and unstick
+    /// the cluster.
     ///
-    /// Returns [`Some(Block)`] of the parent if the parent ready for the `finalized_block` should be added.
+    /// Returns the first slot of the window and its parent block if parent ready should be added.
     fn add_missing_parent_ready(
         finalized_block: Block,
         ctx: &SharedContext,
         vctx: &mut VotingContext,
         local_context: &mut LocalContext,
-    ) -> Option<Block> {
+    ) -> Option<(Slot, Block)> {
         let Block { slot, block_id } = finalized_block;
         let first_slot_of_window = first_of_consecutive_leader_slots(slot);
         if first_slot_of_window == 0 {
             return None;
         }
-        if vctx.vote_history.highest_parent_ready_slot() >= Some(first_slot_of_window)
-            || !local_context.finalized_blocks.contains(&finalized_block)
-        {
+        if !local_context.finalized_blocks.contains(&finalized_block) {
             return None;
         }
         // If the block is missing, we can't trigger parent ready
-        let bank = ctx.bank_forks.read().unwrap().get(slot)?;
+        let mut bank = ctx.bank_forks.read().unwrap().get(slot)?;
         if !bank.is_frozen() {
             // We haven't finished replay for the block, so we can't trigger parent ready
             return None;
@@ -623,25 +620,29 @@ impl EventHandler {
             // We have a different block id for the slot, repair should kick in later
             return None;
         }
-        let parent_bank = bank.parent()?;
-        let parent_slot = parent_bank.slot();
-        let Some(parent_block_id) = parent_bank.block_id() else {
-            // Maybe this bank is set to root after we drop bank_forks.
-            error!(
-                "{}: Unable to find block id for parent bank {parent_slot} to trigger parent ready",
-                local_context.my_pubkey
-            );
+
+        while bank.slot() > first_slot_of_window {
+            bank = bank.parent()?;
+        }
+        if bank.slot() != first_slot_of_window {
             return None;
-        };
+        }
+
+        let (_, parent_block) = Self::get_block_parent_block(&bank);
+        if vctx
+            .vote_history
+            .is_parent_ready(first_slot_of_window, &parent_block)
+        {
+            return None;
+        }
+
         info!(
-            "{}: Triggering parent ready for slot {slot} with parent {parent_slot} \
-             {parent_block_id}",
-            local_context.my_pubkey
+            "{}: Triggering parent ready for slot {first_slot_of_window} with parent {} {}",
+            local_context.my_pubkey,
+            parent_block.slot,
+            parent_block.block_id,
         );
-        Some(Block {
-            slot: parent_slot,
-            block_id: parent_block_id,
-        })
+        Some((first_slot_of_window, parent_block))
     }
 
     fn handle_set_identity(
@@ -2084,7 +2085,7 @@ mod tests {
     fn test_parent_ready_in_middle_of_window() {
         let mut test_context = setup();
 
-        // We just woke up and received finalize for slot 5
+        // We just woke up and received finalize for slot 5 without parent ready for slot 4.
         let root_bank = test_context
             .bank_forks
             .read()
@@ -2097,45 +2098,44 @@ mod tests {
         let bank5 = test_context.create_block_and_send_block_event(5, bank4);
         let block_id_5 = bank5.block_id().unwrap();
 
-        test_context.send_finalized_event(
-            Block {
-                slot: 5,
-                block_id: block_id_5,
-            },
-            true,
-        );
-
-        // We should now have parent ready for slot 5
-        test_context.check_parent_ready_slot((
+        // A later parent ready must not suppress recovery for the window start.
+        test_context.send_parent_ready_event(
             5,
             Block {
                 slot: 4,
                 block_id: block_id_4,
             },
-        ));
-
-        // We are partitioned off from rest of the network, and suddenly received finalize for
-        // slot 9 a little before we finished replay slot 9
-        let bank9 = test_context.create_block_only(9, bank5);
-        let block_id_9 = bank9.block_id().unwrap();
-        test_context.send_finalized_event(
-            Block {
-                slot: 9,
-                block_id: block_id_9,
-            },
-            true,
         );
 
-        test_context.send_block_event(9, bank9);
-
-        // We should now have parent ready for slot 9
-        test_context.check_parent_ready_slot((
-            9,
+        test_context.send_finalized_event(
             Block {
                 slot: 5,
                 block_id: block_id_5,
             },
-        ));
+            true,
+        );
+
+        let recovered_parent = Block {
+            slot: 0,
+            block_id: Hash::default(),
+        };
+        assert!(
+            test_context
+                .voting_context
+                .vote_history
+                .is_parent_ready(4, &recovered_parent)
+        );
+        test_context.check_timeout_set(4);
+        test_context.check_for_votes(&[
+            Vote::new_notarization_vote(Block {
+                slot: 4,
+                block_id: block_id_4,
+            }),
+            Vote::new_notarization_vote(Block {
+                slot: 5,
+                block_id: block_id_5,
+            }),
+        ]);
     }
 
     #[test]
