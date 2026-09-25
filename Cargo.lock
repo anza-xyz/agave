@@ -555,6 +555,7 @@ name = "agave-votor-messages"
 version = "4.5.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-votor-messages",
  "crossbeam-channel",
  "log",
  "serde",
