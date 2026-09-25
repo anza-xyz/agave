@@ -58,9 +58,9 @@ fn bench_process_compute_budget_instructions_no_builtins(c: &mut Criterion) {
                 |bencher| {
                     let ixs: Vec<_> = (0..num_instructions)
                         .map(|_| {
-                            Instruction::new_with_bincode(
+                            Instruction::new_with_bytes(
                                 DUMMY_PROGRAM_ID.parse().unwrap(),
-                                &(),
+                                &[],
                                 vec![],
                             )
                         })
@@ -115,20 +115,20 @@ fn bench_process_compute_budget_instructions_builtins(c: &mut Criterion) {
             .throughput(Throughput::Elements(NUM_TRANSACTIONS_PER_ITER as u64))
             .bench_function("4 dummy builtins", |bencher| {
                 let ixs = vec![
-                    Instruction::new_with_bincode(solana_sdk_ids::bpf_loader::id(), &(), vec![]),
-                    Instruction::new_with_bincode(
+                    Instruction::new_with_bytes(solana_sdk_ids::bpf_loader::id(), &[], vec![]),
+                    Instruction::new_with_bytes(
                         solana_sdk_ids::secp256k1_program::id(),
-                        &(),
+                        &[],
                         vec![],
                     ),
-                    Instruction::new_with_bincode(
+                    Instruction::new_with_bytes(
                         solana_sdk_ids::address_lookup_table::id(),
-                        &(),
+                        &[],
                         vec![],
                     ),
-                    Instruction::new_with_bincode(
+                    Instruction::new_with_bytes(
                         solana_sdk_ids::bpf_loader_upgradeable::id(),
-                        &(),
+                        &[],
                         vec![],
                     ),
                 ];
@@ -159,9 +159,9 @@ fn bench_process_compute_budget_instructions_mixed(c: &mut Criterion) {
                     let payer_keypair = Keypair::new();
                     let mut ixs: Vec<_> = (0..num_instructions)
                         .map(|_| {
-                            Instruction::new_with_bincode(
+                            Instruction::new_with_bytes(
                                 DUMMY_PROGRAM_ID.parse().unwrap(),
-                                &(),
+                                &[],
                                 vec![],
                             )
                         })

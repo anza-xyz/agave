@@ -7846,7 +7846,6 @@ name = "solana-compute-budget-instruction"
 version = "4.5.0-alpha.0"
 dependencies = [
  "agave-feature-set",
- "bincode",
  "criterion",
  "rand 0.9.4",
  "solana-borsh",

@@ -246,9 +246,9 @@ mod test {
     #[test]
     fn test_try_from_request_heap() {
         let tx = build_sanitized_transaction(&[
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
             ComputeBudgetInstruction::request_heap_frame(40 * 1024),
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
         ]);
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_heap_size: Some((1, 40 * 1024)),
@@ -265,7 +265,7 @@ mod test {
         );
 
         let tx = build_sanitized_transaction(&[
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
             ComputeBudgetInstruction::request_heap_frame(40 * 1024),
             ComputeBudgetInstruction::request_heap_frame(41 * 1024),
         ]);
@@ -280,9 +280,9 @@ mod test {
     #[test]
     fn test_try_from_compute_unit_limit() {
         let tx = build_sanitized_transaction(&[
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
             ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX),
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
         ]);
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_compute_unit_limit: Some((1, u32::MAX)),
@@ -297,7 +297,7 @@ mod test {
         );
 
         let tx = build_sanitized_transaction(&[
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
             ComputeBudgetInstruction::set_compute_unit_limit(0),
             ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX),
         ]);
@@ -312,9 +312,9 @@ mod test {
     #[test]
     fn test_try_from_compute_unit_price() {
         let tx = build_sanitized_transaction(&[
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
             ComputeBudgetInstruction::set_compute_unit_price(u64::MAX),
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
         ]);
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_compute_unit_price: Some((1, u64::MAX)),
@@ -331,7 +331,7 @@ mod test {
         );
 
         let tx = build_sanitized_transaction(&[
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
             ComputeBudgetInstruction::set_compute_unit_price(0),
             ComputeBudgetInstruction::set_compute_unit_price(u64::MAX),
         ]);
@@ -346,9 +346,9 @@ mod test {
     #[test]
     fn test_try_from_loaded_accounts_data_size_limit() {
         let tx = build_sanitized_transaction(&[
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
             ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(u32::MAX),
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
         ]);
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_loaded_accounts_data_size_limit: Some((1, u32::MAX)),
@@ -365,7 +365,7 @@ mod test {
         );
 
         let tx = build_sanitized_transaction(&[
-            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
             ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0),
             ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(u32::MAX),
         ]);
@@ -545,8 +545,8 @@ mod test {
             assert_eq!(get_migration_feature_position(feature_id), *position);
 
             let tx = build_sanitized_transaction(&[
-                Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
-                Instruction::new_with_bincode(*program_id, &(), vec![]),
+                Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]),
+                Instruction::new_with_bytes(*program_id, &[], vec![]),
             ]);
 
             let mut expected_details = ComputeBudgetInstructionDetails {

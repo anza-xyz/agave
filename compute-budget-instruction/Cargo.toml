@@ -37,7 +37,6 @@ solana-svm-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 
 [dev-dependencies]
-bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-builtins-default-costs = { path = "../builtins-default-costs", features = ["agave-unstable-api", "dev-context-only-utils"] }
