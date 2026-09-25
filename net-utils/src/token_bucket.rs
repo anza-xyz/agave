@@ -5,7 +5,6 @@
 #[cfg(feature = "shuttle-test")]
 use std::sync::Arc;
 use {
-    cfg_if::cfg_if,
     dashmap::{DashMap, mapref::entry::Entry},
     solana_svm_type_overrides::sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     std::{borrow::Borrow, cmp::Reverse, hash::Hash, time::Instant},
@@ -149,10 +148,11 @@ impl TokenBucket {
 
     /// Retrieves monotonic time since bucket creation.
     fn time_us(&self) -> u64 {
-        cfg_if! {
-            if #[cfg(feature="shuttle-test")] {
+        cfg_select! {
+            feature = "shuttle-test" => {
                 self.time_us_override.load(Ordering::Relaxed)
-            } else {
+            }
+            _ => {
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(self.base_time);
                 elapsed.as_micros() as u64

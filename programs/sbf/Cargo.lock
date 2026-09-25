@@ -7405,7 +7405,6 @@ dependencies = [
  "agave-xdp",
  "bincode",
  "bytes",
- "cfg-if 1.0.5",
  "dashmap",
  "itertools 0.15.0",
  "log",
@@ -7711,7 +7710,6 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "base64 0.23.1",
  "bincode",
- "cfg-if 1.0.5",
  "itertools 0.15.0",
  "log",
  "qualifier_attr",
