@@ -593,7 +593,7 @@ impl Default for QuicStreamerConfig {
         Self {
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
+            num_threads: NonZeroUsize::new(num_cpus::get().max(1)).expect("1 is non-zero"),
             stream_receive_window_size: PACKET_DATA_SIZE as u32,
             max_stream_data_bytes: PACKET_DATA_SIZE as u32,
             stake_revalidation_interval: DEFAULT_STAKE_REVALIDATION_INTERVAL,
@@ -838,6 +838,17 @@ mod test {
         let (t, _receiver, _server_address, cancel) = setup_swqos_quic_server();
         cancel.cancel();
         t.join().unwrap();
+    }
+
+    #[test]
+    fn test_default_config_num_threads() {
+        // The default should scale with the machine's core count. `min(1)` pinned
+        // the runtime to one worker thread on every machine and panicked when
+        // num_cpus reported zero, the opposite of the expect's message.
+        assert_eq!(
+            QuicStreamerConfig::default().num_threads.get(),
+            num_cpus::get().max(1)
+        );
     }
 
     #[test]
