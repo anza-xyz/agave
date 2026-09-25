@@ -919,4 +919,44 @@ mod tests {
         // with the stale pre-reset `tpu_has_bank` snapshot.
         assert!(replay_wakeup_receiver.try_recv().is_ok());
     }
+
+    #[test]
+    fn test_service_message_dropped_without_processing_releases_pending_count() {
+        // The service skips handling a service message once the exit signal is set,
+        // so a message consumed into a guard at exit is dropped without processing.
+        // The guard's drop must release the pending count instead of panicking,
+        // since ReplayStage busy-waits on has_pending_message().
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (mut poh_controller, poh_service_message_receiver) = PohController::new();
+
+        // A message is in flight when the exit path consumes it into a guard.
+        poh_controller
+            .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()))
+            .unwrap();
+        let service_message = poh_service_message_receiver.try_recv().unwrap();
+
+        // The service exits before handling the message; the guard is dropped
+        // without processing.
+        drop(service_message);
+
+        // The pending count must be released so replay's wait is not wedged.
+        assert!(!poh_controller.has_pending_message());
+    }
+
+    #[test]
+    fn test_send_message_failure_releases_pending_count() {
+        // Once the receiver is gone, every send fails and must roll its pending
+        // count back, or has_pending_message() stays true forever.
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (mut poh_controller, poh_service_message_receiver) = PohController::new();
+        drop(poh_service_message_receiver);
+
+        poh_controller
+            .set_bank(BankWithScheduler::new_without_scheduler(bank))
+            .unwrap_err();
+
+        assert!(!poh_controller.has_pending_message());
+    }
 }
