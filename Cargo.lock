@@ -10736,7 +10736,6 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "agave-reserved-account-keys",
  "base64 0.23.1",
- "bincode",
  "bzip2",
  "flate2",
  "futures 0.3.34",
