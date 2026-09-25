@@ -34,6 +34,16 @@ pub struct ProgramStatistics {
 const COMPILATION_EMA_WINDOW_SIZE: u64 = 10;
 /// Number of execution observations contributing to the execution EMA stats.
 const EXECUTION_EMA_WINDOW_SIZE: u64 = 500;
+/// Only every Nth execution feeds the execution EMA.
+///
+/// `stats` is one `Arc` per program shared by every execution thread, so the
+/// `fetch_update` CAS loop in [`ProgramStatistics::observe_ema`] is a
+/// contended read-modify-write on the hottest programs' cache line for every
+/// instruction executed. The execution EMA is only reported (it does not feed
+/// [`crate::program_cache_entry::ProgramCacheEntry::retention_score`]), and
+/// with a 500-observation window a 1-in-16 sample tracks it just as well.
+/// Invocation counts and totals stay exact.
+const EXECUTION_EMA_SAMPLE_EVERY: u64 = 16;
 /// Track exponential moving average in scaled-up units.
 ///
 /// Doing so allows to mitigate error from rounding-towards-zero we get when using integer math.
@@ -82,18 +92,28 @@ impl ProgramStatistics {
     /// Record information about JIT-compiled program having been executed.
     pub fn jit_executed(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
-        self.jit_invocations.fetch_add(1, ord);
+        let invocation = self.jit_invocations.fetch_add(1, ord);
         self.total_jit_execution_time_us.fetch_add(duration_us, ord);
-        Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(&self.jit_execution_time_ema, duration_us);
+        if invocation.is_multiple_of(EXECUTION_EMA_SAMPLE_EVERY) {
+            Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(
+                &self.jit_execution_time_ema,
+                duration_us,
+            );
+        }
     }
 
     /// Record information about program executed with the interpreter.
     pub fn interpreter_executed(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
-        self.interpreted_invocations.fetch_add(1, ord);
+        let invocation = self.interpreted_invocations.fetch_add(1, ord);
         self.total_interpretation_time_us
             .fetch_add(duration_us, ord);
-        Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(&self.interpretation_time_ema, duration_us);
+        if invocation.is_multiple_of(EXECUTION_EMA_SAMPLE_EVERY) {
+            Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(
+                &self.interpretation_time_ema,
+                duration_us,
+            );
+        }
     }
 
     pub fn merge_from(&self, other: &ProgramStatistics) {
@@ -323,5 +343,65 @@ impl<FG: ForkGraph> crate::loaded_programs::ProgramCache<FG> {
         } else {
             log::debug!("Entry stats written to {stat_path:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The very first execution observation must land in the counters and
+    /// seed the EMA with the raw (scaled) duration.
+    #[test]
+    fn test_first_execution_observation_seeds_stats() {
+        let ord = Ordering::Relaxed;
+        let stats = ProgramStatistics::default();
+
+        stats.jit_executed(100);
+        assert_eq!(stats.jit_invocations.load(ord), 1);
+        assert_eq!(stats.total_jit_execution_time_us.load(ord), 100);
+        assert_eq!(stats.jit_execution_time_ema.load(ord), 100 * EMA_SCALE);
+
+        stats.interpreter_executed(7);
+        assert_eq!(stats.interpreted_invocations.load(ord), 1);
+        assert_eq!(stats.total_interpretation_time_us.load(ord), 7);
+        assert_eq!(stats.interpretation_time_ema.load(ord), 7 * EMA_SCALE);
+    }
+
+    /// Totals and invocation counts are exact regardless of how the EMA is
+    /// maintained.
+    #[test]
+    fn test_execution_totals_are_exact() {
+        let ord = Ordering::Relaxed;
+        let stats = ProgramStatistics::default();
+        for i in 0..100u64 {
+            stats.jit_executed(i);
+        }
+        assert_eq!(stats.jit_invocations.load(ord), 100);
+        assert_eq!(
+            stats.total_jit_execution_time_us.load(ord),
+            (0..100u64).sum()
+        );
+        assert!(stats.jit_execution_time_ema.load(ord) > 0);
+    }
+
+    /// The EMA is fed by every `EXECUTION_EMA_SAMPLE_EVERY`-th observation only.
+    #[test]
+    fn test_execution_ema_is_sampled() {
+        let ord = Ordering::Relaxed;
+        let stats = ProgramStatistics::default();
+        stats.jit_executed(100);
+        let seeded = stats.jit_execution_time_ema.load(ord);
+        assert_eq!(seeded, 100 * EMA_SCALE);
+        for _ in 1..EXECUTION_EMA_SAMPLE_EVERY {
+            stats.jit_executed(1_000_000);
+            assert_eq!(stats.jit_execution_time_ema.load(ord), seeded);
+        }
+        stats.jit_executed(1_000_000);
+        assert!(stats.jit_execution_time_ema.load(ord) > seeded);
+        assert_eq!(
+            stats.jit_invocations.load(ord),
+            EXECUTION_EMA_SAMPLE_EVERY + 1
+        );
     }
 }
