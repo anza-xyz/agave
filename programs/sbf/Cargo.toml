@@ -167,7 +167,7 @@ solana-sysvar = "=4.3.0"
 solana-sysvar-id = "=3.1.0"
 solana-test-validator = { path = "../../test-validator", version = "=4.5.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.5.0-alpha.0" }
-solana-vote-interface = "6.1.0"
+solana-vote-interface = "7.1.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.5.0-alpha.0" }
 test-case = "3.3.1"
 thiserror = "2.0"

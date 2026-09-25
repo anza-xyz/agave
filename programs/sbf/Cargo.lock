@@ -5710,7 +5710,7 @@ dependencies = [
  "solana-stake-history 2.1.0",
  "solana-stake-interface",
  "solana-sysvar 5.0.0",
- "solana-vote-interface 7.1.0",
+ "solana-vote-interface",
  "solana-zk-sdk-pod",
  "spl-generic-token",
  "spl-token-2022-interface",
@@ -8056,7 +8056,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-version",
- "solana-vote-interface 7.1.0",
+ "solana-vote-interface",
  "tokio",
  "wincode",
 ]
@@ -8239,7 +8239,7 @@ dependencies = [
  "solana-unified-scheduler-logic",
  "solana-version",
  "solana-vote",
- "solana-vote-interface 7.1.0",
+ "solana-vote-interface",
  "solana-vote-program",
  "spl-generic-token",
  "static_assertions",
@@ -8328,7 +8328,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "solana-vote",
- "solana-vote-interface 6.1.0",
+ "solana-vote-interface",
  "solana-vote-program",
  "test-case",
 ]
@@ -9790,7 +9790,7 @@ dependencies = [
  "solana-syscalls",
  "solana-transaction",
  "solana-validator-exit",
- "solana-vote-interface 7.1.0",
+ "solana-vote-interface",
  "tokio",
 ]
 
@@ -9954,7 +9954,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
- "solana-vote-interface 7.1.0",
+ "solana-vote-interface",
  "solana-zk-sdk-pod",
  "spl-associated-token-account-interface",
  "spl-memo-interface",
@@ -10132,27 +10132,9 @@ dependencies = [
  "solana-signer",
  "solana-svm-transaction",
  "solana-transaction",
- "solana-vote-interface 7.1.0",
+ "solana-vote-interface",
  "thiserror 2.0.20",
  "wincode",
-]
-
-[[package]]
-name = "solana-vote-interface"
-version = "6.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c372a70d5c9738590f9762eb8bf01f7a794fdf0170ee5c1624df9a05e09603bc"
-dependencies = [
- "num-derive 0.4.2",
- "num-traits",
- "solana-clock 3.2.1",
- "solana-hash",
- "solana-instruction 3.5.1",
- "solana-instruction-error 2.5.0",
- "solana-pubkey 4.4.0",
- "solana-rent",
- "solana-sdk-ids",
- "solana-serialize-utils 3.1.2",
 ]
 
 [[package]]
@@ -10205,7 +10187,7 @@ dependencies = [
  "solana-slot-hashes 4.0.0",
  "solana-system-interface",
  "solana-transaction-context",
- "solana-vote-interface 7.1.0",
+ "solana-vote-interface",
 ]
 
 [[package]]
