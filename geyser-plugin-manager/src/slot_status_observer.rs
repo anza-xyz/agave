@@ -1,5 +1,5 @@
 use {
-    crossbeam_channel::Receiver,
+    crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_rpc::{
         optimistically_confirmed_bank_tracker::SlotNotification,
         slot_status_notifier::SlotStatusNotifier,
@@ -10,6 +10,7 @@ use {
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
+        time::Duration,
     },
 };
 
@@ -53,8 +54,11 @@ impl SlotStatusObserver {
             .name("solBankNotif".to_string())
             .spawn(move || {
                 while !exit.load(Ordering::Relaxed) {
-                    if let Ok(slot) = bank_notification_receiver.recv() {
-                        match slot {
+                    // A blocking recv would keep the exit flag unobserved until the
+                    // next notification arrives, so shutdown would hang on an idle
+                    // cluster waiting for the thread to join.
+                    match bank_notification_receiver.recv_timeout(Duration::from_secs(1)) {
+                        Ok(slot) => match slot {
                             SlotNotification::OptimisticallyConfirmed(slot, bank_id) => {
                                 slot_status_notifier
                                     .read()
@@ -75,10 +79,50 @@ impl SlotStatusObserver {
                                     bank_id,
                                 );
                             }
-                        }
+                        },
+                        // No more notifications will ever arrive on a disconnected
+                        // channel; spinning would just burn the core.
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
                     }
                 }
             })
             .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_clock::{BankId, Slot},
+        solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
+        std::sync::RwLock,
+    };
+
+    #[derive(Debug)]
+    struct NoopNotifier;
+
+    impl SlotStatusNotifierInterface for NoopNotifier {
+        fn notify_slot_confirmed(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+        fn notify_slot_processed(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+        fn notify_slot_rooted(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+        fn notify_first_shred_received(&self, _: Slot) {}
+        fn notify_completed(&self, _: Slot) {}
+        fn notify_created_bank(&self, _: Slot, _: Slot, _: BankId) {}
+        fn notify_slot_dead(&self, _: Slot, _: Slot, _: String) {}
+    }
+
+    #[test]
+    fn test_slot_status_observer_joins_on_idle_channel() {
+        // join() sets the exit flag and must return; the run loop may not block
+        // on an idle channel, so shutdown cannot hang waiting for the next
+        // notification.
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let notifier: SlotStatusNotifier = Arc::new(RwLock::new(NoopNotifier));
+        let mut observer = SlotStatusObserver::new(receiver, notifier);
+
+        observer.join().unwrap();
+        drop(sender);
     }
 }
