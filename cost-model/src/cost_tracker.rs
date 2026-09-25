@@ -117,10 +117,17 @@ pub struct CostTracker {
 
 impl Default for CostTracker {
     fn default() -> Self {
+        Self::with_capacity(WRITABLE_ACCOUNTS_PER_BLOCK)
+    }
+}
+
+impl CostTracker {
+    /// Creates a tracker with default limits and space for at least `capacity` writable accounts.
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
             limits: CostTrackerLimits::default(),
             cost_by_writable_accounts: HashMap::with_capacity_and_hasher(
-                WRITABLE_ACCOUNTS_PER_BLOCK,
+                capacity,
                 ahash::RandomState::new(),
             ),
             block_cost: SharedBlockCost::new(0),
@@ -129,9 +136,37 @@ impl Default for CostTracker {
             in_flight_transaction_count: Saturating(0),
         }
     }
-}
 
-impl CostTracker {
+    /// Clears all accounting and applies new limits, retaining writable-account map capacity.
+    ///
+    /// Existing shared counters observe the reset. Outstanding work must not subsequently
+    /// update or remove costs from before the reset.
+    pub fn reset(&mut self, limits: CostTrackerLimits) {
+        let Self {
+            limits: current_limits,
+            cost_by_writable_accounts,
+            block_cost,
+            transaction_count,
+            allocated_accounts_data_size,
+            in_flight_transaction_count,
+        } = self;
+        *current_limits = limits;
+        cost_by_writable_accounts.clear();
+        block_cost.store(0);
+        *transaction_count = Saturating(0);
+        allocated_accounts_data_size.store(0);
+        *in_flight_transaction_count = Saturating(0);
+    }
+
+    /// Shrinks writable-account map capacity without removing tracked accounts.
+    /// Capacity stays at least `capacity` or the current length, subject to map rounding;
+    /// a smaller map is not grown. Returns whether capacity was reduced.
+    pub fn shrink_to(&mut self, capacity: usize) -> bool {
+        let previous_capacity = self.cost_by_writable_accounts.capacity();
+        self.cost_by_writable_accounts.shrink_to(capacity);
+        self.cost_by_writable_accounts.capacity() < previous_capacity
+    }
+
     pub fn new_from_parent_limits(&self) -> Self {
         let mut new = Self::default();
         new.set_limits(self.limits);
@@ -444,6 +479,10 @@ impl SharedBlockCost {
         Self(Arc::new(AtomicU64::new(value)))
     }
 
+    fn store(&self, value: u64) {
+        self.0.store(value, Ordering::Release);
+    }
+
     fn fetch_add(&self, value: u64) -> u64 {
         self.0.fetch_add(value, Ordering::Release)
     }
@@ -532,6 +571,48 @@ mod tests {
         assert_eq!(tracker.transaction_count(), 0);
         assert_eq!(tracker.cost_by_writable_accounts[&accounts[0]], 0);
         assert_eq!(tracker.cost_by_writable_accounts[&accounts[1]], 0);
+    }
+
+    #[test]
+    fn test_reset() {
+        let mut tracker = CostTracker::new(10, 20);
+        let accounts = [Pubkey::new_unique()];
+        let limits = CostTrackerLimits::new(25, 50, 100);
+        tracker
+            .try_add(
+                &TransactionCost {
+                    allocated_accounts_data_size: 7,
+                    ..test_cost(10)
+                },
+                accounts.iter(),
+            )
+            .unwrap();
+        tracker.add_transactions_in_flight(1);
+        let capacity = tracker.cost_by_writable_accounts.capacity();
+        let block_cost = tracker.shared_block_cost();
+        let allocated_data = tracker.shared_allocated_accounts_data_size();
+
+        tracker.reset(limits);
+
+        assert_eq!(tracker.get_limits(), limits);
+        assert!(tracker.cost_by_writable_accounts.is_empty());
+        assert_eq!(tracker.cost_by_writable_accounts.capacity(), capacity);
+        assert_eq!(block_cost.load(), 0);
+        assert_eq!(allocated_data.load(), 0);
+        assert_eq!(tracker.transaction_count(), 0);
+        assert_eq!(tracker.in_flight_transaction_count(), 0);
+
+        tracker
+            .try_add(
+                &TransactionCost {
+                    allocated_accounts_data_size: 7,
+                    ..test_cost(25)
+                },
+                accounts.iter(),
+            )
+            .unwrap();
+        assert_eq!(block_cost.load(), 25);
+        assert_eq!(allocated_data.load(), 7);
     }
 
     #[test]
