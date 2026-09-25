@@ -1,11 +1,16 @@
 use {
-    crate::shred::Error, solana_hash::Hash, solana_sha256_hasher::hashv,
-    static_assertions::const_assert_eq, std::iter::successors,
+    crate::shred::Error, agave_shred_wire_format::constants as wire_format, solana_hash::Hash,
+    solana_sha256_hasher::hashv, static_assertions::const_assert_eq, std::iter::successors,
 };
 
 pub(crate) const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
 const_assert_eq!(SIZE_OF_MERKLE_ROOT, 32);
 const_assert_eq!(SIZE_OF_MERKLE_PROOF_ENTRY, 20);
+const_assert_eq!(SIZE_OF_MERKLE_ROOT, wire_format::SIZE_OF_MERKLE_ROOT);
+const_assert_eq!(
+    SIZE_OF_MERKLE_PROOF_ENTRY,
+    wire_format::SIZE_OF_MERKLE_PROOF_ENTRY
+);
 pub const SIZE_OF_MERKLE_PROOF_ENTRY: usize = std::mem::size_of::<MerkleProofEntry>();
 // Number of proof entries for the standard 64 shred batch.
 pub const PROOF_ENTRIES_FOR_32_32_BATCH: u8 = 6;

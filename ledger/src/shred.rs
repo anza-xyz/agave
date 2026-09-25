@@ -55,6 +55,11 @@ use rand::Rng;
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},
+    agave_shred_wire_format::{
+        constants as wire_format_consts,
+        error::ParseError,
+        kind::{Code, Data, ShredLayout as _},
+    },
     bitflags::bitflags,
     itertools::Either,
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -111,9 +116,10 @@ pub const SIZE_OF_NONCE: usize = std::mem::size_of::<Nonce>();
 
 /// The following constants are computed by hand, and hardcoded.
 /// `test_shred_constants` ensures that the values are correct.
-const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
-pub const SIZE_OF_DATA_SHRED_HEADERS: usize = 88;
-const SIZE_OF_CODING_SHRED_HEADERS: usize = 89;
+const SIZE_OF_COMMON_SHRED_HEADER: usize =
+    wire_format_consts::SIZE_OF_COMMON_HEADER + SIGNATURE_BYTES;
+const SIZE_OF_CODING_SHRED_HEADERS: usize = Code::SIZE_OF_HEADERS;
+pub const SIZE_OF_DATA_SHRED_HEADERS: usize = Data::SIZE_OF_HEADERS;
 const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 
 // Shreds are uniformly split into erasure batches with a "target" number of
@@ -133,14 +139,11 @@ pub const MAX_CODE_SHREDS_PER_SLOT: usize = DEFAULT_MAX_CODE_SHREDS_PER_SLOT as 
 pub const MAX_FEC_SETS_PER_SLOT: u32 =
     MAX_DATA_SHREDS_PER_SLOT as u32 / DATA_SHREDS_PER_FEC_BLOCK as u32;
 
-#[cfg(any(test, feature = "dev-context-only-utils"))]
-pub(crate) const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
-
 /// Rewrites the Merkle proof height of the serialized shred in `payload`,
 /// leaving its signature stale; the caller re-signs if the shred has to verify.
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 pub fn override_proof_size(payload: &mut [u8], proof_size: u8) {
-    let byte = &mut payload[OFFSET_OF_SHRED_VARIANT];
+    let byte = &mut payload[wire_format_consts::OFFSET_OF_VARIANT];
     let shred_variant = ShredVariant::try_from(*byte).expect("payload holds a merkle shred");
     *byte = u8::from(match shred_variant {
         ShredVariant::MerkleCode { resigned, .. } => ShredVariant::MerkleCode {
@@ -213,8 +216,6 @@ pub enum Error {
     InvalidDataSize { size: u16, payload: usize },
     #[error("Invalid deshred set")]
     InvalidDeshredSet,
-    #[error("Invalid erasure config")]
-    InvalidErasureConfig,
     #[error("Invalid erasure shard index: {0:?}")]
     InvalidErasureShardIndex(/*headers:*/ Box<dyn Debug + Send>),
     #[error("Invalid merkle proof")]
@@ -251,6 +252,45 @@ pub enum Error {
     UnknownProofSize,
     #[error("Empty shreds list")]
     EmptyIterator,
+}
+
+impl From<ParseError> for Error {
+    /// Restates what `agave-shred-wire-format` found wrong with a shred in the vocabulary this
+    /// crate's callers already match on.
+    ///
+    /// The mapping is lossy in both directions: this enum has no variant for a nonce that is
+    /// missing rather than malformed, and none of its variants records the shred kind, so several
+    /// parse errors land on the same one. Nothing is invented — where a `ParseError` carries less
+    /// than the variant here wants, the missing number is one the parser had already established.
+    fn from(err: ParseError) -> Self {
+        match err {
+            ParseError::InvalidVariant(_) => Self::InvalidShredVariant,
+            // A packet that does not hold a whole shred is the same failure as one that holds a
+            // payload of the wrong length, which is what this variant reports elsewhere.
+            ParseError::TooShort { len, expected: _ } => Self::InvalidPayloadSize(len),
+            // Framing, not payload: the shred itself parsed, and the packet was the wrong size for
+            // it.
+            ParseError::TrailingBytes(_) | ParseError::MissingNonce => Self::InvalidPacketSize,
+            ParseError::UnexpectedKind {
+                expected: _,
+                found: _,
+            } => Self::InvalidShredType,
+            // The parser reaches this only after fixing the payload at the one length a data shred
+            // has, so naming that length here states what it checked against rather than guessing.
+            ParseError::InvalidDataSize { size } => Self::InvalidDataSize {
+                size,
+                payload: Data::SIZE_OF_PAYLOAD,
+            },
+            ParseError::InvalidShredFlags { flags } => Self::InvalidShredFlags(flags),
+            // Only a data shred's index is checked against its FEC set's, so the kind is not a
+            // guess.
+            ParseError::IndexBeforeFecSet {
+                index,
+                fec_set_index: _,
+            } => Self::InvalidShredIndex(ShredType::Data, index),
+            ParseError::Read(err) => Self::WincodeRead(err),
+        }
+    }
 }
 
 #[repr(u8)]
@@ -904,6 +944,12 @@ pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
 
 #[cfg(test)]
 mod tests {
+    // Re-exported under the names the tests here and in `filter` have always used.
+    pub(super) use agave_shred_wire_format::constants::{
+        OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS as OFFSET_OF_SHRED_FLAGS,
+        OFFSET_OF_INDEX as OFFSET_OF_SHRED_INDEX, OFFSET_OF_NUM_DATA_SHREDS as OFFSET_OF_NUM_DATA,
+        OFFSET_OF_VARIANT as OFFSET_OF_SHRED_VARIANT,
+    };
     use {
         super::*,
         assert_matches::assert_matches,
@@ -915,20 +961,6 @@ mod tests {
     pub(super) const SIZE_OF_SHRED_INDEX: usize = 4;
     pub(super) const SIZE_OF_SHRED_SLOT: usize = 8;
     pub(super) const SIZE_OF_SHRED_VARIANT: usize = 1;
-    pub(super) const SIZE_OF_VERSION: usize = 2;
-    pub(super) const SIZE_OF_FEC_SET_INDEX: usize = 4;
-    pub(super) const SIZE_OF_PARENT_OFFSET: usize = 2;
-
-    pub(super) const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
-    pub(super) const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
-    pub(super) const OFFSET_OF_FEC_SET_INDEX: usize =
-        OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + SIZE_OF_VERSION;
-    pub(super) const OFFSET_OF_NUM_DATA: usize = OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
-
-    pub(super) const OFFSET_OF_PARENT_OFFSET: usize =
-        OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
-    pub(super) const OFFSET_OF_SHRED_FLAGS: usize = OFFSET_OF_PARENT_OFFSET + SIZE_OF_PARENT_OFFSET;
-    pub(super) const OFFSET_OF_DATA_SIZE: usize = OFFSET_OF_SHRED_FLAGS + 1;
 
     #[test]
     fn test_shred_constants() {
