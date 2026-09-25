@@ -97,7 +97,6 @@ dependencies = [
  "agave-math-utils",
  "agave-votor-messages",
  "agave-votor-transport",
- "bincode",
  "bitvec",
  "bytes",
  "criterion",

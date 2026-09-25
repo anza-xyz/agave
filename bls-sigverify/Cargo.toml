@@ -56,7 +56,6 @@ wincode = { workspace = true }
 [dev-dependencies]
 agave-bls-sigverify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 agave-logger = { workspace = true }
-bincode = { workspace = true }
 bytes = { workspace = true }
 criterion = { workspace = true }
 solana-epoch-schedule = { workspace = true }
