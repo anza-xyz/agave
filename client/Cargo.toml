@@ -21,7 +21,6 @@ dev-context-only-utils = []
 
 [dependencies]
 async-trait = { workspace = true }
-bincode = { workspace = true }
 dashmap = { workspace = true }
 futures-util = { workspace = true }
 indicatif = { workspace = true }
@@ -46,10 +45,11 @@ solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-tpu-client-next = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
 solana-udp-client = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 crossbeam-channel = { workspace = true }

@@ -5924,7 +5924,6 @@ dependencies = [
 name = "solana-banks-server"
 version = "4.5.0-alpha.0"
 dependencies = [
- "bincode",
  "crossbeam-channel",
  "futures 0.3.34",
  "solana-account",
@@ -5942,6 +5941,7 @@ dependencies = [
  "solana-transaction-error",
  "tarpc",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -6215,7 +6215,6 @@ name = "solana-client"
 version = "4.5.0-alpha.0"
 dependencies = [
  "async-trait",
- "bincode",
  "dashmap",
  "futures-util",
  "indicatif",
@@ -6244,6 +6243,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-udp-client",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -7995,7 +7995,6 @@ dependencies = [
  "agave-votor-messages",
  "async-trait",
  "base64 0.23.1",
- "bincode",
  "bs58",
  "futures 0.3.34",
  "indicatif",
@@ -9652,7 +9651,6 @@ dependencies = [
  "agave-votor-messages",
  "arc-swap",
  "base64 0.23.1",
- "bincode",
  "crossbeam-channel",
  "log",
  "serde_json",
@@ -9697,6 +9695,7 @@ dependencies = [
  "solana-validator-exit",
  "solana-vote-interface",
  "tokio",
+ "wincode",
 ]
 
 [[package]]

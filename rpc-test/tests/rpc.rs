@@ -1,5 +1,4 @@
 use {
-    bincode::serialize,
     crossbeam_channel::bounded,
     futures_util::StreamExt,
     log::*,
@@ -93,7 +92,7 @@ fn test_rpc_send_tx() {
         Rent::default().minimum_balance(0),
         blockhash,
     );
-    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let serialized_encoded_tx = bs58::encode(wincode::serialize(&tx).unwrap()).into_string();
 
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
     let json: Value = post_rpc(req, &rpc_url);
@@ -440,7 +439,7 @@ fn test_rpc_subscriptions() {
     // Send all transactions
     rt.block_on(async {
         for tx in transactions.iter() {
-            let wire_tx = bincode::serialize(&tx).unwrap();
+            let wire_tx = wincode::serialize(tx).unwrap();
             let _ = transaction_sender.send_transaction(wire_tx).await;
         }
     });
@@ -531,7 +530,7 @@ fn test_run_tpu_send_transaction() {
             .expect("Failed to build TPU client")
     });
 
-    let tx_bytes = bincode::serialize(&tx).unwrap();
+    let tx_bytes = wincode::serialize(&tx).unwrap();
     rt.block_on(async {
         let _ = transaction_sender.send_transaction(tx_bytes).await;
     });

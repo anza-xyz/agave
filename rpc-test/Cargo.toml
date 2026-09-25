@@ -18,7 +18,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 agave-unstable-api = []
 
 [dependencies]
-bincode = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 futures-util = { workspace = true }
@@ -33,6 +32,7 @@ solana-rpc-client-api = { workspace = true }
 solana-tpu-client-next = { workspace = true, features = ["websocket-node-address-service"] }
 solana-transaction-status = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
@@ -47,7 +47,7 @@ solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 tokio-util = { workspace = true }
 
 [lints]

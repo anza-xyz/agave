@@ -7227,7 +7227,6 @@ dependencies = [
 name = "solana-banks-server"
 version = "4.5.0-alpha.0"
 dependencies = [
- "bincode",
  "crossbeam-channel",
  "futures 0.3.34",
  "solana-account",
@@ -7245,6 +7244,7 @@ dependencies = [
  "solana-transaction-error",
  "tarpc",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -7411,7 +7411,6 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "assert_matches",
- "bincode",
  "solana-account",
  "solana-bpf-loader-program",
  "solana-clock",
@@ -7427,6 +7426,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "test-case",
+ "wincode",
 ]
 
 [[package]]
@@ -7704,7 +7704,6 @@ name = "solana-client"
 version = "4.5.0-alpha.0"
 dependencies = [
  "async-trait",
- "bincode",
  "crossbeam-channel",
  "dashmap",
  "futures-util",
@@ -7734,6 +7733,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-udp-client",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -8516,7 +8516,6 @@ dependencies = [
  "agave-logger",
  "agave-snapshots",
  "base64 0.23.1",
- "bincode",
  "bs58",
  "clap 2.33.3",
  "itertools 0.15.0",
@@ -8558,6 +8557,7 @@ dependencies = [
  "solana-vote-program",
  "tempfile",
  "test-case",
+ "wincode",
 ]
 
 [[package]]
@@ -10017,7 +10017,6 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "base64 0.23.1",
- "bincode",
  "bs58",
  "crossbeam-channel",
  "futures 0.3.34",
@@ -10140,7 +10139,6 @@ name = "solana-rpc-test"
 version = "4.5.0-alpha.0"
 dependencies = [
  "agave-logger",
- "bincode",
  "bs58",
  "crossbeam-channel",
  "futures-util",
@@ -10167,6 +10165,7 @@ dependencies = [
  "solana-transaction-status",
  "tokio",
  "tokio-util 0.7.19",
+ "wincode",
 ]
 
 [[package]]
@@ -11143,7 +11142,6 @@ dependencies = [
  "agave-votor-messages",
  "arc-swap",
  "base64 0.23.1",
- "bincode",
  "crossbeam-channel",
  "log",
  "serde_json",
@@ -11189,6 +11187,7 @@ dependencies = [
  "solana-validator-exit",
  "solana-vote-interface",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -11215,7 +11214,6 @@ version = "4.5.0-alpha.0"
 dependencies = [
  "agave-logger",
  "assert_matches",
- "bincode",
  "chrono",
  "clap 2.33.3",
  "console 0.16.6",
@@ -11258,6 +11256,7 @@ dependencies = [
  "spl-token-interface",
  "tempfile",
  "thiserror 2.0.20",
+ "wincode",
 ]
 
 [[package]]
