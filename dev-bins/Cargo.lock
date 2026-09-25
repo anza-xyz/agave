@@ -206,6 +206,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-geyser-plugin-host"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-geyser-plugin-interface",
+ "json5",
+ "libloading",
+ "log",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6837,16 +6849,14 @@ dependencies = [
 name = "solana-geyser-plugin-manager"
 version = "4.5.0-alpha.0"
 dependencies = [
+ "agave-geyser-plugin-host",
  "agave-geyser-plugin-interface",
  "arc-swap",
  "bs58",
  "crossbeam-channel",
- "json5",
  "jsonrpc-core",
  "lazy-lru",
- "libloading",
  "log",
- "serde_json",
  "smallvec",
  "solana-account",
  "solana-account-decoder-client-types",

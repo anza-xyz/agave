@@ -1,6 +1,6 @@
 /// Module responsible for notifying plugins of account updates
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
     },
@@ -17,7 +17,7 @@ use {
 };
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
-    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
     snapshot_notifications_enabled: bool,
 }
 
@@ -53,11 +53,11 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
 
     fn notify_end_of_restore_from_snapshot(&self) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             match plugin.notify_end_of_startup() {
                 Err(err) => {
                     error!(
@@ -79,7 +79,7 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
 
 impl AccountsUpdateNotifierImpl {
     pub fn new(
-        plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+        plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
         snapshot_notifications_enabled: bool,
     ) -> Self {
         AccountsUpdateNotifierImpl {
@@ -130,10 +130,10 @@ impl AccountsUpdateNotifierImpl {
     ) {
         let plugin_manager = self.plugin_manager.load();
 
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             if !plugin.account_data_notifications_enabled() {
                 continue;
             }
@@ -169,10 +169,10 @@ impl AccountsUpdateNotifierImpl {
     ) {
         let plugin_manager = self.plugin_manager.load();
 
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().is_empty() {
             return;
         }
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins().iter() {
             if !plugin.account_data_notifications_enabled() {
                 continue;
             }
@@ -207,7 +207,7 @@ impl AccountsUpdateNotifierImpl {
 mod tests {
     use {
         super::*,
-        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_host::{GeyserPluginHost, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{
             GeyserPlugin, ReplicaAccountInfoVersions,
         },
@@ -264,7 +264,7 @@ mod tests {
         }
     }
 
-    fn loaded_test_plugin(plugin: TestAccountPlugin) -> Arc<LoadedGeyserPlugin> {
+    fn loaded_test_plugin(plugin: impl GeyserPlugin) -> Arc<LoadedGeyserPlugin> {
         #[cfg(unix)]
         let library = libloading::os::unix::Library::this();
         #[cfg(windows)]
@@ -283,8 +283,8 @@ mod tests {
         let disabled_count = Arc::new(AtomicUsize::new(0));
         let enabled_bank_ids = Arc::new(Mutex::new(Vec::new()));
         let disabled_bank_ids = Arc::new(Mutex::new(Vec::new()));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![
                 loaded_test_plugin(TestAccountPlugin {
                     name: "enabled",
                     account_updates_enabled: true,
@@ -298,7 +298,7 @@ mod tests {
                     account_update_bank_ids: disabled_bank_ids.clone(),
                 }),
             ],
-        })));
+        ))));
         let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false);
         let account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
         let pubkey = Pubkey::new_unique();
@@ -316,14 +316,14 @@ mod tests {
     fn test_notify_account_restore_from_snapshot_has_no_bank_id() {
         let account_update_count = Arc::new(AtomicUsize::new(0));
         let account_update_bank_ids = Arc::new(Mutex::new(Vec::new()));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded_test_plugin(TestAccountPlugin {
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![loaded_test_plugin(TestAccountPlugin {
                 name: "enabled",
                 account_updates_enabled: true,
                 account_update_count: account_update_count.clone(),
                 account_update_bank_ids: account_update_bank_ids.clone(),
             })],
-        })));
+        ))));
         let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, true);
         let pubkey = Pubkey::new_unique();
         let owner = Pubkey::new_unique();
@@ -344,5 +344,38 @@ mod tests {
             *account_update_bank_ids.lock().unwrap(),
             Vec::<BankId>::new()
         );
+    }
+
+    #[test]
+    fn test_notify_snapshot_completion_reaches_every_plugin() {
+        #[derive(Debug)]
+        struct CompletionPlugin(Arc<AtomicUsize>);
+
+        impl GeyserPlugin for CompletionPlugin {
+            fn name(&self) -> &'static str {
+                "snapshot-completion"
+            }
+
+            fn notify_end_of_startup(
+                &self,
+            ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+        }
+
+        let counts = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];
+        let manager = GeyserPluginHost::from_plugins(
+            counts
+                .iter()
+                .map(|count| loaded_test_plugin(CompletionPlugin(Arc::clone(count))))
+                .collect(),
+        );
+        let notifier =
+            AccountsUpdateNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)), true);
+        notifier.notify_end_of_restore_from_snapshot();
+        for count in counts {
+            assert_eq!(count.load(Ordering::Relaxed), 1);
+        }
     }
 }
