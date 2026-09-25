@@ -110,6 +110,15 @@ pub(crate) fn check_spl_token_balances(
     Ok(())
 }
 
+pub(crate) fn token_balance_difference_string(actual: u64, expected: u64, decimals: u8) -> String {
+    // The recipient may have spent tokens, so the difference is signed; a plain
+    // u64 subtraction wraps to a garbage token amount.
+    match actual.checked_sub(expected) {
+        Some(delta) => real_number_string(delta, decimals),
+        None => format!("-{}", real_number_string(expected - actual, decimals)),
+    }
+}
+
 pub(crate) fn print_token_balances(
     client: &RpcClient,
     allocation: &TypedAllocation,
@@ -125,8 +134,11 @@ pub(crate) fn print_token_balances(
         SplTokenAccount::unpack(&recipient_account.data)
     {
         let actual_ui_amount = real_number_string(recipient_token.amount, spl_token_args.decimals);
-        let delta_string =
-            real_number_string(recipient_token.amount - expected, spl_token_args.decimals);
+        let delta_string = token_balance_difference_string(
+            recipient_token.amount,
+            expected,
+            spl_token_args.decimals,
+        );
         (
             style(format!("{actual_ui_amount:>24}")),
             format!("{delta_string:>24}"),
@@ -149,6 +161,8 @@ pub(crate) fn print_token_balances(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     // The following unit tests were written for v1.4 using the ProgramTest framework, passing its
     // BanksClient into the `solana-tokens` methods. With the revert to RpcClient in this module
     // (https://github.com/solana-labs/solana/pull/13623), that approach was no longer viable.
@@ -160,4 +174,13 @@ mod tests {
     // async fn test_check_spl_token_balances()
     //
     // https://github.com/solana-labs/solana/blob/5511d52c6284013a24ced10966d11d8f4585799e/tokens/src/spl_token.rs#L490-L685
+
+    #[test]
+    fn test_token_balance_difference_string() {
+        // A recipient that spent tokens shows a negative difference instead of a
+        // wrapped u64 token amount.
+        assert_eq!(token_balance_difference_string(5, 3, 0), "2");
+        assert_eq!(token_balance_difference_string(3, 5, 0), "-2");
+        assert_eq!(token_balance_difference_string(7, 7, 0), "0");
+    }
 }
