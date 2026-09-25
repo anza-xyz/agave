@@ -7320,7 +7320,6 @@ name = "solana-net-utils"
 version = "4.5.0-alpha.0"
 dependencies = [
  "agave-xdp",
- "bincode",
  "bytes",
  "dashmap",
  "itertools 0.15.0",
@@ -7328,13 +7327,12 @@ dependencies = [
  "nix",
  "quinn",
  "rand 0.9.4",
- "serde",
  "socket2 0.6.5",
- "solana-serde",
  "solana-svm-type-overrides",
  "thiserror 2.0.20",
  "tokio",
  "url 2.5.8",
+ "wincode",
 ]
 
 [[package]]

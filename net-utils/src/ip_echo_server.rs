@@ -3,8 +3,6 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH, bind_to_unspecified},
     log::*,
-    serde::{Deserialize, Serialize},
-    solana_serde::default_on_eof,
     std::{
         collections::HashSet,
         io,
@@ -19,6 +17,7 @@ use {
         runtime::{self, Runtime},
         time::{Instant, timeout_at},
     },
+    wincode::{SchemaRead, SchemaWrite, adapter::DefaultOnEmptyRead},
 };
 
 pub type IpEchoServer = Runtime;
@@ -54,13 +53,20 @@ impl Drop for ConnectionCleanup {
 
 #[cfg_attr(
     feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, PartialEq),
+    derive(
+        StableAbi,
+        StableAbiSample,
+        PartialEq,
+        serde::Serialize,
+        serde::Deserialize
+    ),
     frozen_abi(
         abi_digest = "4WNVCd86MjzMaRMEjbWEUDJgMXvynPA1VVoGFS9Su1Qd",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(SchemaRead, SchemaWrite, Default, Debug)]
 pub(crate) struct IpEchoServerMessage {
     tcp_ports: [u16; MAX_PORT_COUNT_PER_MESSAGE], // Fixed size list of ports to avoid vec serde
     udp_ports: [u16; MAX_PORT_COUNT_PER_MESSAGE], // Fixed size list of ports to avoid vec serde
@@ -68,18 +74,23 @@ pub(crate) struct IpEchoServerMessage {
 
 #[cfg_attr(
     feature = "stable-abi",
-    derive(StableAbi, StableAbiSample),
+    derive(StableAbi, StableAbiSample, serde::Serialize, serde::Deserialize),
     frozen_abi(
         abi_digest = "W5tqLfJoZojQh6E9LfTwqGr5hu4g94QDEqi5UY78MYL",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct IpEchoServerResponse {
     // Public IP address of request echoed back to the node.
     pub(crate) address: IpAddr,
     // Cluster shred-version of the node running the server.
-    #[serde(deserialize_with = "default_on_eof")]
+    #[cfg_attr(
+        feature = "stable-abi",
+        serde(deserialize_with = "solana_serde::default_on_eof")
+    )]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u16>>")]
     pub(crate) shred_version: Option<u16>,
 }
 
@@ -98,7 +109,7 @@ impl IpEchoServerMessage {
 pub(crate) fn ip_echo_server_request_length() -> usize {
     const REQUEST_TERMINUS_LENGTH: usize = 1;
     (HEADER_LENGTH + REQUEST_TERMINUS_LENGTH)
-        .wrapping_add(bincode::serialized_size(&IpEchoServerMessage::default()).unwrap() as usize)
+        .wrapping_add(wincode::serialized_size(&IpEchoServerMessage::default()).unwrap() as usize)
 }
 
 async fn process_connection(
@@ -139,7 +150,7 @@ async fn process_connection(
     }
 
     let msg =
-        bincode::deserialize::<IpEchoServerMessage>(&data[HEADER_LENGTH..]).map_err(|err| {
+        wincode::deserialize::<IpEchoServerMessage>(&data[HEADER_LENGTH..]).map_err(|err| {
             io::Error::other(format!(
                 "Failed to deserialize IpEchoServerMessage: {err:?}"
             ))
@@ -188,7 +199,7 @@ async fn process_connection(
     // "\0\0\0\0" header is added to ensure a valid response will never
     // conflict with the first four bytes of a valid HTTP response.
     let mut bytes = vec![0u8; IP_ECHO_SERVER_RESPONSE_LENGTH];
-    bincode::serialize_into(&mut bytes[HEADER_LENGTH..], &response).unwrap();
+    wincode::serialize_into(&mut bytes[HEADER_LENGTH..], &response).unwrap();
     trace!("response: {bytes:?}");
     timeout_at(deadline, writer.write_all(&bytes)).await?
 }
