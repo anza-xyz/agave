@@ -83,10 +83,9 @@ static MIN_PULL_REQUEST_MASK_BITS: LazyLock<u32> = LazyLock::new(|| {
 
 // Incoming gossip pull request from a remote node.
 pub struct PullRequest {
-    pub pubkey: Pubkey,   // remote node's pubkey
     pub addr: SocketAddr, // socket-addr the request was received from
-    pub wallclock: u64,   // remote node's wallclock
     pub filter: CrdsFilter,
+    pub caller: CrdsValue, // remote node's ContactInfo as received
 }
 
 impl Default for CrdsFilter {
@@ -566,7 +565,7 @@ impl CrdsGossipPull {
                 return Vec::default();
             }
             let filter = &request.filter;
-            let caller_wallclock = request.wallclock;
+            let caller_wallclock = request.caller.wallclock();
             if !caller_wallclock_window.contains(&caller_wallclock) {
                 dropped_requests += 1;
                 return Vec::default();
@@ -1179,11 +1178,14 @@ pub(crate) mod tests {
 
         let filter = CrdsFilter::new_rand(1, PACKET_DATA_SIZE);
         assert_eq!(filter.get_mask_bits(), 0);
-        let make_request = |wallclock| PullRequest {
-            pubkey: Pubkey::new_unique(),
-            addr: SocketAddr::from(([0; 4], 0)),
-            wallclock,
-            filter: filter.clone(),
+        let make_request = |wallclock| {
+            let keypair = Keypair::new();
+            let node = ContactInfo::new_localhost(&keypair.pubkey(), wallclock);
+            PullRequest {
+                addr: SocketAddr::from(([0; 4], 0)),
+                filter: filter.clone(),
+                caller: CrdsValue::new(CrdsData::ContactInfo(node), &keypair),
+            }
         };
         let requests = [
             make_request(now),               // too old to see `new`
