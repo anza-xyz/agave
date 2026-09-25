@@ -387,36 +387,57 @@ impl CrdsGossipPull {
         now: u64,
         stats: &mut ProcessPullStats,
     ) -> (Vec<CrdsValue>, Vec<CrdsValue>, Vec<Hash>) {
+        // Number of responses checked per crds read lock.
+        const LOCK_CHUNK_SIZE: usize = 16;
+        #[derive(Clone, Copy)]
+        enum Outcome {
+            Active,
+            Expired,
+            Failed,
+        }
         let mut active_values = vec![];
         let mut expired_values = vec![];
-        let crds = crds.read();
-        let upsert = |response: CrdsValue| {
-            let owner = response.label().pubkey();
+        let mut failed_inserts = vec![];
+        let mut responses = responses.into_iter();
+        while responses.len() > 0 {
+            let chunk = &responses.as_slice()[..responses.len().min(LOCK_CHUNK_SIZE)];
             // Check if the crds value is older than the msg_timeout
-            let timeout = timeouts[&owner];
-            // Before discarding this value, check if a ContactInfo for the
-            // owner exists in the table. If it doesn't, that implies that this
-            // value can be discarded
-            if !crds.upserts(&response) {
-                Some(response)
-            } else if now <= response.wallclock().saturating_add(timeout) {
-                active_values.push(response);
-                None
-            } else if crds.get::<&ContactInfo>(owner).is_some() {
-                // Silently insert this old value without bumping record
-                // timestamps
-                expired_values.push(response);
-                None
-            } else {
-                stats.failed_timeout += 1;
-                Some(response)
+            let mut expired = [false; LOCK_CHUNK_SIZE];
+            for (expired, response) in expired.iter_mut().zip(chunk) {
+                let timeout = timeouts[&response.pubkey()];
+                *expired = now > response.wallclock().saturating_add(timeout);
             }
-        };
-        let failed_inserts = responses
-            .into_iter()
-            .filter_map(upsert)
-            .map(|resp| *resp.hash())
-            .collect();
+            let mut outcomes = [Outcome::Failed; LOCK_CHUNK_SIZE];
+            {
+                let crds = crds.read();
+                for ((outcome, response), &expired) in outcomes.iter_mut().zip(chunk).zip(&expired)
+                {
+                    // Before discarding this value, check if a ContactInfo for
+                    // the owner exists in the table. If it doesn't, that
+                    // implies that this value can be discarded
+                    *outcome = if !crds.upserts(response) {
+                        Outcome::Failed
+                    } else if !expired {
+                        Outcome::Active
+                    } else if crds.get::<&ContactInfo>(response.pubkey()).is_some() {
+                        // Silently insert this old value without bumping
+                        // record timestamps
+                        Outcome::Expired
+                    } else {
+                        stats.failed_timeout += 1;
+                        Outcome::Failed
+                    };
+                }
+            }
+            let num_responses = chunk.len();
+            for (response, outcome) in responses.by_ref().take(num_responses).zip(outcomes) {
+                match outcome {
+                    Outcome::Active => active_values.push(response),
+                    Outcome::Expired => expired_values.push(response),
+                    Outcome::Failed => failed_inserts.push(*response.hash()),
+                }
+            }
+        }
         (active_values, expired_values, failed_inserts)
     }
 
