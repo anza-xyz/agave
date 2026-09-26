@@ -93,15 +93,6 @@ where
         response
     }
 
-    /// Remove the request associated with `nonce` from the cache.
-    ///
-    /// Used to invalidate a nonce when its request times out and is retried with
-    /// a fresh one, so a peer that held its response and replies to the old nonce
-    /// cannot pass verification again.
-    pub fn invalidate_request(&mut self, nonce: Nonce) {
-        self.requests.pop(&nonce);
-    }
-
     /// Fetches metadata associated with the nonce
     pub fn fetch_metadata_for_nonce(&self, nonce: u32) -> Option<U>
     where
