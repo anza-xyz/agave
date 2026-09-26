@@ -69,12 +69,23 @@ pub trait MetricsWriter {
 
 struct InfluxDbMetricsWriter {
     write_url: Option<String>,
+    extra_write_url: Option<String>,
 }
 
 impl InfluxDbMetricsWriter {
     fn new() -> Self {
+        let write_url = Self::build_write_url().ok();
+        let extra_write_url = Self::build_extra_write_url().filter(|extra| {
+            if write_url.as_ref() == Some(extra) {
+                info!("extra metrics disabled: same write URL as primary");
+                false
+            } else {
+                true
+            }
+        });
         Self {
-            write_url: Self::build_write_url().ok(),
+            write_url,
+            extra_write_url,
         }
     }
 
@@ -95,6 +106,42 @@ impl InfluxDbMetricsWriter {
         );
 
         Ok(write_url)
+    }
+
+    fn build_extra_write_url() -> Option<String> {
+        let config = match get_metrics_config_from_env("SOLANA_METRICS_CONFIG_EXTRA") {
+            Ok(config) => config,
+            Err(MetricsError::VarError(env::VarError::NotPresent)) => return None,
+            Err(err) => {
+                warn!("extra metrics disabled: {err}");
+                return None;
+            }
+        };
+
+        info!(
+            "extra metrics configuration: host={} db={} username={}",
+            config.host, config.db, config.username
+        );
+
+        Some(format!(
+            "{}/write?db={}&u={}&p={}&precision=n",
+            config.host, config.db, config.username, config.password
+        ))
+    }
+
+    fn post(client: &reqwest::blocking::Client, write_url: &str, line: String) {
+        let response = client.post(write_url).body(line).send();
+        if let Ok(resp) = response {
+            let status = resp.status();
+            if !status.is_success() {
+                let text = resp
+                    .text()
+                    .unwrap_or_else(|_| "[text body empty]".to_string());
+                warn!("submit response unsuccessful: {status} {text}",);
+            }
+        } else {
+            warn!("submit error: {}", response.unwrap_err());
+        }
     }
 }
 
@@ -144,17 +191,9 @@ impl MetricsWriter for InfluxDbMetricsWriter {
 
             let line = serialize_points(&points, &host_id);
 
-            let response = client.post(write_url.as_str()).body(line).send();
-            if let Ok(resp) = response {
-                let status = resp.status();
-                if !status.is_success() {
-                    let text = resp
-                        .text()
-                        .unwrap_or_else(|_| "[text body empty]".to_string());
-                    warn!("submit response unsuccessful: {status} {text}",);
-                }
-            } else {
-                warn!("submit error: {}", response.unwrap_err());
+            Self::post(client, write_url, line.clone());
+            if let Some(ref extra_write_url) = self.extra_write_url {
+                Self::post(client, extra_write_url, line);
             }
         }
     }
@@ -445,8 +484,12 @@ impl MetricsConfig {
 }
 
 fn get_metrics_config() -> Result<MetricsConfig, MetricsError> {
+    get_metrics_config_from_env("SOLANA_METRICS_CONFIG")
+}
+
+fn get_metrics_config_from_env(name: &str) -> Result<MetricsConfig, MetricsError> {
     let mut config = MetricsConfig::default();
-    let config_var = env::var("SOLANA_METRICS_CONFIG")?;
+    let config_var = env::var(name)?;
     if config_var.is_empty() {
         Err(env::VarError::NotPresent)?;
     }
@@ -585,7 +628,44 @@ pub mod test_mocks {
 
 #[cfg(test)]
 mod test {
-    use {super::*, test_mocks::MockMetricsWriter};
+    use {super::*, serial_test::serial, test_mocks::MockMetricsWriter};
+
+    const PRIMARY_CONFIG: &str =
+        "host=https://metrics.solana.com:8086,db=tds,u=testnet_write,p=secret";
+    const PRIMARY_WRITE_URL: &str =
+        "https://metrics.solana.com:8086/write?db=tds&u=testnet_write&p=secret&precision=n";
+    const EXTRA_CONFIG: &str = "host=http://127.0.0.1:8086,db=testnet,u=write,p=write";
+    const EXTRA_WRITE_URL: &str =
+        "http://127.0.0.1:8086/write?db=testnet&u=write&p=write&precision=n";
+
+    struct RestoreMetricsEnv {
+        primary: Option<String>,
+        extra: Option<String>,
+    }
+
+    impl RestoreMetricsEnv {
+        fn capture() -> Self {
+            Self {
+                primary: env::var("SOLANA_METRICS_CONFIG").ok(),
+                extra: env::var("SOLANA_METRICS_CONFIG_EXTRA").ok(),
+            }
+        }
+    }
+
+    impl Drop for RestoreMetricsEnv {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.primary {
+                    Some(value) => env::set_var("SOLANA_METRICS_CONFIG", value),
+                    None => env::remove_var("SOLANA_METRICS_CONFIG"),
+                }
+                match &self.extra {
+                    Some(value) => env::set_var("SOLANA_METRICS_CONFIG_EXTRA", value),
+                    None => env::remove_var("SOLANA_METRICS_CONFIG_EXTRA"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_submit() {
@@ -736,6 +816,7 @@ mod test {
     }
 
     #[test]
+    #[serial]
     fn test_live_submit() {
         let agent = MetricsAgent::default();
 
@@ -752,5 +833,98 @@ mod test {
         let test_host_id = "test_host_123".to_string();
         set_host_id(test_host_id.clone());
         assert_eq!(get_host_id(), test_host_id);
+    }
+
+    #[test]
+    #[serial]
+    fn test_extra_metrics_config_absent() {
+        let _restore = RestoreMetricsEnv::capture();
+        unsafe {
+            env::set_var("SOLANA_METRICS_CONFIG", PRIMARY_CONFIG);
+            env::remove_var("SOLANA_METRICS_CONFIG_EXTRA");
+        }
+
+        let writer = InfluxDbMetricsWriter::new();
+        assert_eq!(writer.write_url.as_deref(), Some(PRIMARY_WRITE_URL));
+        assert_eq!(writer.extra_write_url, None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_extra_metrics_config_valid() {
+        let _restore = RestoreMetricsEnv::capture();
+        unsafe {
+            env::set_var("SOLANA_METRICS_CONFIG", PRIMARY_CONFIG);
+            env::set_var("SOLANA_METRICS_CONFIG_EXTRA", EXTRA_CONFIG);
+        }
+
+        let writer = InfluxDbMetricsWriter::new();
+        assert_eq!(writer.write_url.as_deref(), Some(PRIMARY_WRITE_URL));
+        assert_eq!(writer.extra_write_url.as_deref(), Some(EXTRA_WRITE_URL));
+    }
+
+    #[test]
+    #[serial]
+    fn test_extra_metrics_config_duplicate_is_ignored() {
+        let _restore = RestoreMetricsEnv::capture();
+        unsafe {
+            env::set_var("SOLANA_METRICS_CONFIG", EXTRA_CONFIG);
+            env::set_var("SOLANA_METRICS_CONFIG_EXTRA", EXTRA_CONFIG);
+        }
+
+        let writer = InfluxDbMetricsWriter::new();
+        assert_eq!(writer.write_url.as_deref(), Some(EXTRA_WRITE_URL));
+        assert_eq!(writer.extra_write_url, None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_extra_metrics_config_invalid_is_ignored() {
+        let _restore = RestoreMetricsEnv::capture();
+        unsafe {
+            env::set_var("SOLANA_METRICS_CONFIG", PRIMARY_CONFIG);
+            env::set_var("SOLANA_METRICS_CONFIG_EXTRA", "host=http://127.0.0.1:8086");
+        }
+
+        let writer = InfluxDbMetricsWriter::new();
+        assert_eq!(writer.write_url.as_deref(), Some(PRIMARY_WRITE_URL));
+        assert_eq!(writer.extra_write_url, None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_extra_metrics_config_empty_is_ignored() {
+        let _restore = RestoreMetricsEnv::capture();
+        unsafe {
+            env::set_var("SOLANA_METRICS_CONFIG", PRIMARY_CONFIG);
+            env::set_var("SOLANA_METRICS_CONFIG_EXTRA", "");
+        }
+
+        let writer = InfluxDbMetricsWriter::new();
+        assert_eq!(writer.write_url.as_deref(), Some(PRIMARY_WRITE_URL));
+        assert_eq!(writer.extra_write_url, None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_metrics_config_sanity_check_ignores_extra() {
+        let _restore = RestoreMetricsEnv::capture();
+        unsafe {
+            env::set_var("SOLANA_METRICS_CONFIG", PRIMARY_CONFIG);
+            env::set_var("SOLANA_METRICS_CONFIG_EXTRA", EXTRA_CONFIG);
+        }
+        metrics_config_sanity_check(ClusterType::Testnet).unwrap();
+
+        // Extra db would mismatch Testnet if sanity-check read it.
+        unsafe {
+            env::set_var(
+                "SOLANA_METRICS_CONFIG_EXTRA",
+                "host=http://127.0.0.1:8086,db=mainnet-beta,u=write,p=write",
+            );
+        }
+        metrics_config_sanity_check(ClusterType::Testnet).unwrap();
+
+        let err = metrics_config_sanity_check(ClusterType::Development).unwrap_err();
+        assert!(matches!(err, MetricsError::DbMismatch(_)));
     }
 }
