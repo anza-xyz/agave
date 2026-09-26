@@ -422,6 +422,14 @@ impl<U: Umem> TxLoop<U> {
             let ecn = item.ecn();
             let can_overflow_mtu = item.allow_mtu_overflow();
             for addr in item.dst_addrs().as_ref() {
+                // The packet is written as IPv4, so an IPv6 destination can only be
+                // dropped. Check before waiting for ring space or reserving a frame,
+                // consistent with the drop paths below.
+                let IpAddr::V4(dst_ip) = addr.ip() else {
+                    log::warn!("dropping packet: IPv6 destination {addr} is not supported");
+                    continue;
+                };
+
                 if ring.available() == 0 || umem.available() == 0 {
                     commit_pending(&mut ring, &mut written_uncommitted);
                     kick(&ring);
@@ -451,9 +459,6 @@ impl<U: Umem> TxLoop<U> {
                 // at this point we're guaranteed to have a frame to write the next packet into and
                 // a slot in the ring to submit it
                 let mut frame = umem.reserve().unwrap();
-                let IpAddr::V4(dst_ip) = addr.ip() else {
-                    panic!("IPv6 not supported");
-                };
 
                 let payload = item.payload().as_ref();
                 let len = payload.len();
