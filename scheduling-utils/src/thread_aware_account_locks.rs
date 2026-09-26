@@ -88,63 +88,58 @@ impl ThreadAwareAccountLocks {
     /// that the `thread_set` passed to `thread_selector` is non-empty.
     pub fn try_lock_accounts<'a>(
         &mut self,
-        write_account_locks: impl Iterator<Item = &'a Pubkey> + Clone,
-        read_account_locks: impl Iterator<Item = &'a Pubkey> + Clone,
+        account_locks: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
         allowed_threads: ThreadSet,
         thread_selector: impl FnOnce(ThreadSet) -> ThreadId,
     ) -> Result<ThreadId, TryLockError> {
-        let schedulable_threads = self
-            .accounts_schedulable_threads(write_account_locks.clone(), read_account_locks.clone())
-            .ok_or(TryLockError::MultipleConflicts)?;
-        let schedulable_threads = schedulable_threads & allowed_threads;
+        let mut schedulable_threads = ThreadSet::any(self.num_threads);
+
+        for (account, is_writable) in account_locks.clone() {
+            schedulable_threads &= if is_writable {
+                self.write_schedulable_threads(account)
+            } else {
+                self.read_schedulable_threads(account)
+            };
+
+            if schedulable_threads.is_empty() {
+                return Err(TryLockError::MultipleConflicts);
+            }
+        }
+
+        schedulable_threads &= allowed_threads;
         if schedulable_threads.is_empty() {
             return Err(TryLockError::ThreadNotAllowed);
         }
 
         let thread_id = thread_selector(schedulable_threads);
-        self.lock_accounts(write_account_locks, read_account_locks, thread_id);
+        assert!(
+            thread_id < self.num_threads,
+            "thread_id must be < num_threads"
+        );
+
+        for (account, is_writable) in account_locks {
+            if is_writable {
+                self.write_lock_account(account, thread_id);
+            } else {
+                self.read_lock_account(account, thread_id);
+            }
+        }
+
         Ok(thread_id)
     }
 
-    /// Unlocks the accounts for the given thread.
     pub fn unlock_accounts<'a>(
         &mut self,
-        write_account_locks: impl Iterator<Item = &'a Pubkey>,
-        read_account_locks: impl Iterator<Item = &'a Pubkey>,
+        account_locks: impl Iterator<Item = (&'a Pubkey, bool)>,
         thread_id: ThreadId,
     ) {
-        for account in write_account_locks {
-            self.write_unlock_account(account, thread_id);
-        }
-
-        for account in read_account_locks {
-            self.read_unlock_account(account, thread_id);
-        }
-    }
-
-    /// Returns `ThreadSet` that the given accounts can be scheduled on.
-    fn accounts_schedulable_threads<'a>(
-        &self,
-        write_account_locks: impl Iterator<Item = &'a Pubkey>,
-        read_account_locks: impl Iterator<Item = &'a Pubkey>,
-    ) -> Option<ThreadSet> {
-        let mut schedulable_threads = ThreadSet::any(self.num_threads);
-
-        for account in write_account_locks {
-            schedulable_threads &= self.write_schedulable_threads(account);
-            if schedulable_threads.is_empty() {
-                return None;
+        for (account, is_writable) in account_locks {
+            if is_writable {
+                self.write_unlock_account(account, thread_id);
+            } else {
+                self.read_unlock_account(account, thread_id);
             }
         }
-
-        for account in read_account_locks {
-            schedulable_threads &= self.read_schedulable_threads(account);
-            if schedulable_threads.is_empty() {
-                return None;
-            }
-        }
-
-        Some(schedulable_threads)
     }
 
     /// Returns `ThreadSet` of schedulable threads for the given readable account.
@@ -199,26 +194,6 @@ impl ThreadAwareAccountLocks {
                 write_locks: None,
                 read_locks: None,
             }) => unreachable!(),
-        }
-    }
-
-    /// Add locks for all writable and readable accounts on `thread_id`.
-    fn lock_accounts<'a>(
-        &mut self,
-        write_account_locks: impl Iterator<Item = &'a Pubkey>,
-        read_account_locks: impl Iterator<Item = &'a Pubkey>,
-        thread_id: ThreadId,
-    ) {
-        assert!(
-            thread_id < self.num_threads,
-            "thread_id must be < num_threads"
-        );
-        for account in write_account_locks {
-            self.write_lock_account(account, thread_id);
-        }
-
-        for account in read_account_locks {
-            self.read_lock_account(account, thread_id);
         }
     }
 
@@ -502,8 +477,7 @@ mod tests {
         locks.read_lock_account(&pk1, 3);
         assert_eq!(
             locks.try_lock_accounts(
-                [&pk1].into_iter(),
-                [&pk2].into_iter(),
+                [(&pk1, true), (&pk2, false)].into_iter(),
                 TEST_ANY_THREADS,
                 test_thread_selector
             ),
@@ -520,8 +494,7 @@ mod tests {
 
         assert_eq!(
             locks.try_lock_accounts(
-                [&pk1].into_iter(),
-                [&pk2].into_iter(),
+                [(&pk1, true), (&pk2, false)].into_iter(),
                 TEST_ANY_THREADS,
                 test_thread_selector
             ),
@@ -538,8 +511,7 @@ mod tests {
 
         assert_eq!(
             locks.try_lock_accounts(
-                [&pk1].into_iter(),
-                [&pk2].into_iter(),
+                [(&pk1, true), (&pk2, false)].into_iter(),
                 ThreadSet::none(),
                 test_thread_selector
             ),
@@ -557,8 +529,7 @@ mod tests {
 
         assert_eq!(
             locks.try_lock_accounts(
-                [&pk1].into_iter(),
-                [&pk2].into_iter(),
+                [(&pk1, true), (&pk2, false)].into_iter(),
                 TEST_ANY_THREADS - ThreadSet::only(0), // exclude 0
                 test_thread_selector
             ),
@@ -573,89 +544,11 @@ mod tests {
         let mut locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
         assert_eq!(
             locks.try_lock_accounts(
-                [&pk1].into_iter(),
-                [&pk2].into_iter(),
+                [(&pk1, true), (&pk2, false)].into_iter(),
                 TEST_ANY_THREADS,
                 test_thread_selector
             ),
             Ok(0)
-        );
-    }
-
-    #[test]
-    fn test_accounts_schedulable_threads_no_outstanding_locks() {
-        let pk1 = Pubkey::new_unique();
-        let locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
-
-        assert_eq!(
-            locks.accounts_schedulable_threads([&pk1].into_iter(), std::iter::empty()),
-            Some(TEST_ANY_THREADS)
-        );
-        assert_eq!(
-            locks.accounts_schedulable_threads(std::iter::empty(), [&pk1].into_iter()),
-            Some(TEST_ANY_THREADS)
-        );
-    }
-
-    #[test]
-    fn test_accounts_schedulable_threads_outstanding_write_only() {
-        let pk1 = Pubkey::new_unique();
-        let pk2 = Pubkey::new_unique();
-        let mut locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
-
-        locks.write_lock_account(&pk1, 2);
-        assert_eq!(
-            locks.accounts_schedulable_threads([&pk1, &pk2].into_iter(), std::iter::empty()),
-            Some(ThreadSet::only(2))
-        );
-        assert_eq!(
-            locks.accounts_schedulable_threads(std::iter::empty(), [&pk1, &pk2].into_iter()),
-            Some(ThreadSet::only(2))
-        );
-    }
-
-    #[test]
-    fn test_accounts_schedulable_threads_outstanding_read_only() {
-        let pk1 = Pubkey::new_unique();
-        let pk2 = Pubkey::new_unique();
-        let mut locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
-
-        locks.read_lock_account(&pk1, 2);
-        assert_eq!(
-            locks.accounts_schedulable_threads([&pk1, &pk2].into_iter(), std::iter::empty()),
-            Some(ThreadSet::only(2))
-        );
-        assert_eq!(
-            locks.accounts_schedulable_threads(std::iter::empty(), [&pk1, &pk2].into_iter()),
-            Some(TEST_ANY_THREADS)
-        );
-
-        locks.read_lock_account(&pk1, 0);
-        assert_eq!(
-            locks.accounts_schedulable_threads([&pk1, &pk2].into_iter(), std::iter::empty()),
-            None
-        );
-        assert_eq!(
-            locks.accounts_schedulable_threads(std::iter::empty(), [&pk1, &pk2].into_iter()),
-            Some(TEST_ANY_THREADS)
-        );
-    }
-
-    #[test]
-    fn test_accounts_schedulable_threads_outstanding_mixed() {
-        let pk1 = Pubkey::new_unique();
-        let pk2 = Pubkey::new_unique();
-        let mut locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
-
-        locks.read_lock_account(&pk1, 2);
-        locks.write_lock_account(&pk1, 2);
-        assert_eq!(
-            locks.accounts_schedulable_threads([&pk1, &pk2].into_iter(), std::iter::empty()),
-            Some(ThreadSet::only(2))
-        );
-        assert_eq!(
-            locks.accounts_schedulable_threads(std::iter::empty(), [&pk1, &pk2].into_iter()),
-            Some(ThreadSet::only(2))
         );
     }
 
@@ -744,10 +637,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "thread_id must be < num_threads")]
-    fn test_lock_accounts_invalid_thread() {
+    fn test_try_lock_accounts_invalid_selected_thread() {
         let pk1 = Pubkey::new_unique();
         let mut locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
-        locks.lock_accounts([&pk1].into_iter(), std::iter::empty(), TEST_NUM_THREADS);
+
+        locks
+            .try_lock_accounts([(&pk1, true)].into_iter(), TEST_ANY_THREADS, |_| {
+                TEST_NUM_THREADS
+            })
+            .unwrap();
     }
 
     #[test]
@@ -830,5 +728,53 @@ mod tests {
             thread_set.contained_threads_iter().collect::<Vec<_>>(),
             (0..64).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_try_lock_accounts_failure_does_not_mutate_locks() {
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+        let pk3 = Pubkey::new_unique();
+
+        let mut locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
+
+        // Conflicting read locks make pk2 unschedulable for a write.
+        locks.read_lock_account(&pk2, 1);
+        locks.read_lock_account(&pk2, 2);
+
+        let before = format!("{:?}", locks.locks);
+
+        assert_eq!(
+            locks.try_lock_accounts(
+                [(&pk1, true), (&pk2, true), (&pk3, false)].into_iter(),
+                TEST_ANY_THREADS,
+                test_thread_selector,
+            ),
+            Err(TryLockError::MultipleConflicts)
+        );
+
+        // pk1 appeared before the conflicting account. It must not have been
+        // partially acquired before the failure was discovered.
+        assert_eq!(format!("{:?}", locks.locks), before);
+    }
+
+    #[test]
+    fn test_try_lock_accounts_mixed_order_unlocks_cleanly() {
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+        let pk3 = Pubkey::new_unique();
+        let pk4 = Pubkey::new_unique();
+
+        let accounts = [(&pk1, false), (&pk2, true), (&pk3, false), (&pk4, true)];
+
+        let mut locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
+
+        let thread_id = locks
+            .try_lock_accounts(accounts.into_iter(), TEST_ANY_THREADS, test_thread_selector)
+            .unwrap();
+
+        locks.unlock_accounts(accounts.into_iter(), thread_id);
+
+        assert!(locks.locks.is_empty());
     }
 }
