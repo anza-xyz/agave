@@ -29,6 +29,7 @@ solana-address = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true, features = ["serde"] }
 solana-fee-calculator = { workspace = true, features = ["serde"] }
+solana-hash = { workspace = true }
 solana-inflation = { workspace = true }
 solana-reward-info = { workspace = true }
 solana-transaction = { workspace = true }

@@ -1309,6 +1309,30 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_highest_snapshot_slot())
     }
 
+    /// Returns the slot hashes that the node has snapshots for.
+    ///
+    /// This will find the full snapshot hash, and the incremental snapshot hash
+    /// _based on_ the full snapshot hash, if there is one.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSnapshotHashes`] RPC method.
+    ///
+    /// [`getSnapshotHashes`]: https://solana.com/docs/rpc/http/getsnapshothashes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let snapshot_hashes = rpc_client.get_snapshot_hashes()?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_snapshot_hashes(&self) -> ClientResult<Option<RpcSnapshotHashes>> {
+        self.invoke((self.rpc_client.as_ref()).get_snapshot_hashes())
+    }
+
     /// Check if a transaction has been processed with the default [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment

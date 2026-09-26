@@ -9,7 +9,7 @@ pub use solana_rpc_client_types::response::{
     RpcFeeRateGovernor, RpcIdentity, RpcInflationGovernor, RpcInflationRate, RpcInflationReward,
     RpcKeyedAccount, RpcLeaderSchedule, RpcLogsResponse, RpcPerfSample, RpcPrioritizationFee,
     RpcResponseContext, RpcSignatureConfirmation, RpcSignatureResult, RpcSimulateTransactionResult,
-    RpcSnapshotSlotInfo, RpcStorageTurn, RpcSupply, RpcTokenAccountBalance, RpcVersionInfo,
+    RpcSnapshotSlotInfo, RpcSnapshotHashes, RpcStorageTurn, RpcSupply, RpcTokenAccountBalance, RpcVersionInfo,
     RpcVote, RpcVoteAccountInfo, RpcVoteAccountStatus, SlotInfo, SlotTransactionStats, SlotUpdate,
     StakeActivationState, TransactionBinaryEncoding, TransactionConfirmationStatus,
     TransactionError, TransactionParsedAccount, TransactionResult, UiAccount, UiAccountData,

@@ -1457,6 +1457,34 @@ impl RpcClient {
             .await
     }
 
+    /// Returns the snapshat hashes that the node has snapshots for.
+    ///
+    /// This will find the full snapshot hash, and the incremental snapshot hash
+    /// _based on_ the full snapshot hash, if there is one.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSnapshotHashes`] RPC method.
+    ///
+    /// [`getSnapshotHashes`]: https://solana.com/docs/rpc/http/getsnapshothashes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let snapshot_hashes = rpc_client.get_snapshot_hashes().await?;
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_snapshot_hashes(&self) -> ClientResult<Option<RpcSnapshotHashes>> {
+        self.send(RpcRequest::GetSnapshotHashes, Value::Null)
+            .await
+    }
+
     /// Check if a transaction has been processed with the default [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment

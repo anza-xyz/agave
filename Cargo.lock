@@ -10128,6 +10128,7 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-fee-calculator",
+ "solana-hash",
  "solana-inflation",
  "solana-pubkey 4.4.0",
  "solana-reward-info",
