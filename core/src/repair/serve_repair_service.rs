@@ -13,11 +13,16 @@ use {
     },
     std::{
         net::UdpSocket,
-        sync::{Arc, atomic::AtomicBool},
-        thread::{self, Builder, JoinHandle},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread::{self, sleep, Builder, JoinHandle},
         time::Duration,
     },
 };
+
+const SUBMIT_SERVE_REPAIR_STATS_INTERVAL: Duration = Duration::from_secs(2);
 
 pub struct ServeRepairService {
     thread_hdls: Vec<JoinHandle<()>>,
@@ -37,6 +42,7 @@ impl ServeRepairService {
         stats_reporter_sender: Sender<Box<dyn FnOnce() + Send>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        let receiver_stats = Arc::new(StreamerReceiveStats::new("serve_repair_receiver"));
         let (request_sender, request_receiver) = EvictingSender::new_bounded(REQUEST_CHANNEL_SIZE);
         let serve_repair_socket = Arc::new(serve_repair_socket);
         let t_receiver = streamer::receiver(
@@ -44,7 +50,7 @@ impl ServeRepairService {
             serve_repair_socket.clone(),
             exit.clone(),
             request_sender,
-            Arc::new(StreamerReceiveStats::new("serve_repair_receiver")),
+            receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             false,                          // is_staked_service
         );
@@ -56,9 +62,19 @@ impl ServeRepairService {
             socket_addr_space,
             Some(stats_reporter_sender),
         );
-        let t_listen = serve_repair.listen(request_receiver, response_sender, exit);
+        let t_listen = serve_repair.listen(request_receiver, response_sender, exit.clone());
 
-        let thread_hdls = vec![t_receiver, t_responder, t_listen];
+        let t_metrics = Builder::new()
+            .name("solServeRepMetr".to_string())
+            .spawn(move || {
+                while !exit.load(Ordering::Relaxed) {
+                    sleep(SUBMIT_SERVE_REPAIR_STATS_INTERVAL);
+                    receiver_stats.report();
+                }
+            })
+            .unwrap();
+
+        let thread_hdls = vec![t_receiver, t_responder, t_listen, t_metrics];
         Self { thread_hdls }
     }
 

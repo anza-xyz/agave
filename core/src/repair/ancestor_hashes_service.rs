@@ -40,6 +40,8 @@ use {
     },
 };
 
+const SUBMIT_ANCESTOR_HASHES_STATS_INTERVAL: Duration = Duration::from_secs(2);
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum AncestorHashesReplayUpdate {
     Dead(Slot),
@@ -164,6 +166,8 @@ impl AncestorHashesService {
             info!("Alpenglow enabled, not starting AncestorHashesService");
             return None;
         }
+        let receiver_stats =
+            Arc::new(StreamerReceiveStats::new("ancestor_hashes_response_receiver"));
         let outstanding_requests = Arc::<RwLock<OutstandingAncestorHashesRepairs>>::default();
         let (response_sender, response_receiver) = bounded(RESPONSE_CHANNEL_SIZE);
         let t_receiver = streamer::receiver(
@@ -171,9 +175,7 @@ impl AncestorHashesService {
             ancestor_hashes_request_socket.clone(),
             exit.clone(),
             response_sender.clone(),
-            Arc::new(StreamerReceiveStats::new(
-                "ancestor_hashes_response_receiver",
-            )),
+            receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             false,                          // is_staked_service
         );
@@ -206,12 +208,23 @@ impl AncestorHashesService {
             ancestor_hashes_request_socket,
             repair_info,
             outstanding_requests,
-            exit,
+            exit.clone(),
             ancestor_hashes_replay_update_receiver,
             retryable_slots_receiver,
         );
+
+        let t_metrics = Builder::new()
+            .name("solAncHashMetr".to_string())
+            .spawn(move || {
+                while !exit.load(Ordering::Relaxed) {
+                    sleep(SUBMIT_ANCESTOR_HASHES_STATS_INTERVAL);
+                    receiver_stats.report();
+                }
+            })
+            .unwrap();
+
         Some(Self {
-            thread_hdls: vec![t_receiver, t_ancestor_hashes_responses, t_ancestor_requests],
+            thread_hdls: vec![t_receiver, t_ancestor_hashes_responses, t_ancestor_requests, t_metrics],
         })
     }
 
@@ -1219,6 +1232,7 @@ mod test {
     struct ResponderThreads {
         t_request_receiver: JoinHandle<()>,
         t_listen: JoinHandle<()>,
+        t_metrics: JoinHandle<()>,
         exit: Arc<AtomicBool>,
         responder_info: ContactInfo,
         response_receiver: PacketBatchReceiver,
@@ -1230,6 +1244,7 @@ mod test {
             self.exit.store(true, Ordering::Relaxed);
             self.t_request_receiver.join().unwrap();
             self.t_listen.join().unwrap();
+            self.t_metrics.join().unwrap();
         }
 
         fn new(slot_to_query: Slot) -> Self {
@@ -1280,21 +1295,34 @@ mod test {
             }
 
             // Set up repair request receiver threads
+            let receiver_stats = Arc::new(StreamerReceiveStats::new("repair_request_receiver"));
             let t_request_receiver = streamer::receiver(
                 "solRcvrTest".to_string(),
                 Arc::new(responder_node.sockets.serve_repair),
                 exit.clone(),
                 requests_sender,
-                Arc::new(StreamerReceiveStats::new("repair_request_receiver")),
+                receiver_stats.clone(),
                 Some(Duration::from_millis(1)), // coalesce
                 false,
             );
             let t_listen =
                 responder_serve_repair.listen(requests_receiver, response_sender, exit.clone());
 
+            let exit_flag = exit.clone();
+            let t_metrics = Builder::new()
+                .name("solRcvrTestMetr".to_string())
+                .spawn(move || {
+                    while !exit_flag.load(Ordering::Relaxed) {
+                        sleep(SUBMIT_ANCESTOR_HASHES_STATS_INTERVAL);
+                        receiver_stats.report();
+                    }
+                })
+                .unwrap();
+
             Self {
                 t_request_receiver,
                 t_listen,
+                t_metrics,
                 exit,
                 responder_info: responder_node.info,
                 response_receiver,
