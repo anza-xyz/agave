@@ -314,6 +314,9 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "blockstorePurge")]
     fn blockstore_purge(&self, meta: Self::Metadata, maximum_purge_slot: Slot) -> Result<()>;
+
+    #[rpc(meta, name = "blockstoreConfigureWal")]
+    fn blockstore_configure_wal(&self, meta: Self::Metadata, enable_wal: bool) -> Result<()>;
 }
 
 pub struct AdminRpcImpl;
@@ -918,6 +921,23 @@ impl AdminRpc for AdminRpcImpl {
                     message: format!("{err}"),
                     data: None,
                 })
+        })
+    }
+
+    fn blockstore_configure_wal(&self, meta: Self::Metadata, enable_wal: bool) -> Result<()> {
+        meta.with_post_init(|post_init| {
+            if enable_wal {
+                info!("Enabling the Blockstore (rocksdb) WAL");
+                post_init.blockstore.enable_wal()
+            } else {
+                info!("Disabling the Blockstore (rocksdb) WAL");
+                post_init.blockstore.disable_wal()
+            }
+            .map_err(|err| jsonrpc_core::Error {
+                code: ErrorCode::InvalidRequest,
+                message: format!("{err}"),
+                data: None,
+            })
         })
     }
 }

@@ -430,6 +430,16 @@ pub struct Blockstore {
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
 
     max_root: AtomicU64,
+    // A lock to synchronize Blockstore data updates
+    //
+    // Shred insertion performs read-modify-write and write operations
+    // across multiple columns. While updates to columns are applied atomically
+    // through use of the rocksdb write batch API, there is no merge/reconcile
+    // logic to handle parallel updates. Thus, this lock ensures there is only
+    // a single writer to avoid race conditions
+    //
+    // If other logic needs to read-modify-write any of the columns updated by
+    // shred insertion, this lock should be obtained to avoid race conditions.
     insert_shreds_lock: Mutex<()>,
     switch_block_lock: SwitchBlockLock,
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
@@ -715,6 +725,8 @@ impl Blockstore {
     fn do_open(ledger_path: &Path, options: BlockstoreOptions) -> Result<Blockstore> {
         fs::create_dir_all(ledger_path)?;
         let blockstore_path = ledger_path.join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL);
+        // rocksdb options takes `disable_wal` so do the inversion here
+        let disable_wal = !options.enable_wal;
 
         // Open the database
         let mut measure = Measure::start("blockstore open");
@@ -794,13 +806,14 @@ impl Blockstore {
                 UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY,
             )),
             certificate_forwarder: OnceLock::new(),
-            insert_shreds_lock: Mutex::<()>::default(),
+            insert_shreds_lock: Mutex::default(),
             switch_block_lock: SwitchBlockLock(FairMutex::new(())),
             max_root,
             lowest_cleanup_slot: RwLock::<Slot>::default(),
             manual_purge_request_sender: Mutex::default(),
             slots_stats: SlotsStats::default(),
         };
+        blockstore.configure_wal_at_startup(disable_wal)?;
 
         Ok(blockstore)
     }
@@ -825,6 +838,33 @@ impl Blockstore {
             completed_slots_receiver,
             update_parent_receiver,
         })
+    }
+
+    fn configure_wal_at_startup(&self, disable_wal: bool) -> Result<()> {
+        let is_primary_access = self.is_primary_access();
+        if self.is_wal_disabled()? {
+            warn!(
+                "The rocksdb write-ahead-log (WAL) is marked as disabled. Another process may not \
+                 have exited gracefully, and the Blockstore may have corrupt and/or inconsistent \
+                 data as a result.{}",
+                if is_primary_access {
+                    ""
+                } else {
+                    " Or, if another process is currently running with primary access and the WAL \
+                     disabled, data in memory of that process is not be visible to this process."
+                }
+            );
+        }
+        // Primary (R/W) access required for subsequent state
+        if !is_primary_access {
+            return Ok(());
+        }
+
+        if disable_wal {
+            self.disable_wal()
+        } else {
+            self.enable_wal()
+        }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -890,6 +930,58 @@ impl Blockstore {
             }
             walk.forward();
         }
+    }
+
+    /// Force flush the contents of memtables (memory) to SST's (disk)
+    pub(crate) fn flush(&self) -> Result<()> {
+        info!("Flushing blockstore");
+        let mut measure = Measure::start("Flushing blockstore");
+        self.db.flush_all_columns()?;
+        measure.stop();
+        info!("{measure}");
+
+        Ok(())
+    }
+
+    // A boolean flag that indicates whether the WAL is currently disabled. This
+    // flag is persisted to rocksdb for several reasons:
+    // - If a `Blockstore` is opened and this flag is present, it could indicate
+    //   that the previous shutdown was not graceful and that data consistency
+    //   issues may exist
+    // - The contents of memory are only accessible to the process writing the
+    //   `Blockstore`. This flag allows additional processes that read the
+    //   `Blockstore` to determine that some data may be unavailable
+    //
+    // An empty value is written for this key; the key being present or absent
+    // indicates whether the WAL is disabled or enabled, respectively.
+    const WAL_DISABLED_KEY: &str = "WAL_DISABLED";
+
+    /// Enable the rocksdb write-ahead-log (WAL)
+    ///
+    /// The WAL gives protection against data loss in the event of an unexpected
+    /// shutdown. This method flushes memtables to extend that protection to
+    /// data that was written while the WAL was disabled
+    pub fn enable_wal(&self) -> Result<()> {
+        // Hold the lock to prevent additional writes; ignore a poisoned lock
+        // to attempt persisting data even if another thread already panicked
+        let _insert_shreds_lock_result = self.insert_shreds_lock.lock().inspect_err(|_| {
+            error!("The shred insertion lock is poisoned");
+        });
+
+        // Flush memory to ensure all data in memtables is also on disk
+        self.flush()?;
+
+        // Finally, remove the WAL-disabled flag from the `Blockstore`
+        self.db.delete(Self::WAL_DISABLED_KEY)
+    }
+
+    /// Whether the WAL should be used for shred insertion writes
+    fn is_wal_disabled(&self) -> Result<bool> {
+        Ok(self.db.get_pinned(Self::WAL_DISABLED_KEY)?.is_some())
+    }
+
+    pub fn disable_wal(&self) -> Result<()> {
+        self.db.put(Self::WAL_DISABLED_KEY, &[])
     }
 
     /// Deletes the blockstore at the specified path.
@@ -2355,7 +2447,8 @@ impl Blockstore {
 
         // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
-        self.write_batch(&mut *shred_insertion_tracker.write_batch)?;
+        let disable_wal = self.is_wal_disabled()?;
+        self.write_batch_with_options(&mut *shred_insertion_tracker.write_batch, disable_wal)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
 
@@ -6291,7 +6384,19 @@ impl Blockstore {
     }
 
     pub fn write_batch<B: AsMut<WriteBatch>>(&self, write_batch: B) -> Result<()> {
-        self.db.write(write_batch)
+        // The WAL provides extra guarantees in the event of a program crash
+        // Enable it for the general case to be safe; more advanced callers
+        // can disable if they so choose
+        const DISABLE_WAL: bool = false;
+        self.write_batch_with_options(write_batch, DISABLE_WAL)
+    }
+
+    fn write_batch_with_options<B: AsMut<WriteBatch>>(
+        &self,
+        write_batch: B,
+        disable_wal: bool,
+    ) -> Result<()> {
+        self.db.write(write_batch, disable_wal)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
