@@ -26,6 +26,7 @@ pub mod node;
 #[macro_use]
 mod tlv;
 pub mod ping_pong;
+pub mod ping_probe;
 mod protocol;
 mod push_active_set;
 mod received_cache;
