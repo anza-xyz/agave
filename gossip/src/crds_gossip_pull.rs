@@ -17,7 +17,7 @@ use {
     crate::{
         cluster_info_metrics::GossipStats,
         contact_info::ContactInfo,
-        crds::{Crds, GossipRoute, VersionedCrdsValue},
+        crds::{Crds, GossipRoute, LOCK_CHUNK_SIZE, VersionedCrdsValue},
         crds_gossip,
         crds_gossip_error::CrdsGossipError,
         crds_value::CrdsValue,
@@ -480,8 +480,6 @@ impl CrdsGossipPull {
         bloom_size: usize,
     ) -> Vec<CrdsFilter> {
         const PAR_MIN_LENGTH: usize = 512;
-        // Number of hashes scanned per crds read lock.
-        const LOCK_CHUNK_SIZE: usize = 128;
         let failed_inserts = self.failed_inserts.read();
         // crds should be locked last after self.failed_inserts.
         let (num_values, num_purged) = {
