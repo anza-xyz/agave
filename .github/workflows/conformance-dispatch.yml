@@ -1,4 +1,4 @@
-name: Conformance Dispatch
+name: Conformance
 
 on:
   pull_request:
@@ -10,10 +10,15 @@ on:
       - "**/Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/conformance-dispatch.yml"
+      - "ci/test-conformance.sh"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
+
+env:
+  TEST_VECTORS_COMMIT: 0074649d2720d237546dd5f30f51c0be31477eb1
+  TEST_VECTORS_SHA256SUMS: aeee3559fcc2ae401eb624cef494dc3abaef5426332d9d121e2b86fd5d0529be
 
 jobs:
   detect:
@@ -43,18 +48,39 @@ jobs:
           echo "entries=$entries" >> "$GITHUB_OUTPUT"
 
   run:
-    name: "stub: ${{ matrix.entry.harness }}"
+    name: ${{ matrix.entry.fixtures_dir }}
     needs: detect
     if: needs.detect.outputs.entries != '[]'
     runs-on: ubuntu-26.04
     strategy:
+      fail-fast: false
       matrix:
         entry: ${{ fromJSON(needs.detect.outputs.entries) }}
+    env:
+      FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
     steps:
-      - name: Log (stub)
-        env:
-          HARNESS: ${{ matrix.entry.harness }}
-          FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Fetch fixtures
+        shell: bash
         run: |
-          echo "stub: would run harness '$HARNESS' on fixtures '$FIXTURES_DIR'"
-          echo "No fixtures downloaded or executed yet."
+          url="https://github.com/firedancer-io/test-vectors/releases/download/${TEST_VECTORS_COMMIT::8}"
+          archive="$FIXTURES_DIR.tar.gz"
+          mkdir fd-vectors
+          cd fd-vectors
+          curl -fsSL --retry 3 -O "$url/SHA256SUMS" -O "$url/$archive"
+          echo "$TEST_VECTORS_SHA256SUMS  SHA256SUMS" | sha256sum --check
+          awk -v f="$archive" '$2 == f' SHA256SUMS | sha256sum --check
+          tar -xzf "$archive"
+          rm "$archive" SHA256SUMS
+
+      - name: Install dependencies
+        shell: bash
+        run: source .github/scripts/install-all-deps.sh ${{ runner.os }}
+
+      - name: Run ${{ matrix.entry.bin }}
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.entry.package }}
+          BIN: ${{ matrix.entry.bin }}
+        run: ci/test-conformance.sh "$PACKAGE" "$BIN" "fd-vectors/$FIXTURES_DIR"

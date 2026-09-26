@@ -20,30 +20,50 @@ pub struct CommandArgs {
 /// One row of the conformance dispatch table.
 #[derive(Serialize)]
 pub struct TableEntry {
-    pub harness: String,
     pub fixtures_dir: String,
+    pub package: String,
+    pub bin: String,
 }
 
-/// Static fixture-set table: (fixtures_dir, anchor_crate, harness_binary).
-const FIXTURE_ANCHORS: &[(&str, &str, &str)] = &[
-    ("instr", "solana-svm", "sol_compat_instr_v1"),
-    ("txn", "solana-runtime", "sol_compat_txn_v1"),
-    ("block", "solana-ledger", "sol_compat_block_v1"),
+const AGAVE: &str = "agave-conformance";
+const SVM: &str = "solana-svm-conformance";
+
+/// Static fixture-set table: (fixtures_dir, anchor_crate, harness_package,
+/// harness_bin). Harnesses are `dev-bins` workspace binaries.
+const FIXTURE_ANCHORS: &[(&str, &str, &str, &str)] = &[
+    ("instr", "solana-svm", SVM, "test_exec_instr"),
+    ("txn", "solana-runtime", AGAVE, "test_exec_txn"),
+    ("block", "solana-ledger", AGAVE, "test_exec_block"),
     (
         "elf_loader",
         "solana-program-runtime",
-        "sol_compat_elf_loader_v1",
+        SVM,
+        "test_exec_elf_loader",
     ),
-    ("syscall", "solana-program-runtime", "sol_compat_syscall_v1"),
+    (
+        "syscall",
+        "solana-program-runtime",
+        SVM,
+        "test_exec_vm_syscall",
+    ),
     (
         "vm_serialization",
         "solana-program-runtime",
-        "sol_compat_vm_serialization_v1",
+        SVM,
+        "test_exec_vm_serialization",
     ),
-    ("cost", "solana-cost-model", "sol_compat_cost_v1"),
-    ("shred", "solana-core", "sol_compat_shred_v1"),
-    ("gossip", "solana-gossip", "sol_compat_gossip_v1"),
+    ("cost", "solana-cost-model", AGAVE, "test_exec_cost"),
+    ("shred", "solana-core", AGAVE, "test_exec_shred"),
+    ("gossip", "solana-gossip", AGAVE, "test_exec_gossip"),
 ];
+
+fn table_entry(fixtures_dir: &str, package: &str, bin: &str) -> TableEntry {
+    TableEntry {
+        fixtures_dir: fixtures_dir.to_string(),
+        package: package.to_string(),
+        bin: bin.to_string(),
+    }
+}
 
 /// Map changed file paths to workspace crate names using `cargo metadata`.
 fn changed_files_to_crates(changed_files: &[String]) -> Result<HashSet<String>> {
@@ -128,16 +148,13 @@ pub fn select_entries(
     anchor_deps: &HashMap<String, HashSet<String>>,
 ) -> Vec<TableEntry> {
     let mut entries = Vec::new();
-    for &(fixtures_dir, anchor, harness) in FIXTURE_ANCHORS {
+    for &(fixtures_dir, anchor, package, bin) in FIXTURE_ANCHORS {
         let empty = HashSet::new();
         let deps = anchor_deps.get(anchor).unwrap_or(&empty);
         let matched = changed_crates.iter().any(|c| deps.contains(c));
         if matched {
-            info!("selected: {fixtures_dir} (harness={harness})");
-            entries.push(TableEntry {
-                harness: harness.to_string(),
-                fixtures_dir: fixtures_dir.to_string(),
-            });
+            info!("selected: {fixtures_dir} (harness={package}/{bin})");
+            entries.push(table_entry(fixtures_dir, package, bin));
         }
     }
     entries
@@ -148,10 +165,7 @@ pub fn select_entries(
 fn all_entries() -> Vec<TableEntry> {
     FIXTURE_ANCHORS
         .iter()
-        .map(|&(fixtures_dir, _, harness)| TableEntry {
-            harness: harness.to_string(),
-            fixtures_dir: fixtures_dir.to_string(),
-        })
+        .map(|&(fixtures_dir, _, package, bin)| table_entry(fixtures_dir, package, bin))
         .collect()
 }
 
@@ -182,7 +196,7 @@ pub async fn run(args: CommandArgs) -> Result<()> {
 
         // Precompute dep sets for each unique anchor (deduplicated).
         let mut anchor_deps: HashMap<String, HashSet<String>> = HashMap::new();
-        for &(_, anchor, _) in FIXTURE_ANCHORS {
+        for &(_, anchor, ..) in FIXTURE_ANCHORS {
             if !anchor_deps.contains_key(anchor) {
                 anchor_deps.insert(anchor.to_string(), anchor_direct_deps(anchor)?);
             }
@@ -282,14 +296,11 @@ mod tests {
 
     #[test]
     fn test_entry_json_shape() {
-        let entry = TableEntry {
-            harness: "sol_compat_instr_v1".to_string(),
-            fixtures_dir: "instr".to_string(),
-        };
+        let entry = table_entry("instr", SVM, "test_exec_instr");
         let json = serde_json::to_string(&entry).unwrap();
         assert_eq!(
             json,
-            r#"{"harness":"sol_compat_instr_v1","fixtures_dir":"instr"}"#
+            r#"{"fixtures_dir":"instr","package":"solana-svm-conformance","bin":"test_exec_instr"}"#
         );
     }
 
