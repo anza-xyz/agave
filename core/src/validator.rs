@@ -2904,7 +2904,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
     config: &ValidatorConfig,
     start_slot: Slot,
     expected_shred_version: u16,
-) -> Result<(), BlockstoreError> {
+) -> Result<(), ValidatorError> {
     let incorrect_shred_version = scan_blockstore_for_incorrect_shred_version(
         blockstore,
         start_slot,
@@ -2914,6 +2914,19 @@ fn cleanup_blockstore_incorrect_shred_versions(
         info!("Only shreds with the correct version were found in the blockstore");
         return Ok(());
     };
+
+    // Purging a root would delete a finalized block, and would also strand the blockstore's
+    // cached `max_root`: `purge_range()` drops the roots column entries without lowering the
+    // cache, and `set_roots()` only ever raises it. Every later shred below the stale root is
+    // then rejected and the node stops making progress. Read `max_root` before the purge,
+    // while it still reflects the roots column.
+    let max_root = blockstore.max_root();
+    if max_root >= start_slot {
+        return Err(ValidatorError::PurgeWouldDeleteRoot {
+            max_root,
+            start_slot,
+        });
+    }
 
     // .unwrap() safe because getting to this point implies blockstore has slots/shreds
     let end_slot = blockstore.highest_slot()?.unwrap();
@@ -3009,7 +3022,7 @@ pub enum ValidatorError {
     BankHashMismatch(Hash, Hash),
 
     #[error("blockstore error: {0}")]
-    Blockstore(#[source] BlockstoreError),
+    Blockstore(#[from] BlockstoreError),
 
     #[error("genesis hash mismatch: actual={0}, expected={1}")]
     GenesisHashMismatch(Hash, Hash),
@@ -3030,6 +3043,12 @@ pub enum ValidatorError {
         "PoH hashes/second rate is slower than the cluster target: mine {mine}, cluster {target}"
     )]
     PohTooSlow { mine: u64, target: u64 },
+
+    #[error(
+        "blockstore has a root at slot {max_root}, which is inside the range that would be purged \
+         (slot {start_slot} and above); purging it would roll back a finalized block"
+    )]
+    PurgeWouldDeleteRoot { max_root: Slot, start_slot: Slot },
 
     #[error(transparent)]
     ResourceLimitError(#[from] ResourceLimitError),
@@ -3547,6 +3566,60 @@ mod tests {
             )
             .unwrap(),
             None,
+        );
+    }
+
+    #[test]
+    fn test_cleanup_blockstore_incorrect_shred_versions_refuses_to_purge_root() {
+        agave_logger::setup();
+
+        let validator_config = ValidatorConfig::default_for_test();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let entries = entry::create_ticks(1, 0, Hash::default());
+        for i in 1..10 {
+            let shreds = blockstore::entries_to_test_shreds(
+                &entries,
+                i,     // slot
+                i - 1, // parent_slot
+                true,  // is_full_slot
+                1,     // version
+            );
+            blockstore.insert_shreds(shreds, true).unwrap();
+        }
+        blockstore.set_roots([8u64].iter()).unwrap();
+
+        // Slot 8 is rooted, so a cleanup from slot 5 would purge it.
+        let err = cleanup_blockstore_incorrect_shred_versions(&blockstore, &validator_config, 5, 2)
+            .expect_err("cleanup that purges a root must be refused");
+        assert!(
+            matches!(
+                err,
+                ValidatorError::PurgeWouldDeleteRoot {
+                    max_root: 8,
+                    start_slot: 5,
+                }
+            ),
+            "unexpected error: {err:?}"
+        );
+        // Nothing was purged.
+        for i in 5..10 {
+            assert!(
+                !blockstore
+                    .get_data_shreds_for_slot(i, 0)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        // Starting above the root leaves it alone and the cleanup proceeds.
+        cleanup_blockstore_incorrect_shred_versions(&blockstore, &validator_config, 9, 2).unwrap();
+        assert!(
+            blockstore
+                .get_data_shreds_for_slot(9, 0)
+                .unwrap()
+                .is_empty()
         );
     }
 
