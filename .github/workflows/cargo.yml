@@ -66,29 +66,3 @@ jobs:
           source ci/rust-version.sh nightly
           rustup component add clippy --toolchain "$rust_nightly"
           scripts/cargo-clippy-nightly.sh
-
-  clippy-nightly-windows-2025:
-    name: clippy-nightly (windows-2025)
-    if: github.repository_owner == 'anza-xyz' && github.event_name == 'push'
-    runs-on: windows-2025
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba  # v0.0.11
-        with:
-          version: "v0.10.0"
-
-      # took the workaround from https://github.com/sfackler/rust-openssl/issues/2149
-      - name: Set Perl environment variables
-        if: runner.os == 'Windows'
-        run: |
-          echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - shell: bash
-        run: |
-          git config --global --add safe.directory "$(pwd)"
-          source .github/scripts/install-all-deps.sh ${{ runner.os }}
-          source ci/rust-version.sh nightly
-          rustup component add clippy --toolchain "$rust_nightly"
-          scripts/cargo-clippy-nightly.sh

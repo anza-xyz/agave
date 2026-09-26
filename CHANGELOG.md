@@ -32,6 +32,8 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Prebuilt Windows releases are no longer provided.
+
 #### Changes
 
 ## 4.4.0

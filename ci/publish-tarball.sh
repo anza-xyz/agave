@@ -28,18 +28,6 @@ source scripts/generate-target-triple.sh
 
 TARGET="$BUILD_TARGET_TRIPLE"
 
-if [[ $TARGET == *windows* ]]; then
-  (
-    set -x
-    git --version
-    git config core.symlinks true
-    find . -type l -delete
-    git reset --hard
-    # patched crossbeam doesn't build on windows
-    sed -i 's/^crossbeam-epoch/#crossbeam-epoch/' Cargo.toml
-  )
-fi
-
 RELEASE_BASENAME="${RELEASE_BASENAME:=solana-release}"
 TARBALL_BASENAME="${TARBALL_BASENAME:="$RELEASE_BASENAME"}"
 
