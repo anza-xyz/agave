@@ -935,9 +935,11 @@ pub fn process_balances(
         } else {
             let address: Pubkey = allocation.recipient;
             let expected = build_balance_message(allocation.amount, false, false);
-            let actual_amount = client.get_balance(&address).unwrap();
+            let actual_amount = client.get_balance(&address)?;
             let actual = build_balance_message(actual_amount, false, false);
-            let diff = build_balance_message(actual_amount - allocation.amount, false, false);
+            let diff = token_balance_difference_string(actual_amount, allocation.amount, |diff| {
+                build_balance_message(diff, false, false)
+            });
             println!(
                 "{:<44}  {:>24.9}  {:>24.9}  {:>24.9}",
                 allocation.recipient, expected, actual, diff,
@@ -952,6 +954,17 @@ pub fn process_transaction_log(args: &TransactionLogArgs) -> Result<(), Error> {
     let db = db::open_db(&args.transaction_db, true)?;
     db::write_transaction_log(&db, &args.output_path)?;
     Ok(())
+}
+
+pub(crate) fn token_balance_difference_string(
+    actual: u64,
+    expected: u64,
+    format: impl Fn(u64) -> String,
+) -> String {
+    match actual.checked_sub(expected) {
+        Some(delta) => format(delta),
+        None => format!("-{}", format(expected - actual)),
+    }
 }
 
 use {
@@ -2681,5 +2694,27 @@ mod tests {
         let transaction_info = db::read_transaction_infos(&read_db);
         assert_eq!(transaction_info.len(), 1);
         assert_eq!(confs, None);
+    }
+
+    #[test]
+    fn test_balance_difference_string() {
+        assert_eq!(
+            token_balance_difference_string(500, 300, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "0.0000002"
+        );
+        assert_eq!(
+            token_balance_difference_string(300, 500, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "-0.0000002"
+        );
+        assert_eq!(
+            token_balance_difference_string(7, 7, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "0"
+        );
     }
 }
