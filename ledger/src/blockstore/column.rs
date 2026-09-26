@@ -174,6 +174,15 @@ pub mod columns {
     pub struct TransactionStatus;
 
     #[derive(Debug)]
+    /// The highest canonical root through which transaction history has been processed.
+    ///
+    /// This is a singleton column whose only entry uses slot 0 as its key.
+    ///
+    /// * index type: `u64` (see [`SlotColumn`])
+    /// * value type: [`Slot`]
+    pub struct TransactionHistorySafeRoot;
+
+    #[derive(Debug)]
     /// The address signatures column
     ///
     /// * index type: `(`[`Pubkey`]`, `[`Slot`]`, u32, `[`Signature`]`)`
@@ -399,6 +408,14 @@ impl ColumnName for columns::TransactionStatus {
 }
 impl ProtobufColumn for columns::TransactionStatus {
     type Type = generated::TransactionStatusMeta;
+}
+
+impl SlotColumn for columns::TransactionHistorySafeRoot {}
+impl ColumnName for columns::TransactionHistorySafeRoot {
+    const NAME: &'static str = "transaction_history_safe_root";
+}
+impl TypedColumn for columns::TransactionHistorySafeRoot {
+    type Type = Slot;
 }
 
 impl Column for columns::AddressSignatures {

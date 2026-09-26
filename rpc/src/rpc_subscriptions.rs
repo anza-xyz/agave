@@ -940,6 +940,9 @@ impl RpcSubscriptions {
 
         let subscriptions = subscriptions.into_par_iter();
         subscriptions.for_each(|(_id, subscription)| {
+            let is_finalized = subscription
+                .commitment()
+                .is_some_and(|commitment| commitment.is_finalized());
             let slot = if let Some(commitment) = subscription.commitment() {
                 if commitment.is_finalized() {
                     Some(commitment_slots.highest_super_majority_root)
@@ -1003,6 +1006,11 @@ impl RpcSubscriptions {
                             slots_to_notify.retain(|slot| ancestors.contains(slot));
                             slots_to_notify.push(slot);
                             for s in slots_to_notify {
+                                if is_finalized
+                                    && s > blockstore.cached_transaction_history_safe_root()
+                                {
+                                    break;
+                                }
                                 // To avoid skipping a slot that fails this condition,
                                 // caused by non-deterministic concurrency accesses, we
                                 // break out of the loop. Besides if the current `s` is

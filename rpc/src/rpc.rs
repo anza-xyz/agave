@@ -1318,6 +1318,14 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    fn highest_safe_transaction_history_root(&self) -> Slot {
+        self.block_commitment_cache
+            .read()
+            .unwrap()
+            .highest_super_majority_root()
+            .min(self.blockstore.cached_transaction_history_safe_root())
+    }
+
     #[allow(clippy::result_large_err)]
     pub async fn get_block(
         &self,
@@ -1342,14 +1350,17 @@ impl JsonRpcRequestProcessor {
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
+        let highest_super_majority_root = self
+            .block_commitment_cache
+            .read()
+            .unwrap()
+            .highest_super_majority_root();
+
         // Block is old enough to be finalized
-        if slot
-            <= self
-                .block_commitment_cache
-                .read()
-                .unwrap()
-                .highest_super_majority_root()
-        {
+        if slot <= highest_super_majority_root {
+            if slot > self.highest_safe_transaction_history_root() {
+                return Err(RpcCustomError::BlockStatusNotAvailableYet { slot }.into());
+            }
             self.check_blockstore_writes_complete(slot)?;
             let result = self
                 .runtime
@@ -1695,33 +1706,38 @@ impl JsonRpcRequestProcessor {
             self.check_if_transaction_history_enabled()?;
         }
 
+        let commitment = config
+            .commitment
+            .unwrap_or_else(CommitmentConfig::processed);
+        let highest_safe_transaction_history_root = self.highest_safe_transaction_history_root();
+        let gate_transaction_history = search_transaction_history && commitment.is_finalized();
+        if gate_transaction_history
+            && highest_safe_transaction_history_root < config.min_context_slot.unwrap_or_default()
+        {
+            return Err(RpcCustomError::MinContextSlotNotReached {
+                context_slot: highest_safe_transaction_history_root,
+            }
+            .into());
+        }
+
         // Default to processed to preserve this method's historical behavior
         // for callers that do not pass a commitment.
         let bank = self.get_bank_with_config(RpcContextConfig {
-            commitment: Some(
-                config
-                    .commitment
-                    .unwrap_or_else(CommitmentConfig::processed),
-            ),
+            commitment: Some(commitment),
             min_context_slot: config.min_context_slot,
         })?;
         let mut statuses: Vec<Option<TransactionStatus>> = vec![];
 
         for signature in signatures {
             let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
-                Some(status)
+                (!gate_transaction_history || status.slot <= highest_safe_transaction_history_root)
+                    .then_some(status)
             } else if search_transaction_history {
                 if let Some(status) = self
                     .blockstore
                     .get_rooted_transaction_status(signature)
                     .map_err(|_| Error::internal_error())?
-                    .filter(|(slot, _status_meta)| {
-                        slot <= &self
-                            .block_commitment_cache
-                            .read()
-                            .unwrap()
-                            .highest_super_majority_root()
-                    })
+                    .filter(|(slot, _status_meta)| *slot <= highest_safe_transaction_history_root)
                     .map(|(slot, status_meta)| {
                         let err = status_meta.status.clone().err();
                         TransactionStatus {
@@ -1738,8 +1754,8 @@ impl JsonRpcRequestProcessor {
                     bigtable_ledger_storage
                         .get_signature_status(&signature)
                         .await
-                        .map(Some)
-                        .unwrap_or(None)
+                        .ok()
+                        .filter(|status| status.slot <= highest_safe_transaction_history_root)
                 } else {
                     None
                 }
@@ -1748,7 +1764,15 @@ impl JsonRpcRequestProcessor {
             };
             statuses.push(status);
         }
-        Ok(new_response(&bank, statuses))
+        let context_slot = if gate_transaction_history {
+            highest_safe_transaction_history_root
+        } else {
+            bank.slot()
+        };
+        Ok(RpcResponse {
+            context: RpcResponseContext::new(context_slot),
+            value: statuses,
+        })
     }
 
     fn get_transaction_status(
@@ -1808,6 +1832,7 @@ impl JsonRpcRequestProcessor {
         check_is_at_least_confirmed(commitment)?;
 
         let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+        let highest_safe_transaction_history_root = self.highest_safe_transaction_history_root();
         // Fail fast, before consulting the blockstore or bigtable, when this
         // node's view at the requested commitment is behind the caller's
         // minimum. Mirrors getSignaturesForAddress.
@@ -1815,10 +1840,7 @@ impl JsonRpcRequestProcessor {
         let context_slot = if commitment.is_confirmed() {
             confirmed_bank.slot()
         } else {
-            self.block_commitment_cache
-                .read()
-                .unwrap()
-                .highest_super_majority_root()
+            highest_safe_transaction_history_root
         };
         if context_slot < min_context_slot {
             return Err(RpcCustomError::MinContextSlotNotReached { context_slot }.into());
@@ -1847,10 +1869,12 @@ impl JsonRpcRequestProcessor {
 
         match confirmed_transaction.unwrap_or(None) {
             Some(mut confirmed_transaction) => {
+                // The confirmed-bank notification waits for this signature's TSS batch, which is
+                // ordered after any purge for the recreated bank.
                 if commitment.is_confirmed()
-                    && confirmed_bank // should be redundant
-                        .status_cache_ancestors()
-                        .contains(&confirmed_transaction.slot)
+                    && confirmed_bank
+                        .get_signature_status_slot(&signature)
+                        .is_some_and(|(slot, _)| slot == confirmed_transaction.slot)
                 {
                     if confirmed_transaction.block_time.is_none() {
                         let r_bank_forks = self.bank_forks.read().unwrap();
@@ -1861,13 +1885,7 @@ impl JsonRpcRequestProcessor {
                     return Ok(Some(encode_transaction(confirmed_transaction)?));
                 }
 
-                if confirmed_transaction.slot
-                    <= self
-                        .block_commitment_cache
-                        .read()
-                        .unwrap()
-                        .highest_super_majority_root()
-                {
+                if confirmed_transaction.slot <= highest_safe_transaction_history_root {
                     return Ok(Some(encode_transaction(confirmed_transaction)?));
                 }
             }
@@ -1877,6 +1895,13 @@ impl JsonRpcRequestProcessor {
                         .get_confirmed_transaction(&signature)
                         .await
                         .unwrap_or(None)
+                        .filter(|transaction| {
+                            transaction.slot <= highest_safe_transaction_history_root
+                                || commitment.is_confirmed()
+                                    && confirmed_bank
+                                        .get_signature_status_slot(&signature)
+                                        .is_some_and(|(slot, _)| slot == transaction.slot)
+                        })
                         .map(encode_transaction)
                         .transpose();
                 }
@@ -1904,18 +1929,32 @@ impl JsonRpcRequestProcessor {
             .read()
             .unwrap()
             .highest_super_majority_root();
-        let highest_slot = if commitment.is_confirmed() {
-            let confirmed_bank = self.get_bank_with_config(config)?;
-            confirmed_bank.slot()
+        let highest_safe_transaction_history_root =
+            highest_super_majority_root.min(self.blockstore.cached_transaction_history_safe_root());
+        let confirmed_bank = if commitment.is_confirmed() {
+            Some(self.get_bank_with_config(config)?)
         } else {
             let min_context_slot = config.min_context_slot.unwrap_or_default();
-            if highest_super_majority_root < min_context_slot {
+            if highest_safe_transaction_history_root < min_context_slot {
                 return Err(RpcCustomError::MinContextSlotNotReached {
-                    context_slot: highest_super_majority_root,
+                    context_slot: highest_safe_transaction_history_root,
                 }
                 .into());
             }
-            highest_super_majority_root
+            None
+        };
+        let highest_slot = confirmed_bank
+            .as_ref()
+            .map_or(highest_safe_transaction_history_root, |bank| bank.slot());
+        // Above the safe root, only expose signatures from the current confirmed bank. Its
+        // notification is dependency-gated on the corresponding TSS transaction batch.
+        let is_visible = |result: &ConfirmedTransactionStatusWithSignature| {
+            result.slot <= highest_slot
+                && (result.slot <= highest_safe_transaction_history_root
+                    || confirmed_bank.as_ref().is_some_and(|bank| {
+                        bank.get_signature_status_slot(&result.signature)
+                            .is_some_and(|(slot, _)| slot == result.slot)
+                    }))
         };
 
         let SignatureInfosForAddress {
@@ -1926,6 +1965,7 @@ impl JsonRpcRequestProcessor {
             .blockstore
             .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
             .map_err(|err| Error::invalid_params(format!("{err}")))?;
+        results.retain(&is_visible);
 
         let map_results = |results: Vec<ConfirmedTransactionStatusWithSignature>| {
             results
@@ -1993,6 +2033,7 @@ impl JsonRpcRequestProcessor {
                             if before != Some(bigtable_result.signature)
                                     // ...or earlier Blockstore signatures
                                     && !results_set.contains(&bigtable_result.signature)
+                                    && is_visible(&bigtable_result)
                             {
                                 results.push(bigtable_result);
                             }
@@ -4713,6 +4754,7 @@ pub mod tests {
         solana_rpc_client_api::{
             custom_error::{
                 JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
+                JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
                 JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
                 JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
                 JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
@@ -4739,7 +4781,7 @@ pub mod tests {
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
-            TransactionDetails,
+            TransactionDetails, TransactionStatusMeta,
         },
         solana_vote_interface::state::VoteStateV4,
         solana_vote_program::{
@@ -4935,7 +4977,24 @@ pub mod tests {
             })
         }
 
+        fn start_with_transaction_history_safe_root(safe_root: Slot) -> Self {
+            Self::start_with_config_and_safe_root(
+                JsonRpcConfig {
+                    enable_rpc_transaction_history: true,
+                    ..JsonRpcConfig::default()
+                },
+                safe_root,
+            )
+        }
+
         fn start_with_config(config: JsonRpcConfig) -> Self {
+            Self::start_with_config_and_safe_root(config, u64::MAX)
+        }
+
+        fn start_with_config_and_safe_root(
+            config: JsonRpcConfig,
+            transaction_history_safe_root: Slot,
+        ) -> Self {
             let (bank_forks, mint_keypair, leader_vote_keypair) =
                 new_bank_forks_with_config(BankTestConfig {
                     accounts_db_config: AccountsDbConfig {
@@ -4946,6 +5005,9 @@ pub mod tests {
 
             let ledger_path = get_tmp_ledger_path!();
             let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
+            blockstore
+                .set_transaction_history_safe_root(transaction_history_safe_root)
+                .unwrap();
             let bank = bank_forks.read().unwrap().working_bank();
 
             let leader_pubkey = *bank.leader_id();
@@ -7640,6 +7702,123 @@ pub mod tests {
             let result: Value = parse_success_result(rpc.handle_request_sync(request));
             assert!(!result.is_null());
         }
+    }
+
+    #[test]
+    fn test_transaction_history_safe_root_gates_finalized_rpc() {
+        let slot = 1;
+        let rpc = RpcHandler::start_with_transaction_history_safe_root(slot - 1);
+        let bank = rpc.advance_bank_to_confirmed_slot(slot);
+        let signature = rpc.create_test_transactions_and_populate_blockstore()[0];
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = bank.clone();
+        rpc.block_commitment_cache
+            .write()
+            .unwrap()
+            .set_all_slots(slot, slot);
+        rpc.max_complete_transaction_status_slot
+            .store(slot, Ordering::SeqCst);
+
+        let history_only_signature = Signature::from([42; 64]);
+        let address = rpc.mint_keypair.pubkey();
+        rpc.blockstore
+            .write_transaction_status(
+                slot,
+                history_only_signature,
+                std::iter::once((&address, true)),
+                TransactionStatusMeta::default(),
+                2,
+            )
+            .unwrap();
+
+        let get_transaction = |commitment| -> Value {
+            parse_success_result(rpc.handle_request_sync(create_test_request(
+                "getTransaction",
+                Some(json!([
+                    signature.to_string(),
+                    {"commitment": commitment},
+                ])),
+            )))
+        };
+        let get_signature_status =
+            |signature: Signature, commitment: &str, search_history: bool| -> Value {
+                parse_success_result(rpc.handle_request_sync(create_test_request(
+                    "getSignatureStatuses",
+                    Some(json!([
+                        [signature.to_string()],
+                        {
+                            "commitment": commitment,
+                            "searchTransactionHistory": search_history,
+                        },
+                    ])),
+                )))
+            };
+        let get_signatures_for_address =
+            |commitment: &str, before: Option<Signature>| -> Vec<Value> {
+                let mut config = json!({"commitment": commitment});
+                if let Some(before) = before {
+                    config["before"] = json!(before.to_string());
+                }
+                parse_success_result(rpc.handle_request_sync(create_test_request(
+                    "getSignaturesForAddress",
+                    Some(json!([address.to_string(), config])),
+                )))
+            };
+
+        assert!(get_transaction("finalized").is_null());
+        assert!(!get_transaction("confirmed").is_null());
+        let cache_status = get_signature_status(signature, "finalized", false);
+        assert_eq!(cache_status["context"]["slot"], slot);
+        assert!(!cache_status["value"][0].is_null());
+        let finalized_status = get_signature_status(signature, "finalized", true);
+        assert_eq!(finalized_status["context"]["slot"], slot - 1);
+        assert!(finalized_status["value"][0].is_null());
+        assert!(!get_signature_status(signature, "confirmed", true)["value"][0].is_null());
+        let confirmed_address_results = get_signatures_for_address("confirmed", None);
+        assert_eq!(confirmed_address_results.len(), 1);
+        assert_eq!(
+            confirmed_address_results[0]["signature"],
+            signature.to_string()
+        );
+        assert!(
+            get_signature_status(history_only_signature, "confirmed", true)["value"][0].is_null()
+        );
+
+        bank.clear_slot_signatures(slot);
+        assert!(get_transaction("confirmed").is_null());
+        assert!(get_signature_status(signature, "confirmed", true)["value"][0].is_null());
+
+        for commitment in ["confirmed", "finalized"] {
+            let block =
+                create_test_request("getBlock", Some(json!([slot, {"commitment": commitment}])));
+            assert_eq!(
+                parse_failure_response(rpc.handle_request_sync(block)).0,
+                JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
+            );
+        }
+
+        assert!(
+            get_signature_status(history_only_signature, "finalized", true)["value"][0].is_null()
+        );
+        assert!(get_signatures_for_address("finalized", None).is_empty());
+        assert!(get_signatures_for_address("finalized", Some(history_only_signature)).is_empty());
+        assert!(get_signatures_for_address("confirmed", None).is_empty());
+
+        rpc.blockstore
+            .set_transaction_history_safe_root(slot)
+            .unwrap();
+
+        assert!(!get_transaction("finalized").is_null());
+        let finalized_status = get_signature_status(signature, "finalized", true);
+        assert_eq!(finalized_status["context"]["slot"], slot);
+        assert!(!finalized_status["value"][0].is_null());
+        assert!(
+            !get_signature_status(history_only_signature, "finalized", true)["value"][0].is_null()
+        );
+
+        let result = get_signatures_for_address("finalized", None);
+        assert!(result.iter().all(|result| result["slot"] == slot));
+        assert!(!result.is_empty());
+        assert!(!get_signatures_for_address("finalized", Some(history_only_signature)).is_empty());
     }
 
     #[test]
