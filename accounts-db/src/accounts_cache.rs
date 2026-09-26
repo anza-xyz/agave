@@ -290,16 +290,21 @@ impl AccountsCache {
         pubkey: &Pubkey,
         account: AccountSharedData,
     ) -> Arc<CachedAccount> {
-        let slot_cache = self.slot_cache(slot).unwrap_or_else(||
-            // DashMap entry.or_insert() returns a RefMut, essentially a write lock,
-            // which is dropped after this block ends, minimizing time held by the lock.
-            // However, we still want to persist the reference to the `SlotStores` behind
-            // the lock, hence we clone it out, (`SlotStores` is an Arc so is cheap to clone).
-            self
-                .cache
-                .entry(slot)
-                .or_insert_with(|| self.new_inner())
-                .clone());
+        // Hold the entry guard across BOTH the SlotCache insert and the index
+        // insert. `remove_slot` reaches the index by first doing
+        // `self.cache.remove(&slot)`, which needs this same shard's write lock,
+        // so keeping the guard alive makes the two steps atomic with respect to
+        // a concurrent flush of this slot. Without it, a flush landing between
+        // the two steps either panics on a key that was never index-inserted, or
+        // retires the entry and leaves store's insert behind as a phantom
+        // (slot, ref_count) with no backing SlotCache.
+        //
+        // Lock ordering stays cache-then-index, which is what `remove_slot` and
+        // `remove_slots_le` already do, so this adds no new deadlock edge.
+        let mut entry = self.cache.entry(slot).or_insert_with(|| self.new_inner());
+        // The SlotCache itself is an Arc, so clone it out cheaply and keep the
+        // guard alive to pin the slot against removal for the index update.
+        let slot_cache = entry.value().clone();
 
         let (item, is_new_key) = slot_cache.insert(pubkey, account);
         if is_new_key {
@@ -782,5 +787,52 @@ mod tests {
         // remove_slot drops slot 1 from both the cache and the tracked roots, leaving slot 2.
         let _ = cache.remove_slot(1);
         assert_eq!(*cache.unflushed_roots.read().unwrap(), BTreeSet::from([2]));
+    }
+
+    /// `store` makes the SlotCache insert and the index insert atomic with
+    /// respect to `remove_slot`. Hammer the two from several threads on the same
+    /// slot: before the fix this panicked inside `AccountsCacheIndex::remove`
+    /// with "pubkey ... not found in cache index during remove", and could leave
+    /// a phantom index entry behind a slot that was already gone.
+    #[test]
+    fn test_store_racing_remove_slot_is_consistent() {
+        const THREADS: usize = 4;
+        const ITERS: usize = 200;
+
+        for _ in 0..20 {
+            let cache = Arc::new(AccountsCache::default());
+            let slot = 1;
+
+            let mut handles = Vec::new();
+            for t in 0..THREADS {
+                let cache = Arc::clone(&cache);
+                handles.push(std::thread::spawn(move || {
+                    for i in 0..ITERS {
+                        // Each thread uses its own pubkey, but all threads race
+                        // on the same slot, which is the contended resource.
+                        let pk = Pubkey::new_from_array([(t + 1) as u8; 32]);
+                        let pk = if i % 2 == 0 { pk } else { Pubkey::new_unique() };
+                        cache.store(slot, &pk, AccountSharedData::new(1, 0, &Pubkey::default()));
+                        if i % 3 == 0 {
+                            let _ = cache.remove_slot(slot);
+                        }
+                    }
+                }));
+            }
+            for h in handles {
+                h.join().expect("worker thread panicked");
+            }
+
+            // Drain whatever is left so the index must end up fully retired.
+            let _ = cache.remove_slot(slot);
+
+            // The invariant: nothing may remain indexed for a slot that is gone.
+            assert_eq!(
+                cache.index.num_unique_pubkeys.load(Ordering::Relaxed),
+                0,
+                "index retained entries after the slot was fully removed"
+            );
+            assert!(cache.cache.is_empty(), "slot cache should be empty");
+        }
     }
 }
