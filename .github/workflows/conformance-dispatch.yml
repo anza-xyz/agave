@@ -10,6 +10,7 @@ on:
       - "**/Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/conformance-dispatch.yml"
+      - "ci/test-conformance.sh"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -42,19 +43,67 @@ jobs:
             conformance-table --pr-number "$PR_NUMBER")
           echo "entries=$entries" >> "$GITHUB_OUTPUT"
 
-  run:
-    name: "stub: ${{ matrix.entry.harness }}"
+  fetch-vectors:
+    name: fetch test-vectors
     needs: detect
     if: needs.detect.outputs.entries != '[]'
     runs-on: ubuntu-24.04
+    steps:
+      # TODO: use release tarballs once test-vectors publishes them.
+      - name: Clone test-vectors
+        shell: bash
+        env:
+          ENTRIES: ${{ needs.detect.outputs.entries }}
+        run: |
+          mapfile -t dirs < <(jq -r '.[].fixtures_dir' <<<"$ENTRIES" | sort -u)
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/firedancer-io/test-vectors.git test-vectors
+          git -C test-vectors sparse-checkout set "${dirs[@]}"
+          echo "test-vectors revision: $(git -C test-vectors rev-parse HEAD)"
+          mkdir fd-vectors
+          for dir in "${dirs[@]}"; do
+            tar --zstd -C test-vectors -cf "fd-vectors/$dir.tar.zst" "$dir"
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: fd-test-vectors
+          path: fd-vectors/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  run:
+    name: "conformance: ${{ matrix.entry.fixtures_dir }}"
+    needs: [detect, fetch-vectors]
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         entry: ${{ fromJSON(needs.detect.outputs.entries) }}
+    env:
+      FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
     steps:
-      - name: Log (stub)
-        env:
-          HARNESS: ${{ matrix.entry.harness }}
-          FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: fd-test-vectors
+          path: fd-vectors
+
+      - name: Extract fixtures
+        shell: bash
         run: |
-          echo "stub: would run harness '$HARNESS' on fixtures '$FIXTURES_DIR'"
-          echo "No fixtures downloaded or executed yet."
+          tar --zstd -C fd-vectors -xf "fd-vectors/$FIXTURES_DIR.tar.zst"
+          rm fd-vectors/*.tar.zst
+
+      - name: Install dependencies
+        shell: bash
+        run: source .github/scripts/install-all-deps.sh ${{ runner.os }}
+
+      - name: Run ${{ matrix.entry.bin }}
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.entry.package }}
+          BIN: ${{ matrix.entry.bin }}
+        run: ci/test-conformance.sh "$PACKAGE" "$BIN" "fd-vectors/$FIXTURES_DIR"
