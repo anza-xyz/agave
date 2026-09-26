@@ -10989,6 +10989,7 @@ dependencies = [
  "num-traits",
  "solana-account",
  "solana-account-info",
+ "solana-address 2.7.0",
  "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-bls12-381-syscall",
