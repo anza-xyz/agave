@@ -99,6 +99,7 @@ solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
+solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true, optional = true, features = ["wincode"] }

@@ -9432,6 +9432,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey 4.4.0",
  "solana-rent",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-slot-hashes",
  "solana-svm-callback",
