@@ -194,7 +194,7 @@ pub fn wait_for_restart_window(
     let mut current_epoch = None;
     let mut leader_schedule = VecDeque::new();
     let mut restart_snapshot = None;
-    let mut upcoming_idle_windows = vec![]; // Vec<(starting slot, idle window length in slots)>
+    let mut upcoming_idle_windows = VecDeque::new(); // VecDeque<(starting slot, idle window length in slots)>
 
     let progress_bar = new_spinner_progress_bar();
     let monitor_start_time = SystemTime::now();
@@ -265,7 +265,7 @@ pub fn wait_for_restart_window(
                     let idle_window = next_leader_slot - idle_window_start_slot;
                     max_idle_window = max_idle_window.max(idle_window);
                     if idle_window > min_idle_slots {
-                        upcoming_idle_windows.push((idle_window_start_slot, idle_window));
+                        upcoming_idle_windows.push_back((idle_window_start_slot, idle_window));
                     }
                     idle_window_start_slot = next_leader_slot;
                 }
@@ -300,11 +300,11 @@ pub fn wait_for_restart_window(
                         leader_schedule.pop_front();
                     }
                     while upcoming_idle_windows
-                        .first()
+                        .front()
                         .map(|(slot, _)| *slot < epoch_info.absolute_slot)
                         .unwrap_or(false)
                     {
-                        upcoming_idle_windows.pop();
+                        upcoming_idle_windows.pop_front();
                     }
 
                     match leader_schedule.front() {
@@ -317,7 +317,7 @@ pub fn wait_for_restart_window(
                             if idle_slots >= min_idle_slots {
                                 Ok(())
                             } else {
-                                Err(match upcoming_idle_windows.first() {
+                                Err(match upcoming_idle_windows.front() {
                                     Some((starting_slot, length_in_slots)) => {
                                         format!(
                                             "Next idle window in {} slots, for {} slots",
