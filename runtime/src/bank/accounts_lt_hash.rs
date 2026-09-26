@@ -11,7 +11,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{accounts_db::AccountsDb, storable_accounts::StorableAccounts},
-    solana_lattice_hash::lt_hash::LtHash,
+    solana_lattice_hash::{batch::Accumulator, lt_hash::LtHash},
     solana_pubkey::Pubkey,
     std::{
         array,
@@ -256,35 +256,55 @@ impl Bank {
     }
 }
 
+/// A hasher worker's pair of persistent batched lattice-hash accumulators.
+///
+/// The batch kernel only reaches its SIMD width once several messages are staged,
+/// so the accumulators persist across jobs. Accounts larger than one BLAKE3 chunk,
+/// and a worker's trailing partial batch, go through the `blake3` hasher instead.
+///
+/// The batch API only adds, so previous-version accounts are staged separately and
+/// the worker's delta is `Σ curr − Σ prev`.
+#[derive(Debug)]
+struct ThreadAcc {
+    /// Current-version accounts, mixed *in* to the bank hash.
+    plus: Accumulator,
+    /// Previous-version accounts, mixed *out* of the bank hash.
+    minus: Accumulator,
+}
+
+impl ThreadAcc {
+    fn new() -> Self {
+        Self {
+            plus: Accumulator::new(),
+            minus: Accumulator::new(),
+        }
+    }
+
+    /// Stages `update`'s previous and current account versions into `minus` and
+    /// `plus` respectively.
+    fn process(&mut self, update: AccountsLtHashUpdate) {
+        let AccountsLtHashUpdate {
+            address,
+            prev_account,
+            curr_account,
+        } = update;
+        if let Some(prev_account) = prev_account {
+            AccountsDb::add_account_to_lt_hash(&mut self.minus, &prev_account, &address);
+        }
+        if let Some(curr_account) = curr_account {
+            AccountsDb::add_account_to_lt_hash(&mut self.plus, &curr_account, &address);
+        }
+    }
+}
+
 /// Struct for tracking progress of the asynchronous accounts lt hashing for a Bank.
 pub struct AccountsLtHashAsyncProgress {
-    // Note: use [Mutex<CachePadded<LtHash>>] and *not* [CachePadded<Mutex<LtHash>>].
-    // - In both ways each mutex is on its own separate cache line.
-    // - In both ways the size used for each element, including padding, is the same.
-    // - Only this way ensures that each LtHash is placed for aligned SIMD/AVX access.
-    //
-    // Here's the layout of [Mutex<CachePadded<LtHash>>; 2]
-    //
-    //  │element 0                         │element 1
-    //  │                                  │
-    //  ▼───────┬─────────┬────────────────▼───────┬─────────┬────────────────┐
-    //  │ Mutex │ padding │     LtHash     │ Mutex │ padding │     LtHash     │
-    //  ├───────┼─────────┼────────────────┼───────┼─────────┼────────────────┤
-    //  │       │         │                │       │         │                │
-    //  │0      │6        │128 <-- aligned │2176   │2182     │2304            │4352
-    //
-    //
-    // And here's the layout of [CachePadded<Mutex<LtHash>>; 2]
-    //
-    //  │element 0                         │element 1
-    //  │                                  │
-    //  ▼───────┬────────────────┬─────────▼───────┬────────────────┬─────────┐
-    //  │ Mutex │     LtHash     │ padding │ Mutex │     LtHash     │ padding │
-    //  ├───────┼────────────────┼─────────┼───────┼────────────────┼─────────┤
-    //  │       │                │         │       │                │         │
-    //  │0      │6 <-- unaligned │2054     │2176   │2182            │4230     │4352
-    //
-    accumulators: [Mutex<CachePadded<LtHash>>; NUM_ACCOUNTS_HASHER_THREADS],
+    /// Each job only touches its own worker's pair (selected by
+    /// `current_thread_index()`), so the Mutex is uncontended. The padding aligns
+    /// every element to a cache line: a pair is several KiB, so without it the
+    /// boundary between two of them falls at an arbitrary offset and one line can
+    /// straddle a worker's lock word and its neighbor's staging state.
+    accumulators: [CachePadded<Mutex<ThreadAcc>>; NUM_ACCOUNTS_HASHER_THREADS],
     num_jobs_pending: AtomicUsize,
     num_jobs_total: AtomicU64,
     /// Flag to indicate if the bank has reached the end of the slot.
@@ -298,7 +318,7 @@ impl AccountsLtHashAsyncProgress {
     /// Creates a new AccountsLtHashAsyncProgress instance that is suitable for a new Bank.
     pub fn new() -> Self {
         Self {
-            accumulators: array::from_fn(|_| Mutex::new(CachePadded::new(LtHash::identity()))),
+            accumulators: array::from_fn(|_| CachePadded::new(Mutex::new(ThreadAcc::new()))),
             num_jobs_pending: AtomicUsize::new(0),
             num_jobs_total: AtomicU64::new(0),
             is_at_end_of_slot: AtomicBool::new(false),
@@ -323,7 +343,7 @@ impl AccountsLtHashAsyncProgress {
                 debug_assert!(worker_index < self.accumulators.len());
                 let accumulator = unsafe { self.accumulators.get_unchecked(worker_index) };
 
-                Self::process(&mut accumulator.lock().unwrap(), update);
+                accumulator.lock().unwrap().process(update);
 
                 // Decrementing the number of pending jobs MUST happen *after*
                 // accumulating the result.  This ensures `finish()` cannot
@@ -347,29 +367,12 @@ impl AccountsLtHashAsyncProgress {
         }
 
         for thread_accumulator in self.accumulators.iter() {
-            lt_hash.mix_in(&thread_accumulator.lock().unwrap());
+            let mut thread_accumulator = thread_accumulator.lock().unwrap();
+            // fold this worker's delta, Σ curr − Σ prev, into the bank hash
+            lt_hash.mix_in(&thread_accumulator.plus.take_lt_hash());
+            lt_hash.mix_out(&thread_accumulator.minus.take_lt_hash());
         }
         self.num_jobs_total.load(Ordering::Relaxed)
-    }
-
-    /// Processes `update` and mixes the result into `accum_lt_hash`.
-    ///
-    /// Note: Since an LtHash is large, `accum_lt_hash` is passed as an in-out parameter.
-    /// This it to avoid Rust compiler bug that fails to perform return value optimization.
-    fn process(accum_lt_hash: &mut LtHash, update: AccountsLtHashUpdate) {
-        let AccountsLtHashUpdate {
-            address,
-            prev_account,
-            curr_account,
-        } = update;
-        if let Some(prev_account) = prev_account {
-            let prev_lt_hash = AccountsDb::lt_hash_account(&prev_account, &address);
-            accum_lt_hash.mix_out(&prev_lt_hash.0);
-        }
-        if let Some(curr_account) = curr_account {
-            let curr_lt_hash = AccountsDb::lt_hash_account(&curr_account, &address);
-            accum_lt_hash.mix_in(&curr_lt_hash.0);
-        }
     }
 
     /// Signals to the accounts lt hash manager that this bank has reached the end
