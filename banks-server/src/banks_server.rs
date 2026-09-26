@@ -146,10 +146,13 @@ impl BanksServer {
         while status.is_none() {
             sleep(self.poll_signature_status_sleep_duration).await;
             let bank = self.bank(commitment);
-            if bank.block_height() > last_valid_block_height {
+            status = bank.get_signature_status_with_blockhash(signature, blockhash);
+            // A bank past the blockhash expiry ends the poll, but its ancestors may
+            // still hold a status committed by a block in its final valid block, so
+            // read the status before breaking.
+            if status.is_none() && bank.block_height() > last_valid_block_height {
                 break;
             }
-            status = bank.get_signature_status_with_blockhash(signature, blockhash);
         }
         status
     }
@@ -424,4 +427,71 @@ pub async fn start_local_server(
         });
     tokio::spawn(server);
     client_transport
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_leader_schedule::SlotLeader,
+        solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        solana_system_transaction as system_transaction,
+        std::thread,
+    };
+
+    // A transaction that commits in its final valid block must still be reported:
+    // a bank past the blockhash expiry searches ancestors, so the poll must read
+    // the status from the newly fetched bank before breaking on the height.
+    #[tokio::test]
+    async fn test_poll_signature_status_reads_status_committed_in_final_valid_block() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank0 = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank0);
+        let bank_a = Bank::new_from_parent(
+            bank_forks.read().unwrap().get(0).unwrap(),
+            SlotLeader::default(),
+            1,
+        );
+        bank_forks.write().unwrap().insert(bank_a);
+        let bank_b = Bank::new_from_parent(
+            bank_forks.read().unwrap().get(1).unwrap(),
+            SlotLeader::default(),
+            2,
+        );
+        bank_forks.write().unwrap().insert(bank_b);
+
+        let blockhash = bank_forks.read().unwrap()[2].last_blockhash();
+        let recipient = Pubkey::new_unique();
+        let tx = system_transaction::transfer(&mint_keypair, &recipient, 1, blockhash);
+        bank_forks.read().unwrap()[2]
+            .process_transaction(&tx)
+            .unwrap();
+
+        // The commitment cache starts at slot 1 (no status) and advances to slot 2
+        // mid-poll, which is past the transaction's last valid block height.
+        let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
+        block_commitment_cache.write().unwrap().set_all_slots(1, 1);
+        let cache_for_thread = block_commitment_cache.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            cache_for_thread.write().unwrap().set_all_slots(2, 2);
+        });
+
+        let (sender, _receiver) = unbounded();
+        let server = BanksServer::new(
+            bank_forks,
+            block_commitment_cache,
+            sender,
+            Duration::from_millis(10),
+        );
+        let status = server
+            .poll_signature_status(&tx.signatures[0], &blockhash, 1, CommitmentLevel::Processed)
+            .await;
+
+        assert_eq!(status, Some(Ok(())));
+    }
 }
