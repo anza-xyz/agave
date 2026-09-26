@@ -759,21 +759,14 @@ fn deserialize_obsolete_accounts(
         return Err(IoError::other(error_message).into());
     }
 
-    match fastboot_version.major {
-        4 => Ok(serde_snapshot::deserialize_wincode_from(
-            obsolete_accounts_reader,
-        )?),
-        3 => {
-            let legacy: LegacyObsoleteAccountsMap =
-                serde_snapshot::deserialize_wincode_from(obsolete_accounts_reader)?;
-            Ok(SerdeObsoleteAccountsMap::try_from(legacy)?)
-        }
-        _ => Err(IoError::new(
-            io::ErrorKind::InvalidData,
-            SnapshotFastbootError::IncompatibleVersion(fastboot_version.clone()),
-        )
-        .into()),
-    }
+    let obsolete_accounts = if fastboot_version.major >= 4 {
+        serde_snapshot::deserialize_wincode_from(obsolete_accounts_reader)?
+    } else {
+        let legacy: LegacyObsoleteAccountsMap =
+            serde_snapshot::deserialize_wincode_from(obsolete_accounts_reader)?;
+        SerdeObsoleteAccountsMap::try_from(legacy)?
+    };
+    Ok(obsolete_accounts)
 }
 
 pub fn write_storages_list_to_snapshot(
