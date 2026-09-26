@@ -108,11 +108,14 @@ impl SnapshotStream {
                 Ok::<_, std::io::Error>(())
             })
             .await;
-            if !matches!(result, Ok(Ok(()))) {
-                // Report an incomplete response on a read error or timeout. This does not wait
-                // for the socket to become writable, so the file is dropped when this task exits.
-                sender.abort();
+            match result {
+                Ok(Ok(())) => return,
+                Ok(Err(err)) => warn!("Snapshot transfer failed: {err}"),
+                Err(_) => warn!("Snapshot transfer deadline exceeded after {timeout:?}"),
             }
+            // Report an incomplete response on a read error or timeout. This does not wait
+            // for the socket to become writable, so the file is dropped when this task exits.
+            sender.abort();
         });
         Self {
             receiver,
