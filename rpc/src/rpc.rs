@@ -1562,18 +1562,6 @@ impl JsonRpcRequestProcessor {
             .get_first_available_block()
             .unwrap_or_default();
 
-        if start_slot < lowest_blockstore_slot {
-            // If the starting slot is lower than what's available in blockstore assume the entire
-            // range can be fetched from BigTable. This range should not ever run into unfinalized
-            // confirmed blocks due to MAX_GET_CONFIRMED_BLOCKS_RANGE
-            if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                return Ok(bigtable_ledger_storage
-                    .get_confirmed_blocks(start_slot, limit)
-                    .await
-                    .unwrap_or_default());
-            }
-        }
-
         let highest_super_majority_root = self
             .block_commitment_cache
             .read()
@@ -1587,6 +1575,18 @@ impl JsonRpcRequestProcessor {
                     context_slot: highest_super_majority_root,
                 }
                 .into());
+            }
+        }
+
+        if start_slot < lowest_blockstore_slot {
+            // If the starting slot is lower than what's available in blockstore assume the entire
+            // range can be fetched from BigTable. This range should not ever run into unfinalized
+            // confirmed blocks due to MAX_GET_CONFIRMED_BLOCKS_RANGE
+            if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                return Ok(bigtable_ledger_storage
+                    .get_confirmed_blocks(start_slot, limit)
+                    .await
+                    .unwrap_or_default());
             }
         }
 
