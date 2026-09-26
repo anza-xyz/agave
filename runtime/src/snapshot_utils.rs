@@ -1437,11 +1437,8 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
     next_append_vec_id: Arc<AtomicAccountsFileId>,
 ) -> Result<(AccountStorageMap, BankFieldsToDeserialize, AccountsDbFields)> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
-
-    if !matches!(snapshot_info.fastboot_version.as_ref(), Some(version) if matches!(version.major, 3 | 4))
-    {
-        return Err(IoError::other("unsupported fastboot snapshot version").into());
-    }
+    // it is a programmer error if `snapshot_info` is incompatible
+    debug_assert!(is_bank_snapshot_loadable(snapshot_info.fastboot_version.as_ref()).unwrap());
 
     // With fastboot_version >= 2, obsolete accounts are tracked and stored in the snapshot
     // Even if obsolete accounts are not enabled, the snapshot may still contain obsolete accounts
