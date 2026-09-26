@@ -137,6 +137,7 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.set_priority(10);
     pipeline.add_step(default_sanity_step());
     pipeline.add_step(default_checks_step());
+    pipeline.add_step(default_release_check_step());
     Ok(pipeline)
 }
 
@@ -341,6 +342,7 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
     pipeline.add_step(default_checks_step());
+    pipeline.add_step(default_release_check_step());
     pipeline.add_step(default_feature_check_step(5));
     pipeline.add_step(default_miri_step());
     pipeline.add_step(default_frozen_abi_step());
@@ -398,6 +400,19 @@ fn default_checks_step() -> buildkite::Step {
         command: String::from("ci/docker-run-default-image.sh ci/test-checks.sh"),
         agents: Some(queue_agents()),
         timeout_in_minutes: Some(20),
+        ..Default::default()
+    })
+}
+
+fn default_release_check_step() -> buildkite::Step {
+    buildkite::Step::Command(buildkite::CommandStep {
+        name: String::from("release-check"),
+        command: String::from(
+            "ci/docker-run-default-image.sh bash -c 'source ci/rust-version.sh nightly && cargo \
+             xtask release-check'",
+        ),
+        agents: Some(queue_agents()),
+        timeout_in_minutes: Some(25),
         ..Default::default()
     })
 }
