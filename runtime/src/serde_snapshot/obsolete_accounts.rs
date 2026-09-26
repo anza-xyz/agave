@@ -124,7 +124,7 @@ impl SerdeObsoleteAccountsMap {
 }
 
 /// Fastboot v2/v3 stored the obsolete accounts' offsets as u64, which are append vec file offsets.
-/// We support loading from v2/v3, and thus must support deserialization of the legacy format.
+/// We support loading from v3, and thus must support deserialization of the legacy format.
 #[repr(C)]
 #[derive(SchemaRead)]
 struct LegacyObsoleteAccountItem {
