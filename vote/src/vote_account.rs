@@ -211,6 +211,7 @@ impl VoteAccounts {
         &self,
         max_vote_accounts: usize,
         minimum_vote_account_balance: u64,
+        block_revenue_sharing: bool,
     ) -> VoteAccounts {
         assert!(max_vote_accounts > 0, "max_vote_accounts must be > 0");
         let capacity = max_vote_accounts.min(self.vote_accounts.len());
@@ -221,10 +222,14 @@ impl VoteAccounts {
             let has_stake = *stake != 0u64;
             // Pending delegator rewards are deducted at the start of the epoch,
             // so this operation reflects the actual expected balance
-            let has_balance = vote_account
-                .lamports()
-                .saturating_sub(vote_state_view.pending_delegator_rewards())
-                >= minimum_vote_account_balance;
+            let available_balance = if block_revenue_sharing {
+                vote_account
+                    .lamports()
+                    .saturating_sub(vote_state_view.pending_delegator_rewards())
+            } else {
+                vote_account.lamports()
+            };
+            let has_balance = available_balance >= minimum_vote_account_balance;
 
             if !has_bls || !has_stake || !has_balance {
                 continue;
