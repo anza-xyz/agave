@@ -34,6 +34,9 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* `airdrop` now prints a link to https://faucet.solana.com, pre-populated with the recipient address and
+  the closest supported amount, when the request fails on devnet or testnet.
+
 ## 4.4.0
 
 ### RPC
