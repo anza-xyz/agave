@@ -1,7 +1,10 @@
 use {
     crate::{
         args::{DistributeTokensArgs, SplTokenArgs},
-        commands::{Error, FundingSource, TypedAllocation, get_fee_estimate_for_messages},
+        commands::{
+            Error, FundingSource, TypedAllocation, get_fee_estimate_for_messages,
+            token_balance_difference_string,
+        },
     },
     console::style,
     solana_account_decoder::parse_token::{real_number_string, real_number_string_trimmed},
@@ -110,15 +113,6 @@ pub(crate) fn check_spl_token_balances(
     Ok(())
 }
 
-pub(crate) fn token_balance_difference_string(actual: u64, expected: u64, decimals: u8) -> String {
-    // The recipient may have spent tokens, so the difference is signed; a plain
-    // u64 subtraction wraps to a garbage token amount.
-    match actual.checked_sub(expected) {
-        Some(delta) => real_number_string(delta, decimals),
-        None => format!("-{}", real_number_string(expected - actual, decimals)),
-    }
-}
-
 pub(crate) fn print_token_balances(
     client: &RpcClient,
     allocation: &TypedAllocation,
@@ -134,11 +128,10 @@ pub(crate) fn print_token_balances(
         SplTokenAccount::unpack(&recipient_account.data)
     {
         let actual_ui_amount = real_number_string(recipient_token.amount, spl_token_args.decimals);
-        let delta_string = token_balance_difference_string(
-            recipient_token.amount,
-            expected,
-            spl_token_args.decimals,
-        );
+        let delta_string =
+            token_balance_difference_string(recipient_token.amount, expected, |diff| {
+                real_number_string(diff, spl_token_args.decimals)
+            });
         (
             style(format!("{actual_ui_amount:>24}")),
             format!("{delta_string:>24}"),
@@ -177,10 +170,17 @@ mod tests {
 
     #[test]
     fn test_token_balance_difference_string() {
-        // A recipient that spent tokens shows a negative difference instead of a
-        // wrapped u64 token amount.
-        assert_eq!(token_balance_difference_string(5, 3, 0), "2");
-        assert_eq!(token_balance_difference_string(3, 5, 0), "-2");
-        assert_eq!(token_balance_difference_string(7, 7, 0), "0");
+        assert_eq!(
+            token_balance_difference_string(5, 3, |diff| real_number_string(diff, 0)),
+            "2"
+        );
+        assert_eq!(
+            token_balance_difference_string(3, 5, |diff| real_number_string(diff, 0)),
+            "-2"
+        );
+        assert_eq!(
+            token_balance_difference_string(7, 7, |diff| real_number_string(diff, 0)),
+            "0"
+        );
     }
 }

@@ -937,7 +937,9 @@ pub fn process_balances(
             let expected = build_balance_message(allocation.amount, false, false);
             let actual_amount = client.get_balance(&address)?;
             let actual = build_balance_message(actual_amount, false, false);
-            let diff = balance_difference_string(actual_amount, allocation.amount);
+            let diff = token_balance_difference_string(actual_amount, allocation.amount, |diff| {
+                build_balance_message(diff, false, false)
+            });
             println!(
                 "{:<44}  {:>24.9}  {:>24.9}  {:>24.9}",
                 allocation.recipient, expected, actual, diff,
@@ -954,15 +956,14 @@ pub fn process_transaction_log(args: &TransactionLogArgs) -> Result<(), Error> {
     Ok(())
 }
 
-fn balance_difference_string(actual: u64, expected: u64) -> String {
-    // The recipient may have spent tokens, so the difference is signed; a plain
-    // u64 subtraction wraps to a garbage lamports amount.
+pub(crate) fn token_balance_difference_string(
+    actual: u64,
+    expected: u64,
+    format: impl Fn(u64) -> String,
+) -> String {
     match actual.checked_sub(expected) {
-        Some(delta) => build_balance_message(delta, false, false),
-        None => format!(
-            "-{}",
-            build_balance_message(expected - actual, false, false)
-        ),
+        Some(delta) => format(delta),
+        None => format!("-{}", format(expected - actual)),
     }
 }
 
@@ -2701,10 +2702,23 @@ mod tests {
 
     #[test]
     fn test_balance_difference_string() {
-        // A recipient that spent tokens shows a negative difference instead of a
-        // wrapped u64 lamports amount.
-        assert_eq!(balance_difference_string(500, 300), "0.0000002");
-        assert_eq!(balance_difference_string(300, 500), "-0.0000002");
-        assert_eq!(balance_difference_string(7, 7), "0");
+        assert_eq!(
+            token_balance_difference_string(500, 300, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "0.0000002"
+        );
+        assert_eq!(
+            token_balance_difference_string(300, 500, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "-0.0000002"
+        );
+        assert_eq!(
+            token_balance_difference_string(7, 7, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "0"
+        );
     }
 }
