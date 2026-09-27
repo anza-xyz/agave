@@ -5,6 +5,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
+    std::time::Instant,
 };
 
 /// Request to build reward certificates.
@@ -13,6 +14,7 @@ pub(crate) struct RewardRequest {
     pub(crate) bank_slot: Slot,
     /// The channel on which to send the reply.
     pub(super) reply_sender: Sender<RewardResponse>,
+    pub(super) request_sent: Instant,
 }
 
 /// Response when the reward certs are built successfully.

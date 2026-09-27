@@ -62,7 +62,7 @@ use {
         tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
     },
     solana_system_interface::{error::SystemError, instruction as system_instruction},
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     std::{ops::Deref, rc::Rc},
 };
 
@@ -1686,9 +1686,10 @@ pub async fn process_stake_authorize(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -1856,9 +1857,10 @@ pub async fn process_deactivate_stake_account(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -1975,9 +1977,10 @@ pub async fn process_withdraw_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2179,9 +2182,10 @@ pub async fn process_split_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2304,9 +2308,10 @@ pub async fn process_merge_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2415,9 +2420,10 @@ pub async fn process_stake_set_lockup(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2442,22 +2448,12 @@ fn stake_activation_status(
     current_epoch: Epoch,
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
-    use_fixed_point_stake_math: bool,
 ) -> StakeActivationStatus {
-    if use_fixed_point_stake_math {
-        delegation.stake_activating_and_deactivating_v2(
-            current_epoch,
-            stake_history,
-            new_rate_activation_epoch,
-        )
-    } else {
-        #[allow(deprecated)]
-        delegation.stake_activating_and_deactivating(
-            current_epoch,
-            stake_history,
-            new_rate_activation_epoch,
-        )
-    }
+    delegation.stake_activating_and_deactivating_v2(
+        current_epoch,
+        stake_history,
+        new_rate_activation_epoch,
+    )
 }
 
 pub fn build_stake_state(
@@ -2469,7 +2465,6 @@ pub fn build_stake_state(
     new_rate_activation_epoch: Option<Epoch>,
     rent_exempt_reserve: u64,
     use_csv: bool,
-    use_fixed_point_stake_math: bool,
 ) -> CliStakeState {
     match stake_state {
         StakeStateV2::Stake(
@@ -2492,7 +2487,6 @@ pub fn build_stake_state(
                 current_epoch,
                 stake_history,
                 new_rate_activation_epoch,
-                use_fixed_point_stake_math,
             );
             let lockup = if lockup.is_in_force(clock, None) {
                 Some(lockup.into())
@@ -2761,13 +2755,6 @@ pub async fn get_account_stake_state(
                 &agave_feature_set::reduce_stake_warmup_cooldown::id(),
             )
             .await?;
-            let fixed_point_activation_epoch = get_feature_activation_epoch(
-                rpc_client,
-                &agave_feature_set::upgrade_bpf_stake_program_to_v5_1::id(),
-            )
-            .await?;
-            let use_fixed_point_stake_math = fixed_point_activation_epoch
-                .is_some_and(|activation_epoch| clock.epoch >= activation_epoch);
             let rent_exempt_balance = rpc_client
                 .get_minimum_balance_for_rent_exemption(stake_account.data.len())
                 .await?;
@@ -2780,7 +2767,6 @@ pub async fn get_account_stake_state(
                 new_rate_activation_epoch,
                 rent_exempt_balance,
                 use_csv,
-                use_fixed_point_stake_math,
             );
 
             if state.stake_type == CliStakeType::Stake
@@ -3000,9 +2986,10 @@ pub async fn process_delegate_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )

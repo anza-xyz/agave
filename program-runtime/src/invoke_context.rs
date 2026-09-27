@@ -22,7 +22,8 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_hash::Hash,
-    solana_instruction::{Instruction, error::InstructionError},
+    solana_instruction::Instruction,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -338,24 +339,97 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .map(|seeds| Pubkey::create_program_address(seeds, &caller_program_id))
             .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()
             .map_err(|e| e as u64)?;
-        self.prepare_next_cpi_instruction(instruction, &signers)?;
+        self.build_instruction_frame(instruction)?;
+        self.internal_native_invoke(&signers)?;
+        Ok(())
+    }
+
+    /// A special native invoke for when the instruction is already configured in the instruction
+    /// trace
+    pub fn internal_native_invoke(&mut self, signers: &[Pubkey]) -> Result<(), InstructionError> {
+        self.verify_instruction_accounts(signers)?;
         let mut compute_units_consumed = 0;
         self.process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
         Ok(())
     }
 
-    /// Helper to prepare for process_instruction() when the instruction is not a top level one,
-    /// and depends on `AccountMeta`s
-    pub(crate) fn prepare_next_cpi_instruction(
+    /// Verifies if all the CPI accounts are present in the caller, and checks writability and
+    /// signing permissions.
+    pub(crate) fn verify_instruction_accounts(
+        &mut self,
+        signers: &[Pubkey],
+    ) -> Result<(), InstructionError> {
+        let instruction_context = self.transaction_context.get_current_instruction_context()?;
+        let next_context = self.transaction_context.get_next_instruction_context()?;
+        let callee_instruction_accounts = next_context.instruction_accounts();
+        for (idx, callee_account) in callee_instruction_accounts.iter().enumerate() {
+            if next_context
+                .is_instruction_account_duplicate(idx as u16)?
+                .is_some()
+            {
+                continue;
+            }
+
+            // The account passed down to the instruction is supposed to be present in the caller
+            let index_in_caller = instruction_context
+                .get_index_of_account_in_instruction(callee_account.index_in_transaction)?;
+
+            let caller_instruction_account = instruction_context
+                .instruction_accounts()
+                .get(index_in_caller as usize)
+                .expect(
+                    "get_index_of_account_in_instruction above has already checked if the index \
+                     is valid.",
+                );
+
+            let account_key = self
+                .transaction_context
+                .get_key_of_account_at_index(caller_instruction_account.index_in_transaction)?;
+
+            // Readonly in caller cannot become writable in callee
+            if callee_account.is_writable() && !caller_instruction_account.is_writable() {
+                ic_msg!(self, "{}'s writable privilege escalated", account_key,);
+                return Err(InstructionError::PrivilegeEscalation);
+            }
+
+            // To be signed in the callee,
+            // it must be either signed in the caller or by the program
+            if callee_account.is_signer()
+                && !(caller_instruction_account.is_signer() || signers.contains(account_key))
+            {
+                ic_msg!(self, "{}'s signer privilege escalated", account_key,);
+                return Err(InstructionError::PrivilegeEscalation);
+            }
+        }
+
+        // See if program account is part of the instruction
+        // `build_instruction_frame` already checked if the account is part of the transaction.
+        let program_id_tx_idx = next_context.get_index_of_program_account_in_transaction()?;
+        if instruction_context
+            .get_index_of_account_in_instruction(program_id_tx_idx)
+            .is_err()
+        {
+            let callee_program_id = self
+                .transaction_context
+                .get_key_of_account_at_index(program_id_tx_idx)
+                .expect("We should have checked that the program ID is in the transaction");
+            ic_msg!(self, "Unknown program {}", callee_program_id);
+            return Err(InstructionError::MissingAccount);
+        }
+
+        Ok(())
+    }
+
+    /// Convert an SDK Instruction from CPI to an InstructionFrame used by runtime.
+    pub(crate) fn build_instruction_frame(
         &mut self,
         instruction: Instruction,
-        signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         let transaction_callee_map_len = (self.transaction_context.get_number_of_accounts()
             as usize)
             .min(MAX_ACCOUNTS_PER_TRANSACTION);
-        let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; transaction_callee_map_len];
+        let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; transaction_callee_map_len];
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
 
@@ -363,8 +437,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         // transaction context (the `instruction_context` variable). At the end of this
         // function, we must borrow it again as mutable.
         let program_account_index = {
-            let instruction_context = self.transaction_context.get_current_instruction_context()?;
-
             for account_meta in instruction.accounts.iter() {
                 let index_in_transaction = self
                     .transaction_context
@@ -398,7 +470,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                     };
                     instruction_accounts.push(cloned_account);
                 } else {
-                    *index_in_callee = instruction_accounts.len() as u16;
+                    *index_in_callee = instruction_accounts.len() as u8;
                     instruction_accounts.push(InstructionAccount::new(
                         index_in_transaction,
                         account_meta.is_signer,
@@ -407,71 +479,20 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 }
             }
 
-            for current_index in 0..instruction_accounts.len() {
-                let instruction_account = instruction_accounts.get(current_index).unwrap();
-                let index_in_callee = *transaction_callee_map
-                    .get(instruction_account.index_in_transaction as usize)
-                    .unwrap() as usize;
+            TransactionContext::replicate_account_flags(
+                &mut instruction_accounts,
+                &transaction_callee_map,
+            );
 
-                if current_index != index_in_callee {
-                    let (is_signer, is_writable) = {
-                        let reference_account = instruction_accounts
-                            .get(index_in_callee)
-                            .ok_or(InstructionError::MissingAccount)?;
-                        (
-                            reference_account.is_signer(),
-                            reference_account.is_writable(),
-                        )
-                    };
-
-                    let current_account = instruction_accounts.get_mut(current_index).unwrap();
-                    current_account.set_is_signer(current_account.is_signer() || is_signer);
-                    current_account.set_is_writable(current_account.is_writable() || is_writable);
-                    // This account is repeated, so there is no need to check for permissions
-                    continue;
-                }
-
-                let index_in_caller = instruction_context.get_index_of_account_in_instruction(
-                    instruction_account.index_in_transaction,
-                )?;
-
-                // This unwrap is safe because instruction.accounts.len() == instruction_accounts.len()
-                let account_key = &instruction.accounts.get(current_index).unwrap().pubkey;
-                // get_index_of_account_in_instruction has already checked if the index is valid.
-                let caller_instruction_account = instruction_context
-                    .instruction_accounts()
-                    .get(index_in_caller as usize)
-                    .unwrap();
-
-                // Readonly in caller cannot become writable in callee
-                if instruction_account.is_writable() && !caller_instruction_account.is_writable() {
-                    ic_msg!(self, "{}'s writable privilege escalated", account_key,);
-                    return Err(InstructionError::PrivilegeEscalation);
-                }
-
-                // To be signed in the callee,
-                // it must be either signed in the caller or by the program
-                if instruction_account.is_signer()
-                    && !(caller_instruction_account.is_signer() || signers.contains(account_key))
-                {
-                    ic_msg!(self, "{}'s signer privilege escalated", account_key,);
-                    return Err(InstructionError::PrivilegeEscalation);
-                }
-            }
-
-            // Find and validate executables / program accounts
+            // Find executables / program accounts
             let callee_program_id = &instruction.program_id;
             let program_account_index_in_transaction = self
                 .transaction_context
                 .find_index_of_account(callee_program_id);
-            let program_account_index_in_instruction = program_account_index_in_transaction
-                .map(|index| instruction_context.get_index_of_account_in_instruction(index));
 
-            // We first check if the account exists in the transaction, and then see if it is part
-            // of the instruction.
-            if program_account_index_in_instruction.is_none()
-                || program_account_index_in_instruction.unwrap().is_err()
-            {
+            // Validate executables / program accounts
+            // Check if the account exists in the transaction
+            if program_account_index_in_transaction.is_none() {
                 ic_msg!(self, "Unknown program {}", callee_program_id);
                 return Err(InstructionError::MissingAccount);
             }
@@ -547,6 +568,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
             result.map_err(|err| (top_level_instruction_index as u8, err))?;
         }
+
         Ok(())
     }
 
@@ -563,7 +585,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 .account_keys()
                 .len()
                 .min(MAX_ACCOUNTS_PER_TRANSACTION);
-            let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; transaction_callee_map_len];
+            let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; transaction_callee_map_len];
 
             let mut instruction_accounts: Vec<InstructionAccount> =
                 Vec::with_capacity(instruction.accounts.len());
@@ -573,7 +595,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                     .expect("Invalid index in transaction");
 
                 if (*index_in_callee as usize) > instruction_accounts.len() {
-                    *index_in_callee = instruction_accounts.len() as u16;
+                    *index_in_callee = instruction_accounts.len() as u8;
                 }
 
                 let index_in_transaction = *index_in_transaction as usize;
@@ -863,7 +885,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             solana_svm_callback::InvokeContextCallback,
             solana_svm_log_collector::LogCollector,
             $crate::{
-                __private::{Hash, ReadableAccount, Rent, TransactionContext},
+                __private::{DropOnBailOut, Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
@@ -885,12 +907,13 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 }
             }
         });
-        let mut $transaction_context = TransactionContext::new(
+        let mut $transaction_context = TransactionContext::new_with_feature_flags(
             $transaction_accounts,
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             $top_level_instructions,
+            DropOnBailOut::Disabled,
         );
         let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
@@ -1423,7 +1446,7 @@ mod tests {
                 0,
                 0,
                 vec![InstructionAccount::new(0, false, false)],
-                vec![u16::MAX; num_transaction_accounts],
+                vec![u8::MAX; num_transaction_accounts],
                 Cow::Owned(Vec::new()),
                 None,
             )
@@ -1434,7 +1457,7 @@ mod tests {
                 1,
                 0,
                 vec![InstructionAccount::new(0, false, false)],
-                vec![u16::MAX; num_transaction_accounts],
+                vec![u8::MAX; num_transaction_accounts],
                 Cow::Owned(Vec::new()),
                 None,
             )
@@ -1574,9 +1597,11 @@ mod tests {
             },
             metas,
         );
+
         invoke_context
-            .prepare_next_cpi_instruction(inner_instruction, &[])
+            .build_instruction_frame(inner_instruction)
             .unwrap();
+        invoke_context.verify_instruction_accounts(&[]).unwrap();
 
         let mut compute_units_consumed = 0;
         let result = invoke_context
@@ -1787,13 +1812,19 @@ mod tests {
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_cpi_instruction(instruction_1, &[fee_payer.pubkey()])
+            .build_instruction_frame(instruction_1)
+            .unwrap();
+        invoke_context
+            .verify_instruction_accounts(&[fee_payer.pubkey()])
             .unwrap();
         test_case_1(&invoke_context);
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_cpi_instruction(instruction_2, &[fee_payer.pubkey()])
+            .build_instruction_frame(instruction_2)
+            .unwrap();
+        invoke_context
+            .verify_instruction_accounts(&[fee_payer.pubkey()])
             .unwrap();
         test_case_2(&invoke_context);
     }
@@ -1870,8 +1901,9 @@ mod tests {
             account_metas.iter().cloned().rev().collect(),
         );
 
+        invoke_context.build_instruction_frame(instruction).unwrap();
         invoke_context
-            .prepare_next_cpi_instruction(instruction, &[fee_payer.pubkey()])
+            .verify_instruction_accounts(&[fee_payer.pubkey()])
             .unwrap();
         let instruction_context = invoke_context
             .transaction_context

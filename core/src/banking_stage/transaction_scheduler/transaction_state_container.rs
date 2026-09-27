@@ -6,7 +6,7 @@ use {
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::StaticTransactionWithMeta,
     },
     std::{
         collections::{BTreeSet, HashMap, hash_map::Entry},
@@ -40,15 +40,16 @@ use {
 ///
 /// The container maintains a fixed capacity. If the queue is full when pushing
 /// a new transaction, the lowest priority transaction will be dropped.
-pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
+pub(crate) struct TransactionStateContainer<Tx: StaticTransactionWithMeta> {
     capacity: usize,
     priority_queue: BTreeSet<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
+    next_arrival_order: u64,
     held_transactions: Vec<TransactionPriorityId>,
     nonces_in_use: HashMap<Pubkey, TransactionPriorityId, PubkeyHasherBuilder>,
 }
 
-pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
+pub(crate) trait StateContainer<Tx: StaticTransactionWithMeta> {
     /// Create a new `TransactionStateContainer` with the given capacity.
     fn with_capacity(capacity: usize) -> Self;
 
@@ -81,7 +82,11 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
         let transaction_state = self
             .get_mut_transaction_state(transaction_id)
             .expect("transaction must exist");
-        let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
+        let priority_id = TransactionPriorityId::new(
+            transaction_state.priority(),
+            transaction_state.arrival_order(),
+            transaction_id,
+        );
         transaction_state.retry_transaction(transaction);
 
         if immediately_retryable {
@@ -135,12 +140,13 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 // is added to the slab before anything can be evicted from a full queue.
 pub(crate) const EXTRA_CAPACITY: usize = 1;
 
-impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
+impl<Tx: StaticTransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             capacity,
             priority_queue: BTreeSet::new(),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
+            next_arrival_order: 0,
             held_transactions: Vec::with_capacity(capacity),
             nonces_in_use: HashMap::with_hasher(PubkeyHasherBuilder::default()),
         }
@@ -262,14 +268,21 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 }
 
-impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
+impl<Tx: StaticTransactionWithMeta> TransactionStateContainer<Tx> {
     /// Insert into the map, but NOT into the priority queue.
-    /// Returns the id of the inserted transaction.
-    pub(crate) fn insert_map_only(&mut self, state: TransactionState<Tx>) -> TransactionId {
+    /// Returns the priority id of the inserted transaction.
+    pub(crate) fn insert_map_only(
+        &mut self,
+        mut state: TransactionState<Tx>,
+    ) -> TransactionPriorityId {
+        let arrival_order = self.next_arrival_order;
+        self.next_arrival_order = self.next_arrival_order.wrapping_add(1);
+        state.set_arrival_order(arrival_order);
+        let priority = state.priority();
         let entry = self.get_vacant_map_entry();
         let transaction_id = entry.key();
         entry.insert(state);
-        transaction_id
+        TransactionPriorityId::new(priority, arrival_order, transaction_id)
     }
 
     /// Insert a new transaction into the container's queues and maps.
@@ -282,9 +295,8 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         priority: u64,
         cost: u64,
     ) -> bool {
-        let transaction_id =
+        let priority_id =
             self.insert_map_only(TransactionState::new(transaction, max_age, priority, cost));
-        let priority_id = TransactionPriorityId::new(priority, transaction_id);
 
         self.push_ids_into_queue(std::iter::once(priority_id)) > 0
     }
@@ -296,7 +308,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
 
     fn remove_state(&mut self, id: TransactionId) -> TransactionPriorityId {
         let state = self.id_to_transaction_state.remove(id);
-        let priority_id = TransactionPriorityId::new(state.priority(), id);
+        let priority_id = TransactionPriorityId::new(state.priority(), state.arrival_order(), id);
 
         if let Some(nonce_address) = state.nonce_address()
             && let Entry::Occupied(entry) = self.nonces_in_use.entry(*nonce_address)
@@ -324,9 +336,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::Message,
         solana_perf::packet::Packet,
-        solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        },
+        solana_runtime_transaction::sanitize_config::sanitize_config,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{
@@ -393,6 +403,61 @@ mod tests {
     }
 
     #[test]
+    fn test_equal_priority_transactions_are_fifo_across_slab_reuse() {
+        let mut container = TransactionStateContainer::with_capacity(2);
+        let mut priority_ids = Vec::new();
+
+        for _ in 0..2 {
+            let (transaction, max_age, priority, cost) = test_transaction(1);
+            let priority_id = container.insert_map_only(TransactionState::new(
+                transaction,
+                max_age,
+                priority,
+                cost,
+            ));
+            container.push_ids_into_queue(std::iter::once(priority_id));
+            priority_ids.push(priority_id);
+        }
+
+        let removed = priority_ids[1];
+        container.remove_by_id(removed.id);
+
+        let (transaction, max_age, priority, cost) = test_transaction(1);
+        let priority_id =
+            container.insert_map_only(TransactionState::new(transaction, max_age, priority, cost));
+        assert_eq!(priority_id.id, removed.id);
+        container.push_ids_into_queue(std::iter::once(priority_id));
+
+        assert_eq!(container.pop().unwrap(), priority_ids[0]);
+        assert_eq!(container.pop().unwrap(), priority_id);
+    }
+
+    #[test]
+    fn test_equal_priority_capacity_drops_newest_transaction() {
+        let mut container = TransactionStateContainer::with_capacity(2);
+        let mut priority_ids = Vec::new();
+
+        for expected_drops in [0, 0, 1] {
+            let (transaction, max_age, priority, cost) = test_transaction(1);
+            let priority_id = container.insert_map_only(TransactionState::new(
+                transaction,
+                max_age,
+                priority,
+                cost,
+            ));
+            assert_eq!(
+                container.push_ids_into_queue(std::iter::once(priority_id)),
+                expected_drops,
+            );
+            priority_ids.push(priority_id);
+        }
+
+        assert!(container.get_transaction(priority_ids[2].id).is_none());
+        assert_eq!(container.pop().unwrap(), priority_ids[0]);
+        assert_eq!(container.pop().unwrap(), priority_ids[1]);
+    }
+
+    #[test]
     fn test_get_mut_transaction_state() {
         let mut container = TransactionStateContainer::with_capacity(5);
         push_to_container(&mut container, 5);
@@ -437,8 +502,7 @@ mod tests {
             let (transaction, _max_age, priority, cost) = test_transaction(priority);
             let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
             let data = Bytes::copy_from_slice(packet.data(..).unwrap());
-            let id = container.insert_map_only(packet_parser(data, priority, cost));
-            let priority_id = TransactionPriorityId::new(priority, id);
+            let priority_id = container.insert_map_only(packet_parser(data, priority, cost));
             assert_eq!(
                 container.push_ids_into_queue(std::iter::once(priority_id)),
                 0
@@ -450,8 +514,7 @@ mod tests {
             let (transaction, _max_age, priority, cost) = test_transaction(priority);
             let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
             let data = Bytes::copy_from_slice(packet.data(..).unwrap());
-            let id = container.insert_map_only(packet_parser(data, priority, cost));
-            let priority_id = TransactionPriorityId::new(priority, id);
+            let priority_id = container.insert_map_only(packet_parser(data, priority, cost));
             assert_eq!(
                 container.push_ids_into_queue(std::iter::once(priority_id)),
                 1,
@@ -468,8 +531,7 @@ mod tests {
         let (transaction, _max_age, priority, cost) = test_transaction(priority);
         let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
         let data = Bytes::copy_from_slice(packet.data(..).unwrap());
-        let id = container.insert_map_only(packet_parser(data, priority, cost));
-        let priority_id = TransactionPriorityId::new(priority, id);
+        let priority_id = container.insert_map_only(packet_parser(data, priority, cost));
         assert_eq!(
             container.push_ids_into_queue(std::iter::once(priority_id)),
             1

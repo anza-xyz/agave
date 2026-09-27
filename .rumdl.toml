@@ -1,0 +1,10 @@
+[global]
+flavor = "gfm"
+# Allow lines longer than 80 characters.
+disable = ["MD013"]
+
+[MD049]
+style = "asterisk"
+
+[MD050]
+style = "asterisk"

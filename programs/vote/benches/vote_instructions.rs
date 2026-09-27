@@ -6,7 +6,8 @@ use {
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, error::InstructionError},
+    solana_instruction::AccountMeta,
+    solana_instruction_error::InstructionError,
     solana_program_runtime::{
         invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
         solana_sbpf::program::BuiltinFunctionDefinition,
@@ -14,7 +15,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{sysvar, vote::id},
-    solana_slot_hashes::{MAX_ENTRIES, SlotHashes},
+    solana_slot_hashes::{MAX_ENTRIES, SlotHash, SlotHashes},
     solana_sysvar_id::SysvarId,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
@@ -384,9 +385,9 @@ impl BenchVote {
 
         let last_vote_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == last_vote_slot)
+            .find(|entry| entry.slot == last_vote_slot)
             .unwrap()
-            .1;
+            .hash;
 
         let vote = Vote::new(
             (num_initial_votes..=last_vote_slot).collect(),
@@ -592,9 +593,9 @@ impl BenchVoteSwitch {
 
         let last_vote_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == last_vote_slot)
+            .find(|entry| entry.slot == last_vote_slot)
             .unwrap()
-            .1;
+            .hash;
 
         let vote = Vote::new(
             (num_initial_votes..=last_vote_slot).collect(),
@@ -715,9 +716,9 @@ impl BenchUpdateVoteState {
             .saturating_sub(1);
         let last_vote_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == last_vote_slot)
+            .find(|entry| entry.slot == last_vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let slots_and_lockouts: Vec<(Slot, u32)> =
             ((num_initial_votes.saturating_add(1)..=last_vote_slot).zip((1u32..=31).rev()))
                 .collect();
@@ -961,7 +962,7 @@ impl BenchCompactUpdateVoteState {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote = Vote::new(vec![1], Hash::default());
         let vote_state_update = VoteStateUpdate::from(vec![(1, 1)]);
-        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes = SlotHashes::new(&[SlotHash::new(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = create_sysvar_account(&slot_hashes);
         let instruction_accounts = vec![
             AccountMeta {
@@ -1023,7 +1024,7 @@ impl BenchTowerSync {
     fn new(switch: bool) -> Self {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote = Vote::new(vec![1], Hash::default());
-        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes = SlotHashes::new(&[SlotHash::new(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = create_sysvar_account(&slot_hashes);
         let instruction_accounts = vec![
             AccountMeta {

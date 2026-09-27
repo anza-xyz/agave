@@ -10,7 +10,10 @@ use {
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::Receiver,
     log::*,
-    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, WritableAccount,
+        state_traits::StateMutWincode as _,
+    },
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_index::{AccountsIndexConfig, ScanFilter},
@@ -522,7 +525,7 @@ impl TestValidatorGenesis {
 
             if let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
-            }) = account.deserialize_data()
+            }) = account.state()
             {
                 programdata_addresses.insert(programdata_address);
             } else {

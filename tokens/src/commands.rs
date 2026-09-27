@@ -20,7 +20,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_instruction::Instruction,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_native_token::sol_str_to_lamports,
     solana_program_error::ProgramError,
     solana_rpc_client::rpc_client::RpcClient,
@@ -812,7 +812,7 @@ pub fn get_fee_estimate_for_messages(
     let mut message = messages.first().ok_or(Error::MissingMessages)?.clone();
     let latest_blockhash = client.get_latest_blockhash()?;
     message.recent_blockhash = latest_blockhash;
-    let fee = client.get_fee_for_message(&message)?;
+    let fee = client.get_fee_for_versioned_message(&VersionedMessage::Legacy(message))?;
     let fee_estimate = fee
         .checked_mul(messages.len() as u64)
         .ok_or(Error::FeeEstimationError)?;
@@ -1866,9 +1866,8 @@ mod tests {
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
         write_keypair_file(&alice, &sender_keypair_file).unwrap();
 
-        let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
-            .unwrap();
+        let fee_message = VersionedMessage::Legacy(one_signer_message(&client));
+        let fees = client.get_fee_for_versioned_message(&fee_message).unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
         let allocation_amount = 1000.0;
@@ -1948,9 +1947,8 @@ mod tests {
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
-        let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
-            .unwrap();
+        let fee_message = VersionedMessage::Legacy(one_signer_message(&client));
+        let fees = client.get_fee_for_versioned_message(&fee_message).unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
@@ -2070,9 +2068,8 @@ mod tests {
         let url = test_validator.rpc_url();
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
-        let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
-            .unwrap();
+        let fee_message = VersionedMessage::Legacy(one_signer_message(&client));
+        let fees = client.get_fee_for_versioned_message(&fee_message).unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
@@ -2186,9 +2183,8 @@ mod tests {
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
-        let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
-            .unwrap();
+        let fee_message = VersionedMessage::Legacy(one_signer_message(&client));
+        let fees = client.get_fee_for_versioned_message(&fee_message).unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());

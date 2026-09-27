@@ -13,7 +13,7 @@ use {
     solana_account::ReadableAccount,
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection},
+        accounts_db::{AccountsDb, GetUniqueAccountsResult},
         storable_accounts::StorableAccountsBySlot,
     },
     solana_clock::Slot,
@@ -183,7 +183,7 @@ impl<'a> SnapshotMinimizer<'a> {
             .filter_map(|account| {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = bincode::deserialize(account.data())
+                }) = wincode::deserialize(account.data())
                 {
                     Some(programdata_address)
                 } else {
@@ -324,11 +324,8 @@ impl<'a> SnapshotMinimizer<'a> {
             let storable_accounts =
                 StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
 
-            self.accounts_db().store_accounts_for_shrink(
-                storable_accounts,
-                new_storage,
-                UpdateIndexThreadSelection::Inline,
-            );
+            self.accounts_db()
+                .store_accounts_for_shrink(&storable_accounts, new_storage);
 
             new_storage.flush().unwrap();
         }
@@ -364,7 +361,9 @@ mod tests {
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         dashmap::DashSet,
-        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+        solana_account::{
+            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+        },
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_genesis_config::create_genesis_config,
         solana_hash::Hash,
@@ -585,7 +584,7 @@ mod tests {
         ); // snapshot slot is untouched, so still has all 300 accounts
     }
 
-    /// Purging an account from a filtered storage must decrement its ref count when the
+    /// Purging an account from a filtered storage must remove its slot list entry when the
     /// account is still alive in a later slot.
     #[test]
     fn test_minimize_accounts_db_unrefs_multi_ref_accounts() {
@@ -609,12 +608,7 @@ mod tests {
         // Flush without clean so pubkey_multi keeps both slot list entries
         accounts.flush_rooted_accounts_cache_without_clean();
 
-        assert_eq!(
-            accounts
-                .accounts_index
-                .ref_count_from_storage(&pubkey_multi),
-            2
-        );
+        assert_eq!(accounts.accounts_index.slot_list_len(&pubkey_multi), 2);
 
         let minimized_account_set = DashSet::new();
         minimized_account_set.insert(pubkey_keep);
@@ -625,14 +619,9 @@ mod tests {
         };
         minimizer.minimize_accounts_db();
 
-        // filter_storage purged (pubkey_multi, slot 1) from the index, decrementing its
-        // ref count; the other entry keeps it alive
-        assert_eq!(
-            accounts
-                .accounts_index
-                .ref_count_from_storage(&pubkey_multi),
-            1
-        );
+        // filter_storage purged (pubkey_multi, slot 1) from the index; the slot 2 entry
+        // keeps it alive
+        assert_eq!(accounts.accounts_index.slot_list_len(&pubkey_multi), 1);
     }
 
     /// A dead slot whose storage carries a shrink-produced tombstone must still purge
@@ -677,7 +666,6 @@ mod tests {
         // its bytes stay in tombstone_slot's storage while its index entry is removed
         accounts.set_latest_full_snapshot_slot(tombstone_slot - 1);
         accounts.clean_accounts_for_tests();
-        accounts.shrink_all_slots(false, None);
         assert!(!accounts.contains(&zero_lamport_pubkey));
         assert_eq!(
             accounts
@@ -751,7 +739,6 @@ mod tests {
         // When minimize is called, it is a tombstone-only storage which should be
         // removed as a dead slot
         accounts.clean_accounts_for_tests();
-        accounts.shrink_all_slots(false, None);
         assert!(!accounts.contains(&zero_lamport_pubkey));
         assert_eq!(
             accounts
@@ -859,7 +846,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             accounts_db_config,

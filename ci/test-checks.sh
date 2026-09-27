@@ -17,13 +17,11 @@ CHANNEL="$(jq -r '.CHANNEL' <<<"$channel_info")"
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
 
-# sort
-if [[ -n $CI ]]; then
-  # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check > /dev/null
-else
-  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check
-fi
+# format and sort TOML files
+tombi format --check --diff
+
+# lint the changelog
+_ rumdl check CHANGELOG.md
 
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree
@@ -37,7 +35,7 @@ _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 # Only force up-to-date lock files on edge
 if [[ $CI_BASE_BRANCH = "$EDGE_CHANNEL" ]]; then
   if _ scripts/cargo-for-all-lock-files.sh "+${rust_nightly}" check \
-    --locked --workspace --all-targets --features dummy-for-ci-check,frozen-abi; then
+    --locked --workspace --all-targets --features dummy-for-ci-check,stable-abi; then
     true
   else
     check_status=$?

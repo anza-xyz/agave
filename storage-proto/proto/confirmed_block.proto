@@ -130,6 +130,7 @@ enum RewardType {
     Staking = 3;
     Voting = 4;
     DeactivatedStake = 5;
+    VATDebit = 6;
 }
 
 message Reward {

@@ -117,7 +117,7 @@ fn star_network_create(num: usize) -> Network {
             let new = CrdsValue::new(CrdsData::from(&contact_info), &node_keypair);
             let node = CrdsGossip::default();
             {
-                let mut node_crds = node.crds.write().unwrap();
+                let mut node_crds = node.crds.write();
                 node_crds
                     .insert(new.clone(), timestamp(), GossipRoute::LocalMessage)
                     .unwrap();
@@ -133,7 +133,6 @@ fn star_network_create(num: usize) -> Network {
     let id = entry.label().pubkey();
     node.crds
         .write()
-        .unwrap()
         .insert(entry, timestamp(), GossipRoute::LocalMessage)
         .unwrap();
     let node = Node::new(node_keypair, contact_info, Arc::new(node));
@@ -150,7 +149,6 @@ fn rstar_network_create(num: usize) -> Network {
     origin
         .crds
         .write()
-        .unwrap()
         .insert(entry, timestamp(), GossipRoute::LocalMessage)
         .unwrap();
     let mut network: HashMap<_, _> = (1..num)
@@ -161,13 +159,11 @@ fn rstar_network_create(num: usize) -> Network {
             let node = CrdsGossip::default();
             node.crds
                 .write()
-                .unwrap()
                 .insert(new.clone(), timestamp(), GossipRoute::LocalMessage)
                 .unwrap();
             origin
                 .crds
                 .write()
-                .unwrap()
                 .insert(new.clone(), timestamp(), GossipRoute::LocalMessage)
                 .unwrap();
             let node = Node::new(node_keypair, contact_info, Arc::new(node));
@@ -188,7 +184,6 @@ fn ring_network_create(num: usize) -> Network {
             let node = CrdsGossip::default();
             node.crds
                 .write()
-                .unwrap()
                 .insert(new.clone(), timestamp(), GossipRoute::LocalMessage)
                 .unwrap();
             let node = Node::new(node_keypair, contact_info, Arc::new(node));
@@ -201,11 +196,11 @@ fn ring_network_create(num: usize) -> Network {
             let start = &network[&keys[k]];
             let start_id = keys[k];
             let label = CrdsValueLabel::ContactInfo(start_id);
-            let gossip_crds = start.gossip.crds.read().unwrap();
+            let gossip_crds = start.gossip.crds.read();
             gossip_crds.get::<&CrdsValue>(&label).unwrap().clone()
         };
         let end = network.get_mut(&keys[(k + 1) % keys.len()]).unwrap();
-        let mut end_crds = end.gossip.crds.write().unwrap();
+        let mut end_crds = end.gossip.crds.write();
         end_crds
             .insert(start_info, timestamp(), GossipRoute::LocalMessage)
             .unwrap();
@@ -223,7 +218,6 @@ fn connected_staked_network_create(stakes: &[u64]) -> Network {
             let node = CrdsGossip::default();
             node.crds
                 .write()
-                .unwrap()
                 .insert(new.clone(), timestamp(), GossipRoute::LocalMessage)
                 .unwrap();
             let node = Node::staked(node_keypair, contact_info, Arc::new(node), stakes[n]);
@@ -237,12 +231,12 @@ fn connected_staked_network_create(stakes: &[u64]) -> Network {
         .map(|k| {
             let start = &network[k];
             let start_label = CrdsValueLabel::ContactInfo(*k);
-            let gossip_crds = start.gossip.crds.read().unwrap();
+            let gossip_crds = start.gossip.crds.read();
             gossip_crds.get::<&CrdsValue>(&start_label).unwrap().clone()
         })
         .collect();
     for (end_pubkey, end) in network.iter_mut() {
-        let mut end_crds = end.gossip.crds.write().unwrap();
+        let mut end_crds = end.gossip.crds.write();
         for k in 0..keys.len() {
             if keys[k] != *end_pubkey {
                 let start_info = start_entries[k].clone();
@@ -265,14 +259,14 @@ fn network_simulator_pull_only(thread_pool: &ThreadPool, network: &Network) {
         .iter()
         .map(|(&pubkey, node)| {
             let label = CrdsValueLabel::ContactInfo(pubkey);
-            let crds = node.gossip.crds.read().unwrap();
+            let crds = node.gossip.crds.read();
             let entry = crds.get::<&CrdsValue>(&label).unwrap().clone();
             (pubkey, entry)
         })
         .unzip();
     entries.rotate_right(1);
     for (pubkey, entry) in pubkeys.into_iter().zip(entries) {
-        let mut crds = network.nodes[&pubkey].gossip.crds.write().unwrap();
+        let mut crds = network.nodes[&pubkey].gossip.crds.write();
         let _ = crds.insert(entry, timestamp(), GossipRoute::LocalMessage);
     }
     // Star convergence needs O(SAMPLE_RATE * num) rounds.
@@ -311,7 +305,7 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
         network_values.par_iter().for_each(|node| {
             let node_pubkey = node.keypair.pubkey();
             let mut m = {
-                let node_crds = node.gossip.crds.read().unwrap();
+                let node_crds = node.gossip.crds.read();
                 node_crds.get::<&ContactInfo>(node_pubkey).cloned().unwrap()
             };
             m.set_wallclock(now);
@@ -552,7 +546,7 @@ fn network_run_pull(
                         .unwrap_or_default();
                     let from_pubkey = from.keypair.pubkey();
                     let label = CrdsValueLabel::ContactInfo(from_pubkey);
-                    let gossip_crds = from.gossip.crds.read().unwrap();
+                    let gossip_crds = from.gossip.crds.read();
                     let self_info = gossip_crds.get::<&CrdsValue>(&label).unwrap().clone();
                     requests
                         .into_iter()
@@ -633,7 +627,7 @@ fn network_run_pull(
         }
         let total: usize = network_values
             .par_iter()
-            .map(|v| v.gossip.crds.read().unwrap().len())
+            .map(|v| v.gossip.crds.read().len())
             .sum();
         convergance = total as f64 / ((num * num) as f64);
         if convergance > max_convergance {
@@ -774,7 +768,6 @@ fn test_prune_errors() {
     crds_gossip
         .crds
         .write()
-        .unwrap()
         .insert(
             CrdsValue::new(CrdsData::from(&ci), &Keypair::new()),
             0,

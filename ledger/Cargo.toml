@@ -21,10 +21,10 @@ name = "solana_ledger"
 
 [features]
 dev-context-only-utils = ["solana-perf/dev-context-only-utils", "solana-runtime/dev-context-only-utils"]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-runtime/frozen-abi",
+    "solana-runtime/stable-abi",
 ]
 agave-unstable-api = []
 
@@ -32,7 +32,9 @@ agave-unstable-api = []
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-wake-channel = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bitflags = { workspace = true }
@@ -69,12 +71,8 @@ solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-hash = { workspace = true }
@@ -135,8 +133,9 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-bls-signatures = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -148,9 +147,6 @@ solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features =
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
 test-case = { workspace = true }
-
-[[bench]]
-name = "blockstore"
 
 [[bench]]
 name = "make_shreds_from_entries"

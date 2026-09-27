@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         contact_info::ContactInfo,
@@ -23,7 +25,7 @@ use {
 
 /// CrdsValue that is replicated across the cluster
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "4ABukH5bS69APB3bu1hbMiGyeKPw21nzXAVzCRMtKPih",
@@ -39,7 +41,7 @@ pub struct CrdsValue {
     data: CrdsData,
     #[wincode(skip)]
     // Not on the wire (recomputed on deserialize); keep it out of the sample.
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Hash::default()"))]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Hash::default()"))]
     hash: Hash, // Sha256 hash of [signature, data].
 }
 
@@ -183,6 +185,7 @@ impl CrdsValue {
     }
 
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn data(&self) -> &CrdsData {
         &self.data
     }

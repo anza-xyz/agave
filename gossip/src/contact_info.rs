@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::{field_qualifiers, qualifiers};
 pub use solana_net_utils::Protocol;
 use {
     crate::{
@@ -81,7 +83,7 @@ pub enum Error {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi),
     frozen_abi(
         abi_digest = "8uEsgsqpoykiQgP3Majk8kurCVNB3TESe9dejgDowub4",
@@ -112,8 +114,13 @@ pub struct ContactInfo {
     cache: [SocketAddr; SOCKET_CACHE_SIZE],
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(key(pub), index(pub), offset(pub))
+)]
 pub(crate) struct SocketEntry {
     pub(crate) key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
     pub(crate) index: u8, // IpAddr index in the accompanying addrs vector.
@@ -259,13 +266,14 @@ impl ContactInfo {
         &self.version
     }
 
-    // Conformance-only accessors; unused under DCOU.
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn addrs(&self) -> &[IpAddr] {
         &self.addrs
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn sockets(&self) -> &[SocketEntry] {
         &self.sockets
     }
@@ -695,7 +703,7 @@ fn sanitize_entries(addrs: &[IpAddr], sockets: &[SocketEntry]) -> Result<(), Err
 // can't produce round-trippable values. We build a valid node via `set_socket`,
 // which maintains every invariant (including `cache`), so the digest test can use
 // `test_roundtrip = "eq_and_wire"`.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 impl solana_frozen_abi::rand::distr::Distribution<ContactInfo>
     for solana_frozen_abi::rand::distr::StandardUniform
 {

@@ -101,14 +101,14 @@ mod tests {
         test_case::test_matrix,
     };
 
-    fn store_account<T: serde::Serialize>(
+    fn store_account<T: wincode::Serialize<Src = T>>(
         bank: &Bank,
         address: &Pubkey,
         data: &T,
         executable: bool,
         owner: &Pubkey,
     ) {
-        let data = bincode::serialize(data).unwrap();
+        let data = wincode::serialize(data).unwrap();
         let data_len = data.len();
         let lamports = bank.get_minimum_balance_for_rent_exemption(data_len);
         let account = AccountSharedData::from(Account {

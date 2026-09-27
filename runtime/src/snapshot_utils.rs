@@ -5,7 +5,7 @@ use {
         bank::BankFieldsToDeserialize,
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, SerdeObsoleteAccountsMap,
-            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams, StorageListItem,
+            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams, StartupHints,
             StoragesList,
         },
         snapshot_package::BankSnapshotPackage,
@@ -42,8 +42,7 @@ use {
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsFileId, AtomicAccountsFileId},
         utils::{
-            ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path,
-            move_and_async_delete_path_contents,
+            ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path, move_and_async_delete_path_contents,
         },
     },
     solana_clock::Slot,
@@ -75,6 +74,8 @@ pub const MAX_OBSOLETE_ACCOUNTS_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 12; // 12 
 /// Each `(slot, id)` entry encodes to 12 bytes; 100 MiB covers ~8.7 million entries, well past
 /// any realistic storage count.
 pub const MAX_STORAGES_LIST_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MiB
+/// The file holds a handful of scalars; this conservative bound limits the impact of bad state.
+pub const MAX_STARTUP_HINTS_FILE_SIZE: u64 = 4096;
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 /// Buffer size for reading auxiliary per-snapshot files (obsolete accounts, storages list).
@@ -93,7 +94,9 @@ const AUX_SNAPSHOT_FILE_READ_BUF_SIZE: usize = 4 * 1024 * 1024;
 //         and the next teardown writes the new-format storages list.
 //         Note: 2.0.0 validators cannot fastboot from 3.0.0 snapshots because the per-storage
 //         hardlink dirs they rely on are no longer written; they must fall back to archive.
-const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(3, 0, 0);
+// 3.1.0 - Startup hints file added. Optional tuning state, so snapshots fastboot in either
+//         direction between 3.0.0 and 3.1.0; a validator finding no hints just skips the tuning.
+const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(3, 1, 0);
 
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.
@@ -372,9 +375,6 @@ fn is_snapshot_fastboot_compatible(
     match version.major {
         // Current format: storages list lives next to the bank snapshot file.
         3 => Ok(true),
-        // Legacy format: per-storage hardlink dirs. `rebuild_storages_from_snapshot_dir`
-        // migrates them to the new format at load time.
-        2 => Ok(true),
         v if v > SNAPSHOT_FASTBOOT_VERSION.major => {
             Err(SnapshotFastbootError::IncompatibleVersion(version.clone()))
         }
@@ -487,6 +487,7 @@ pub fn serialize_snapshot(
     bank_snapshot_package: BankSnapshotPackage,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     should_finalize: bool,
+    startup_hints: &StartupHints,
     io_setup: &IoSetupState,
 ) -> Result<BankSnapshotInfo> {
     let BankSnapshotPackage {
@@ -529,11 +530,10 @@ pub fn serialize_snapshot(
                 accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
                 block_id: Some(bank_fields.block_id),
             };
-            serde_snapshot::serialize_bank_snapshot_into_wincode(
+            serde_snapshot::serialize_bank_snapshot_into(
                 stream,
                 bank_fields,
                 bank_hash_stats,
-                snapshot_storages,
                 extra_fields,
             )?;
             Ok(())
@@ -592,6 +592,9 @@ pub fn serialize_snapshot(
                     )
                     .map_err(|err| AddBankSnapshotError::WriteStoragesList(Box::new(err)))?
                 );
+
+                write_startup_hints_to_snapshot(&bank_snapshot_dir, startup_hints, io_setup)
+                    .map_err(|err| AddBankSnapshotError::WriteStartupHints(Box::new(err)))?;
 
                 mark_bank_snapshot_as_loadable(&bank_snapshot_dir)
                     .map_err(AddBankSnapshotError::MarkSnapshotLoadable)?;
@@ -815,6 +818,58 @@ fn deserialize_storages_list(
     Ok(serde_snapshot::deserialize_wincode_from(
         storages_list_reader,
     )?)
+}
+
+pub fn write_startup_hints_to_snapshot(
+    bank_snapshot_dir: impl AsRef<Path>,
+    startup_hints: &StartupHints,
+    io_setup: &IoSetupState,
+) -> Result<FileSize> {
+    let startup_hints_path = bank_snapshot_dir
+        .as_ref()
+        .join(snapshot_paths::SNAPSHOT_STARTUP_HINTS_FILENAME);
+    let mut file_stream = SizeLimitedWriter::new(
+        large_file_buf_writer(&startup_hints_path, io_setup)?,
+        MAX_STARTUP_HINTS_FILE_SIZE,
+    );
+    serde_snapshot::serialize_into(&mut file_stream, startup_hints).map_err(|err| {
+        IoError::other(format!(
+            "unable to serialize startup hints to file '{}': {err}",
+            startup_hints_path.display(),
+        ))
+    })?;
+    Ok(file_stream.bytes_written())
+}
+
+/// Reads the startup hints written next to a bank snapshot.
+///
+/// `Ok(None)` when the snapshot predates the hints file or its hints came from a newer version;
+/// any other failure to read a present file is an error.
+pub fn read_startup_hints(bank_snapshot_dir: impl AsRef<Path>) -> Result<Option<StartupHints>> {
+    let startup_hints_path = bank_snapshot_dir
+        .as_ref()
+        .join(snapshot_paths::SNAPSHOT_STARTUP_HINTS_FILENAME);
+    if !startup_hints_path.exists() {
+        return Ok(None);
+    }
+
+    let startup_hints_file_metadata = fs::metadata(&startup_hints_path)?;
+    if startup_hints_file_metadata.len() > MAX_STARTUP_HINTS_FILE_SIZE {
+        let error_message = format!(
+            "too large startup hints file to deserialize: '{}' has {} bytes (max size is \
+             {MAX_STARTUP_HINTS_FILE_SIZE} bytes)",
+            startup_hints_path.display(),
+            startup_hints_file_metadata.len(),
+        );
+        return Err(IoError::other(error_message).into());
+    }
+    let startup_hints_reader = ReadAdapter::new(large_file_buf_reader(
+        &startup_hints_path,
+        AUX_SNAPSHOT_FILE_READ_BUF_SIZE,
+        &IoSetupState::default(),
+    )?);
+
+    Ok(StartupHints::read_from(startup_hints_reader)?)
 }
 
 pub fn serialize_snapshot_data_file<F>(
@@ -1327,114 +1382,6 @@ fn spawn_streaming_snapshot_dir_files(
     (file_receiver, handle)
 }
 
-/// Migrates a legacy (2.0.0) bank snapshot's hardlink-based storages into the new format.
-///
-/// Walks `<bank_snapshot_dir>/accounts_hardlinks/`, follows each symlink to its
-/// `<account_path>/snapshot/<slot>/` target, and renames each storage file there back into
-/// `<account_path>/run/`. Writes the derived storages list into the bank snapshot dir so the
-/// load path can always read it from disk. Tears down the legacy directories (the
-/// `accounts_hardlinks/` symlink dir and the whole `<account_path>/snapshot/` tree) on success
-/// so subsequent restarts go through the normal new-format path.
-fn migrate_legacy_hardlinks(bank_snapshot_dir: &Path, account_run_paths: &[PathBuf]) -> Result<()> {
-    let accounts_hardlinks_dir =
-        bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
-    let mut items: Vec<StorageListItem> = Vec::new();
-
-    for entry in fs::read_dir(&accounts_hardlinks_dir).map_err(|err| {
-        IoError::other(format!(
-            "failed to read legacy accounts hardlinks dir '{}': {err}",
-            accounts_hardlinks_dir.display(),
-        ))
-    })? {
-        let symlink_path = entry?.path();
-        let snapshot_slot_dir = fs::read_link(&symlink_path).map_err(|err| {
-            IoError::other(format!(
-                "failed to read symlink '{}': {err}",
-                symlink_path.display(),
-            ))
-        })?;
-        // snapshot_slot_dir = `<X>/snapshot/<slot>/`. The account run dir is its
-        // grandparent + `run` (i.e. `<X>/run`).
-        let run_dir = snapshot_slot_dir
-            .parent()
-            .and_then(Path::parent)
-            .ok_or_else(|| {
-                IoError::other(format!(
-                    "invalid legacy hardlink target '{}'",
-                    snapshot_slot_dir.display(),
-                ))
-            })?
-            .join(ACCOUNTS_RUN_DIR);
-        // The legacy snapshot was taken against the account paths in use at the time. If
-        // those have changed (e.g. the operator reconfigured `account_paths` while upgrading
-        // Agave), the run dir we just derived isn't one we're loading into — bail rather than
-        // silently writing files into a location nobody's reading from.
-        if !account_run_paths.contains(&run_dir) {
-            return Err(IoError::other(format!(
-                "legacy hardlink target '{}' points to run dir '{}' which is not in the current \
-                 account paths ({:?}); the account paths configuration has changed since this \
-                 snapshot was taken — load from a snapshot archive instead",
-                snapshot_slot_dir.display(),
-                run_dir.display(),
-                account_run_paths,
-            ))
-            .into());
-        }
-
-        for file_entry in fs::read_dir(&snapshot_slot_dir).map_err(|err| {
-            IoError::other(format!(
-                "failed to read legacy hardlink dir '{}': {err}",
-                snapshot_slot_dir.display(),
-            ))
-        })? {
-            let src = file_entry?.path();
-            let Some(name) = src.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            let (slot, id) = get_slot_and_append_vec_id(name)?;
-            let dest = run_dir.join(name);
-            fs::rename(&src, &dest).map_err(|err| {
-                IoError::other(format!(
-                    "failed to migrate legacy storage from '{}' to '{}': {err}",
-                    src.display(),
-                    dest.display(),
-                ))
-            })?;
-            items.push(StorageListItem {
-                slot,
-                id: id as AccountsFileId,
-            });
-        }
-    }
-
-    // Persist the derived list now: migration is destructive (it removes the legacy hardlinks
-    // below), and writing the storages list is what actually brings the bank snapshot to
-    // fastboot version >=3 compatibility. Doing it here means the snapshot stays loadable even
-    // if the validator never performs a proper teardown (e.g. crashes).
-    serialize_storages_list_to_snapshot(
-        bank_snapshot_dir,
-        StoragesList::from_items(items),
-        &IoSetupState::default(),
-    )?;
-
-    // Tear down the legacy state so we don't repeat this migration: drop the bank snapshot's
-    // `accounts_hardlinks/` symlink dir and wipe each `<account_path>/snapshot/` tree (catches
-    // both the per-slot dirs we just emptied and any orphans from older purged snapshots).
-    fs::remove_dir_all(&accounts_hardlinks_dir).map_err(|err| {
-        IoError::other(format!(
-            "failed to remove legacy accounts hardlinks dir '{}': {err}",
-            accounts_hardlinks_dir.display(),
-        ))
-    })?;
-    wipe_account_snapshot_dirs(account_run_paths);
-
-    // Bump the fastboot version so subsequent loads take the normal 3.0+ path instead of
-    // re-running the migration (which would fail now that the hardlinks dir is gone).
-    mark_bank_snapshot_as_loadable(bank_snapshot_dir)?;
-
-    Ok(())
-}
-
 /// Removes storage files from `account_paths` whose `(slot, id)` pair isn't listed in the
 /// storages list (i.e. they don't belong to the snapshot being loaded). Files whose names
 /// don't parse as `<slot>.<id>` storage filenames are left alone.
@@ -1479,6 +1426,10 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
 ) -> Result<(AccountStorageMap, BankFieldsToDeserialize, AccountsDbFields)> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
 
+    if !matches!(snapshot_info.fastboot_version.as_ref(), Some(version) if version.major == 3) {
+        return Err(IoError::other("unsupported fastboot snapshot version").into());
+    }
+
     // With fastboot_version >= 2, obsolete accounts are tracked and stored in the snapshot
     // Even if obsolete accounts are not enabled, the snapshot may still contain obsolete accounts
     // as the feature may have been enabled in previous validator runs.
@@ -1500,14 +1451,6 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
     // lt hash check at startup verifies the surviving storages.
     let storages_list_path =
         bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STORAGES_LIST_FILENAME);
-    if !storages_list_path.exists() {
-        // Legacy (2.0.0) bank snapshot: storages live as hardlinks under
-        // `<account_path>/snapshot/<slot>/`, with symlinks in
-        // `<bank_snapshot_dir>/accounts_hardlinks/` tying them to the bank snapshot. Move the
-        // files back into `<account_path>/run/` and write out the storages list so the load
-        // path below can read it like any other 3.0+ snapshot.
-        migrate_legacy_hardlinks(bank_snapshot_dir, account_paths)?;
-    }
     let storages_list =
         deserialize_storages_list(&storages_list_path, MAX_STORAGES_LIST_FILE_SIZE)?;
     prune_stale_storages(account_paths, storages_list)?;
@@ -1873,7 +1816,7 @@ pub fn create_tmp_accounts_dir_for_tests() -> (TempDir, PathBuf) {
 mod tests {
     use {
         super::*,
-        crate::serde_snapshot::{deserialize_wincode_from, serialize_into},
+        crate::serde_snapshot::{StorageListItem, deserialize_wincode_from, serialize_into},
         agave_snapshots::{
             paths::{
                 full_snapshot_archives_iter, get_highest_full_snapshot_archive_slot,

@@ -7,7 +7,7 @@ use {
         self,
         filter::{ShredFilterContext, TurbineMode},
     },
-    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef},
+    solana_perf::packet::{PacketBatch, PacketFlags, PacketRef},
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -32,6 +32,11 @@ pub(crate) struct ShredFetchStage {
 /// suggest a roughly 16k packet batch limit for ample headroom. We're setting it to 4x that amount
 /// to future proof for increases of CU limits (e.g., a future 100k CU limit).
 pub(crate) const SHRED_FETCH_CHANNEL_SIZE: usize = 1024 * 64;
+
+/// Ingress limit for the repair-response fetch channel (in terms of packet _batches_).
+///
+/// Sized so that a full queue of requests always drains within ~400ms.
+const REPAIR_FETCH_CHANNEL_SIZE: usize = 128;
 
 struct RepairContext {
     repair_socket: Arc<UdpSocket>,
@@ -132,7 +137,6 @@ impl ShredFetchStage {
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
         sender: EvictingSender<PacketBatch>,
-        recycler: PacketBatchRecycler,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
         name: &'static str,
@@ -141,8 +145,11 @@ impl ShredFetchStage {
         turbine_mode: TurbineMode,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_sender, packet_receiver) =
-            EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
+        let channel_size = match &ingress {
+            ShredIngress::Turbine => SHRED_FETCH_CHANNEL_SIZE,
+            ShredIngress::Repair(_) => REPAIR_FETCH_CHANNEL_SIZE,
+        };
+        let (packet_sender, packet_receiver) = EvictingSender::new_bounded(channel_size);
         let receiver_stats = Arc::new(StreamerReceiveStats::new(receiver_name));
         let streamers = sockets
             .into_iter()
@@ -153,10 +160,8 @@ impl ShredFetchStage {
                     socket,
                     exit.clone(),
                     packet_sender.clone(),
-                    recycler.clone(),
                     receiver_stats.clone(),
                     Some(Duration::from_millis(5)), // coalesce
-                    true,                           // use_pinned_memory
                     false,                          // is_staked_service
                 )
             })
@@ -191,7 +196,6 @@ impl ShredFetchStage {
         turbine_mode: TurbineMode,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let recycler = PacketBatchRecycler::new();
         let repair_context = RepairContext {
             repair_socket: repair_socket.clone(),
             cluster_info,
@@ -204,7 +208,6 @@ impl ShredFetchStage {
             sockets,
             exit.clone(),
             sender.clone(),
-            recycler.clone(),
             bank_forks.clone(),
             shred_version,
             "shred_fetch",
@@ -219,7 +222,6 @@ impl ShredFetchStage {
             vec![repair_socket],
             exit.clone(),
             sender.clone(),
-            recycler,
             bank_forks.clone(),
             shred_version,
             "shred_fetch_repair",

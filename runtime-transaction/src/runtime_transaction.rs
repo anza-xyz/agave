@@ -12,6 +12,8 @@
 use {
     crate::transaction_meta::{CachedTransactionMeta, TransactionConfiguration, TransactionMeta},
     agave_feature_set::FeatureSet,
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
+    bytes::Bytes,
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
@@ -29,6 +31,8 @@ use {
 
 mod sdk_transactions;
 mod transaction_view;
+
+pub type ReplayTransaction = RuntimeTransaction<ResolvedTransactionView<Bytes>>;
 
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 #[derive(Debug)]

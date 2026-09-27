@@ -12,7 +12,7 @@ use {
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -59,7 +59,7 @@ fn check_and_filter_proposed_vote_state(
     proposed_lockouts: &mut VecDeque<Lockout>,
     proposed_root: &mut Option<Slot>,
     proposed_hash: Hash,
-    slot_hashes: &[(Slot, Hash)],
+    slot_hashes: &[SlotHash],
 ) -> Result<(), VoteError> {
     if proposed_lockouts.is_empty() {
         return Err(VoteError::EmptySlots);
@@ -80,7 +80,7 @@ fn check_and_filter_proposed_vote_state(
     if slot_hashes.is_empty() {
         return Err(VoteError::SlotsMismatch);
     }
-    let earliest_slot_hash_in_history = slot_hashes.last().unwrap().0;
+    let earliest_slot_hash_in_history = slot_hashes.last().unwrap().slot;
 
     // Check if the proposed vote state is too old to be in the SlotHash history
     if last_proposed_slot < earliest_slot_hash_in_history {
@@ -151,7 +151,7 @@ fn check_and_filter_proposed_vote_state(
         let ancestor_slot = slot_hashes[slot_hashes_index
             .checked_sub(1)
             .expect("`slot_hashes_index` is positive when computing `ancestor_slot`")]
-        .0;
+        .slot;
 
         // Find if this slot in the proposed vote state exists in the SlotHashes history
         // to confirm if it was a valid ancestor on this fork
@@ -255,9 +255,9 @@ fn check_and_filter_proposed_vote_state(
     // `proposed_vote_slot < earliest_slot_hash_in_history` ran, which is equivalent to
     // `last_proposed_slot < earliest_slot_hash_in_history`, but this is impossible
     // due to assumption 3) above.
-    assert_eq!(last_proposed_slot, slot_hashes[slot_hashes_index].0);
+    assert_eq!(last_proposed_slot, slot_hashes[slot_hashes_index].slot);
 
-    if slot_hashes[slot_hashes_index].1 != proposed_hash {
+    if slot_hashes[slot_hashes_index].hash != proposed_hash {
         // This means the newest vote in the slot has a match that
         // doesn't match the expected hash for that slot on this
         // fork
@@ -267,7 +267,7 @@ fn check_and_filter_proposed_vote_state(
             proposed_lockouts,
             proposed_root,
             proposed_hash,
-            slot_hashes[slot_hashes_index].1
+            slot_hashes[slot_hashes_index].hash
         );
         return Err(VoteError::SlotHashMismatch);
     }
@@ -300,7 +300,7 @@ fn check_slots_are_valid(
     vote_state: &VoteStateHandler,
     vote_slots: &[Slot],
     vote_hash: &Hash,
-    slot_hashes: &[(Slot, Hash)],
+    slot_hashes: &[SlotHash],
 ) -> Result<(), VoteError> {
     // index into the vote's slots, starting at the oldest
     // slot
@@ -332,7 +332,7 @@ fn check_slots_are_valid(
         }
 
         // 2) Find the hash for this slot `s`.
-        if vote_slots[i] != slot_hashes[j.checked_sub(1).expect("`j` is positive")].0 {
+        if vote_slots[i] != slot_hashes[j.checked_sub(1).expect("`j` is positive")].slot {
             // Decrement `j` to find newer slots
             j = j
                 .checked_sub(1)
@@ -374,7 +374,7 @@ fn check_slots_are_valid(
         );
         return Err(VoteError::SlotsMismatch);
     }
-    if &slot_hashes[j].1 != vote_hash {
+    if &slot_hashes[j].hash != vote_hash {
         // This means the newest slot in the `vote_slots` has a match that
         // doesn't match the expected hash for that slot on this
         // fork
@@ -383,7 +383,7 @@ fn check_slots_are_valid(
             vote_state.node_pubkey(),
             vote_slots,
             vote_hash,
-            slot_hashes[j].1
+            slot_hashes[j].hash
         );
         return Err(VoteError::SlotHashMismatch);
     }
@@ -630,7 +630,7 @@ pub fn process_vote(
     if vote.slots.is_empty() {
         return Err(VoteError::EmptySlots);
     }
-    let earliest_slot_in_history = slot_hashes.last().map(|(slot, _hash)| *slot).unwrap_or(0);
+    let earliest_slot_in_history = slot_hashes.last().map(|entry| entry.slot).unwrap_or(0);
     let vote_slots = vote
         .slots
         .iter()
@@ -658,7 +658,12 @@ pub fn process_vote_unchecked(
     if vote.slots.is_empty() {
         return Err(VoteError::EmptySlots);
     }
-    let slot_hashes: Vec<_> = vote.slots.iter().rev().map(|x| (*x, vote.hash)).collect();
+    let slot_hashes: Vec<_> = vote
+        .slots
+        .iter()
+        .rev()
+        .map(|x| SlotHash::new(*x, vote.hash))
+        .collect();
     process_vote_unfiltered(
         vote_state,
         &vote.slots,
@@ -858,67 +863,72 @@ pub fn update_commission_bps<S: std::hash::BuildHasher>(
     vote_state.set_vote_account_state(vote_account)
 }
 
-pub enum NewCommissionCollector<'a, 'b> {
-    VoteAccount,
-    NewAccount(BorrowedInstructionAccount<'a, 'b>),
-}
-
-impl NewCommissionCollector<'_, '_> {
-    /// Validates the collector per SIMD-0232 and returns its pubkey.
-    ///
-    /// The designated commission collector must either be equal to the vote
-    /// account's address OR satisfy ALL of the following constraints:
-    ///
-    /// 1. Must be a system program owned account.
-    /// 2. Must be rent-exempt.
-    /// 3. Must not be a reserved account (checked via writable flag).
-    pub fn validate_and_resolve_key(
-        &self,
-        vote_account: &BorrowedInstructionAccount,
-        rent: &Rent,
-    ) -> Result<Pubkey, InstructionError> {
-        match self {
-            NewCommissionCollector::VoteAccount => Ok(*vote_account.get_key()),
-            NewCommissionCollector::NewAccount(collector_account) => {
-                // 1. Must be a system program owned account.
-                if collector_account.get_owner() != &system_program::id() {
-                    return Err(InstructionError::InvalidAccountOwner);
-                }
-
-                // 2. Must be rent-exempt.
-                if !rent.is_exempt(
-                    collector_account.get_lamports(),
-                    collector_account.get_data().len(),
-                ) {
-                    return Err(InstructionError::InsufficientFunds);
-                }
-
-                // 3. Must not be a reserved account (checked via writable flag).
-                if !collector_account.is_writable() {
-                    return Err(InstructionError::InvalidArgument);
-                }
-
-                Ok(*collector_account.get_key())
-            }
-        }
+/// Validates the collector per SIMD-0232 and returns its pubkey.
+///
+/// The designated commission collector must either be equal to the vote
+/// account's address OR satisfy ALL of the following constraints:
+///
+/// 1. Must be a system program owned account.
+/// 2. Must be rent-exempt.
+/// 3. Must not be a reserved account (checked via writable flag).
+fn validate_and_resolve_collector_key(
+    instruction_context: &InstructionContext,
+    vote_account: &BorrowedInstructionAccount,
+    collector_index: IndexOfAccount,
+    rent: &Rent,
+) -> Result<Pubkey, InstructionError> {
+    if instruction_context.get_key_of_instruction_account(collector_index)?
+        == vote_account.get_key()
+    {
+        return Ok(*vote_account.get_key());
     }
+
+    let collector_account = instruction_context.try_borrow_instruction_account(collector_index)?;
+
+    // 1. Must be a system program owned account.
+    if collector_account.get_owner() != &system_program::id() {
+        return Err(InstructionError::InvalidAccountOwner);
+    }
+
+    // 2. Must be rent-exempt.
+    if !rent.is_exempt(
+        collector_account.get_lamports(),
+        collector_account.get_data().len(),
+    ) {
+        return Err(InstructionError::InsufficientFunds);
+    }
+
+    // 3. Must not be a reserved account (checked via writable flag).
+    if !collector_account.is_writable() {
+        return Err(InstructionError::InvalidArgument);
+    }
+
+    Ok(*collector_account.get_key())
 }
 
 /// Update the vote account's commission collector (SIMD-0232).
 pub fn update_commission_collector<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedInstructionAccount,
+    instruction_context: &InstructionContext,
+    vote_account_index: IndexOfAccount,
     target_version: VoteStateTargetVersion,
-    new_collector: NewCommissionCollector,
+    new_collector_index: IndexOfAccount,
     kind: CommissionKind,
     signers: &HashSet<Pubkey, S>,
     rent: &Rent,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
+    let mut vote_account =
+        instruction_context.try_borrow_instruction_account(vote_account_index)?;
+    let mut vote_state = get_vote_state_handler_checked(&vote_account, target_version)?;
 
     // Require authorized withdrawer to sign.
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
-    let new_collector_key = new_collector.validate_and_resolve_key(vote_account, rent)?;
+    let new_collector_key = validate_and_resolve_collector_key(
+        instruction_context,
+        &vote_account,
+        new_collector_index,
+        rent,
+    )?;
 
     match kind {
         CommissionKind::InflationRewards => {
@@ -929,7 +939,7 @@ pub fn update_commission_collector<S: std::hash::BuildHasher>(
         }
     }
 
-    vote_state.set_vote_account_state(vote_account)
+    vote_state.set_vote_account_state(&mut vote_account)
 }
 
 /// Deposit delegator rewards into a vote account (SIMD-0123).
@@ -1136,12 +1146,14 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 /// Also validates the inflation-rewards and block-revenue collector accounts
 /// per SIMD-0464 (which delegates to the SIMD-0232 collector checks) and
 /// verifies the BLS proof of possession for the authorized voter BLS pubkey.
+#[allow(clippy::too_many_arguments)]
 pub fn initialize_account_v2<S: std::hash::BuildHasher, F>(
-    vote_account: &mut BorrowedInstructionAccount,
+    instruction_context: &InstructionContext,
+    vote_account_index: IndexOfAccount,
     target_version: VoteStateTargetVersion,
     vote_init: &VoteInitV2,
-    inflation_rewards_collector: NewCommissionCollector,
-    block_revenue_collector: NewCommissionCollector,
+    inflation_rewards_collector_index: IndexOfAccount,
+    block_revenue_collector_index: IndexOfAccount,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
     rent: &Rent,
@@ -1150,7 +1162,9 @@ pub fn initialize_account_v2<S: std::hash::BuildHasher, F>(
 where
     F: FnOnce() -> Result<(), InstructionError>,
 {
-    VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
+    let mut vote_account =
+        instruction_context.try_borrow_instruction_account(vote_account_index)?;
+    VoteStateHandler::check_vote_account_length(&mut vote_account, target_version)?;
     let versioned = vote_account.get_state::<VoteStateVersions>()?;
 
     if !versioned.is_uninitialized() {
@@ -1162,10 +1176,18 @@ where
 
     // Per SIMD-0464, validate the collector accounts using the same checks as
     // `UpdateCommissionCollector` (SIMD-0232).
-    let inflation_rewards_collector_key =
-        inflation_rewards_collector.validate_and_resolve_key(vote_account, rent)?;
-    let block_revenue_collector_key =
-        block_revenue_collector.validate_and_resolve_key(vote_account, rent)?;
+    let inflation_rewards_collector_key = validate_and_resolve_collector_key(
+        instruction_context,
+        &vote_account,
+        inflation_rewards_collector_index,
+        rent,
+    )?;
+    let block_revenue_collector_key = validate_and_resolve_collector_key(
+        instruction_context,
+        &vote_account,
+        block_revenue_collector_index,
+        rent,
+    )?;
 
     // verify the BLS pubkey proof of possession
     verify_bls_proof_of_possession(
@@ -1176,7 +1198,7 @@ where
     )?;
 
     VoteStateHandler::init_vote_account_state_v2(
-        vote_account,
+        &mut vote_account,
         vote_init,
         &inflation_rewards_collector_key,
         &block_revenue_collector_key,
@@ -2071,7 +2093,12 @@ mod tests {
         // as long as b has missed less than "NUM_RECENT" votes both accounts should be in sync
         let slots = (0u64..MAX_RECENT_VOTES as u64).collect();
         let vote = Vote::new(slots, Hash::default());
-        let slot_hashes: Vec<_> = vote.slots.iter().rev().map(|x| (*x, vote.hash)).collect();
+        let slot_hashes: Vec<_> = vote
+            .slots
+            .iter()
+            .rev()
+            .map(|x| SlotHash::new(*x, vote.hash))
+            .collect();
 
         assert_eq!(
             process_vote(&mut vote_state_a, &vote, &slot_hashes, 0, 0),
@@ -2087,7 +2114,7 @@ mod tests {
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_vote_skips_old_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(0, vote.hash)];
+        let slot_hashes = vec![SlotHash::new(0, vote.hash)];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
@@ -2112,7 +2139,7 @@ mod tests {
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_new_vote(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
+        let slot_hashes = vec![SlotHash::new(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Ok(())
@@ -2122,7 +2149,10 @@ mod tests {
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_bad_hash(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), hash(vote.hash.as_ref()))];
+        let slot_hashes = vec![SlotHash::new(
+            *vote.slots.last().unwrap(),
+            hash(vote.hash.as_ref()),
+        )];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Err(VoteError::SlotHashMismatch)
@@ -2132,7 +2162,7 @@ mod tests {
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_bad_slot(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![1], Hash::default());
-        let slot_hashes: Vec<_> = vec![(0, vote.hash)];
+        let slot_hashes = vec![SlotHash::new(0, vote.hash)];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Err(VoteError::SlotsMismatch)
@@ -2142,7 +2172,7 @@ mod tests {
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_duplicate_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
+        let slot_hashes = vec![SlotHash::new(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
@@ -2156,14 +2186,14 @@ mod tests {
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_next_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
+        let slot_hashes = vec![SlotHash::new(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
 
         let vote = Vote::new(vec![0, 1], Hash::default());
-        let slot_hashes: Vec<_> = vec![(1, vote.hash), (0, vote.hash)];
+        let slot_hashes = vec![SlotHash::new(1, vote.hash), SlotHash::new(0, vote.hash)];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Ok(())
@@ -2173,14 +2203,14 @@ mod tests {
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_next_vote_only(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
+        let slot_hashes = vec![SlotHash::new(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
 
         let vote = Vote::new(vec![1], Hash::default());
-        let slot_hashes: Vec<_> = vec![(1, vote.hash), (0, vote.hash)];
+        let slot_hashes = vec![SlotHash::new(1, vote.hash), SlotHash::new(0, vote.hash)];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Ok(())
@@ -2473,8 +2503,12 @@ mod tests {
                     hash: Hash::new_unique(),
                     timestamp: None,
                 };
-                let slot_hashes: Vec<_> =
-                    vote.slots.iter().rev().map(|x| (*x, vote.hash)).collect();
+                let slot_hashes: Vec<_> = vote
+                    .slots
+                    .iter()
+                    .rev()
+                    .map(|x| SlotHash::new(*x, vote.hash))
+                    .collect();
                 assert_eq!(
                     process_vote(
                         &mut vote_state_1,
@@ -3224,7 +3258,10 @@ mod tests {
 
         // Vote with all slots that are all older than the SlotHashes history should
         // error with `VotesTooOldAllFiltered`
-        let slot_hashes = vec![(3, Hash::new_unique()), (2, Hash::new_unique())];
+        let slot_hashes = vec![
+            SlotHash::new(3, Hash::new_unique()),
+            SlotHash::new(2, Hash::new_unique()),
+        ];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Err(VoteError::VotesTooOldAllFiltered)
@@ -3235,9 +3272,9 @@ mod tests {
         let vote_slot = 2;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
 
         let vote = Vote::new(vec![old_vote_slot, vote_slot], vote_slot_hash);
         process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0).unwrap();
@@ -3251,18 +3288,18 @@ mod tests {
         );
     }
 
-    fn build_slot_hashes(slots: Vec<Slot>) -> Vec<(Slot, Hash)> {
+    fn build_slot_hashes(slots: Vec<Slot>) -> Vec<SlotHash> {
         slots
             .iter()
             .rev()
-            .map(|x| (*x, Hash::new_unique()))
+            .map(|x| SlotHash::new(*x, Hash::new_unique()))
             .collect()
     }
 
     fn build_vote_state(
         target_version: VoteStateTargetVersion,
         vote_slots: Vec<Slot>,
-        slot_hashes: &[(Slot, Hash)],
+        slot_hashes: &[SlotHash],
     ) -> VoteStateHandler {
         let mut vote_state = match target_version {
             VoteStateTargetVersion::V4 => VoteStateHandler::default_v4(),
@@ -3271,9 +3308,9 @@ mod tests {
         if !vote_slots.is_empty() {
             let vote_hash = slot_hashes
                 .iter()
-                .find(|(slot, _hash)| slot == vote_slots.last().unwrap())
+                .find(|entry| &entry.slot == vote_slots.last().unwrap())
                 .unwrap()
-                .1;
+                .hash;
             let vote = Vote::new(vote_slots, vote_hash);
             process_vote_unfiltered(&mut vote_state, &vote.slots, &vote, slot_hashes, 0, 0)
                 .unwrap();
@@ -3385,13 +3422,13 @@ mod tests {
             build_vote_state(target_version, current_vote_state_slots, &slot_hashes);
         vote_state.set_root_slot(current_vote_state_root);
 
-        slot_hashes.retain(|slot| slot.0 >= earliest_slot_in_history);
+        slot_hashes.retain(|entry| entry.slot >= earliest_slot_in_history);
         assert!(!proposed_slots_and_lockouts.is_empty());
         let proposed_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == proposed_slots_and_lockouts.last().unwrap().0)
+            .find(|entry| entry.slot == proposed_slots_and_lockouts.last().unwrap().0)
             .unwrap()
-            .1;
+            .hash;
 
         // Test with a `TowerSync` where the root is less than `earliest_slot_in_history`.
         // Root slot in the `TowerSync` should be updated to match the root slot in the
@@ -3569,9 +3606,9 @@ mod tests {
         let vote_slot = 3;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(2, 2), (1, 3), (vote_slot, 1)]);
         tower_sync.hash = vote_slot_hash;
         assert_eq!(
@@ -3616,9 +3653,9 @@ mod tests {
         let vote_slot = 12;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let missing_older_than_history_slot = earliest_slot_in_history - 1;
         let mut tower_sync = TowerSync::from(vec![
             (1, 4),
@@ -3666,9 +3703,9 @@ mod tests {
         let vote_slot = 12;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let existing_older_than_history_slot = 4;
         let mut tower_sync =
             TowerSync::from(vec![(existing_older_than_history_slot, 3), (vote_slot, 2)]);
@@ -3719,9 +3756,9 @@ mod tests {
         let vote_slot = 14;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
 
         let missing_older_than_history_slot = 4;
         let existing_older_than_history_slot = 6;
@@ -3776,9 +3813,9 @@ mod tests {
         let vote_slot = vote_state.votes().back().unwrap().slot() + 2;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(missing_vote_slot, 2), (vote_slot, 3)]);
         tower_sync.hash = vote_slot_hash;
         assert_eq!(
@@ -3831,12 +3868,12 @@ mod tests {
         // Have to vote for a slot greater than the last vote in the vote state to avoid VoteTooOld
         // errors, but also this slot must be present in SlotHashes
         let vote_slot = 8;
-        assert_eq!(vote_slot, slot_hashes.first().unwrap().0);
+        assert_eq!(vote_slot, slot_hashes.first().unwrap().slot);
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(vote_slot, 1)]);
         tower_sync.hash = vote_slot_hash;
         tower_sync.root = Some(new_root);
@@ -3864,7 +3901,7 @@ mod tests {
         // 2) The slot is greater than the newest slot in the slot history
         // Thus this slot is not part of the fork and the update should be rejected
         // with error `SlotsMismatch`
-        let missing_vote_slot = slot_hashes.first().unwrap().0 + 1;
+        let missing_vote_slot = slot_hashes.first().unwrap().slot + 1;
         let vote_slot_hash = Hash::new_unique();
         let mut tower_sync = TowerSync::from(vec![(8, 2), (missing_vote_slot, 3)]);
         tower_sync.hash = vote_slot_hash;
@@ -3895,9 +3932,9 @@ mod tests {
         let vote_slot = vote_state.votes().back().unwrap().slot() + 2;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(2, 4), (4, 3), (6, 2), (vote_slot, 1)]);
         tower_sync.hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
@@ -3942,9 +3979,9 @@ mod tests {
         let vote_slot = vote_state.votes().back().unwrap().slot() + 2;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(4, 2), (vote_slot, 1)]);
         tower_sync.hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
@@ -4389,7 +4426,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_commission_collector_validate_and_resolve_key() {
+    fn test_validate_and_resolve_collector_key() {
         let rent = Rent::default();
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let vote_pubkey = solana_pubkey::new_rand();
@@ -4413,7 +4450,7 @@ mod tests {
                 .try_borrow_instruction_account(0)
                 .unwrap();
             assert_eq!(
-                NewCommissionCollector::VoteAccount.validate_and_resolve_key(&borrowed_vote, &rent),
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 0, &rent),
                 Ok(vote_pubkey),
             );
         }
@@ -4436,12 +4473,8 @@ mod tests {
             let borrowed_vote = instruction_context
                 .try_borrow_instruction_account(0)
                 .unwrap();
-            let borrowed_collector = instruction_context
-                .try_borrow_instruction_account(1)
-                .unwrap();
             assert_eq!(
-                NewCommissionCollector::NewAccount(borrowed_collector)
-                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
                 Ok(collector_pubkey),
             );
         }
@@ -4469,12 +4502,8 @@ mod tests {
             let borrowed_vote = instruction_context
                 .try_borrow_instruction_account(0)
                 .unwrap();
-            let borrowed_collector = instruction_context
-                .try_borrow_instruction_account(1)
-                .unwrap();
             assert_eq!(
-                NewCommissionCollector::NewAccount(borrowed_collector)
-                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
                 Ok(solana_sdk_ids::incinerator::id()),
             );
         }
@@ -4499,12 +4528,8 @@ mod tests {
             let borrowed_vote = instruction_context
                 .try_borrow_instruction_account(0)
                 .unwrap();
-            let borrowed_collector = instruction_context
-                .try_borrow_instruction_account(1)
-                .unwrap();
             assert_eq!(
-                NewCommissionCollector::NewAccount(borrowed_collector)
-                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
                 Err(InstructionError::InvalidAccountOwner),
             );
         }
@@ -4528,12 +4553,8 @@ mod tests {
             let borrowed_vote = instruction_context
                 .try_borrow_instruction_account(0)
                 .unwrap();
-            let borrowed_collector = instruction_context
-                .try_borrow_instruction_account(1)
-                .unwrap();
             assert_eq!(
-                NewCommissionCollector::NewAccount(borrowed_collector)
-                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
                 Err(InstructionError::InsufficientFunds),
             );
         }
@@ -4556,12 +4577,8 @@ mod tests {
             let borrowed_vote = instruction_context
                 .try_borrow_instruction_account(0)
                 .unwrap();
-            let borrowed_collector = instruction_context
-                .try_borrow_instruction_account(1)
-                .unwrap();
             assert_eq!(
-                NewCommissionCollector::NewAccount(borrowed_collector)
-                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
                 Err(InstructionError::InvalidArgument),
             );
         }
@@ -4588,8 +4605,12 @@ mod tests {
         vote_account.set_data_from_slice(&serialized);
 
         let get_commission_collector =
-            |vote_account: &BorrowedInstructionAccount, kind: CommissionKind| {
-                let handler = get_vote_state_handler_checked(vote_account, target_version).unwrap();
+            |instruction_context: &InstructionContext, kind: CommissionKind| {
+                let vote_account = instruction_context
+                    .try_borrow_instruction_account(0)
+                    .unwrap();
+                let handler =
+                    get_vote_state_handler_checked(&vote_account, target_version).unwrap();
                 let vote_state = handler.as_ref_v4();
                 match kind {
                     CommissionKind::InflationRewards => vote_state.inflation_rewards_collector,
@@ -4623,53 +4644,43 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             // InflationRewards kind.
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
+                1,
                 CommissionKind::InflationRewards,
                 &signers,
                 &rent,
             )
             .unwrap();
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 new_collector,
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
 
             // BlockRevenue kind.
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
+                1,
                 CommissionKind::BlockRevenue,
                 &signers,
                 &rent,
             )
             .unwrap();
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 new_collector,
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 new_collector,
             );
         }
@@ -4688,45 +4699,43 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             // InflationRewards kind.
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::VoteAccount,
+                1,
                 CommissionKind::InflationRewards,
                 &signers,
                 &rent,
             )
             .unwrap();
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 vote_pubkey,
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
 
             // BlockRevenue kind.
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::VoteAccount,
+                1,
                 CommissionKind::BlockRevenue,
                 &signers,
                 &rent,
             )
             .unwrap();
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 vote_pubkey,
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 vote_pubkey,
             );
         }
@@ -4764,18 +4773,11 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
+                1,
                 CommissionKind::InflationRewards,
                 &v3_signers,
                 &rent,
@@ -4784,13 +4786,13 @@ mod tests {
 
             // The updated field reflects the caller's new collector.
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 new_collector,
             );
             // The *other* field was reset to its V4-conversion default
             // (block_revenue_collector = node_pubkey from the V3 source).
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 v3_node_pubkey,
             );
         }
@@ -4817,17 +4819,11 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
+                1,
                 CommissionKind::InflationRewards,
                 &signers,
                 &rent,
@@ -4879,19 +4875,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &non_signers,
                     &rent,
@@ -4899,11 +4888,11 @@ mod tests {
                 Err(InstructionError::MissingRequiredSignature)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -4924,19 +4913,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &wrong_signers,
                     &rent,
@@ -4944,11 +4926,11 @@ mod tests {
                 Err(InstructionError::MissingRequiredSignature)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -4972,19 +4954,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &signers,
                     &rent,
@@ -4992,11 +4967,11 @@ mod tests {
                 Err(InstructionError::InvalidAccountOwner)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -5018,19 +4993,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &signers,
                     &rent,
@@ -5038,11 +5006,11 @@ mod tests {
                 Err(InstructionError::InsufficientFunds)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -5065,19 +5033,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &signers,
                     &rent,
@@ -5085,11 +5046,11 @@ mod tests {
                 Err(InstructionError::InvalidArgument)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -5130,9 +5091,12 @@ mod tests {
             || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
 
         let assert_v4_fields =
-            |vote_account: &BorrowedInstructionAccount,
+            |instruction_context: &InstructionContext,
              expected_inflation_rewards_collector: Pubkey,
              expected_block_revenue_collector: Pubkey| {
+                let vote_account = instruction_context
+                    .try_borrow_instruction_account(0)
+                    .unwrap();
                 let VoteStateVersions::V4(v4) =
                     vote_account.get_state::<VoteStateVersions>().unwrap()
                 else {
@@ -5158,7 +5122,10 @@ mod tests {
                 assert!(v4.epoch_credits.is_empty());
             };
 
-        let assert_still_uninitialized = |vote_account: &BorrowedInstructionAccount| {
+        let assert_still_uninitialized = |instruction_context: &InstructionContext| {
+            let vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
             assert!(
                 vote_account
                     .get_state::<VoteStateVersions>()
@@ -5184,24 +5151,13 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             initialize_account_v2(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
                 &vote_init,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(2)
-                        .unwrap(),
-                ),
+                1,
+                2,
                 &signers,
                 &clock,
                 &rent,
@@ -5210,7 +5166,7 @@ mod tests {
             .unwrap();
 
             assert_v4_fields(
-                &borrowed_vote_account,
+                &instruction_context,
                 inflation_collector_pubkey,
                 block_revenue_collector_pubkey,
             );
@@ -5226,25 +5182,19 @@ mod tests {
                 ],
                 vec![
                     InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
                     InstructionAccount::new(2, false, true),
                 ],
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             initialize_account_v2(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
                 &vote_init,
-                NewCommissionCollector::VoteAccount,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
+                1,
+                2,
                 &signers,
                 &clock,
                 &rent,
@@ -5253,7 +5203,7 @@ mod tests {
             .unwrap();
 
             assert_v4_fields(
-                &borrowed_vote_account,
+                &instruction_context,
                 vote_pubkey,
                 block_revenue_collector_pubkey,
             );
@@ -5270,24 +5220,18 @@ mod tests {
                 vec![
                     InstructionAccount::new(1, false, true),
                     InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(1, false, true),
                 ],
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             initialize_account_v2(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
                 &vote_init,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
-                NewCommissionCollector::VoteAccount,
+                1,
+                2,
                 &signers,
                 &clock,
                 &rent,
@@ -5296,7 +5240,7 @@ mod tests {
             .unwrap();
 
             assert_v4_fields(
-                &borrowed_vote_account,
+                &instruction_context,
                 inflation_collector_pubkey,
                 vote_pubkey,
             );
@@ -5309,20 +5253,21 @@ mod tests {
                     (id(), processor_account.clone()),
                     (vote_pubkey, make_uninit_vote_account()),
                 ],
-                vec![InstructionAccount::new(1, false, true)],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
+                ],
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             initialize_account_v2(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
                 &vote_init,
-                NewCommissionCollector::VoteAccount,
-                NewCommissionCollector::VoteAccount,
+                1,
+                2,
                 &signers,
                 &clock,
                 &rent,
@@ -5330,7 +5275,44 @@ mod tests {
             )
             .unwrap();
 
-            assert_v4_fields(&borrowed_vote_account, vote_pubkey, vote_pubkey);
+            assert_v4_fields(&instruction_context, vote_pubkey, vote_pubkey);
+        }
+
+        // Should pass - both collectors aliased to same external account.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            initialize_account_v2(
+                &instruction_context,
+                0,
+                target_version,
+                &vote_init,
+                1,
+                2,
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(
+                &instruction_context,
+                inflation_collector_pubkey,
+                inflation_collector_pubkey,
+            );
         }
 
         // Should fail - vote account is the wrong size.
@@ -5352,25 +5334,14 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 initialize_account_v2(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
                     &vote_init,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap(),
-                    ),
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(2)
-                            .unwrap(),
-                    ),
+                    1,
+                    2,
                     &signers,
                     &clock,
                     &rent,
@@ -5400,25 +5371,14 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 initialize_account_v2(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
                     &vote_init,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap(),
-                    ),
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(2)
-                            .unwrap(),
-                    ),
+                    1,
+                    2,
                     &signers,
                     &clock,
                     &rent,
@@ -5453,25 +5413,14 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 initialize_account_v2(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
                     &vote_init,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap(),
-                    ),
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(2)
-                            .unwrap(),
-                    ),
+                    1,
+                    2,
                     &signers,
                     &clock,
                     &rent,
@@ -5482,6 +5431,9 @@ mod tests {
 
             // Pre-existing state must be untouched - the new init payload must
             // not have been written.
+            let borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
             let handler =
                 get_vote_state_handler_checked(&borrowed_vote_account, target_version).unwrap();
             assert_eq!(*handler.as_ref_v4(), preexisting_state);
@@ -5505,25 +5457,14 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 initialize_account_v2(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
                     &vote_init,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap(),
-                    ),
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(2)
-                            .unwrap(),
-                    ),
+                    1,
+                    2,
                     &non_signers,
                     &clock,
                     &rent,
@@ -5531,7 +5472,7 @@ mod tests {
                 ),
                 Err(InstructionError::MissingRequiredSignature),
             );
-            assert_still_uninitialized(&borrowed_vote_account);
+            assert_still_uninitialized(&instruction_context);
         }
 
         // Should fail - SIMD-0232 collector account checks, applied to both
@@ -5584,25 +5525,14 @@ mod tests {
                     );
                     let instruction_context =
                         transaction_context.get_next_instruction_context().unwrap();
-                    let mut borrowed_vote_account = instruction_context
-                        .try_borrow_instruction_account(0)
-                        .unwrap();
-
                     assert_eq!(
                         initialize_account_v2(
-                            &mut borrowed_vote_account,
+                            &instruction_context,
+                            0,
                             target_version,
                             &vote_init,
-                            NewCommissionCollector::NewAccount(
-                                instruction_context
-                                    .try_borrow_instruction_account(1)
-                                    .unwrap(),
-                            ),
-                            NewCommissionCollector::NewAccount(
-                                instruction_context
-                                    .try_borrow_instruction_account(2)
-                                    .unwrap(),
-                            ),
+                            1,
+                            2,
                             &signers,
                             &clock,
                             &rent,
@@ -5610,7 +5540,7 @@ mod tests {
                         ),
                         Err(expected_error),
                     );
-                    assert_still_uninitialized(&borrowed_vote_account);
+                    assert_still_uninitialized(&instruction_context);
                 };
 
             for slot in [CollectorSlot::Inflation, CollectorSlot::BlockRevenue] {
@@ -5663,25 +5593,14 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 initialize_account_v2(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
                     &bad_vote_init,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap(),
-                    ),
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(2)
-                            .unwrap(),
-                    ),
+                    1,
+                    2,
                     &signers,
                     &clock,
                     &rent,
@@ -5689,7 +5608,7 @@ mod tests {
                 ),
                 Err(InstructionError::InvalidArgument),
             );
-            assert_still_uninitialized(&borrowed_vote_account);
+            assert_still_uninitialized(&instruction_context);
         }
     }
 

@@ -1,5 +1,5 @@
 use {
-    crossbeam_channel::Sender,
+    agave_wake_channel::{Sender, bounded},
     log::error,
     std::{
         mem,
@@ -23,7 +23,7 @@ impl<J: WorkerJob> WorkerPool<J> {
         job_queue_capacity: usize,
     ) -> Self {
         assert_ne!(num_workers, 0, "worker pool must have at least one worker");
-        let (job_sender, job_receiver) = crossbeam_channel::bounded::<J>(job_queue_capacity);
+        let (job_sender, job_receiver) = bounded::<J>(job_queue_capacity);
         let worker_handles = (0..num_workers)
             .map(|index| {
                 let job_receiver = job_receiver.clone();
@@ -58,7 +58,7 @@ impl<J: WorkerJob> WorkerPool<J> {
 impl<J: WorkerJob> Drop for WorkerPool<J> {
     fn drop(&mut self) {
         // drop the sender so the workers exit
-        let (tmp, _) = crossbeam_channel::bounded(0);
+        let (tmp, _) = bounded(1);
         drop(mem::replace(&mut self.job_sender, tmp));
         for worker_handle in self.worker_handles.drain(..) {
             if let Err(err) = worker_handle.join() {

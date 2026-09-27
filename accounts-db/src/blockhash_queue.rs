@@ -12,7 +12,7 @@ use {
 };
 
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct HashInfo {
     fee_calculator: FeeCalculator,
@@ -28,10 +28,9 @@ impl HashInfo {
 
 /// Low memory overhead, so can be cloned for every checkpoint
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
-        api_digest = "6dJKUuLbK5FVbUvNf7YwaGxJDkBTWvV9vfXevAFkHR5u",
         abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire"
@@ -51,7 +50,7 @@ pub struct BlockhashQueue {
     max_age: usize,
 
     /// durable nonce value for the last hash
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
     #[wincode(skip)]
     durable_nonce: Option<DurableNonce>,

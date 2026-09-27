@@ -14,13 +14,12 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     log::{error, warn},
     qualifier_attr::qualifiers,
-    quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_keypair::{Keypair, Signer},
-    solana_net_utils::token_bucket::TokenBucket,
+    solana_net_utils::{SocketAddrSpace, quic_socket::QuicSocket, token_bucket::TokenBucket},
     solana_pubkey::Pubkey,
     solana_tls_utils::NotifyKeyUpdate,
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::SocketAddr,
         sync::{Arc, Mutex, TryLockError},
         time::Duration,
     },
@@ -71,14 +70,17 @@ impl QuicDatagramEndpoint {
     /// `peer_list` carries the desired peer set: inbound admits those peers and
     /// closes connections to peers no longer in the set, outbound connects to
     /// peers in it as long as the peer_list enables pushing.
+    /// `socket_addr_space` controls which remote addresses may start an inbound
+    /// handshake.
     /// `cancel` controls when the endpoint should terminate.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
-        inbound_sockets: Vec<UdpSocket>,
-        outbound_socket: UdpSocket,
+        inbound_sockets: Vec<QuicSocket>,
+        outbound_socket: QuicSocket,
         inbound_datagrams: Sender<Datagram>,
         peer_list: PeerListReceiver,
+        socket_addr_space: SocketAddrSpace,
         max_datagrams_per_second_per_peer: usize,
         cancel: CancellationToken,
     ) -> Result<(mpsc::Sender<Bytes>, Self), Error> {
@@ -114,22 +116,15 @@ impl QuicDatagramEndpoint {
             let inbound_endpoints = inbound_sockets
                 .into_iter()
                 .map(|socket| {
-                    Endpoint::new(
-                        EndpointConfig::default(),
-                        Some(server_config.clone()),
-                        socket,
-                        Arc::new(TokioRuntime),
-                    )
-                    .map_err(Error::Endpoint)
+                    socket
+                        .into_endpoint(Some(server_config.clone()))
+                        .map_err(Error::Endpoint)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let outbound_endpoint = Endpoint::new(
-                EndpointConfig::default(),
-                None,
-                outbound_socket,
-                Arc::new(TokioRuntime),
-            )
-            .map_err(Error::Endpoint)?;
+            let outbound_endpoint = outbound_socket
+                .into_endpoint(None)
+                .map_err(Error::Endpoint)?;
+
             (inbound_endpoints, outbound_endpoint)
         };
         outbound_endpoint.set_default_client_config(new_client_config(
@@ -176,6 +171,7 @@ impl QuicDatagramEndpoint {
                     inbound_events_sender.clone(),
                     server_stats.clone(),
                     cancel.clone(),
+                    socket_addr_space,
                     rate_limiter.clone(),
                     max_inflight_handshakes,
                 );
@@ -395,9 +391,13 @@ mod tests {
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
         solana_keypair::{Keypair, Signer},
-        solana_net_utils::sockets::{
-            SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
-            unique_port_range_for_tests,
+        solana_net_utils::{
+            SocketAddrSpace,
+            quic_socket::QuicSocket,
+            sockets::{
+                SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
+                unique_port_range_for_tests,
+            },
         },
         solana_pubkey::Pubkey,
         solana_tls_utils::NotifyKeyUpdate,
@@ -493,7 +493,8 @@ mod tests {
             let addr = inbound_sockets[0]
                 .local_addr()
                 .expect("server local addr from first inbound socket");
-            let client_socket = bind_to_localhost_unique().expect("bind client UDP");
+            let client_socket =
+                QuicSocket::Kernel(bind_to_localhost_unique().expect("bind client UDP"));
             // Ingress channel size mirrors prod (`solana_core::tvu`):
             // `MAX_ALPENGLOW_PACKET_NUM`.
             let (ingress_sender, ingress_receiver) = bounded(INGRESS_CAP);
@@ -504,10 +505,14 @@ mod tests {
             let (egress, endpoint) = QuicDatagramEndpoint::spawn(
                 rt.handle(),
                 &keypair,
-                inbound_sockets,
+                inbound_sockets
+                    .into_iter()
+                    .map(QuicSocket::Kernel)
+                    .collect(),
                 client_socket,
                 ingress_sender,
                 peer_list_receiver,
+                SocketAddrSpace::Unspecified,
                 max_pps,
                 cancel,
             )

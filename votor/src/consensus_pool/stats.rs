@@ -1,5 +1,5 @@
 use {
-    agave_votor_messages::{certificate::CertificateType, vote::VoteType},
+    agave_votor_messages::{certificate::CertificateType, vote::Vote},
     solana_metrics::datapoint_info,
     std::time::{Duration, Instant},
 };
@@ -65,16 +65,16 @@ struct VoteStats {
 }
 
 impl VoteStats {
-    fn increment(&mut self, vote_type: &VoteType) {
-        match vote_type {
-            VoteType::Finalize => self.finalize = self.finalize.saturating_add(1),
-            VoteType::Notarize => self.notarize = self.notarize.saturating_add(1),
-            VoteType::NotarizeFallback => {
+    fn increment(&mut self, vote: &Vote) {
+        match vote {
+            Vote::Finalize(_) => self.finalize = self.finalize.saturating_add(1),
+            Vote::Notarize(_) => self.notarize = self.notarize.saturating_add(1),
+            Vote::NotarizeFallback(_) => {
                 self.notar_fallback = self.notar_fallback.saturating_add(1)
             }
-            VoteType::Skip => self.skip = self.skip.saturating_add(1),
-            VoteType::SkipFallback => self.skip_fallback = self.skip_fallback.saturating_add(1),
-            VoteType::Genesis => self.genesis = self.genesis.saturating_add(1),
+            Vote::Skip(_) => self.skip = self.skip.saturating_add(1),
+            Vote::SkipFallback(_) => self.skip_fallback = self.skip_fallback.saturating_add(1),
+            Vote::Genesis(_) => self.genesis = self.genesis.saturating_add(1),
         }
     }
 
@@ -140,8 +140,8 @@ impl Default for ConsensusPoolStats {
 }
 
 impl ConsensusPoolStats {
-    pub(super) fn incr_ingested_vote_type(&mut self, vote_type: VoteType) {
-        self.ingested_votes.increment(&vote_type);
+    pub(super) fn incr_ingested_vote(&mut self, vote: &Vote) {
+        self.ingested_votes.increment(vote);
     }
 
     pub(super) fn incr_generated_cert(&mut self, cert_type: &CertificateType) {

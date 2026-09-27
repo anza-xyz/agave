@@ -17,6 +17,7 @@ use {
         ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError,
     },
     crossbeam_channel::{Receiver, Sender},
+    solana_clock::Slot,
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_ledger::shred::get_data_shred_bytes_per_batch_typical,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -82,6 +83,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
     fn schedule<S: StateContainer<Tx>>(
         &mut self,
         container: &mut S,
+        slot: Slot,
         budget: u64,
     ) -> Result<SchedulingSummary, SchedulerError> {
         // Subtract any in-flight compute units from the budget.
@@ -179,7 +181,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     if self.common.batches.entry_bytes()[thread_id] + transaction_bytes
                         > self.config.target_entry_bytes_per_batch
                     {
-                        num_sent += self.common.send_batches()?;
+                        num_sent += self.common.send_batches(slot)?;
                     }
 
                     num_scheduled += 1;
@@ -199,7 +201,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                         || self.common.batches.entry_bytes()[thread_id]
                             >= self.config.target_entry_bytes_per_batch
                     {
-                        num_sent += self.common.send_batches()?;
+                        num_sent += self.common.send_batches(slot)?;
                     }
 
                     // if the thread is at target_cu_per_thread, remove it from the schedulable threads
@@ -218,7 +220,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             }
         }
 
-        num_sent += self.common.send_batches()?;
+        num_sent += self.common.send_batches(slot)?;
         let Saturating(num_scheduled) = num_scheduled;
         assert_eq!(
             num_scheduled, num_sent,
@@ -239,6 +241,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
     fn scheduling_common_mut(&mut self) -> &mut SchedulingCommon<Tx> {
         &mut self.common
+    }
+
+    fn has_in_flight_transactions(&self) -> bool {
+        self.common.in_flight_tracker.has_in_flight_transactions()
     }
 }
 
@@ -310,6 +316,8 @@ mod test {
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::borrow::Borrow,
     };
+
+    const TEST_SLOT: Slot = 42;
 
     #[allow(clippy::type_complexity)]
     fn create_test_frame(
@@ -411,6 +419,7 @@ mod test {
         assert_matches!(
             scheduler.schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             ),
             Err(SchedulerError::DisconnectedSendChannel(_))
@@ -429,6 +438,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             )
             .unwrap();
@@ -449,6 +459,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 0, // zero budget
             )
             .unwrap();
@@ -473,6 +484,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             )
             .unwrap();
@@ -498,6 +510,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             )
             .unwrap();
@@ -523,6 +536,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             )
             .unwrap();
@@ -549,7 +563,9 @@ mod test {
             (&Keypair::new(), &[Pubkey::new_unique()], 3, 3),
         ]);
 
-        let scheduling_summary = scheduler.schedule(&mut container, u64::MAX).unwrap();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, TEST_SLOT, u64::MAX)
+            .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 3);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
         assert_eq!(
@@ -579,6 +595,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             )
             .unwrap();
@@ -597,6 +614,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             )
             .unwrap();
@@ -636,6 +654,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             )
             .unwrap();
@@ -671,6 +690,7 @@ mod test {
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
+                TEST_SLOT,
                 u64::MAX, // no budget
             )
             .unwrap();

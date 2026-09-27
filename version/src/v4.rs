@@ -13,7 +13,6 @@ use {
     },
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Prerelease {
     Stable,
@@ -85,7 +84,6 @@ impl FromStr for Prerelease {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 #[serde(transparent)]
 struct PackedMinor(
@@ -157,7 +155,7 @@ impl PackedMinor {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi),
     frozen_abi(
         abi_digest = "CAvtbh3st7PCvB93NjvDDQj1tBz82BmYPL4cNXMByfLX",
@@ -350,7 +348,6 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Version {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct SerializedVersion {
     #[serde(with = "serde_varint")]
@@ -435,7 +432,7 @@ impl<'de> Deserialize<'de> for Version {
 // wire format with cross-field invariants (`minor` fits in 14 bits, non-stable
 // prereleases force `patch == 0`; see `PackedMinor::try_pack`), so the fields
 // cannot be sampled independently. Used by tests and as the `StableAbi` sampler.
-#[cfg(any(test, feature = "frozen-abi"))]
+#[cfg(any(test, feature = "stable-abi"))]
 fn random_version<R: Rng + ?Sized>(rng: &mut R) -> Version {
     let minor = rng.random::<u16>() & PackedMinor::PRERELEASE_MINOR_MAX;
     let (prerelease, patch) = match rng.random::<u8>() % 4 {
@@ -457,7 +454,7 @@ fn random_version<R: Rng + ?Sized>(rng: &mut R) -> Version {
 
 // `StableAbiSample` cannot be derived here because it samples fields
 // independently; `random_version` upholds the cross-field invariants instead.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 impl solana_frozen_abi::rand::distr::Distribution<Version>
     for solana_frozen_abi::rand::distr::StandardUniform
 {

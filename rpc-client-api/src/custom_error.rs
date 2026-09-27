@@ -30,6 +30,7 @@ pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE: i64 = -32019;
 pub const JSON_RPC_SERVER_ERROR_FILTER_TRANSACTION_NOT_FOUND: i64 = -32020;
 pub const JSON_RPC_SERVER_ERROR_NO_SLOT_HISTORY: i64 = -32021;
+pub const JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND: i64 = -32022;
 
 #[derive(Error, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -86,6 +87,8 @@ pub enum RpcCustomError {
     FilterTransactionNotFound { signature: String },
     #[error("NoSlotHistory")]
     NoSlotHistory,
+    #[error("LeaderScheduleIdentityNotFound")]
+    LeaderScheduleIdentityNotFound { identity: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -273,6 +276,15 @@ impl From<RpcCustomError> for Error {
             RpcCustomError::NoSlotHistory => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_NO_SLOT_HISTORY),
                 message: "No slot history".to_string(),
+                data: None,
+            },
+            RpcCustomError::LeaderScheduleIdentityNotFound { identity } => Self {
+                code: ErrorCode::ServerError(
+                    JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
+                ),
+                message: format!(
+                    "Node {identity} was not in the leader schedule for specified epoch"
+                ),
                 data: None,
             },
         }

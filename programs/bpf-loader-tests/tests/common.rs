@@ -3,7 +3,8 @@
 use {
     agave_feature_set::loader_v3_minimum_extend_program_size,
     solana_account::{AccountSharedData, WritableAccount},
-    solana_instruction::{Instruction, error::InstructionError},
+    solana_instruction::Instruction,
+    solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_test::*,

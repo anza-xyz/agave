@@ -18,6 +18,7 @@ use {
     std::sync::Arc,
 };
 
+#[deprecated(since = "4.4.0", note = "Connection cache is deprecated")]
 pub enum TpuClientWrapper {
     Quic(BackendTpuClient<QuicPool, QuicConnectionManager, QuicConfig>),
     Udp(BackendTpuClient<UdpPool, UdpConnectionManager, UdpConfig>),

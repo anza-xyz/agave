@@ -1,7 +1,7 @@
 use {
     bytemuck::{Pod, bytes_of},
     solana_account::Account,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
     solana_program_test::*,
     solana_pubkey::Pubkey,

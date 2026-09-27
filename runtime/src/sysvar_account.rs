@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     solana_account::{
         AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
@@ -41,6 +43,7 @@ fn new_account(lamports: u64, rent_epoch: Epoch, data_len: usize) -> AccountShar
     account
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn create_account<T>(sysvar: &T, fields: InheritableAccountFields) -> AccountSharedData
 where
     T: wincode::Serialize<Src = T> + SysvarId,
@@ -54,25 +57,6 @@ where
         required_data_len(&T::id(), serialized_len),
     );
     wincode::serialize_into(account.data_as_mut_slice(), sysvar).unwrap();
-    account
-}
-
-pub(crate) fn create_account_with_bincode<T>(
-    sysvar: &T,
-    fields: InheritableAccountFields,
-) -> AccountSharedData
-where
-    T: serde::Serialize + SysvarId,
-{
-    let serialized_len =
-        bincode::serialized_size(sysvar).expect("failed to get serialized sysvar size") as usize;
-    let (lamports, rent_epoch) = fields;
-    let mut account = new_account(
-        lamports,
-        rent_epoch,
-        required_data_len(&T::id(), serialized_len),
-    );
-    bincode::serialize_into(account.data_as_mut_slice(), sysvar).unwrap();
     account
 }
 

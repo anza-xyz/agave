@@ -5,7 +5,6 @@
 #[cfg(feature = "shuttle-test")]
 use std::sync::Arc;
 use {
-    cfg_if::cfg_if,
     dashmap::{DashMap, mapref::entry::Entry},
     solana_svm_type_overrides::sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     std::{borrow::Borrow, cmp::Reverse, hash::Hash, time::Instant},
@@ -77,6 +76,7 @@ impl TokenBucket {
     pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
         let now = self.time_us();
         self.update_state(now);
+        #[cfg_attr(not(feature = "shuttle-test"), allow(deprecated))]
         match self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
             Ordering::Acquire, // everyone observed correct number
@@ -105,6 +105,7 @@ impl TokenBucket {
         let now = self.time_us();
         self.update_state(now);
         let mut consumed = 0u64;
+        #[cfg_attr(not(feature = "shuttle-test"), allow(deprecated))]
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // winner publishes new amount
             Ordering::Acquire, // everyone observed correct number
@@ -119,6 +120,7 @@ impl TokenBucket {
     /// Adds given amount of tokens, up to a maximum of self.max_tokens.
     #[inline]
     pub fn add_tokens(&self, new_tokens: u64) {
+        #[cfg_attr(not(feature = "shuttle-test"), allow(deprecated))]
         let _ = self.tokens.fetch_update(
             Ordering::AcqRel,  // writer publishes new amount
             Ordering::Acquire, //we fetch the correct amount
@@ -146,10 +148,11 @@ impl TokenBucket {
 
     /// Retrieves monotonic time since bucket creation.
     fn time_us(&self) -> u64 {
-        cfg_if! {
-            if #[cfg(feature="shuttle-test")] {
+        cfg_select! {
+            feature = "shuttle-test" => {
                 self.time_us_override.load(Ordering::Relaxed)
-            } else {
+            }
+            _ => {
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(self.base_time);
                 elapsed.as_micros() as u64
@@ -316,6 +319,7 @@ where
         };
 
         if entry_added {
+            #[cfg_attr(not(feature = "shuttle-test"), allow(deprecated))]
             if let Ok(count) =
                 self.countdown_to_shrink
                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {

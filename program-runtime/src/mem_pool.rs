@@ -11,7 +11,7 @@ use {
 };
 
 trait Reset {
-    fn reset(&mut self);
+    fn reset(&mut self, len: usize);
 }
 
 struct Pool<T: Reset, const SIZE: usize> {
@@ -41,11 +41,11 @@ impl<T: Reset, const SIZE: usize> Pool<T, SIZE> {
             .and_then(|item| item.take())
     }
 
-    fn put(&mut self, mut value: T) -> bool {
+    fn put(&mut self, mut value: T, len: usize) -> bool {
         self.items
             .get_mut(self.next_empty)
             .map(|item| {
-                value.reset();
+                value.reset(len);
                 item.replace(value);
                 self.next_empty = self.next_empty.saturating_add(1);
                 true
@@ -55,8 +55,12 @@ impl<T: Reset, const SIZE: usize> Pool<T, SIZE> {
 }
 
 impl Reset for AlignedMemory<{ HOST_ALIGN }> {
-    fn reset(&mut self) {
-        self.as_slice_mut().fill(0)
+    fn reset(&mut self, len: usize) {
+        let slice = self.as_slice_mut();
+        let len = len.min(slice.len());
+        if let Some(head) = slice.get_mut(..len) {
+            head.fill(0);
+        }
     }
 }
 
@@ -74,7 +78,7 @@ impl Default for CallFrameBuffer {
 }
 
 impl Reset for CallFrameBuffer {
-    fn reset(&mut self) {
+    fn reset(&mut self, _len: usize) {
         self.fill(CallFrame::default())
     }
 }
@@ -130,7 +134,8 @@ impl VmMemoryPool {
     }
 
     pub fn put_stack(&mut self, stack: AlignedMemory<{ HOST_ALIGN }>) -> bool {
-        self.stack.put(stack)
+        let len = stack.len();
+        self.stack.put(stack, len)
     }
 
     pub fn get_heap(&mut self, heap_size: u32) -> AlignedMemory<{ HOST_ALIGN }> {
@@ -140,13 +145,14 @@ impl VmMemoryPool {
             .unwrap_or_else(|| AlignedMemory::zero_filled(MAX_HEAP_FRAME_BYTES as usize))
     }
 
-    pub fn put_heap(&mut self, heap: AlignedMemory<{ HOST_ALIGN }>) -> bool {
+    pub fn put_heap(&mut self, heap: AlignedMemory<{ HOST_ALIGN }>, mapped_len: usize) -> bool {
         let heap_size = heap.len();
         debug_assert!(
             heap_size >= MIN_HEAP_FRAME_BYTES as usize
                 && heap_size <= MAX_HEAP_FRAME_BYTES as usize
         );
-        self.heap.put(heap)
+        debug_assert!(mapped_len <= heap_size);
+        self.heap.put(heap, mapped_len.min(heap_size))
     }
 
     pub fn get_call_frames(&mut self) -> CallFrameBuffer {
@@ -154,7 +160,7 @@ impl VmMemoryPool {
     }
 
     pub fn put_call_frames(&mut self, call_frame: CallFrameBuffer) -> bool {
-        self.call_frame.put(call_frame)
+        self.call_frame.put(call_frame, 0)
     }
 }
 
@@ -165,9 +171,30 @@ mod test {
     #[derive(Debug, Eq, PartialEq)]
     struct Item(u8, u8);
     impl Reset for Item {
-        fn reset(&mut self) {
+        fn reset(&mut self, _len: usize) {
             self.1 = 0;
         }
+    }
+
+    #[test]
+    fn test_heap_shrink_then_grow_stays_zeroed() {
+        let mut pool = VmMemoryPool::new();
+        let big = MAX_HEAP_FRAME_BYTES;
+        let small = MIN_HEAP_FRAME_BYTES;
+
+        let mut heap = pool.get_heap(big);
+        heap.as_slice_mut().fill(0xaa);
+        assert!(pool.put_heap(heap, big as usize));
+
+        let mut heap = pool.get_heap(small);
+        heap.as_slice_mut()
+            .get_mut(..small as usize)
+            .unwrap()
+            .fill(0xbb);
+        assert!(pool.put_heap(heap, small as usize));
+
+        let heap = pool.get_heap(big);
+        assert!(heap.as_slice().iter().all(|byte| *byte == 0));
     }
 
     #[test]
@@ -176,11 +203,11 @@ mod test {
         assert_eq!(pool.get(), Some(Item(1, 1)));
         assert_eq!(pool.get(), Some(Item(0, 1)));
         assert_eq!(pool.get(), None);
-        pool.put(Item(1, 1));
+        pool.put(Item(1, 1), 0);
         assert_eq!(pool.get(), Some(Item(1, 0)));
-        pool.put(Item(2, 2));
-        pool.put(Item(3, 3));
-        assert!(!pool.put(Item(4, 4)));
+        pool.put(Item(2, 2), 0);
+        pool.put(Item(3, 3), 0);
+        assert!(!pool.put(Item(4, 4), 0));
         assert_eq!(pool.get(), Some(Item(3, 0)));
         assert_eq!(pool.get(), Some(Item(2, 0)));
         assert_eq!(pool.get(), None);

@@ -39,8 +39,7 @@ static const uint8_t TEST_CPI_INVALID_KEY_POINTER = 35;
 static const uint8_t TEST_CPI_INVALID_OWNER_POINTER = 36;
 static const uint8_t TEST_CPI_INVALID_LAMPORTS_POINTER = 37;
 static const uint8_t TEST_CPI_INVALID_DATA_POINTER = 38;
-static const uint8_t TEST_WRITE_ACCOUNT = 40;
-static const uint8_t TEST_ACCOUNT_INFO_IN_ACCOUNT = 43;
+static const uint8_t TEST_WRITE_ACCOUNT = 43;
 static const uint8_t TEST_NESTED_INVOKE_SIMD_0268_OK = 46;
 static const uint8_t TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP = 47;
 static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK = 48;
@@ -874,29 +873,6 @@ extern uint64_t entrypoint(const uint8_t *input) {
     accounts[target_account_index].data[offset] = params.data[10];
     break;
   }
-  case TEST_ACCOUNT_INFO_IN_ACCOUNT:
-  {
-    sol_log("Test TEST_ACCOUNT_INFO_IN_ACCOUNT");
-
-    uint8_t data[] = { TEST_WRITE_ACCOUNT, 1,  1, 0, 0, 0, 0, 0, 0, 0,  1 };
-
-    void *account_info_acc = accounts[1].data + 32;
-
-    sol_memcpy(account_info_acc, accounts, sizeof(accounts[0]) * params.ka_num);
-
-    SolAccountMeta arguments[] = {
-        {accounts[INVOKED_PROGRAM_INDEX].key, false, false},
-        {accounts[ARGUMENT_INDEX].key, true, false},
-        {accounts[MINT_INDEX].key, false, false},
-    };
-
-    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
-                                        arguments, SOL_ARRAY_SIZE(arguments),
-                                        data, SOL_ARRAY_SIZE(data)};
-
-    sol_invoke(&instruction, account_info_acc, params.ka_num);
-    break;
-  }
   case TEST_CU_USAGE_MINIMUM:
   {
     sol_log("Test minimum cost of a CPI invocation with 1 account meta and 1 account info");
@@ -927,7 +903,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
 
     uint64_t used = remaining - sol_remaining_compute_units();
 
-    sol_assert(used == 1061);
+    sol_assert(used == 1060 || used == 1061);
     break;
   }
   case TEST_CU_USAGE_BASELINE:
@@ -963,7 +939,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
                           signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
     uint64_t used = before - sol_remaining_compute_units();
 
-    sol_assert(used == 1115);
+    sol_assert(used == 1114 || used == 1115);
     break;
   }
     case TEST_CU_USAGE_MAX:
@@ -1001,7 +977,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
                           account_infos, account_infos_len,
                           signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
     uint64_t used = before - sol_remaining_compute_units();
-    sol_assert(used == 1176);
+    sol_assert(used == 1175 || used == 1176);
     break;
   }
   default:

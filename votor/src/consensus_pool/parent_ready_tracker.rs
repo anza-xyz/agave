@@ -15,7 +15,6 @@
 use {
     crate::{common::MAX_NOTAR_FALLBACK_BLOCKS, event::VotorEvent},
     agave_votor_messages::consensus_message::Block,
-    core::fmt,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
@@ -31,17 +30,10 @@ pub(crate) enum BlockProductionParent {
     Parent(Block),
 }
 
-struct DebugIgnore<T>(T);
-
-impl<T> fmt::Debug for DebugIgnore<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<ignored>")
-    }
-}
-
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub(crate) struct ParentReadyTracker {
-    cluster_info: DebugIgnore<Arc<ClusterInfo>>,
+    #[debug(skip)]
+    cluster_info: Arc<ClusterInfo>,
     /// Parent ready status for each slot
     slot_statuses: HashMap<Slot, ParentReadyStatus>,
     /// Root
@@ -57,7 +49,12 @@ pub(crate) struct ParentReadyTracker {
 struct ParentReadyStatus {
     /// Whether this slot has a skip certificate
     skip: bool,
-    /// The blocks that have been notar fallbacked in this slot
+    /// The blocks that have been notar fallbacked in this slot.
+    ///
+    /// Note that since the existence of a Notarize or FastFinalize certificate
+    /// implies the existence of a NotarizeFallback certificate, here we also
+    /// record blocks for which we've observed Notarize or FastFinalize
+    /// certificates.
     notar_fallbacks: Vec<Block>,
     /// The parent blocks that achieve parent ready in this slot,
     /// Theses blocks are all potential parents choosable in this slot
@@ -104,7 +101,7 @@ impl ParentReadyTracker {
         );
 
         Self {
-            cluster_info: DebugIgnore(cluster_info),
+            cluster_info,
             slot_statuses,
             root: parent_block.slot.min(root),
             highest_with_parent_ready: slot.max(root),
@@ -140,7 +137,7 @@ impl ParentReadyTracker {
         }
         trace!(
             "{}: Adding new notar fallback for {block:?}",
-            self.cluster_info.0.id()
+            self.cluster_info.id()
         );
         status.notar_fallbacks.push(block);
         assert!(status.notar_fallbacks.len() <= MAX_NOTAR_FALLBACK_BLOCKS);
@@ -149,7 +146,7 @@ impl ParentReadyTracker {
         for s in block.slot.saturating_add(1).. {
             trace!(
                 "{}: Adding new parent ready for {s} parent {block:?}",
-                self.cluster_info.0.id()
+                self.cluster_info.id()
             );
             let status = self.slot_statuses.entry(s).or_default();
             if !status.parents_ready.contains(&block) {
@@ -178,7 +175,7 @@ impl ParentReadyTracker {
             return;
         }
 
-        trace!("{}: Adding new skip for {slot:?}", self.cluster_info.0.id());
+        trace!("{}: Adding new skip for {slot:?}", self.cluster_info.id());
         let status = self.slot_statuses.entry(slot).or_default();
         status.skip = true;
 
@@ -217,7 +214,7 @@ impl ParentReadyTracker {
         for s in future_slots {
             trace!(
                 "{}: Adding new parent ready for {s} parents {potential_parents:?}",
-                self.cluster_info.0.id(),
+                self.cluster_info.id(),
             );
             let status = self.slot_statuses.entry(s).or_default();
             for &block in &potential_parents {
@@ -246,7 +243,23 @@ impl ParentReadyTracker {
             .is_some_and(|ss| ss.parents_ready.contains(&parent))
     }
 
-    /// For our leader slot `slot`, which block should we use as the parent
+    /// For our leader slot `slot`, returns the block we should use as the
+    /// parent, if any.
+    ///
+    /// In this implementation, we choose *not to* build on blocks in slots that
+    /// have a skip certificate, regardless of whether the block also has a
+    /// notarize-fallback certificate, for a few reasons:
+    ///
+    /// 1. it is more profitable for the current leader as they can pack any
+    ///    transactions contained in those blocks in its own blocks,
+    /// 2. for a block to get enough skip votes to not be notarized the leader
+    ///    must have had poor propagation or was stretched very close to the skip
+    ///    timeout. We don't want to reward that behavior, and
+    /// 3. a malicious leader can submit multiple blocks in the same slot in
+    ///    such a way that different versions get Notarize-Fallback but neither
+    ///    version actually gets Finalized. We'd prefer to skip their slot to avoid
+    ///    forcing the network overhead of the cluster ditching their current
+    ///    version and downloading the version chosen by the next leader.
     pub(crate) fn block_production_parent(&self, slot: Slot) -> BlockProductionParent {
         if self.highest_parent_ready() > slot {
             // This indicates that our block has already received a certificate
@@ -254,6 +267,10 @@ impl ParentReadyTracker {
             // and catching up. Either way we should not attempt to produce this slot
             return BlockProductionParent::MissedWindow;
         }
+
+        // Don't build off of skipped slots (regardless of whether they include
+        // blocks that have a notarize-fallback certificate); see method
+        // docstring for details.
         match self
             .slot_statuses
             .get(&slot)
@@ -285,10 +302,7 @@ impl ParentReadyTracker {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*, crate::tests::get_cluster_info, itertools::Itertools, solana_hash::Hash,
-        solana_keypair::Keypair,
-    };
+    use {super::*, crate::tests::get_cluster_info, itertools::Itertools, solana_keypair::Keypair};
 
     fn root_parent_ready(root_block: Block) -> ParentReady {
         (root_block.slot.saturating_add(1), root_block)
@@ -306,10 +320,7 @@ mod tests {
         let mut events = vec![];
 
         for i in 1..2 * NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot {
-            let block = Block {
-                slot: i,
-                block_id: Hash::new_unique(),
-            };
+            let block = Block::new_unique(i);
             tracker.add_new_notar_fallback_or_stronger(block, &mut events);
             assert_eq!(tracker.highest_parent_ready(), i + 1);
             assert!(tracker.parent_ready(i + 1, block));
@@ -326,13 +337,7 @@ mod tests {
         let mut events = vec![];
 
         for _ in 0..=MAX_NOTAR_FALLBACK_BLOCKS {
-            tracker.add_new_notar_fallback_or_stronger(
-                Block {
-                    slot: 1,
-                    block_id: Hash::new_unique(),
-                },
-                &mut events,
-            );
+            tracker.add_new_notar_fallback_or_stronger(Block::new_unique(1), &mut events);
         }
     }
 
@@ -342,10 +347,7 @@ mod tests {
         let genesis = Block::default();
         let mut tracker = new_tracker(cluster_info, genesis);
         let mut events = vec![];
-        let block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(1);
 
         tracker.add_new_notar_fallback_or_stronger(block, &mut events);
         tracker.add_new_skip(1, &mut events);
@@ -363,10 +365,7 @@ mod tests {
         let genesis = Block::default();
         let mut tracker = new_tracker(cluster_info, genesis);
         let mut events = vec![];
-        let block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(1);
 
         tracker.add_new_skip(3, &mut events);
         tracker.add_new_skip(2, &mut events);
@@ -384,10 +383,7 @@ mod tests {
     fn snapshot_wfsm() {
         let cluster_info = get_cluster_info(Keypair::new());
         let root_slot = 2147;
-        let root_block = Block {
-            slot: root_slot,
-            block_id: Hash::new_unique(),
-        };
+        let root_block = Block::new_unique(root_slot);
         let mut tracker = new_tracker(cluster_info, root_block);
         let mut events = vec![];
 
@@ -405,10 +401,7 @@ mod tests {
         assert!(tracker.parent_ready(root_slot + 3, root_block));
         assert_eq!(tracker.highest_parent_ready(), root_slot + 3);
 
-        let block = Block {
-            slot: root_slot + 4,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(root_slot + 4);
         tracker.add_new_notar_fallback_or_stronger(block, &mut events);
         assert!(tracker.parent_ready(root_slot + 3, root_block));
         assert!(tracker.parent_ready(root_slot + 5, block));
@@ -420,10 +413,7 @@ mod tests {
         let cluster_info = get_cluster_info(Keypair::new());
         let startup_root = Block::default();
         let root_slot = 63;
-        let migration_genesis = Block {
-            slot: root_slot,
-            block_id: Hash::new_unique(),
-        };
+        let migration_genesis = Block::new_unique(root_slot);
         let mut tracker = new_tracker(cluster_info, startup_root);
         let mut events = vec![];
 
@@ -453,10 +443,7 @@ mod tests {
     fn restored_parent_ready() {
         let cluster_info = get_cluster_info(Keypair::new());
         let root_slot = 4;
-        let restored = Block {
-            slot: 13,
-            block_id: Hash::new_unique(),
-        };
+        let restored = Block::new_unique(13);
         let tracker = ParentReadyTracker::new(cluster_info, root_slot, (16, restored));
 
         assert!(tracker.parent_ready(16, restored));
@@ -502,13 +489,7 @@ mod tests {
             BlockProductionParent::ParentNotReady
         );
 
-        tracker.add_new_notar_fallback_or_stronger(
-            Block {
-                slot: 4,
-                block_id: Hash::new_unique(),
-            },
-            &mut events,
-        );
+        tracker.add_new_notar_fallback_or_stronger(Block::new_unique(4), &mut events);
         assert_eq!(tracker.highest_parent_ready(), 5);
         assert_eq!(
             tracker.block_production_parent(4),
@@ -519,13 +500,7 @@ mod tests {
             tracker.block_production_parent(8),
             BlockProductionParent::ParentNotReady
         );
-        tracker.add_new_notar_fallback_or_stronger(
-            Block {
-                slot: 64,
-                block_id: Hash::new_unique(),
-            },
-            &mut events,
-        );
+        tracker.add_new_notar_fallback_or_stronger(Block::new_unique(64), &mut events);
         assert_eq!(tracker.highest_parent_ready(), 65);
         assert_eq!(
             tracker.block_production_parent(8),
@@ -542,13 +517,7 @@ mod tests {
 
         for i in 1..=10 {
             tracker.add_new_skip(i, &mut vec![]);
-            tracker.add_new_notar_fallback_or_stronger(
-                Block {
-                    slot: i,
-                    block_id: Hash::new_unique(),
-                },
-                &mut vec![],
-            );
+            tracker.add_new_notar_fallback_or_stronger(Block::new_unique(i), &mut vec![]);
         }
 
         tracker.add_new_skip(11, &mut events);

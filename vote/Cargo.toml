@@ -28,14 +28,14 @@ dev-context-only-utils = [
     "dep:solana-bls-signatures",
     "solana-bls-signatures/solana-signer-derive",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-bls-signatures",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-account/frozen-abi",
+    "solana-account/stable-abi",
     "solana-bls-signatures/solana-signer-derive",
-    "solana-pubkey/frozen-abi",
-    "solana-vote-interface/frozen-abi",
+    "solana-pubkey/stable-abi",
+    "solana-vote-interface/stable-abi",
 ]
 
 [dependencies]
@@ -48,14 +48,11 @@ solana-account = { workspace = true, features = ["serde", "wincode"] }
 solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true, optional = true }
 solana-clock = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-hash = { workspace = true, features = ["copy"] }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true }
 solana-packet = { workspace = true }
 solana-pubkey = { workspace = true, features = ["wincode"] }
@@ -75,7 +72,7 @@ bencher = { workspace = true }
 bincode = { workspace = true }
 rand = { workspace = true }
 solana-keypair = { workspace = true }
-solana-sha256-hasher = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode", "dev-context-only-utils"] }

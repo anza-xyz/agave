@@ -3,7 +3,6 @@ use {
     solana_genesis_config::GenesisConfig, solana_rent::Rent,
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct RentCollector {
     pub epoch: Epoch,

@@ -113,7 +113,6 @@ pub fn execute(
 
     let cli::thread_args::NumThreadConfig {
         accounts_db_background_threads,
-        accounts_db_foreground_threads,
         accounts_index_flush_threads,
         block_production_num_workers,
         ip_echo_server_threads,
@@ -406,7 +405,8 @@ pub fn execute(
                             tpu: Some(all_positions.clone()),
                             turbine: Some(all_positions.clone()),
                             repair: Some(all_positions.clone()),
-                            gossip: Some(all_positions),
+                            gossip: Some(all_positions.clone()),
+                            votor: Some(all_positions),
                         },
                     },
                     XdpNetworkConfigReport {
@@ -719,11 +719,10 @@ pub fn execute(
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
         skip_initial_hash_calc: false,
-        exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        verify_index: matches.is_present("accounts_db_verify_index"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
-        num_foreground_threads: Some(accounts_db_foreground_threads),
         accounts_file_provider: AccountsFileProvider::AppendVec,
     };
 
@@ -849,7 +848,6 @@ pub fn execute(
         account_paths: account_run_paths,
         account_snapshot_paths,
         accounts_db_config,
-        accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
@@ -877,6 +875,7 @@ pub fn execute(
             usize
         )
         .ok(),
+        replay_arenas: value_t!(matches, "replay_arenas", usize).ok(),
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",
@@ -1411,17 +1410,12 @@ fn build_xdp_config(
             "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
         );
     }
-    let xdp_interface = matches
-        .value_of("xdp_interface")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-        || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let xdp_interface = matches.value_of("xdp_interface");
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy");
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-    let xdp_cpu_cores = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+    let xdp_cpu_cores = matches.value_of("xdp_cpu_cores");
     let cpus = if let Some(cpu_str) = xdp_cpu_cores {
         let parsed =
             parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");

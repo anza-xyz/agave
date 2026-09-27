@@ -5,7 +5,6 @@
 use {
     crate::{
         accounts_db::AccountsFileId,
-        accounts_file::ALIGN_BOUNDARY_OFFSET,
         accounts_index::{DiskIndexValue, IndexValue},
         is_zero_lamport::IsZeroLamport,
     },
@@ -13,7 +12,8 @@ use {
 };
 
 /// offset within an accounts file to account data
-pub type Offset = usize;
+pub type Offset = u32;
+pub const MAX_OFFSET: Offset = (1 << 31) - 1;
 
 /// specify where account data is located
 #[derive(Debug, PartialEq, Eq)]
@@ -38,28 +38,20 @@ impl StorageLocation {
     }
 }
 
-/// how large the offset we store in AccountInfo is
-/// Note this is a smaller datatype than 'Offset'
-/// AppendVecs store accounts aligned to u64, so offset is always a multiple of 8 (sizeof(u64))
-pub type OffsetReduced = u32;
-
 #[bitfield(bits = 32)]
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub struct PackedOffsetAndFlags {
+    /// logical offset of an account in an accounts storage file
     /// this provides 2^31 bits, which when multiplied by 8 (sizeof(u64)) = 16G, which is the maximum size of an append vec
-    offset_reduced: B31,
+    offset: B31,
     /// use 1 bit to specify that the entry is zero lamport
     is_zero_lamport: bool,
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct AccountInfo {
-    /// index identifying the append storage
     store_id: AccountsFileId,
-
-    /// offset = 'packed_offset_and_flags.offset_reduced()' * ALIGN_BOUNDARY_OFFSET into the storage
-    /// Note this is a smaller type than 'Offset'
     account_offset_and_flags: PackedOffsetAndFlags,
 }
 
@@ -81,12 +73,8 @@ impl AccountInfo {
         let mut packed_offset_and_flags = PackedOffsetAndFlags::default();
         let store_id = match storage_location {
             StorageLocation::AccountsFile(store_id, offset) => {
-                packed_offset_and_flags.set_offset_reduced(Self::get_reduced_offset(offset));
-                assert_eq!(
-                    Self::reduced_offset_to_offset(packed_offset_and_flags.offset_reduced()),
-                    offset,
-                    "illegal offset"
-                );
+                assert!(offset <= MAX_OFFSET, "illegal offset");
+                packed_offset_and_flags.set_offset(offset);
                 store_id
             }
         };
@@ -97,20 +85,12 @@ impl AccountInfo {
         }
     }
 
-    pub fn get_reduced_offset(offset: usize) -> OffsetReduced {
-        (offset / ALIGN_BOUNDARY_OFFSET) as OffsetReduced
-    }
-
     pub fn store_id(&self) -> AccountsFileId {
         self.store_id
     }
 
     pub fn offset(&self) -> Offset {
-        Self::reduced_offset_to_offset(self.account_offset_and_flags.offset_reduced())
-    }
-
-    pub fn reduced_offset_to_offset(reduced_offset: OffsetReduced) -> Offset {
-        (reduced_offset as Offset) * ALIGN_BOUNDARY_OFFSET
+        self.account_offset_and_flags.offset()
     }
 
     pub fn storage_location(&self) -> StorageLocation {
@@ -120,29 +100,20 @@ impl AccountInfo {
 
 #[cfg(test)]
 mod test {
-    use {super::*, crate::append_vec::MAXIMUM_APPEND_VEC_FILE_SIZE};
+    use super::*;
 
     #[test]
     fn test_limits() {
-        for offset in [
-            // MAXIMUM_APPEND_VEC_FILE_SIZE is too big. That would be an offset at the first invalid byte in the max file size.
-            // MAXIMUM_APPEND_VEC_FILE_SIZE - 8 bytes would reference the very last 8 bytes in the file size. It makes no sense to reference that since element sizes are always more than 8.
-            // MAXIMUM_APPEND_VEC_FILE_SIZE - 16 bytes would reference the second to last 8 bytes in the max file size. This is still likely meaningless, but it is 'valid' as far as the index
-            // is concerned.
-            (MAXIMUM_APPEND_VEC_FILE_SIZE - 2 * (ALIGN_BOUNDARY_OFFSET as u64)) as Offset,
-            0,
-            ALIGN_BOUNDARY_OFFSET,
-            4 * ALIGN_BOUNDARY_OFFSET,
-        ] {
+        for offset in [0, 1, MAX_OFFSET - 1, MAX_OFFSET] {
             let info = AccountInfo::new(StorageLocation::AccountsFile(0, offset), true);
-            assert!(info.offset() == offset);
+            assert_eq!(info.offset(), offset);
         }
     }
 
     #[test]
     #[should_panic(expected = "illegal offset")]
-    fn test_alignment() {
-        let offset = 1; // not aligned
+    fn test_offset_too_large() {
+        let offset = MAX_OFFSET + 1;
         AccountInfo::new(StorageLocation::AccountsFile(0, offset), true);
     }
 }

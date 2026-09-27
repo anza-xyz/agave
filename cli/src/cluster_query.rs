@@ -32,8 +32,9 @@ use {
         client_error::ErrorKind as ClientErrorKind,
         config::{
             RpcAccountInfoConfig, RpcBlockConfig, RpcGetVoteAccountsConfig,
-            RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcProgramAccountsConfig,
-            RpcTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter,
+            RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcLeaderScheduleConfig,
+            RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
+            RpcTransactionLogsFilter,
         },
         filter::{Memcmp, RpcFilterType},
         request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
@@ -185,6 +186,14 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .value_name("EPOCH")
                         .validator(is_epoch)
                         .help("Epoch to show leader schedule for [default: current]"),
+                )
+                .arg(
+                    Arg::with_name("key_by_vote_account")
+                        .long("key-by-vote-account")
+                        .takes_value(false)
+                        .help(
+                            "Show each slot's leader by vote account instead of validator identity",
+                        ),
                 ),
         )
         .subcommand(
@@ -942,8 +951,12 @@ pub async fn process_first_available_block(rpc_client: &RpcClient) -> ProcessRes
 
 pub fn parse_leader_schedule(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let epoch = value_of(matches, "epoch");
+    let key_by_vote_account = matches.is_present("key_by_vote_account");
     Ok(CliCommandInfo::without_signers(
-        CliCommand::LeaderSchedule { epoch },
+        CliCommand::LeaderSchedule {
+            epoch,
+            key_by_vote_account,
+        },
     ))
 }
 
@@ -951,6 +964,7 @@ pub async fn process_leader_schedule(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     epoch: Option<Epoch>,
+    key_by_vote_account: bool,
 ) -> ProcessResult {
     let epoch_info = rpc_client.get_epoch_info().await?;
     let epoch = epoch.unwrap_or(epoch_info.epoch);
@@ -962,7 +976,14 @@ pub async fn process_leader_schedule(
     let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
 
     let leader_schedule = rpc_client
-        .get_leader_schedule(Some(first_slot_in_epoch))
+        .get_leader_schedule_with_config(
+            Some(first_slot_in_epoch),
+            RpcLeaderScheduleConfig {
+                key_by_vote_account: key_by_vote_account.then_some(true),
+                commitment: Some(rpc_client.commitment()),
+                ..RpcLeaderScheduleConfig::default()
+            },
+        )
         .await?;
     if leader_schedule.is_none() {
         return Err(
@@ -1054,7 +1075,7 @@ pub async fn process_get_block(
             RpcBlockConfig {
                 encoding: Some(UiTransactionEncoding::Base64),
                 commitment: Some(CommitmentConfig::confirmed()),
-                max_supported_transaction_version: Some(0),
+                max_supported_transaction_version: Some(1),
                 ..RpcBlockConfig::default()
             },
         )
@@ -1714,13 +1735,6 @@ pub async fn process_show_stakes(
         &agave_feature_set::reduce_stake_warmup_cooldown::id(),
     )
     .await?;
-    let fixed_point_activation_epoch = get_feature_activation_epoch(
-        rpc_client,
-        &agave_feature_set::upgrade_bpf_stake_program_to_v5_1::id(),
-    )
-    .await?;
-    let use_fixed_point_stake_math = fixed_point_activation_epoch
-        .is_some_and(|activation_epoch| clock.epoch >= activation_epoch);
     stake_account_progress_bar.finish_and_clear();
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
@@ -1745,7 +1759,6 @@ pub async fn process_show_stakes(
                             new_rate_activation_epoch,
                             rent_exempt_balance,
                             false,
-                            use_fixed_point_stake_math,
                         ),
                     });
                 }
@@ -1764,7 +1777,6 @@ pub async fn process_show_stakes(
                             new_rate_activation_epoch,
                             rent_exempt_balance,
                             false,
-                            use_fixed_point_stake_math,
                         ),
                     });
                 }
@@ -2039,7 +2051,8 @@ pub async fn process_transaction_history(
                         RpcTransactionConfig {
                             encoding: Some(UiTransactionEncoding::Base64),
                             commitment: Some(CommitmentConfig::confirmed()),
-                            max_supported_transaction_version: Some(0),
+                            max_supported_transaction_version: Some(1),
+                            min_context_slot: None,
                         },
                     )
                     .await
@@ -2241,6 +2254,32 @@ mod tests {
         assert_eq!(
             parse_command(&test_get_epoch_info, &default_signer, &mut None).unwrap(),
             CliCommandInfo::without_signers(CliCommand::GetEpochInfo)
+        );
+
+        let test_leader_schedule = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "leader-schedule"]);
+        assert_eq!(
+            parse_command(&test_leader_schedule, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::LeaderSchedule {
+                epoch: None,
+                key_by_vote_account: false,
+            })
+        );
+
+        let test_leader_schedule = test_commands.clone().get_matches_from(vec![
+            "test",
+            "leader-schedule",
+            "--epoch",
+            "42",
+            "--key-by-vote-account",
+        ]);
+        assert_eq!(
+            parse_command(&test_leader_schedule, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::LeaderSchedule {
+                epoch: Some(42),
+                key_by_vote_account: true,
+            })
         );
 
         let test_get_genesis_hash = test_commands

@@ -148,6 +148,11 @@ pub trait StorableAccounts<'a>: Sync {
     }
     // current slot for account at 'index'
     fn slot(&self, index: usize) -> Slot;
+
+    /// (current slot, pubkey) for each account, in index order
+    fn slots_and_pubkeys(&self) -> impl Iterator<Item = (Slot, &Pubkey)> {
+        (0..self.len()).map(|index| (self.slot(index), self.pubkey(index)))
+    }
     /// slot that all accounts are to be written to
     fn target_slot(&self) -> Slot;
     /// true if no accounts to write
@@ -285,7 +290,7 @@ impl<'a> StorableAccountsBySlot<'a> {
         // This happens when we are just shrinking a single slot storage, which happens very often.
         // Note: we check the actual number of entries, not just whether slots differ,
         // because multiple entries can have the same slot value (e.g., when packing
-        // many_refs_newest and one_ref accounts from the same source slot).
+        // newest_duplicate and no_duplicates accounts from the same source slot).
         if self.slots_and_accounts.len() == 1 {
             return (0, index);
         }
@@ -373,6 +378,14 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     fn slot(&self, index: usize) -> Slot {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].0
+    }
+    fn slots_and_pubkeys(&self) -> impl Iterator<Item = (Slot, &Pubkey)> {
+        // walk the source slices directly, avoiding a `find_internal_index` search per account
+        self.slots_and_accounts.iter().flat_map(|(slot, accounts)| {
+            accounts
+                .iter()
+                .map(move |account| (*slot, account.pubkey()))
+        })
     }
     fn target_slot(&self) -> Slot {
         self.target_slot

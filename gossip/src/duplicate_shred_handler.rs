@@ -97,7 +97,7 @@ impl DuplicateShredHandler {
     }
 
     fn cache_root_info(&mut self) {
-        let last_root = self.blockstore.max_root();
+        let last_root = self.epoch_specs.root_slot();
         if last_root == self.last_root && self.cached_slots_in_epoch != 0 {
             return;
         }
@@ -133,8 +133,12 @@ impl DuplicateShredHandler {
                 .leader_schedule_cache
                 .slot_leader_at(slot, /*bank:*/ None)
                 .ok_or(Error::UnknownSlotLeader(slot))?;
-            let (shred1, shred2) =
-                duplicate_shred::into_shreds(&slot_leader.id, chunks, self.shred_version)?;
+            let (shred1, shred2) = duplicate_shred::into_shreds(
+                &slot_leader.id,
+                chunks,
+                self.shred_version,
+                self.epoch_specs.should_enforce_correct_proof_size(slot),
+            )?;
             if !self.blockstore.has_duplicate_shreds_in_slot(slot) {
                 self.blockstore.store_duplicate_slot(
                     slot,
@@ -237,7 +241,7 @@ mod tests {
         solana_ledger::{
             genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             get_tmp_ledger_path_auto_delete,
-            shred::Shredder,
+            shred::{Shred, Shredder, override_proof_size},
         },
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -245,6 +249,7 @@ mod tests {
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
+        test_case::test_case,
     };
 
     fn create_duplicate_proof(
@@ -287,6 +292,106 @@ mod tests {
         Ok(chunks)
     }
 
+    // Builds a duplicate proof whose two shreds carry a Merkle proof height
+    // that no 32:32 erasure set can produce. The shreds are re-signed after the
+    // rewrite so that only the proof height sets them apart from a proof the
+    // handler would otherwise store.
+    fn create_duplicate_proof_with_bad_proof_size(
+        keypair: Arc<Keypair>,
+        slot: Slot,
+        shred_version: u16,
+    ) -> impl Iterator<Item = DuplicateShred> {
+        let mut rng = rand::rng();
+        let shredder = Shredder::new(slot, slot - 1, 0, shred_version).unwrap();
+        let mut bad_proof_size_shred = || {
+            let shred = new_rand_shred(&mut rng, 353, &shredder, &keypair);
+            let mut payload = shred.payload().to_vec();
+            override_proof_size(&mut payload, 5);
+            let mut shred = Shred::new_from_serialized_shred(payload).unwrap();
+            assert_eq!(
+                shred.proof_size().unwrap(),
+                5,
+                "the rewritten proof height has to survive a round trip"
+            );
+            shred.sign(&keypair);
+            shred
+        };
+        let shred1 = bad_proof_size_shred();
+        let shred2 = bad_proof_size_shred();
+        from_shred(
+            shred1,
+            keypair.pubkey(),
+            shred2.payload().clone(),
+            None::<fn(Slot) -> Option<Pubkey>>,
+            timestamp(), // wallclock
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            shred_version,
+        )
+        .unwrap()
+    }
+
+    // A duplicate proof marks the slot duplicate, so a proof whose shreds could
+    // never have been retransmitted must be admitted only while the gate that
+    // rejects them on the shred paths is still off for the slot.
+    #[test_case(true, false; "enforced")]
+    #[test_case(false, true; "not_enforced")]
+    fn test_handle_bad_proof_size(enforce_correct_proof_size: bool, expect_stored: bool) {
+        agave_logger::setup();
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let my_keypair = Arc::new(Keypair::new());
+        let my_pubkey = my_keypair.pubkey();
+        let shred_version = 0;
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_leader(10_000, &my_pubkey, 10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks_arc = BankForks::new_rw_arc(bank);
+        {
+            let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
+            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
+            let mut bank_forks = bank_forks_arc.write().unwrap();
+            bank_forks.insert(bank9);
+            bank_forks.set_root(9, None, None);
+        }
+        let slots_in_epoch = bank_forks_arc
+            .read()
+            .unwrap()
+            .working_bank()
+            .get_slots_in_epoch(0);
+        let epoch_specs = TestEpochSpecs {
+            staked_nodes: Arc::new(HashMap::new()),
+            slots_in_epoch,
+            enforce_correct_proof_size,
+            root_slot: bank_forks_arc.read().unwrap().root(),
+        };
+
+        blockstore.set_roots([0, 9].iter()).unwrap();
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
+            &bank_forks_arc.read().unwrap().working_bank(),
+        ));
+        let (sender, receiver) = bounded(1024);
+        let migration_status = bank_forks_arc.read().unwrap().migration_status();
+        let mut duplicate_shred_handler = DuplicateShredHandler::new(
+            blockstore.clone(),
+            leader_schedule_cache,
+            epoch_specs.clone_box(),
+            sender,
+            shred_version,
+            migration_status,
+        );
+
+        let slot: Slot = 10;
+        for chunk in create_duplicate_proof_with_bad_proof_size(my_keypair, slot, shred_version) {
+            duplicate_shred_handler.handle(chunk);
+        }
+        assert_eq!(blockstore.has_duplicate_shreds_in_slot(slot), expect_stored);
+        assert_eq!(
+            receiver.try_iter().collect_vec(),
+            if expect_stored { vec![slot] } else { vec![] }
+        );
+    }
+
     #[test]
     fn test_handle_mixed_entries() {
         agave_logger::setup();
@@ -315,6 +420,8 @@ mod tests {
         let epoch_specs = TestEpochSpecs {
             staked_nodes: Arc::new(HashMap::new()),
             slots_in_epoch,
+            enforce_correct_proof_size: true,
+            root_slot: bank_forks_arc.read().unwrap().root(),
         };
 
         assert!(blockstore.set_roots([0, 9].iter()).is_ok());
@@ -439,6 +546,8 @@ mod tests {
         let epoch_specs = TestEpochSpecs {
             staked_nodes: Arc::new(HashMap::new()),
             slots_in_epoch,
+            enforce_correct_proof_size: true,
+            root_slot: bank_forks_arc.read().unwrap().root(),
         };
 
         blockstore.set_roots([0, 9].iter()).unwrap();

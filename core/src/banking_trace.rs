@@ -67,10 +67,9 @@ pub struct BankingTracer {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, PartialEq),
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
-        api_digest = "5jvhDLvSuAMKMHg8nSkmP57J5QitUcSRK2Ykg4FGCLzk",
         abi_digest = "6WDJa7JLPQEZdP5iHBWpdkBF6cdVYXeW4swypaLmpLag",
         test_roundtrip = "eq_and_wire",
     )
@@ -78,27 +77,21 @@ pub struct BankingTracer {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "SystemTime::UNIX_EPOCH + Duration::from_nanos(rng.next_u64())")
     )]
     pub SystemTime,
     pub TracedEvent,
 );
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, PartialEq)
-)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TracedEvent {
     PacketBatch(ChannelLabel, BankingPacketBatch),
     BlockAndBankHash(Slot, Hash, Hash),
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, PartialEq)
-)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ChannelLabel {
     NonVote,

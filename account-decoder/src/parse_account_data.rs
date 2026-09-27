@@ -9,7 +9,7 @@ use {
     inflector::Inflector,
     serde::{Deserialize, Serialize},
     solana_clock::UnixTimestamp,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         address_lookup_table, bpf_loader_upgradeable, config, stake, system_program, sysvar, vote,

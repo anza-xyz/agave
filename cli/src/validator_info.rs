@@ -137,8 +137,8 @@ fn parse_validator_info(
     let key_list: ConfigKeys = deserialize(&account.data).ok()?;
     if key_list.keys.len() > 1 {
         let (validator_pubkey, is_signed) = key_list.keys[1];
-        let validator_info_string: String =
-            get_config_data(&account.data).and_then(deserialize).ok()?;
+        let config_data = get_config_data(&account.data).ok()?;
+        let validator_info_string: String = deserialize(config_data).ok()?;
         let validator_info: Map<_, _> = serde_json::from_str(&validator_info_string).ok()?;
         Some((validator_pubkey, is_signed, validator_info))
     } else {

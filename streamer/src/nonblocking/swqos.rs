@@ -9,7 +9,7 @@ use {
                 update_open_connections_stat,
             },
             stream_throttle::{
-                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL_MS, StakedStreamLoadEMA,
+                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL_MS, StreamLoadEMA,
                 throttle_stream,
             },
         },
@@ -87,7 +87,7 @@ impl SwQosConfig {
 
 pub struct SwQos {
     config: SwQosConfig,
-    staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
+    stream_load_ema: Arc<StreamLoadEMA>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     unstaked_connection_table: Arc<Mutex<ConnectionTable<ConnectionStreamCounter>>>,
@@ -125,7 +125,7 @@ impl SwQos {
     ) -> Self {
         Self {
             config: config.clone(),
-            staked_stream_load_ema: Arc::new(StakedStreamLoadEMA::new(
+            stream_load_ema: Arc::new(StreamLoadEMA::new(
                 stats.clone(),
                 config.max_unstaked_connections,
                 config.max_streams_per_ms,
@@ -290,7 +290,7 @@ impl SwQos {
     }
 
     fn max_streams_per_throttling_interval(&self, conn_context: &SwQosConnectionContext) -> u64 {
-        self.staked_stream_load_ema
+        self.stream_load_ema
             .available_load_capacity_in_throttling_duration(
                 conn_context.peer_type,
                 conn_context.total_stake,
@@ -316,7 +316,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
 
                 let peer_type = {
-                    let max_streams_per_ms = self.staked_stream_load_ema.max_streams_per_ms();
+                    let max_streams_per_ms = self.stream_load_ema.max_streams_per_ms();
                     let min_stake_ratio =
                         1_f64 / (max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS) as f64;
                     let stake_ratio = stake as f64 / total_stake as f64;
@@ -447,8 +447,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     fn on_stream_accepted(&self, conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema
-            .increment_load(conn_context.peer_type);
+        self.stream_load_ema.increment_load(conn_context.peer_type);
         conn_context
             .stream_counter
             .as_ref()
@@ -458,11 +457,11 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     fn on_stream_error(&self, _conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema.update_ema_if_needed();
+        self.stream_load_ema.update_ema_if_needed();
     }
 
     fn on_stream_closed(&self, _conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema.update_ema_if_needed();
+        self.stream_load_ema.update_ema_if_needed();
     }
 
     #[allow(clippy::manual_async_fn)]

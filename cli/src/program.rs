@@ -36,7 +36,8 @@ use {
         SendAndConfirmConfigV3, SendTransport, send_and_confirm_transactions_in_parallel_v3,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_instruction::{Instruction, error::InstructionError},
+    solana_instruction::Instruction,
+    solana_instruction_error::InstructionError,
     solana_keypair::{Keypair, keypair_from_seed, read_keypair_file},
     solana_loader_v3_interface::{
         get_program_data_address,
@@ -63,7 +64,7 @@ use {
         elf::{ElfError, Executable, get_sbpf_version},
         error::EbpfError,
         program::SBPFVersion,
-        verifier::RequisiteVerifier,
+        verifier::{LocalVerifier, RequisiteVerifier},
         vm::Config,
     },
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
@@ -76,7 +77,7 @@ use {
         node_address_service::LeaderTpuCacheServiceConfig,
         websocket_node_address_service::WebsocketNodeAddressService,
     },
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::TransactionError,
     std::{
         fs::File,
@@ -1648,7 +1649,8 @@ async fn process_program_upgrade(
         )
         .await?;
 
-        let fee = rpc_client.get_fee_for_message(&message).await?;
+        let message = VersionedMessage::Legacy(message);
+        let fee = rpc_client.get_fee_for_versioned_message(&message).await?;
         check_account_for_spend_and_fee_with_commitment(
             &rpc_client,
             &fee_payer_signer.pubkey(),
@@ -1657,9 +1659,8 @@ async fn process_program_upgrade(
             config.commitment,
         )
         .await?;
-        let mut tx = Transaction::new_unsigned(message);
         let signers = &[fee_payer_signer, upgrade_authority_signer];
-        tx.try_sign(signers, blockhash)?;
+        let tx = VersionedTransaction::try_new(message, &dedup_signers(signers))?;
         let final_tx_sig = rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
@@ -2623,7 +2624,10 @@ async fn do_process_program_deploy(
     for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
         let offset = i.saturating_mul(chunk_size);
         if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-            write_messages.push(create_msg(offset as u32, chunk.to_vec()));
+            write_messages.push(VersionedMessage::Legacy(create_msg(
+                offset as u32,
+                chunk.to_vec(),
+            )));
         }
     }
 
@@ -2651,6 +2655,9 @@ async fn do_process_program_deploy(
             &blockhash,
         ))
     };
+
+    let initial_message = initial_message.map(VersionedMessage::Legacy);
+    let final_message = final_message.map(VersionedMessage::Legacy);
 
     if !skip_fee_check {
         check_payer(
@@ -2759,9 +2766,14 @@ async fn do_process_write_buffer(
     for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
         let offset = i.saturating_mul(chunk_size);
         if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-            write_messages.push(create_msg(offset as u32, chunk.to_vec()));
+            write_messages.push(VersionedMessage::Legacy(create_msg(
+                offset as u32,
+                chunk.to_vec(),
+            )));
         }
     }
+
+    let initial_message = initial_message.map(VersionedMessage::Legacy);
 
     if !skip_fee_check {
         check_payer(
@@ -2887,7 +2899,10 @@ async fn do_process_program_upgrade(
         for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
             let offset = i.saturating_mul(chunk_size);
             if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-                write_messages.push(create_msg(offset as u32, chunk.to_vec()));
+                write_messages.push(VersionedMessage::Legacy(create_msg(
+                    offset as u32,
+                    chunk.to_vec(),
+                )));
             }
         }
 
@@ -2913,6 +2928,9 @@ async fn do_process_program_upgrade(
         &blockhash,
     );
     let final_message = Some(final_message);
+
+    let initial_message = initial_message.map(VersionedMessage::Legacy);
+    let final_message = final_message.map(VersionedMessage::Legacy);
 
     if !skip_fee_check {
         check_payer(
@@ -3060,6 +3078,11 @@ fn verify_elf(
 
     executable
         .verify::<RequisiteVerifier>()
+        .map_err(|err| explain_elf_error(&err, program_data, config))?;
+
+    // A local verifier to catch SBPFv3 errors
+    executable
+        .verify::<LocalVerifier>()
         .map_err(|err| explain_elf_error(&err, program_data, config).into())
 }
 
@@ -3103,23 +3126,23 @@ async fn check_payer(
     config: &CliConfig<'_>,
     fee_payer_pubkey: Pubkey,
     balance_needed: u64,
-    initial_message: &Option<Message>,
-    write_messages: &[Message],
-    final_message: &Option<Message>,
+    initial_message: &Option<VersionedMessage>,
+    write_messages: &[VersionedMessage],
+    final_message: &Option<VersionedMessage>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut fee = Saturating(0);
     if let Some(message) = initial_message {
-        fee += rpc_client.get_fee_for_message(message).await?;
+        fee += rpc_client.get_fee_for_versioned_message(message).await?;
     }
     // Assume all write messages cost the same
     if let Some(message) = write_messages.first() {
         fee += rpc_client
-            .get_fee_for_message(message)
+            .get_fee_for_versioned_message(message)
             .await?
             .saturating_mul(write_messages.len() as u64);
     }
     if let Some(message) = final_message {
-        fee += rpc_client.get_fee_for_message(message).await?;
+        fee += rpc_client.get_fee_for_versioned_message(message).await?;
     }
     check_account_for_spend_and_fee_with_commitment(
         rpc_client,
@@ -3152,9 +3175,9 @@ fn dedup_signers<'a>(signers: &[&'a dyn Signer]) -> Vec<&'a dyn Signer> {
 async fn send_deploy_messages(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig<'_>,
-    initial_message: Option<Message>,
-    mut write_messages: Vec<Message>,
-    final_message: Option<Message>,
+    initial_message: Option<VersionedMessage>,
+    write_messages: Vec<VersionedMessage>,
+    final_message: Option<VersionedMessage>,
     fee_payer_signer: &dyn Signer,
     initial_signer: Option<&dyn Signer>,
     write_signer: Option<&dyn Signer>,
@@ -3163,6 +3186,16 @@ async fn send_deploy_messages(
     use_rpc: bool,
     compute_unit_limit: &ComputeUnitLimit,
 ) -> Result<Option<Signature>, Box<dyn std::error::Error>> {
+    let into_legacy = |message| match message {
+        VersionedMessage::Legacy(message) => message,
+        _ => unreachable!("program deployment constructs legacy messages"),
+    };
+    let initial_message = initial_message.map(into_legacy);
+    let mut write_messages = write_messages
+        .into_iter()
+        .map(into_legacy)
+        .collect::<Vec<_>>();
+    let final_message = final_message.map(into_legacy);
     if let Some(mut message) = initial_message {
         if let Some(initial_signer) = initial_signer {
             trace!("Preparing the required accounts");
@@ -3230,13 +3263,16 @@ async fn send_deploy_messages(
                 }
             }
 
-            // Holds the scheduler alive for the duration of the send.
-            let _tpu_client;
             let cancel_token = CancellationToken::new();
-            let transport = if use_rpc {
-                SendTransport::Rpc(config.send_transaction_config)
+            // Keep background TPU client tasks alive for the duration of the send.
+            let (transport, node_address_service, _tpu_client) = if use_rpc {
+                (
+                    SendTransport::Rpc(config.send_transaction_config),
+                    None,
+                    None,
+                )
             } else {
-                let node_address_service = WebsocketNodeAddressService::run(
+                let (provider, service) = WebsocketNodeAddressService::run(
                     rpc_client.clone(),
                     config.websocket_url.clone(),
                     LeaderTpuCacheServiceConfig::default(),
@@ -3246,20 +3282,22 @@ async fn send_deploy_messages(
 
                 let bind_socket = bind_to_unspecified()?;
 
-                let (transaction_sender, client) =
-                    ClientBuilder::new(Box::new(node_address_service))
-                        .cancel_token(cancel_token.clone())
-                        .bind_socket(bind_socket)
-                        .broadcaster(NonblockingBroadcaster)
-                        .build()
-                        .expect("Failed to build TPU client");
-                _tpu_client = client;
-                SendTransport::Tpu(transaction_sender)
+                let (transaction_sender, client) = ClientBuilder::new(Box::new(provider))
+                    .cancel_token(cancel_token.clone())
+                    .bind_socket(bind_socket)
+                    .broadcaster(NonblockingBroadcaster)
+                    .build()
+                    .expect("Failed to build TPU client");
+                (
+                    SendTransport::Tpu(transaction_sender),
+                    Some(service),
+                    Some(client),
+                )
             };
 
             let versioned_write_messages = write_messages.into_iter().map(VersionedMessage::Legacy);
 
-            let transaction_errors = send_and_confirm_transactions_in_parallel_v3(
+            let transaction_errors_result = send_and_confirm_transactions_in_parallel_v3(
                 rpc_client.clone(),
                 transport,
                 versioned_write_messages,
@@ -3273,10 +3311,19 @@ async fn send_deploy_messages(
                 },
             )
             .await
-            .map_err(|err| format!("Data writes to account failed: {err}"))?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+            .map_err(|err| format!("Data writes to account failed: {err}"));
+
+            cancel_token.cancel();
+            if let Some(node_address_service) = node_address_service
+                && let Err(err) = node_address_service.shutdown().await
+            {
+                error!("Failed to shut down WebSocket node address service: {err}");
+            }
+
+            let transaction_errors = transaction_errors_result?
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
 
             if !transaction_errors.is_empty() {
                 for transaction_error in &transaction_errors {

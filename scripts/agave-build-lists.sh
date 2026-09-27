@@ -41,6 +41,7 @@ AGAVE_BINS_DEPRECATED=(
 )
 
 DCOU_TAINTED_PACKAGES=(
+  agave-conformance
   agave-ledger-tool
   agave-store-histogram
   agave-store-tool

@@ -1,6 +1,6 @@
 use {
     crate::entry_notifier_interface::{EntryNotifierArc, EntryUpdateParentInfo},
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
+    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError, bounded},
     solana_clock::{BankId, Slot},
     solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
     std::{
@@ -32,6 +32,30 @@ pub enum EntryNotification {
 pub type EntryNotifierSender = Sender<EntryNotification>;
 pub type EntryNotifierReceiver = Receiver<EntryNotification>;
 
+/// Maximum number of entry notifications buffered while a notifier is busy.
+/// Blocking producers on saturation preserves notifications without allowing an
+/// arbitrarily slow notifier to grow validator memory without bound.
+const ENTRY_NOTIFICATION_CHANNEL_CAPACITY: usize = 2048;
+
+/// Try the nonblocking fast path first so saturation is observable, then block
+/// rather than dropping an entry notification.
+pub fn send_entry_notification(
+    sender: &EntryNotifierSender,
+    notification: EntryNotification,
+) -> Result<(), SendError<EntryNotification>> {
+    match sender.try_send(notification) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(notification)) => {
+            log::error!(
+                "EntryNotifier channel is full (capacity {ENTRY_NOTIFICATION_CHANNEL_CAPACITY}); \
+                 blocking to preserve the notification"
+            );
+            sender.send(notification)
+        }
+        Err(TrySendError::Disconnected(notification)) => Err(SendError(notification)),
+    }
+}
+
 pub struct EntryNotifierService {
     sender: EntryNotifierSender,
     thread_hdl: JoinHandle<()>,
@@ -39,7 +63,8 @@ pub struct EntryNotifierService {
 
 impl EntryNotifierService {
     pub fn new(entry_notifier: EntryNotifierArc, exit: Arc<AtomicBool>) -> Self {
-        let (entry_notification_sender, entry_notification_receiver) = unbounded();
+        let (entry_notification_sender, entry_notification_receiver) =
+            bounded(ENTRY_NOTIFICATION_CHANNEL_CAPACITY);
         let thread_hdl = Builder::new()
             .name("solEntryNotif".to_string())
             .spawn(move || {
@@ -177,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_forwards_entry_notifications_in_order() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(3);
         let notifier = Arc::new(TestEntryNotifier::default());
         let block_footer = VersionedBlockFooter::V1(BlockFooterV1 {
             bank_hash: Hash::new_unique(),

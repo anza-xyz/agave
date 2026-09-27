@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_fs::FileInfo,
     criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -105,11 +106,10 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
         // lots of file handles and run out/crash.  We also need to *not* remove the backing file in
         // this new append vec because that would cause a double-free.  Wrap the append vec in
         // ManuallyDrop to *not* remove the backing file on drop.
-        let append_vec_file = ManuallyDrop::new(
-            AppendVec::new_from_file(append_vec.path(), append_vec.len())
-                .unwrap()
-                .0,
-        );
+        let append_vec_file = ManuallyDrop::new({
+            let file_info = FileInfo::new_from_path(append_vec.path()).unwrap();
+            AppendVec::new_for_startup(file_info).unwrap()
+        });
 
         group.bench_function(BenchmarkId::new("append_vec_file", accounts_count), |b| {
             b.iter(|| {
@@ -156,11 +156,10 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
         // lots of file handles and run out/crash.  We also need to *not* remove the backing file in
         // this new append vec because that would cause a double-free.  Wrap the append vec in
         // ManuallyDrop to *not* remove the backing file on drop.
-        let append_vec_file = ManuallyDrop::new(
-            AppendVec::new_from_file(append_vec.path(), append_vec.len())
-                .unwrap()
-                .0,
-        );
+        let append_vec_file = ManuallyDrop::new({
+            let file_info = FileInfo::new_from_path(append_vec.path()).unwrap();
+            AppendVec::new_for_startup(file_info).unwrap()
+        });
 
         // Run the benchmarks!
         // Note, use `iter_with_large_drop()` to avoid timing how long it takes to drop the Vec of

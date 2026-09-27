@@ -1,7 +1,10 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::{enable_alt_bn128_syscall, loader_v3_minimum_extend_program_size},
+    agave_feature_set::{
+        enable_alt_bn128_syscall, loader_v3_minimum_extend_program_size,
+        loader_v3_set_program_data_to_elf_length,
+    },
     assert_matches::assert_matches,
     serde_json::Value,
     solana_account::ReadableAccount,
@@ -22,7 +25,7 @@ use {
         instruction::{self as loader_v3_instruction, MINIMUM_EXTEND_PROGRAM_BYTES},
         state::UpgradeableLoaderState,
     },
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -53,6 +56,7 @@ use {
 
 pub struct LoaderV3Features {
     pub minimum_extend_program_size: bool,
+    pub set_programdata_to_elf_length: bool,
 }
 
 fn test_validator_genesis(
@@ -72,9 +76,13 @@ fn test_validator_genesis(
 
     let LoaderV3Features {
         minimum_extend_program_size,
+        set_programdata_to_elf_length,
     } = features;
     if !minimum_extend_program_size {
         genesis.deactivate_features(&[loader_v3_minimum_extend_program_size::id()]);
+    }
+    if !set_programdata_to_elf_length {
+        genesis.deactivate_features(&[loader_v3_set_program_data_to_elf_length::id()]);
     }
 
     genesis
@@ -212,6 +220,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -428,6 +437,7 @@ async fn test_cli_program_deploy_no_authority() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -537,6 +547,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     );
 
@@ -674,6 +685,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     );
 
@@ -829,6 +841,146 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_deploy_local_verifier() {
+    agave_logger::setup();
+
+    let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    program_path.push("tests");
+    program_path.push("fixtures");
+    program_path.push("v3_call_minus_one");
+    program_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let test_validator_builder = test_validator_genesis(
+        &mint_keypair,
+        LoaderV3Features {
+            minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
+        },
+    );
+
+    let test_validator = test_validator_builder
+        .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
+        .await
+        .expect("validator start failed");
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = setup_rpc_client(&mut config);
+
+    let mut file = File::open(program_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+    let max_len = program_data.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .await
+        .unwrap();
+    let minimum_balance_for_program = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
+        .unwrap();
+    let upgrade_authority = Keypair::new();
+
+    let keypair = Keypair::new();
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+    };
+    config.signers = vec![&keypair];
+    process_command(&config).await.unwrap();
+
+    config.signers = vec![&keypair, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(program_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: None,
+        program_pubkey: None,
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        upgrade_authority_signer_index: 1,
+        is_final: true,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: false,
+    });
+    config.output_format = OutputFormat::JsonCompact;
+
+    expect_command_failure(
+        &config,
+        "Program contains a call -1 instruction",
+        "Verifier error: Invalid function at instruction 5 (local pre-flight)",
+    )
+    .await;
+
+    // Try again using a program with an invalid syscall
+    let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    program_path.push("tests");
+    program_path.push("fixtures");
+    program_path.push("v3_invalid_syscall");
+    program_path.set_extension("so");
+
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(program_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: None,
+        program_pubkey: None,
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        upgrade_authority_signer_index: 1,
+        is_final: true,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: false,
+    });
+
+    expect_command_failure(
+        &config,
+        "Program contains an invalid syscall",
+        "Verifier error: Invalid syscall code 3623975301 (local pre-flight)",
+    )
+    .await;
+
+    // This case should work
+    let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    program_path.push("tests");
+    program_path.push("fixtures");
+    program_path.push("v3_valid_syscall");
+    program_path.set_extension("so");
+
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(program_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: None,
+        program_pubkey: None,
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        upgrade_authority_signer_index: 1,
+        is_final: true,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: false,
+    });
+
+    let response = process_command(&config).await;
+    assert!(response.is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_deploy_with_authority() {
     agave_logger::setup();
 
@@ -843,6 +995,7 @@ async fn test_cli_program_deploy_with_authority() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1256,6 +1409,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1434,6 +1588,7 @@ async fn test_cli_program_close_program() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1577,6 +1732,7 @@ async fn test_cli_program_extend_program() {
         &noop_path,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .await;
@@ -1736,6 +1892,7 @@ async fn test_cli_program_extend_program_minimum_size() {
         &noop_path,
         LoaderV3Features {
             minimum_extend_program_size: true,
+            set_programdata_to_elf_length: false,
         },
     )
     .await;
@@ -1859,6 +2016,7 @@ async fn test_cli_program_write_buffer() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2182,7 +2340,7 @@ async fn test_cli_program_write_buffer() {
     );
     close_message.recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
     let close_fee = rpc_client
-        .get_fee_for_message(&close_message)
+        .get_fee_for_versioned_message(&VersionedMessage::Legacy(close_message))
         .await
         .unwrap();
     config.signers = vec![&keypair];
@@ -2279,6 +2437,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     );
 
@@ -2378,6 +2537,7 @@ async fn test_cli_program_set_buffer_authority() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2571,6 +2731,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2709,6 +2870,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2908,6 +3070,7 @@ async fn test_cli_program_show() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -3110,6 +3273,7 @@ async fn test_cli_program_dump() {
         &mint_keypair,
         LoaderV3Features {
             minimum_extend_program_size: false,
+            set_programdata_to_elf_length: false,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)

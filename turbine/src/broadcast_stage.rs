@@ -24,14 +24,14 @@ use {
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         blockstore::Blockstore,
-        blockstore_db::DBPinnableSlice,
+        blockstore_db::{DBPinnableSlice, WriteBatch},
         leader_schedule_cache::LeaderScheduleCache,
         shred::{MAX_FEC_SETS_PER_SLOT, Shred},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
     solana_net_utils::SocketAddrSpace,
-    solana_poh::poh_recorder::WorkingBankEntryOrMarker,
+    solana_poh::poh_recorder::WorkingBankMessage,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
@@ -166,7 +166,7 @@ impl BroadcastStageType {
         &self,
         sock: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
-        receiver: Receiver<WorkingBankEntryOrMarker>,
+        receiver: Receiver<WorkingBankMessage>,
         retransmit_slots_receiver: Receiver<Slot>,
         exit_sender: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
@@ -221,7 +221,8 @@ trait BroadcastRun {
         keypair: &Keypair,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
-        receiver: &Receiver<WorkingBankEntryOrMarker>,
+        write_batch: &mut WriteBatch,
+        receiver: &Receiver<WorkingBankMessage>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()>;
@@ -237,6 +238,7 @@ trait BroadcastRun {
         receiver: &RecordReceiver,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
     ) -> Result<()>;
 }
 
@@ -267,17 +269,19 @@ impl BroadcastStage {
     fn run(
         cluster_info: Arc<ClusterInfo>,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntryOrMarker>,
+        receiver: &Receiver<WorkingBankMessage>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         mut broadcast_stage_run: impl BroadcastRun,
     ) -> BroadcastStageReturnType {
         let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch();
         loop {
             let res = broadcast_stage_run.run(
                 &cluster_info.keypair(),
                 blockstore,
                 &mut pinnable_slice,
+                &mut write_batch,
                 receiver,
                 socket_sender,
                 blockstore_sender,
@@ -327,7 +331,7 @@ impl BroadcastStage {
     fn new(
         socks: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
-        receiver: Receiver<WorkingBankEntryOrMarker>,
+        receiver: Receiver<WorkingBankMessage>,
         retransmit_slots_receiver: Receiver<Slot>,
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
@@ -423,11 +427,13 @@ impl BroadcastStage {
             let blockstore = blockstore.clone();
             let run_record = move || {
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
+                let mut write_batch = blockstore.get_write_batch();
                 loop {
                     let res = broadcast_stage_run.record(
                         &blockstore_receiver,
                         &blockstore,
                         &mut pinnable_slice,
+                        &mut write_batch,
                     );
                     let res = Self::handle_error(res, "solana-broadcaster-record");
                     if let Some(res) = res {
@@ -602,14 +608,12 @@ pub fn broadcast_shreds(
     match socket {
         BroadcastSocket::Udp(s) => {
             let packets: Vec<_> = packets.collect();
-            num_packets += packets.len();
+            let batch_len = packets.len();
+            num_packets += batch_len;
             let mut send_mmsg_time = Measure::start("send_mmsg");
             match batch_send(s, packets) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    transmit_stats.dropped_packets_udp += num_failed;
-                    result = Err(Error::Io(ioerr));
-                }
+                Ok(num_sent) => transmit_stats.dropped_packets_udp += batch_len - num_sent,
+                Err(SendPktsError::IoError(ioerr)) => result = Err(Error::Io(ioerr)),
             }
             send_mmsg_time.stop();
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
@@ -643,7 +647,7 @@ pub mod test {
         agave_votor_messages::migration::MigrationStatus,
         crossbeam_channel::bounded,
         rand::Rng,
-        solana_entry::{entry::create_ticks, entry_or_marker::EntryOrMarker},
+        solana_entry::{entry::create_ticks, recorder_message::RecorderMessage},
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -842,7 +846,7 @@ pub mod test {
     fn setup_dummy_broadcast_service(
         leader_keypair: Arc<Keypair>,
         ledger_path: &Path,
-        entry_receiver: Receiver<WorkingBankEntryOrMarker>,
+        entry_receiver: Receiver<WorkingBankMessage>,
         retransmit_slots_receiver: Receiver<Slot>,
     ) -> MockBroadcastStage {
         // Make the database ledger
@@ -944,7 +948,10 @@ pub mod test {
                 entry_sender
                     .send((
                         bank.clone(),
-                        (EntryOrMarker::Entry(tick), start_tick_height + i as u64 + 1),
+                        (
+                            RecorderMessage::Entry(tick),
+                            start_tick_height + i as u64 + 1,
+                        ),
                     ))
                     .expect("Expect successful send to broadcast service");
             }

@@ -9,12 +9,9 @@ use {
 };
 
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample),
-    frozen_abi(
-        api_digest = "s77hb8RD8Hc9fsXn6uo6by1Kk3ByFF5bcBGA7qr2bLn",
-        abi_digest = "BZedcpj1BV5iCF1n7Tt62rbyfY4gm6D5Fjtj5dDtGSh5"
-    )
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(abi_digest = "BZedcpj1BV5iCF1n7Tt62rbyfY4gm6D5Fjtj5dDtGSh5")
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum VoteTransaction {

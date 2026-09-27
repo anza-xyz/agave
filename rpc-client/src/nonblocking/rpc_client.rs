@@ -7,6 +7,8 @@
 //! [JSON-RPC]: https://www.jsonrpc.org/specification
 
 pub use crate::mock_sender::Mocks;
+#[allow(deprecated)]
+use crate::rpc_client::SerializableMessage;
 #[cfg(feature = "spinner")]
 use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
@@ -14,8 +16,7 @@ use {
         http_sender::HttpSender,
         mock_sender::{MockSender, MocksMap, mock_encoded_account},
         rpc_client::{
-            GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
-            SerializableTransaction,
+            GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableTransaction,
         },
         rpc_sender::*,
     },
@@ -34,6 +35,7 @@ use {
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
+    solana_message::VersionedMessage,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::{
@@ -1669,6 +1671,24 @@ impl RpcClient {
         .await
     }
 
+    /// Gets the statuses of a list of transaction signatures with the given
+    /// [`RpcSignatureStatusConfig`], which can select a commitment level and a
+    /// minimum context slot.
+    ///
+    /// [`RpcSignatureStatusConfig`]: solana_rpc_client_api::config::RpcSignatureStatusConfig
+    pub async fn get_signature_statuses_with_config(
+        &self,
+        signatures: &[Signature],
+        config: solana_rpc_client_api::config::RpcSignatureStatusConfig,
+    ) -> RpcResult<Vec<Option<TransactionStatus>>> {
+        let signatures: Vec<_> = signatures.iter().map(|s| s.to_string()).collect();
+        self.send(
+            RpcRequest::GetSignatureStatuses,
+            json!([signatures, config]),
+        )
+        .await
+    }
+
     /// Check if a transaction has been processed with the given [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
@@ -2984,6 +3004,7 @@ impl RpcClient {
     ///     encoding: Some(UiTransactionEncoding::Json),
     ///     commitment: Some(CommitmentConfig::confirmed()),
     ///     max_supported_transaction_version: Some(0),
+    ///     min_context_slot: None,
     /// };
     /// let transaction = rpc_client.get_transaction_with_config(
     ///     &signature,
@@ -3205,6 +3226,7 @@ impl RpcClient {
     /// let config = RpcLeaderScheduleConfig {
     ///     identity: Some(validator_pubkey_str),
     ///     commitment: Some(CommitmentConfig::processed()),
+    ///     ..RpcLeaderScheduleConfig::default()
     /// };
     /// let leader_schedule = rpc_client.get_leader_schedule_with_config(
     ///     Some(slot),
@@ -5036,11 +5058,34 @@ impl RpcClient {
     /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
     ///
     /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    #[deprecated(since = "4.5.0", note = "Use get_fee_for_versioned_message instead")]
+    #[allow(deprecated)]
     pub async fn get_fee_for_message(
         &self,
         message: &impl SerializableMessage,
     ) -> ClientResult<u64> {
-        let serialized = message.serialize();
+        self.get_fee_for_serialized_message(message.serialize())
+            .await
+    }
+
+    /// Returns the fee that the cluster would charge to process the provided message.
+    ///
+    /// Supports legacy, v0, and v1 messages through [`VersionedMessage`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
+    ///
+    /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    pub async fn get_fee_for_versioned_message(
+        &self,
+        message: &VersionedMessage,
+    ) -> ClientResult<u64> {
+        self.get_fee_for_serialized_message(message.serialize())
+            .await
+    }
+
+    async fn get_fee_for_serialized_message(&self, serialized: Vec<u8>) -> ClientResult<u64> {
         let serialized_encoded = BASE64_STANDARD.encode(serialized);
         let result = self
             .send::<Response<Option<u64>>>(

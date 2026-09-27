@@ -14,6 +14,10 @@
 //! regarding to pooling and the actual use.
 
 use {
+    agave_jemalloc::{
+        group::ArenaGroup,
+        jemalloc::{Arena, Jemalloc},
+    },
     assert_matches::assert_matches,
     crossbeam_channel::{
         self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
@@ -36,9 +40,8 @@ use {
         },
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
         BlockSize, Capability, OrderedTaskId, SchedulingStateMachine, Task, UsageQueue,
@@ -59,6 +62,10 @@ use {
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
+
+#[cfg(test)]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 // dead_code is false positive; these tuple fields are used via Debug.
 #[allow(dead_code)]
@@ -105,6 +112,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     common_handler_context: CommonHandlerContext,
     block_verification_handler_count: CountOrDefault,
+    handler_thread_arenas: Option<ArenaGroup>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
     // almost always. But, this would cause wasted and noisy Arc::clone()'s at every call sites.
@@ -121,6 +129,28 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_pool_sender: Sender<Weak<Self>>,
     cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
+}
+
+// Drop this before jemalloc's thread-local destructor runs. That flushes and disables the
+// handler thread's tcache while the thread is still assigned to its arena, avoiding jemalloc's
+// no-background-thread forced purge path when the last handler thread exits.
+#[derive(Debug)]
+struct DisableHandlerThreadTcacheOnDrop {
+    arena: Arena,
+    thread_index: usize,
+}
+
+impl Drop for DisableHandlerThreadTcacheOnDrop {
+    fn drop(&mut self) {
+        if let Err(error) = Jemalloc::disable_current_thread_tcache() {
+            warn!(
+                "failed to disable unified scheduler handler thread jemalloc tcache before thread \
+                 exit; thread_index: {}; arena_id: {}; error: {error}",
+                self.thread_index,
+                self.arena.id()
+            );
+        }
+    }
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -175,6 +205,8 @@ pub type DefaultSchedulerPool =
     SchedulerPool<PooledScheduler<DefaultTaskHandler>, DefaultTaskHandler>;
 
 const DEFAULT_POOL_CLEANER_INTERVAL: Duration = Duration::from_secs(10);
+const ARENA_DIRTY_BYTES_PURGE_THRESHOLD: usize = 10 * 1024 * 1024 * 1024;
+const ARENA_STATS_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_POOLING_DURATION: Duration = Duration::from_secs(180);
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // Rough estimate of max UsageQueueLoader size in bytes:
@@ -204,6 +236,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        handler_thread_arenas: Option<ArenaGroup>,
     ) -> Arc<Self> {
         Self::do_new(
             block_verification_handler_count,
@@ -211,6 +244,7 @@ where
             transaction_status_sender,
             replay_vote_sender,
             prioritization_fee_cache,
+            handler_thread_arenas,
             DEFAULT_POOL_CLEANER_INTERVAL,
             DEFAULT_MAX_POOLING_DURATION,
             DEFAULT_MAX_USAGE_QUEUE_COUNT,
@@ -232,6 +266,7 @@ where
             transaction_status_sender,
             replay_vote_sender,
             prioritization_fee_cache,
+            None,
         )
     }
 
@@ -242,19 +277,27 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        handler_thread_arenas: Option<ArenaGroup>,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
         timeout_duration: Duration,
     ) -> Arc<Self> {
+        let cleaner_interval = handler_thread_arenas
+            .as_ref()
+            .map_or(pool_cleaner_interval, |_| {
+                pool_cleaner_interval.min(ARENA_STATS_INTERVAL)
+            });
         let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
 
         let cleaner_main_loop = move || {
             info!("cleaner_main_loop: started...");
 
             let weak_scheduler_pool: Weak<Self> = scheduler_pool_receiver.recv().unwrap();
+            let mut last_cleanup = Instant::now();
+            let mut last_arena_stats_report = Instant::now();
             loop {
-                match scheduler_pool_receiver.recv_timeout(pool_cleaner_interval) {
+                match scheduler_pool_receiver.recv_timeout(cleaner_interval) {
                     Ok(_) => unreachable!(),
                     Err(RecvTimeoutError::Disconnected | RecvTimeoutError::Timeout) => (),
                 }
@@ -266,6 +309,58 @@ where
                 };
 
                 let now = Instant::now();
+
+                if now.duration_since(last_arena_stats_report) >= ARENA_STATS_INTERVAL {
+                    if let Some(arenas) = &scheduler_pool.handler_thread_arenas {
+                        if let Err(error) = Jemalloc::advance_epoch() {
+                            warn!("failed to advance jemalloc epoch: {error}");
+                        } else {
+                            for arena_index in 0..arenas.len() {
+                                let arena = arenas[arena_index];
+                                let stats = match arena.stats() {
+                                    Ok(stats) => stats,
+                                    Err(error) => {
+                                        warn!(
+                                            "failed to read jemalloc arena stats; arena_id: {}; \
+                                             error: {error}",
+                                            arena.id()
+                                        );
+                                        continue;
+                                    }
+                                };
+
+                                arena.report_stats("replay-arena-stats", &stats);
+
+                                if stats.dirty > ARENA_DIRTY_BYTES_PURGE_THRESHOLD {
+                                    match arena.purge() {
+                                        Ok(()) => error!(
+                                            "purged jemalloc arena after dirty memory exceeded \
+                                             threshold; arena_id: {}; dirty_bytes: {}; \
+                                             threshold_bytes: {}",
+                                            arena.id(),
+                                            stats.dirty,
+                                            ARENA_DIRTY_BYTES_PURGE_THRESHOLD
+                                        ),
+                                        Err(error) => error!(
+                                            "failed to purge jemalloc arena after dirty memory \
+                                             exceeded threshold; arena_id: {}; dirty_bytes: {}; \
+                                             threshold_bytes: {}; error: {error}",
+                                            arena.id(),
+                                            stats.dirty,
+                                            ARENA_DIRTY_BYTES_PURGE_THRESHOLD
+                                        ),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    last_arena_stats_report = now;
+                }
+
+                if now.duration_since(last_cleanup) < pool_cleaner_interval {
+                    continue;
+                }
+                last_cleanup = now;
 
                 let idle_inner_count = {
                     // Pre-allocate rather large capacity to avoid reallocation inside the lock.
@@ -352,6 +447,7 @@ where
                 prioritization_fee_cache,
             },
             block_verification_handler_count,
+            handler_thread_arenas,
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
@@ -1482,7 +1578,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             }
         };
 
-        let handler_main_loop = || {
+        let handler_main_loop = |thread_index: usize, assigned_arena: Option<Arena>| {
             let handler_context = handler_context.clone();
             let mut runnable_task_receiver = runnable_task_receiver.clone();
             let finished_blocked_task_sender = finished_blocked_task_sender.clone();
@@ -1497,6 +1593,31 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
             move || {
+                let _disable_tcache_on_exit = if let Some(arena) = assigned_arena {
+                    if let Err(error) = arena.bind_current_thread_permanently() {
+                        let current_thread = thread::current();
+                        error!(
+                            "failed to bind unified scheduler handler thread to jemalloc arena; \
+                             thread_index: {thread_index}; arena_id: {}; thread: \
+                             {current_thread:?}; error: {error}",
+                            arena.id()
+                        );
+                        let _ = finished_idle_task_sender.send(Err(HandlerPanicked));
+                        panic!(
+                            "failed to bind unified scheduler handler thread {thread_index} to \
+                             jemalloc arena {}: {error}",
+                            arena.id()
+                        );
+                    }
+
+                    Some(DisableHandlerThreadTcacheOnDrop {
+                        arena,
+                        thread_index,
+                    })
+                } else {
+                    None
+                };
+
                 loop {
                     let (task, sender) = select_biased! {
                         recv(runnable_task_receiver.for_select()) -> message => {
@@ -1558,12 +1679,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .unwrap(),
         );
 
+        let handler_thread_arenas = self.pool.handler_thread_arenas.as_ref();
         self.handler_threads = (0..handler_context.thread_count)
             .map({
                 |thx| {
+                    let assigned_arena = handler_thread_arenas.map(|arenas| {
+                        #[allow(clippy::arithmetic_side_effects)]
+                        let arena_index = thx % arenas.len();
+                        arenas[arena_index]
+                    });
                     thread::Builder::new()
                         .name(format!("solScHandle{mode_char}{thx:02}"))
-                        .spawn_tracked(handler_main_loop())
+                        .spawn_tracked(handler_main_loop(thx, assigned_arena))
                         .unwrap()
                 }
             })
@@ -1806,7 +1933,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
     ) -> ScheduleResult {
         let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |pubkey| {
@@ -1876,6 +2003,7 @@ mod tests {
     use {
         super::*,
         crate::sleepless_testing,
+        agave_jemalloc::jemalloc::{Decay, Jemalloc},
         assert_matches::assert_matches,
         solana_clock::Slot,
         solana_hash::Hash,
@@ -1894,7 +2022,6 @@ mod tests {
         },
         solana_svm_timings::ExecuteTimingType,
         solana_system_transaction as system_transaction,
-        solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         std::{
             num::Saturating,
@@ -1925,6 +2052,7 @@ mod tests {
                 transaction_status_sender,
                 replay_vote_sender,
                 prioritization_fee_cache,
+                None,
                 pool_cleaner_interval,
                 max_pooling_duration,
                 max_usage_queue_count,
@@ -1947,6 +2075,7 @@ mod tests {
                 transaction_status_sender,
                 replay_vote_sender,
                 prioritization_fee_cache,
+                None,
             )
         }
     }
@@ -1980,6 +2109,138 @@ mod tests {
         assert_eq!((Arc::strong_count(&pool), Arc::weak_count(&pool)), (1, 2));
         let debug = format!("{pool:#?}");
         assert!(!debug.is_empty());
+    }
+
+    #[test]
+    fn test_handler_thread_tcache_drop_guard_avoids_purge_on_thread_exit() {
+        let arenas = ArenaGroup::new(1, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        let arena = arenas[0];
+
+        let stats_before_thread_exit = std::thread::spawn(move || {
+            arena.bind_current_thread_permanently().unwrap();
+            let _disable_tcache_on_exit = DisableHandlerThreadTcacheOnDrop {
+                arena,
+                thread_index: 0,
+            };
+
+            const DIRTY_BYTES: usize = 8 * 1024 * 1024;
+            let allocation = vec![0u8; DIRTY_BYTES];
+            assert_eq!(allocation.len(), DIRTY_BYTES);
+            drop(allocation);
+
+            Jemalloc::advance_epoch().unwrap();
+            let stats = arena.stats().unwrap();
+            assert_eq!(stats.dirty_decay, Decay::Never);
+            assert_eq!(stats.muzzy_decay, Decay::Never);
+            assert!(
+                stats.dirty_pages > 0,
+                "test requires dirty pages before handler thread exit"
+            );
+
+            stats
+        })
+        .join()
+        .unwrap();
+
+        Jemalloc::advance_epoch().unwrap();
+        let stats_after_thread_exit = arena.stats().unwrap();
+
+        assert_eq!(
+            stats_after_thread_exit.dirty_purges,
+            stats_before_thread_exit.dirty_purges
+        );
+        assert_eq!(
+            stats_after_thread_exit.muzzy_purges,
+            stats_before_thread_exit.muzzy_purges
+        );
+    }
+
+    #[test]
+    fn test_handler_threads_use_assigned_arenas() {
+        const SECOND_ARENA_SHIFT: u32 = 32;
+        const TASK_SEQUENCE_SHIFT: u32 = 64;
+
+        #[derive(Debug)]
+        enum ArenaCheckPoint {
+            Started,
+            Released,
+        }
+
+        #[derive(Debug)]
+        struct ArenaCheckingHandler;
+
+        impl TaskHandler for ArenaCheckingHandler {
+            fn handle(
+                _result: &mut Result<()>,
+                _timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                task: &Task,
+                _handler_context: &HandlerContext,
+            ) {
+                let task_id = task.task_id();
+                sleepless_testing::at((ArenaCheckPoint::Started, task_id));
+                sleepless_testing::at((ArenaCheckPoint::Released, task_id));
+
+                let current_thread = thread::current();
+                let expected_arena_id = match current_thread.name() {
+                    Some("solScHandleV00") => task_id & u128::from(u32::MAX),
+                    Some("solScHandleV01") => {
+                        (task_id >> SECOND_ARENA_SHIFT) & u128::from(u32::MAX)
+                    }
+                    name => panic!("unexpected handler thread name: {name:?}"),
+                };
+                assert_eq!(
+                    u128::from(Jemalloc::current_thread_arena().unwrap().as_raw()),
+                    expected_arena_id
+                );
+            }
+        }
+
+        let arenas = ArenaGroup::new(2, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        // Encode both arena IDs so either handler can verify its assigned arena from any task.
+        let encoded_arena_ids = u128::from(arenas[0].id().as_raw())
+            | (u128::from(arenas[1].id().as_raw()) << SECOND_ARENA_SHIFT);
+        let task_ids = [
+            encoded_arena_ids,
+            encoded_arena_ids | (1 << TASK_SEQUENCE_SHIFT),
+        ];
+        // Hold the first task until the second starts, forcing both handler threads to run.
+        let _progress = sleepless_testing::setup(&[
+            &(ArenaCheckPoint::Started, task_ids[0]),
+            &(ArenaCheckPoint::Started, task_ids[1]),
+            &(ArenaCheckPoint::Released, task_ids[0]),
+            &(ArenaCheckPoint::Released, task_ids[1]),
+        ]);
+        let pool = SchedulerPool::<PooledScheduler<ArenaCheckingHandler>, _>::new(
+            Some(2),
+            None,
+            None,
+            None,
+            None,
+            Some(arenas),
+        );
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let scheduler = pool
+            .take_scheduler(SchedulingContext::new(bank.clone()))
+            .unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        let transactions = task_ids.map(|task_id| {
+            (
+                ReplayTransaction::from(system_transaction::transfer(
+                    &Keypair::new(),
+                    &Pubkey::new_unique(),
+                    1,
+                    genesis_config.hash(),
+                )),
+                task_id,
+            )
+        });
+
+        bank.schedule_transaction_executions(transactions.into_iter())
+            .unwrap();
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
     }
 
     #[test]
@@ -2242,25 +2503,23 @@ mod tests {
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         pool.register_timeout_listener(bank.create_timeout_listener());
 
-        let tx_before_stale =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+        let tx_before_stale = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         bank.schedule_transaction_executions([(tx_before_stale, 0)].into_iter())
             .unwrap();
         sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
 
         sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
-        let tx_after_stale =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+        let tx_after_stale = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         bank.schedule_transaction_executions([(tx_after_stale, 1)].into_iter())
             .unwrap();
 
@@ -2360,26 +2619,24 @@ mod tests {
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         pool.register_timeout_listener(bank.create_timeout_listener());
 
-        let tx_before_stale =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+        let tx_before_stale = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         bank.schedule_transaction_executions([(tx_before_stale, 0)].into_iter())
             .unwrap();
         sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
         sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
 
         sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
-        let tx_after_stale =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+        let tx_after_stale = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         let result = bank.schedule_transaction_executions([(tx_after_stale, 1)].into_iter());
         assert_matches!(result, Err(TransactionError::AccountNotFound));
 
@@ -2441,26 +2698,24 @@ mod tests {
                 None, None, None, None, None,
             );
         let scheduler = pool.do_take_scheduler(SchedulingContext::new(bank.clone()));
-        let cancelled_transaction =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+        let cancelled_transaction = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         let bank = BankWithScheduler::new(bank, Some(Box::new(scheduler)));
         bank.schedule_transaction_executions([(cancelled_transaction, 0)].into_iter())
             .unwrap();
 
         sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
 
-        let transaction_after_abort =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+        let transaction_after_abort = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         assert_matches!(
             bank.schedule_transaction_executions([(transaction_after_abort, 1)].into_iter()),
             Err(TransactionError::CommitCancelled)
@@ -2488,7 +2743,7 @@ mod tests {
             ..
         } = create_genesis_config(10_000);
 
-        let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx = ReplayTransaction::from(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
@@ -2598,7 +2853,7 @@ mod tests {
         const MAX_TASK_COUNT: OrderedTaskId = 100;
 
         for i in 0..MAX_TASK_COUNT {
-            let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            let tx = ReplayTransaction::from(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 2,
@@ -2746,7 +3001,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx0 = ReplayTransaction::from(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
@@ -2802,7 +3057,7 @@ mod tests {
         let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
 
-        let bad_tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let bad_tx = ReplayTransaction::from(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
@@ -2813,13 +3068,12 @@ mod tests {
         sleepless_testing::at(TestCheckPoint::AfterTaskHandled);
         assert_eq!(bank.transaction_count(), 0);
 
-        let good_tx_after_bad_tx =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                3,
-                genesis_config.hash(),
-            ));
+        let good_tx_after_bad_tx = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            3,
+            genesis_config.hash(),
+        ));
         // make sure this tx is really a good one to execute.
         assert_matches!(
             bank.simulate_transaction_unchecked(&good_tx_after_bad_tx, false)
@@ -2931,7 +3185,7 @@ mod tests {
 
         for task_id in 0..TX_COUNT {
             // Use 2 non-conflicting txes to exercise the channel disconnected case as well.
-            let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            let tx = ReplayTransaction::from(system_transaction::transfer(
                 &Keypair::new(),
                 &solana_pubkey::new_rand(),
                 1,
@@ -2999,7 +3253,7 @@ mod tests {
         let scheduler = pool.do_take_scheduler(context);
 
         for i in 0..10 {
-            let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            let tx = ReplayTransaction::from(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 2,
@@ -3085,13 +3339,13 @@ mod tests {
         } = create_genesis_config_for_block_production(10_000);
 
         // tx0 and tx1 is definitely conflicting to write-lock the mint address
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx0 = ReplayTransaction::from(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
             genesis_config.hash(),
         ));
-        let tx1 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx1 = ReplayTransaction::from(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
@@ -3100,8 +3354,9 @@ mod tests {
 
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-        let pool =
-            SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(None, None, None, None, None);
+        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
+            None, None, None, None, None, None,
+        );
 
         // This variable tracks the cumulative count of transactions since genesis, which is
         // incremented as test is progressed.
@@ -3194,13 +3449,12 @@ mod tests {
         );
 
         // Create a dummy tx and two contexts
-        let dummy_tx =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+        let dummy_tx: ReplayTransaction = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         let context0 = &SchedulingContext::new(bank0.clone());
         let context1 = &SchedulingContext::new(bank1.clone());
 
@@ -3255,7 +3509,7 @@ mod tests {
 
         fn schedule_execution(
             &self,
-            transaction: RuntimeTransaction<SanitizedTransaction>,
+            transaction: ReplayTransaction,
             task_id: OrderedTaskId,
         ) -> ScheduleResult {
             let context = self.context().clone();
@@ -3384,13 +3638,12 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let very_old_valid_tx =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+        let very_old_valid_tx = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         let bank = Bank::new_for_tests(&genesis_config);
         let (mut bank, _bank_forks) = setup_dummy_fork_graph(bank);
         for _ in 0..bank.max_processing_age() {
@@ -3482,9 +3735,9 @@ mod tests {
         );
         // mangle the transfer tx to try to lock fee_payer (= mint_keypair) address twice!
         tx.message.account_keys.push(tx.message.account_keys[0]);
-        let tx = RuntimeTransaction::from_transaction_for_tests(tx);
 
-        // this internally should call SanitizedTransaction::get_account_locks().
+        // this internally should call validate_account_locks() via
+        // Bank::prepare_unlocked_batch_from_single_tx().
         let result = &mut Ok(());
         let timings = &mut ExecuteTimings::default();
         let scheduling_context = &SchedulingContext::new(bank.clone());
@@ -3496,7 +3749,7 @@ mod tests {
             prioritization_fee_cache: None,
         };
 
-        let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| {
+        let task = SchedulingStateMachine::create_task(ReplayTransaction::from(tx), 0, &mut |_| {
             UsageQueue::new(&Capability::FifoQueueing)
         });
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);

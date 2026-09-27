@@ -6,7 +6,6 @@ use {
     solana_serde_varint as serde_varint,
     std::{convert::TryInto, fmt},
 };
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Version {
     #[serde(with = "serde_varint")]

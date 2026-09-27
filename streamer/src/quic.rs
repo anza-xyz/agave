@@ -6,7 +6,6 @@ use {
             simple_qos::{SimpleQos, SimpleQosBanlist, SimpleQosConfig},
             swqos::{SwQos, SwQosConfig},
         },
-        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     crossbeam_channel::Sender,
@@ -17,6 +16,7 @@ use {
     },
     rustls::KeyLogFile,
     solana_keypair::Keypair,
+    solana_net_utils::quic_socket::QuicSocket,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::PacketBatch,
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate, tls_server_config_builder},
@@ -183,6 +183,8 @@ pub struct StreamerStats {
     pub(crate) total_packets_sent_to_consumer: AtomicUsize,
     pub(crate) total_bytes_sent_to_consumer: AtomicUsize,
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
+    /// Number of completed packets assembled from at least the accumulator's inline chunk capacity.
+    pub(crate) total_packets_at_or_above_chunk_capacity: AtomicUsize,
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
     pub(crate) num_evictions_staked: AtomicUsize,
@@ -212,8 +214,8 @@ pub struct StreamerStats {
     // opened from a particular IP address.
     pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
-    pub(crate) stream_load_ema: AtomicUsize,
-    pub(crate) stream_load_ema_overflow: AtomicUsize,
+    pub(crate) staked_stream_load_ema: AtomicUsize,
+    pub(crate) unstaked_stream_load_ema: AtomicUsize,
     pub(crate) stream_load_capacity_overflow: AtomicUsize,
     pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
@@ -416,6 +418,12 @@ impl StreamerStats {
                 i64
             ),
             (
+                "packets_at_or_above_chunk_capacity",
+                self.total_packets_at_or_above_chunk_capacity
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
                 "staked_chunks_received",
                 self.total_staked_chunks_received.swap(0, Ordering::Relaxed),
                 i64
@@ -465,13 +473,13 @@ impl StreamerStats {
                 i64
             ),
             (
-                "stream_load_ema",
-                self.stream_load_ema.load(Ordering::Relaxed),
+                "staked_stream_load_ema",
+                self.staked_stream_load_ema.load(Ordering::Relaxed),
                 i64
             ),
             (
-                "stream_load_ema_overflow",
-                self.stream_load_ema_overflow.load(Ordering::Relaxed),
+                "unstaked_stream_load_ema",
+                self.unstaked_stream_load_ema.load(Ordering::Relaxed),
                 i64
             ),
             (

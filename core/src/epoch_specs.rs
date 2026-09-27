@@ -1,7 +1,9 @@
 use {
-    solana_clock::Epoch,
+    agave_feature_set as feature_set,
+    solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::epoch_specs::EpochSpecs as EpochSpecsTrait,
+    solana_ledger::shred::filter::check_feature_activation_from_bank,
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     std::{
@@ -36,8 +38,21 @@ impl EpochSpecsTrait for EpochSpecs {
         cache.slots_in_epoch
     }
 
+    fn should_enforce_correct_proof_size(&self, shred_slot: Slot) -> bool {
+        // This can not be cached, as answer depends on shred's slot.
+        check_feature_activation_from_bank(
+            &feature_set::enforce_correct_proof_size::id(),
+            shred_slot,
+            &self.sharable_banks.root(),
+        )
+    }
+
     fn clone_box(&self) -> Box<dyn EpochSpecsTrait> {
         Box::new(self.clone())
+    }
+
+    fn root_slot(&self) -> Slot {
+        self.sharable_banks.root().slot()
     }
 }
 

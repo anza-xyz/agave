@@ -40,17 +40,14 @@ extern crate log;
 #[macro_use]
 extern crate assert_matches;
 
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
+#[cfg_attr(feature = "stable-abi", macro_use)]
+#[cfg(feature = "stable-abi")]
 extern crate solana_frozen_abi_macro;
 
 #[macro_use]
 extern crate solana_metrics;
 
-#[cfg(feature = "conformance")]
-pub use protocol::gossip_decode_to_effects;
-
-#[cfg(feature = "conformance")]
-pub mod harness;
+#[cfg(feature = "dev-context-only-utils")]
+pub use protocol::{Ping, Protocol, PruneData, deserialize_protocol};
 
 mod wire_format_tests;

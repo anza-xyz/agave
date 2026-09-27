@@ -148,7 +148,6 @@ pub fn bank_from_snapshot_archives(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
@@ -266,7 +265,6 @@ pub fn bank_from_snapshot_archives(
 
     let mut measure_verify = Measure::start("verify");
     if !bank.verify_snapshot_bank(
-        accounts_db_skip_shrink || !full_snapshot_archive_info.is_remote(),
         accounts_db_force_initial_clean,
         full_snapshot_archive_info.slot(),
         Some(&info.calculated_accounts_lt_hash),
@@ -307,7 +305,6 @@ pub fn bank_from_latest_snapshot_archives(
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
@@ -341,7 +338,6 @@ pub fn bank_from_latest_snapshot_archives(
         debug_keys,
         None, // leader_for_tests
         limit_load_slot_count_from_snapshot,
-        accounts_db_skip_shrink,
         accounts_db_force_initial_clean,
         verify_index,
         accounts_db_config,
@@ -367,7 +363,7 @@ pub fn bank_from_snapshot_dir(
     leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
+    mut accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> agave_snapshots::Result<Bank> {
@@ -375,6 +371,19 @@ pub fn bank_from_snapshot_dir(
         "Loading bank from snapshot dir: {}",
         bank_snapshot.snapshot_dir.display()
     );
+
+    // Size the index up front from the snapshot's account count, unless it was configured
+    // explicitly. Fastboot only: snapshot archives carry no such count.
+    let num_accounts_hint = snapshot_utils::read_startup_hints(&bank_snapshot.snapshot_dir)?
+        .and_then(|startup_hints| startup_hints.num_accounts());
+    if let Some(num_accounts) = num_accounts_hint {
+        let index_config = accounts_db_config.index.get_or_insert_default();
+        if index_config.num_initial_accounts.is_none() {
+            let num_accounts = num_accounts as usize;
+            info!("Sizing accounts index for {num_accounts} accounts, per the snapshot");
+            index_config.num_initial_accounts = Some(num_accounts);
+        }
+    }
 
     // Storages from this snapshot already live under `account_paths`; the storages list
     // inside the bank snapshot dir tells us which ones belong to it, and stale files
@@ -448,7 +457,6 @@ pub fn bank_from_snapshot_dir(
     bank.status_cache.write().unwrap().append(&slot_deltas);
 
     if !bank.verify_snapshot_bank(
-        true,
         false,
         0, // since force_clean is false, this value is unused
         Some(&info.calculated_accounts_lt_hash),
@@ -734,6 +742,7 @@ pub fn bank_to_full_snapshot_archive(
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        &snapshot_package.startup_hints,
         &io_setup,
     )?;
 
@@ -807,6 +816,7 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        &snapshot_package.startup_hints,
         &io_setup,
     )?;
 
@@ -949,6 +959,7 @@ mod tests {
             bank_snapshot_package,
             snapshot_storages.as_slice(),
             should_finalize,
+            &serde_snapshot::StartupHints::new_from_bank(bank),
             &IoSetupState::default(),
         )?;
 
@@ -988,7 +999,6 @@ mod tests {
             None,
             Some(*original_bank.leader()), // genesis doesn't have a staked node
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1069,7 +1079,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1171,7 +1180,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1287,7 +1295,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1385,7 +1392,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1427,7 +1433,6 @@ mod tests {
             None,
             Some(*bank.leader()),
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1581,7 +1586,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1712,7 +1716,6 @@ mod tests {
             None,
             false,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
@@ -1760,7 +1763,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1846,6 +1848,52 @@ mod tests {
 
         assert!(purge_bank_snapshot(&bank_snapshot_dir).is_ok());
         assert!(fs::metadata(&bank_snapshot_dir).is_err());
+    }
+
+    #[test]
+    fn test_bank_snapshot_dir_startup_hints() {
+        let bank = Bank::new_for_tests(&GenesisConfig::default());
+        bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
+
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        create_bank_snapshot_from_bank(
+            &bank_snapshots_dir,
+            &bank,
+            SnapshotVersion::default(),
+            true,
+        )
+        .unwrap();
+
+        let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, bank.slot());
+        let startup_hints = snapshot_utils::read_startup_hints(&bank_snapshot_dir)
+            .unwrap()
+            .unwrap();
+        let num_accounts = bank.rc.accounts.accounts_db.accounts_index.num_accounts() as u64;
+        assert_ne!(num_accounts, 0);
+        assert_eq!(startup_hints.num_accounts(), Some(num_accounts));
+
+        // A truncated file is corrupt local state, not a missing hint
+        let startup_hints_path =
+            bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STARTUP_HINTS_FILENAME);
+        fs::write(&startup_hints_path, [0u8; 3]).unwrap();
+        assert!(snapshot_utils::read_startup_hints(&bank_snapshot_dir).is_err());
+
+        // An oversized file is rejected before being read
+        fs::write(
+            &startup_hints_path,
+            vec![0u8; snapshot_utils::MAX_STARTUP_HINTS_FILE_SIZE as usize + 1],
+        )
+        .unwrap();
+        assert!(snapshot_utils::read_startup_hints(&bank_snapshot_dir).is_err());
+
+        // Snapshots predating the hints file still load
+        fs::remove_file(&startup_hints_path).unwrap();
+        assert!(
+            snapshot_utils::read_startup_hints(&bank_snapshot_dir)
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// Test versioning when fastbooting
@@ -2090,7 +2138,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,

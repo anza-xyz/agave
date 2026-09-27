@@ -24,7 +24,6 @@ pub(super) struct ConsensusPoolServiceStats {
     pub(super) own_message_receive_limit_reached: Saturating<u64>,
     pub(super) consensus_message_batch_receive_limit_reached: Saturating<u64>,
     pub(super) standstill: bool,
-    pub(super) prune_old_state_called: Saturating<usize>,
     pub(crate) pending_safe_to_notar_repair_sent: Saturating<usize>,
     pub(crate) pending_safe_to_notar_resolved: Saturating<usize>,
 
@@ -48,7 +47,6 @@ impl ConsensusPoolServiceStats {
             certs_received: Saturating(0),
             footer_certs_received: Saturating(0),
             standstill: false,
-            prune_old_state_called: Saturating(0),
             pending_safe_to_notar_repair_sent: Saturating(0),
             pending_safe_to_notar_resolved: Saturating(0),
             last_request_time: Instant::now(),
@@ -71,7 +69,6 @@ impl ConsensusPoolServiceStats {
             own_message_receive_limit_reached,
             consensus_message_batch_receive_limit_reached,
             standstill,
-            prune_old_state_called,
             pending_safe_to_notar_repair_sent,
             pending_safe_to_notar_resolved,
             last_request_time: _,
@@ -112,7 +109,6 @@ impl ConsensusPoolServiceStats {
             ),
             ("footer_certs_received", footer_certs_received.0, i64),
             ("in_standstill_bool", standstill, bool),
-            ("prune_old_state_called", prune_old_state_called.0, i64),
             (
                 "pending_safe_to_notar_repair_sent",
                 pending_safe_to_notar_repair_sent.0,

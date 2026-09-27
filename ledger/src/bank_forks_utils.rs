@@ -241,7 +241,6 @@ pub fn try_load_bank_forks_from_snapshot(
             process_options.debug_keys.clone(),
             None, // leader_for_tests
             process_options.limit_load_slot_count_from_snapshot,
-            process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,
             process_options.verify_index,
             process_options.accounts_db_config.clone(),

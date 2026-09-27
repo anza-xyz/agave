@@ -10,7 +10,6 @@ use {
 };
 
 #[derive(Debug, PartialEq, Clone)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(crate) struct VoteStateFrameV4 {
     pub(super) bls_pubkey_compressed_frame: BlsPubkeyCompressedFrame,
     pub(super) votes_frame: LandedVotesListFrame,
@@ -90,7 +89,7 @@ impl VoteStateFrameV4 {
         Self::inflation_rewards_commission_offset() + core::mem::size_of::<u16>()
     }
 
-    const fn pending_delegator_rewards_offset() -> usize {
+    pub(crate) const fn pending_delegator_rewards_offset() -> usize {
         Self::block_revenue_commission_offset() + core::mem::size_of::<u16>()
     }
 

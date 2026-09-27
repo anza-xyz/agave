@@ -17,7 +17,8 @@ use {
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{TRANSACTION_LEVEL_STACK_HEIGHT, error::InstructionError},
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
+    solana_instruction_error::InstructionError,
     solana_message::MessageHeader,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{

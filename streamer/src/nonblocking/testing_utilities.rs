@@ -7,7 +7,6 @@ use {
             swqos::{SwQos, SwQosConfig},
         },
         quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
-        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     crossbeam_channel::{Receiver, Sender, bounded},
@@ -16,9 +15,13 @@ use {
         crypto::rustls::QuicClientConfig,
     },
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{
-        SocketConfiguration as SocketConfig, bind_to_with_config, localhost_port_range_for_tests,
-        multi_bind_in_range_with_config, unique_port_range_for_tests,
+    solana_net_utils::{
+        quic_socket::QuicSocket,
+        sockets::{
+            SocketConfiguration as SocketConfig, bind_to_with_config,
+            localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            unique_port_range_for_tests,
+        },
     },
     solana_perf::packet::PacketBatch,
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},

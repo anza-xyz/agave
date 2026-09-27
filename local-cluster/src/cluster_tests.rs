@@ -5,7 +5,7 @@
 use log::*;
 use {
     crate::local_cluster::LocalCluster,
-    agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS,
+    agave_votor::voting_service::votor_rate_limit_pps,
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
@@ -17,6 +17,7 @@ use {
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
+    solana_bls_signatures::signature::SignatureAffine,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_core::consensus::tower_storage::{
@@ -36,7 +37,9 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
-    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_net_utils::{
+        SocketAddrSpace, quic_socket::QuicSocket, sockets::bind_to_localhost_unique,
+    },
     solana_perf::packet::packet_config,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
@@ -649,15 +652,17 @@ pub fn start_datagram_listener_for_alpenglow_votor(
     }));
     // We want the sender to stay alive so the endpoint does not exit prematurely.
     Box::leak(Box::new(peer_list_sender));
-    let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
+    let client_socket =
+        QuicSocket::Kernel(bind_to_localhost_unique().expect("bind alpenglow client socket"));
     let (egress, endpoint) = QuicDatagramEndpoint::spawn(
         rt.handle(),
         &listener_keypair,
-        vec![vote_listener_socket],
+        vec![QuicSocket::Kernel(vote_listener_socket)],
         client_socket,
         sender,
         peer_list_receiver,
-        VOTOR_RATE_LIMIT_PPS,
+        SocketAddrSpace::Unspecified,
+        votor_rate_limit_pps(),
         CancellationToken::new(),
     )
     .expect("alpenglow datagram listener");
@@ -685,9 +690,10 @@ fn convert_datagram_to_vote_message(
     let bank = bank_forks.read().unwrap().root_bank();
     let rank_map = bank.get_rank_map(vote_msg.vote.slot())?;
     let (rank, sender_entry) = rank_map.get_ranked_entry_for_node(&sender)?;
+    let signature = SignatureAffine::try_from(vote_msg.signature).ok()?;
     Some(VoteMessage {
         vote: vote_msg.vote,
-        signature: vote_msg.signature,
+        signature,
         rank,
         stake: sender_entry.stake,
     })

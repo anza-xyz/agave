@@ -1,7 +1,7 @@
 //! Error-code mapping for VM execution results.
 
 use {
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_poseidon::PoseidonSyscallError,
     solana_program_runtime::{
         cpi::CpiError,

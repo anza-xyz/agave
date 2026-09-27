@@ -3,10 +3,10 @@ use {
     crate::block_creation_loop::rewards::{
         certs_builder::entry::partial_cert::BuildResult, msg_types::RewardRespSucc,
     },
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor::aggregate_accumulator::AggregateAccumulatorError,
     agave_votor_messages::{
-        consensus_message::VoteMessage, reward_certificate::SkipRewardCertificate,
-        sig_verified_messages::VoteAggregate, vote::Vote,
+        consensus_message::VoteMessage, reward_certificate::SkipRewardCertificate, vote::Vote,
     },
     notar_entry::NotarEntry,
     partial_cert::PartialCert,

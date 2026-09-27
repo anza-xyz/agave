@@ -160,10 +160,10 @@ fn collect_accounts_for_failed_tx<'a>(
 mod tests {
     use {
         super::*,
-        solana_account::{AccountSharedData, ReadableAccount},
+        solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_keypair::{Keypair, keypair_from_seed},
         solana_message::{Message, compiled_instruction::CompiledInstruction},
         solana_nonce::{

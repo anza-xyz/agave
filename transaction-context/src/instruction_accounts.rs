@@ -4,7 +4,7 @@ use {
         transaction_accounts::AccountRefMut,
     },
     solana_account::{ReadableAccount, WritableAccount},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
 };
 

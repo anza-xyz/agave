@@ -24,7 +24,7 @@ const PONG_SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 5;
 // For backward compatibility we are using a const generic parameter here.
 // N should always be >= 8 and only the first 8 bytes are used. So the new code
 // should only use N == 8.
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
 pub struct Ping<const N: usize> {
     from: Pubkey,
@@ -33,7 +33,7 @@ pub struct Ping<const N: usize> {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "Gab1D5ug6ZAB5sRNmBpoM8JyxsixccLLaWxYZwmueVYA",

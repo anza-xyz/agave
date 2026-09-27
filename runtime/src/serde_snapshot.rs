@@ -1,4 +1,4 @@
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 use solana_frozen_abi::stable_abi;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use std::{
@@ -12,16 +12,12 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_utils::StorageAndNextAccountsFileId,
         stake_account::StakeAccount,
-        stakes::{
-            DeserializableDelegationStakes, Stakes, serialize_stake_accounts_to_delegation_format,
-        },
+        stakes::{DeserializableDelegationStakes, Stakes},
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
-    bincode::{self, Error, config::Options},
     log::*,
-    serde::{Deserialize, Serialize},
-    smallvec::{SmallVec, smallvec},
+    smallvec::SmallVec,
     solana_accounts_db::{
         ObsoleteAccounts,
         account_storage_entry::AccountStorageEntry,
@@ -44,10 +40,8 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_leader_schedule::SlotLeader,
     solana_pubkey::Pubkey,
-    solana_serde::default_on_eof,
     solana_stake_interface::state::Delegation,
     std::{
-        borrow::Borrow,
         collections::{HashMap, HashSet},
         io::{self, BufReader, Read, Write},
         path::PathBuf,
@@ -62,40 +56,46 @@ use {
     types::{SerdeAccountsLtHash, UnusedRentCollector},
     wincode::{
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
-        adapter::DefaultOnEmptyRead,
-        containers::FromIntoIterator,
+        adapter::{DefaultOnEmptyRead, DiscardSeq},
         io::{Reader, std_write::WriteAdapter},
         len::BincodeLen,
     },
 };
 
 mod obsolete_accounts;
+mod startup_hints;
 mod status_cache;
 mod storage;
 mod storages_list;
 mod tests;
 mod types;
 
+pub use startup_hints::StartupHints;
+#[cfg(feature = "dev-context-only-utils")]
+pub use status_cache::serialize_status_cache_into;
+#[cfg(test)]
+pub(crate) use storages_list::StorageListItem;
 pub(crate) use {
     obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
-    storages_list::{StorageListItem, StoragesList},
+    storages_list::StoragesList,
 };
 
 const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
 type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>;
 
-/// A slot paired with its account storage entries, used as the `slot -> [entry]` map item on both
-/// the read path ([`AccountsDbFields`]) and the write ABI type [`SerializableAccountsDbForAbi`].
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+/// A slot paired with its account storage entries; only kept to name the wire shape of the
+/// no-longer-used storage entries map in [`AccountsDbFields`] and [`SerializableAccountsDb`].
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SlotAccountStorageEntries {
     slot: Slot,
-    /// In a real snapshot this always holds exactly one entry; it is sampled as an arbitrary
-    /// (`0..=5`-length) collection only to keep the abi digest compatible with the current one.
+    /// In a real snapshot this always holds exactly one entry; sampling is spelled out because
+    /// `SmallVec` has no `StableAbi` impl (the length range no longer matters, as the map holding
+    /// these entries is itself sampled empty).
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "solana_frozen_abi::stable_abi::sample_collection_sized(rng, \
                                   solana_frozen_abi::stable_abi::context::SequenceLenRange::new(0.\
                                   .=5))")
@@ -104,29 +104,31 @@ pub(crate) struct SlotAccountStorageEntries {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, Serialize, SchemaWrite, StableAbi, StableAbiSample)
+    feature = "stable-abi",
+    derive(SchemaWrite, StableAbi, StableAbiSample)
 )]
-#[derive(Debug, Deserialize, SchemaRead)]
+#[derive(Debug, SchemaRead)]
 pub(crate) struct AccountsDbFields(
+    /// unused storage entries map, skipped without allocating a backing `Vec`, as old snapshots
+    /// still carry a populated one; sampled empty, so the abi digests pin its wire shape only
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Vec::new()"))]
+    #[wincode(with = "DiscardSeq<SlotAccountStorageEntries, BincodeLen>")]
     Vec<SlotAccountStorageEntries>,
     u64, // unused, formerly write_version
     Slot,
     BankHashInfo,
     /// all slots that were roots within the last epoch
-    #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<Vec<Slot>>")]
     Vec<Slot>,
     /// slots that were roots within the last epoch for which we care about the hash value
-    #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<Vec<(Slot, Hash)>>")]
     Vec<(Slot, Hash)>,
 );
 
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
-#[derive(Serialize, Deserialize, Clone, Debug, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct UnusedIncrementalSnapshotPersistence {
     pub full_slot: u64,
     pub full_hash: [u8; 32],
@@ -137,23 +139,23 @@ pub struct UnusedIncrementalSnapshotPersistence {
 
 #[repr(C)]
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "EcPdH21GSyYYTiSZbAN157YfrT3G8rKvDiNh7q1fw8Bc",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct BankHashInfo {
     unused_accounts_delta_hash: [u8; 32],
     unused_accounts_hash: [u8; 32],
     stats: BankHashStats,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Default, Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 struct UnusedAccounts {
     unused1: HashSet<Pubkey>,
     unused2: HashSet<Pubkey>,
@@ -161,13 +163,13 @@ struct UnusedAccounts {
 }
 
 // Deserializable version of Bank; keep fields synced with SerializableVersionedBank.
-// frozen-abi Serialize/SchemaWrite exist only to pin the read-path abi digest (see
+// stable-abi Serialize/SchemaWrite exist only to pin the read-path abi digest (see
 // DeserializableBankSnapshot).
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(Serialize, SchemaWrite, StableAbi, StableAbiSample)
+    feature = "stable-abi",
+    derive(SchemaWrite, StableAbi, StableAbiSample)
 )]
-#[derive(Clone, Deserialize, SchemaRead)]
+#[derive(Clone, SchemaRead)]
 struct DeserializableVersionedBank {
     blockhash_queue: BlockhashQueue,
     _unused_ancestors: HashMap<Slot, usize>,
@@ -247,17 +249,17 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
 // Serializable version of Bank, not Deserializable to avoid cloning by using refs.
 // Sync fields with DeserializableVersionedBank!
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     // Write-only type (its deserialize counterpart is `DeserializableVersionedBank`), so the abi
     // digest only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
         abi_digest = "7bTCffg34CBt8zAyc1H81TUazqPTUC1Xtkd597FV7wjr",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "no"
     )
 )]
-#[derive(Serialize, SchemaWrite)]
+#[derive(SchemaWrite)]
 struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
     unused_ancestors: HashMap<Slot, usize>,
@@ -287,7 +289,6 @@ struct SerializableVersionedBank {
     unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    #[serde(serialize_with = "serialize_stake_accounts_to_delegation_format")]
     stakes: Stakes<StakeAccount<Delegation>>,
     unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
@@ -423,33 +424,27 @@ where
 /// added to this struct a minor release before they are added to the serialize
 /// struct.
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, Serialize, SchemaWrite, StableAbi, StableAbiSample)
+    feature = "stable-abi",
+    derive(SchemaWrite, StableAbi, StableAbiSample)
 )]
-#[derive(Clone, Debug, Deserialize, SchemaRead)]
+#[derive(Clone, Debug, SchemaRead)]
 struct ExtraFieldsToDeserialize {
-    #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<u64>")]
     lamports_per_signature: u64,
-    #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<Option<UnusedIncrementalSnapshotPersistence>>")]
     _unused_incremental_snapshot_persistence: Option<UnusedIncrementalSnapshotPersistence>,
-    #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<Option<Hash>>")]
     _unused_epoch_accounts_hash: Option<Hash>,
-    #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<Vec<(u64, DeserializableVersionedEpochStakes)>>")]
     // Match the serialize side's `HashMap<u64, VersionedEpochStakes>`, which samples `0..=1` entries.
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "stable_abi::sample_collection_sized(rng, \
                                   stable_abi::context::SequenceLenMax(1))")
     )]
     versioned_epoch_stakes: Vec<(u64, DeserializableVersionedEpochStakes)>,
-    #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<Option<SerdeAccountsLtHash>>")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    #[serde(deserialize_with = "default_on_eof")]
     #[wincode(with = "DefaultOnEmptyRead<Option<Hash>>")]
     block_id: Option<Hash>,
 }
@@ -461,18 +456,18 @@ struct ExtraFieldsToDeserialize {
 /// be added to the deserialize struct a minor release before they are added to
 /// this one.
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample),
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
     // Write-only type (its deserialize counterpart is `ExtraFieldsToDeserialize`), so the abi digest
     // only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
         abi_digest = "A1hmQvmrkwy33dXMpHXTweArYefPfWtsmwXK6EbNV4K6",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "no"
     )
 )]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
-#[derive(Debug, Serialize, SchemaWrite)]
+#[derive(Debug, SchemaWrite)]
 pub struct ExtraFieldsToSerialize {
     pub lamports_per_signature: u64,
     pub unused_incremental_snapshot_persistence: Option<UnusedIncrementalSnapshotPersistence>,
@@ -485,14 +480,14 @@ pub struct ExtraFieldsToSerialize {
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads
 /// the parts sequentially, matching separate reads).
 ///
-/// Its frozen-abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
+/// Its abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
 /// wire formats can't diverge.
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(Deserialize, Serialize, SchemaWrite, StableAbi, StableAbiSample),
+    feature = "stable-abi",
+    derive(SchemaWrite, StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
-        abi_serializer = ["bincode", "wincode"],
+        abi_digest = "EULkWXkHiQJQazbeCQSP6L7ZMDBXZpBg1JntdHZktrEh",
+        abi_serializer = "wincode",
         test_roundtrip = "wire_only"
     )
 )]
@@ -624,7 +619,6 @@ where
 pub(crate) fn bank_to_stream<W>(
     stream: &mut io::BufWriter<W>,
     bank: &Bank,
-    snapshot_storages: &[Arc<AccountStorageEntry>],
 ) -> wincode::WriteResult<()>
 where
     W: Write,
@@ -635,11 +629,10 @@ where
     let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
     let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
     let block_id = Some(bank_fields.block_id);
-    serialize_bank_snapshot_into_wincode(
+    serialize_bank_snapshot_into(
         stream,
         bank_fields,
         bank_hash_stats,
-        snapshot_storages,
         ExtraFieldsToSerialize {
             lamports_per_signature,
             unused_incremental_snapshot_persistence: None,
@@ -651,101 +644,62 @@ where
     )
 }
 
-/// Serializes bank snapshot into `stream` with bincode
+// The full serialized form of a bank snapshot: the bank fields, the accounts db fields, and the
+// extra fields, in wire order.
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    // Write-only type (its deserialize counterparts are `DeserializableVersionedBank`,
+    // `AccountsDbFields` and `ExtraFieldsToDeserialize`), so there is no roundtrip.
+    frozen_abi(
+        abi_digest = "EULkWXkHiQJQazbeCQSP6L7ZMDBXZpBg1JntdHZktrEh",
+        abi_serializer = "wincode",
+        test_roundtrip = "no"
+    )
+)]
+#[derive(SchemaWrite)]
+struct SerializableBankSnapshot {
+    bank: SerializableVersionedBank,
+    accounts_db: SerializableAccountsDb,
+    extra_fields: ExtraFieldsToSerialize,
+}
+
+/// Serializes bank snapshot into `stream`.
 pub fn serialize_bank_snapshot_into(
     stream: &mut dyn Write,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    account_storage_entries: &[Arc<AccountStorageEntry>],
-    extra_fields: ExtraFieldsToSerialize,
-) -> Result<(), Error> {
-    let mut serializer = bincode::Serializer::new(
-        stream,
-        bincode::DefaultOptions::new().with_fixint_encoding(),
-    );
-    serialize_bank_snapshot_with(
-        &mut serializer,
-        bank_fields,
-        bank_hash_stats,
-        account_storage_entries,
-        extra_fields,
-    )
-}
-
-// The full serialized form of a bank snapshot: the bank fields, the accounts db fields, and the
-// extra fields, in wire order. Generic over the account-storage-entries serializer `E` so the
-// runtime can stream the storage entries lazily (see `SerializableAccountsDb`).
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Serialize, SchemaWrite)]
-struct SerializableBankSnapshot<E> {
-    bank: SerializableVersionedBank,
-    accounts_db: SerializableAccountsDb<E>,
-    extra_fields: ExtraFieldsToSerialize,
-}
-
-// Concrete instantiation of `SerializableBankSnapshot` used only to pin the wire ABI; see
-// `SerializableAccountsDbForAbi`. Write-only type (its deserialize counterparts are
-// `DeserializableVersionedBank`, `AccountsDbFields` and `ExtraFieldsToDeserialize`), so there is no
-// roundtrip.
-#[cfg(all(test, feature = "frozen-abi"))]
-#[frozen_abi(
-    abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
-    abi_serializer = ["bincode", "wincode"],
-    test_roundtrip = "no"
-)]
-type SerializableBankSnapshotForAbi = SerializableBankSnapshot<Vec<SlotAccountStorageEntries>>;
-
-/// Serializes bank snapshot with `serializer`
-pub fn serialize_bank_snapshot_with<S>(
-    serializer: S,
-    bank_fields: BankFieldsToSerialize,
-    bank_hash_stats: BankHashStats,
-    account_storage_entries: &[Arc<AccountStorageEntry>],
-    extra_fields: ExtraFieldsToSerialize,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let slot = bank_fields.slot;
-    let snapshot = SerializableBankSnapshot {
-        bank: SerializableVersionedBank::from(bank_fields),
-        accounts_db: SerializableAccountsDb::new(slot, account_storage_entries, bank_hash_stats),
-        extra_fields,
-    };
-    // Note: the time spent here is reported by the caller (e.g. as `bank_serialize_us` in the
-    // `snapshot_bank` datapoint).
-    snapshot.serialize(serializer)
-}
-
-/// Serializes bank snapshot into `stream` with wincode.
-///
-/// Produces byte-for-byte the same output as [`serialize_bank_snapshot_into`] (which uses bincode),
-/// just through the wincode serializer.
-pub fn serialize_bank_snapshot_into_wincode(
-    stream: &mut dyn Write,
-    bank_fields: BankFieldsToSerialize,
-    bank_hash_stats: BankHashStats,
-    account_storage_entries: &[Arc<AccountStorageEntry>],
     extra_fields: ExtraFieldsToSerialize,
 ) -> wincode::WriteResult<()> {
     let slot = bank_fields.slot;
     let snapshot = SerializableBankSnapshot {
         bank: SerializableVersionedBank::from(bank_fields),
-        accounts_db: SerializableAccountsDb::new(slot, account_storage_entries, bank_hash_stats),
+        accounts_db: SerializableAccountsDb::new(slot, bank_hash_stats),
         extra_fields,
     };
+    // The caller reports the time spent here, e.g. as `bank_serialize_us` in the
+    // `snapshot_bank` datapoint.
     serialize_into(stream, &snapshot)
 }
 
-// Serializable counterpart of `AccountsDbFields`, generic over the type used to serialize the
-// account storage entries so that the runtime can stream them via a lazy map-serializing iterator
-// (see `SerializableAccountsDb::new`) without materializing a collection. Sync fields with
-// `AccountsDbFields`!
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Serialize, SchemaWrite)]
-struct SerializableAccountsDb<E> {
-    /// account storage entries, serialized as a map of slot to its storage entries
-    accounts_storage_entries: E,
+// Serializable counterpart of `AccountsDbFields`. Sync fields with `AccountsDbFields`!
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    // Write-only type (its deserialize counterpart is `AccountsDbFields`), so there is no
+    // roundtrip.
+    frozen_abi(
+        abi_digest = "6d9LgxwkMTVHRKGtF8QSFFn3rYG8MSmyT9wPrL1HESu1",
+        abi_serializer = "wincode",
+        test_roundtrip = "no"
+    )
+)]
+#[derive(SchemaWrite)]
+struct SerializableAccountsDb {
+    /// unused storage entries map, always written empty; sampled empty, so the abi digests pin its
+    /// wire shape only
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Vec::new()"))]
+    unused_accounts_storage_entries: Vec<SlotAccountStorageEntries>,
     unused_write_version: u64, // unused, formerly write_version
     slot: Slot,
     bank_hash_info: BankHashInfo,
@@ -755,93 +709,15 @@ struct SerializableAccountsDb<E> {
     historical_roots_with_hash: Vec<(Slot, Hash)>,
 }
 
-/// Adapts a cloneable, exact-size iterator into a value that serializes as a length-prefixed
-/// sequence under *both* serde (bincode) and wincode, re-creating the iterator via `Clone` on each
-/// serialization so a locally built iterator can be written without first materializing it into a
-/// collection. serde maps/sequences and bincode/wincode sequences share the same wire encoding, so
-/// this matches the `slot -> [entry]` map shape read back by `AccountsDbFields`.
-struct SerializableExactIteratorView<I>(I);
-
-impl<I: Iterator> IntoIterator for SerializableExactIteratorView<I> {
-    type Item = I::Item;
-    type IntoIter = I;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-    }
-}
-
-impl<I: Iterator + Clone> IntoIterator for &SerializableExactIteratorView<I> {
-    type Item = I::Item;
-    type IntoIter = I;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.clone()
-    }
-}
-
-impl<I> Serialize for SerializableExactIteratorView<I>
-where
-    I: ExactSizeIterator + Clone,
-    I::Item: Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.collect_seq(self.0.clone())
-    }
-}
-
-// Serialize the wrapped iterator as a length-prefixed sequence via `FromIntoIterator`, byte-for-byte
-// identical to the serde encoding above.
-unsafe impl<I, C: wincode::config::Config> SchemaWrite<C> for SerializableExactIteratorView<I>
-where
-    I: ExactSizeIterator + Clone,
-    I::Item: SchemaWrite<C> + Borrow<<I::Item as SchemaWrite<C>>::Src>,
-{
-    type Src = Self;
-
-    fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        <FromIntoIterator<SerializableExactIteratorView<I>, BincodeLen> as SchemaWrite<C>>::size_of(
-            src,
-        )
-    }
-
-    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
-        <FromIntoIterator<SerializableExactIteratorView<I>, BincodeLen> as SchemaWrite<C>>::write(
-            writer, src,
-        )
-    }
-}
-
-impl SerializableAccountsDb<()> {
-    fn new(
-        slot: Slot,
-        account_storage_entries: &[Arc<AccountStorageEntry>],
-        bank_hash_stats: BankHashStats,
-    ) -> SerializableAccountsDb<
-        SerializableExactIteratorView<
-            impl ExactSizeIterator<Item = SlotAccountStorageEntries> + Clone + '_,
-        >,
-    > {
-        // Stream the storage entries as a `slot -> [entry]` map, each slot's single entry kept
-        // inline in a `SmallVec`. `SerializableExactIteratorView` re-creates the iterator on each
-        // serialization, so nothing is materialized.
-        let accounts_storage_entries =
-            SerializableExactIteratorView(account_storage_entries.iter().map(move |entry| {
-                SlotAccountStorageEntries {
-                    slot: entry.slot(),
-                    entries: smallvec![SerializableAccountStorageEntry::new(entry, slot)],
-                }
-            }));
+impl SerializableAccountsDb {
+    fn new(slot: Slot, bank_hash_stats: BankHashStats) -> Self {
         let bank_hash_info = BankHashInfo {
             unused_accounts_delta_hash: [0; 32],
             unused_accounts_hash: [0; 32],
             stats: bank_hash_stats,
         };
         SerializableAccountsDb {
-            accounts_storage_entries,
+            unused_accounts_storage_entries: Vec::default(),
             unused_write_version: 0,
             slot,
             bank_hash_info,
@@ -850,18 +726,6 @@ impl SerializableAccountsDb<()> {
         }
     }
 }
-
-// Concrete instantiation of `SerializableAccountsDb` used only to pin the wire ABI. The runtime
-// serializes the storage entries with a lazy map-serializing iterator; this alias uses a `Vec` of
-// the same `(slot, entries)` shape, which serializes to identical bytes. Write-only type (its
-// deserialize counterpart is `AccountsDbFields`), so there is no roundtrip.
-#[cfg(all(test, feature = "frozen-abi"))]
-#[frozen_abi(
-    abi_digest = "2TpwtsyrverM4ius4ykX3RRCGqeLfXJQbAvYHkxdUVrs",
-    abi_serializer = ["bincode", "wincode"],
-    test_roundtrip = "no"
-)]
-type SerializableAccountsDbForAbi = SerializableAccountsDb<Vec<SlotAccountStorageEntries>>;
 
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]

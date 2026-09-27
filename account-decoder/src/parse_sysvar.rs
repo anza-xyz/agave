@@ -62,8 +62,8 @@ pub fn parse_sysvar(data: &[u8], pubkey: &Pubkey) -> Result<SysvarAccountType, P
                     let slot_hashes = slot_hashes
                         .iter()
                         .map(|slot_hash| UiSlotHashEntry {
-                            slot: slot_hash.0,
-                            hash: slot_hash.1.to_string(),
+                            slot: slot_hash.slot,
+                            hash: slot_hash.hash.to_string(),
                         })
                         .collect();
                     SysvarAccountType::SlotHashes(slot_hashes)
@@ -82,8 +82,8 @@ pub fn parse_sysvar(data: &[u8], pubkey: &Pubkey) -> Result<SysvarAccountType, P
                 let stake_history = stake_history
                     .iter()
                     .map(|entry| UiStakeHistoryEntry {
-                        epoch: entry.0,
-                        stake_history: entry.1.clone(),
+                        epoch: entry.epoch,
+                        stake_history: entry.entry.clone(),
                     })
                     .collect();
                 SysvarAccountType::StakeHistory(stake_history)

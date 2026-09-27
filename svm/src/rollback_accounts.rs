@@ -150,7 +150,7 @@ impl RollbackAccounts {
 mod tests {
     use {
         super::*,
-        solana_account::{ReadableAccount, WritableAccount},
+        solana_account::{ReadableAccount, WritableAccount, state_traits::StateMutWincode as _},
         solana_hash::Hash,
         solana_nonce::{
             state::{Data as NonceData, DurableNonce, State as NonceState},

@@ -1,7 +1,7 @@
 use {
     crate::{UiFeeCalculator, parse_account_data::ParseAccountError},
     serde::{Deserialize, Serialize},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_nonce::{state::State, versions::Versions},
 };
 

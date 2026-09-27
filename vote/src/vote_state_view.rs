@@ -26,7 +26,7 @@ use {
 mod field_frames;
 mod frame_v1_14_11;
 mod frame_v3;
-mod frame_v4;
+pub(crate) mod frame_v4;
 mod list_view;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -39,6 +39,7 @@ pub enum VoteStateViewError {
     InvalidEpochCreditsLength,
     OldVersion,
     UnsupportedVersion,
+    AccountDataSizeIncorrect,
 }
 
 pub type Result<T> = core::result::Result<T, VoteStateViewError>;
@@ -67,7 +68,6 @@ enum Simd185Field {
 /// deserializing it. This is done by parsing and caching metadata
 /// about the layout of the serialized VoteState.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub struct VoteStateView {
     data: Arc<Vec<u8>>,
     frame: VoteStateFrame,
@@ -258,7 +258,6 @@ impl From<VoteStateV4> for VoteStateView {
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 enum VoteStateFrame {
     V1_14_11(VoteStateFrameV1_14_11),
     V3(VoteStateFrameV3),

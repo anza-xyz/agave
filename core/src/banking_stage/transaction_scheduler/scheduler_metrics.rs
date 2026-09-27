@@ -318,6 +318,8 @@ pub struct SchedulerTimingMetricsInner {
     pub clean_time_us: Saturating<u64>,
     /// Time spent receiving completed transactions.
     pub receive_completed_time_us: Saturating<u64>,
+    /// Time scheduling was blocked on in-flight transactions during slot transitions.
+    pub scheduling_slot_transition_blocked_time_us: Saturating<u64>,
 }
 
 impl IntervalSchedulerTimingMetrics {
@@ -356,6 +358,8 @@ impl SchedulerTimingMetricsInner {
             clear_time_us: Saturating(clear_time_us),
             clean_time_us: Saturating(clean_time_us),
             receive_completed_time_us: Saturating(receive_completed_time_us),
+            scheduling_slot_transition_blocked_time_us:
+                Saturating(scheduling_slot_transition_blocked_time_us),
         } = self;
         let mut datapoint = create_datapoint!(
             @point name,
@@ -368,6 +372,11 @@ impl SchedulerTimingMetricsInner {
             (
                 "receive_completed_time_us",
                 receive_completed_time_us,
+                i64
+            ),
+            (
+                "scheduling_slot_transition_blocked_time_us",
+                scheduling_slot_transition_blocked_time_us,
                 i64
             )
         );
@@ -385,6 +394,7 @@ impl SchedulerTimingMetricsInner {
         self.clear_time_us = Saturating(0);
         self.clean_time_us = Saturating(0);
         self.receive_completed_time_us = Saturating(0);
+        self.scheduling_slot_transition_blocked_time_us = Saturating(0);
     }
 }
 

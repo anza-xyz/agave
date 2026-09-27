@@ -230,6 +230,34 @@ impl<D: TransactionData> StaticTransactionWithMeta
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl<D> From<solana_transaction::Transaction> for RuntimeTransaction<ResolvedTransactionView<D>>
+where
+    D: TransactionData + From<Vec<u8>>,
+{
+    fn from(transaction: solana_transaction::Transaction) -> Self {
+        let versioned_transaction = VersionedTransaction::from(transaction);
+        let data = D::from(wincode::serialize(&versioned_transaction).unwrap());
+        let sanitized_view = SanitizedTransactionView::try_new_sanitized(
+            data,
+            &crate::sanitize_config::sanitize_config(),
+        )
+        .expect("failed to create SanitizedTransactionView from Transaction");
+        let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            sanitized_view,
+            MessageHash::Compute,
+            None,
+        )
+        .expect("failed to create RuntimeTransaction from Transaction");
+        RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+            static_runtime_tx,
+            None,
+            &HashSet::new(),
+        )
+        .expect("failed to create RuntimeTransaction from Transaction")
+    }
+}
+
 impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
     fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
         let VersionedTransaction {

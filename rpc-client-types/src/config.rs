@@ -9,10 +9,14 @@ pub use {
     solana_transaction_status_client_types::{TransactionDetails, UiTransactionEncoding},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSignatureStatusConfig {
+    #[serde(default)]
     pub search_transaction_history: bool,
+    #[serde(flatten)]
+    pub commitment: Option<CommitmentConfig>,
+    pub min_context_slot: Option<Slot>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +65,7 @@ pub struct RpcRequestAirdropConfig {
 #[serde(rename_all = "camelCase")]
 pub struct RpcLeaderScheduleConfig {
     pub identity: Option<String>, // validator identity, as a base-58 encoded string
+    pub key_by_vote_account: Option<bool>, // key the schedule by vote account instead of identity
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
 }
@@ -309,6 +314,7 @@ pub struct RpcTransactionConfig {
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
     pub max_supported_transaction_version: Option<u8>,
+    pub min_context_slot: Option<Slot>,
 }
 
 impl EncodingConfig for RpcTransactionConfig {

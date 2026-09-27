@@ -534,7 +534,7 @@ mod test {
         super::*,
         crate::test_utils::create_client_for_tests,
         crossbeam_channel::bounded,
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_runtime::bank::SlotLeader,

@@ -199,9 +199,9 @@ fn bench_process_vote(c: &mut Criterion) {
         .saturating_sub(1);
     let last_vote_hash = slot_hashes
         .iter()
-        .find(|(slot, _hash)| *slot == last_vote_slot)
+        .find(|entry| entry.slot == last_vote_slot)
         .unwrap()
-        .1;
+        .hash;
     let vote = Vote::new(
         (num_initial_votes..=last_vote_slot).collect(),
         last_vote_hash,
@@ -227,9 +227,9 @@ fn bench_process_vote_state_update(c: &mut Criterion) {
         .saturating_sub(1);
     let last_vote_hash = slot_hashes
         .iter()
-        .find(|(slot, _hash)| *slot == last_vote_slot)
+        .find(|entry| entry.slot == last_vote_slot)
         .unwrap()
-        .1;
+        .hash;
     let slots_and_lockouts: Vec<(Slot, u32)> =
         ((num_initial_votes.saturating_add(1)..=last_vote_slot).zip((1u32..=31).rev())).collect();
     let mut vote_state_update = VoteStateUpdate::from(slots_and_lockouts);
@@ -257,9 +257,9 @@ fn bench_process_tower_sync(c: &mut Criterion) {
         .saturating_sub(1);
     let last_vote_hash = slot_hashes
         .iter()
-        .find(|(slot, _hash)| *slot == last_vote_slot)
+        .find(|entry| entry.slot == last_vote_slot)
         .unwrap()
-        .1;
+        .hash;
     let slots_and_lockouts: Vec<(Slot, u32)> =
         ((num_initial_votes.saturating_add(1)..=last_vote_slot).zip((1u32..=31).rev())).collect();
     let mut tower_sync = TowerSync::from(slots_and_lockouts);

@@ -3,7 +3,10 @@
 use crate::{rpc_pubsub_service, rpc_subscriptions::RpcSubscriptions};
 use {
     crate::{
-        rpc::{check_is_at_least_confirmed, optimize_filters, verify_filters},
+        rpc::{
+            check_is_at_least_confirmed, optimize_filters,
+            validate_max_supported_transaction_version_for_encoding, verify_filters,
+        },
         rpc_pubsub_service::PubSubConfig,
         rpc_subscription_tracker::{
             AccountSubscriptionParams, BlockSubscriptionKind, BlockSubscriptionParams,
@@ -16,7 +19,7 @@ use {
     jsonrpc_core::{Error, ErrorCode, Result},
     jsonrpc_derive::rpc,
     jsonrpc_pubsub::{SubscriptionId as PubSubSubscriptionId, typed::Subscriber},
-    solana_account_decoder::{UiAccount, UiAccountEncoding},
+    solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
@@ -358,6 +361,18 @@ mod internal {
     }
 }
 
+// Zero-length slices return the same empty data at every offset. Use one
+// subscription key for them, keeping None distinct because it returns all data.
+fn normalize_data_slice(data_slice: Option<UiDataSliceConfig>) -> Option<UiDataSliceConfig> {
+    match data_slice {
+        Some(UiDataSliceConfig { length: 0, .. }) => Some(UiDataSliceConfig {
+            offset: 0,
+            length: 0,
+        }),
+        other => other,
+    }
+}
+
 pub struct RpcSolPubSubImpl {
     config: PubSubConfig,
     subscription_control: SubscriptionControl,
@@ -436,7 +451,7 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         let params = AccountSubscriptionParams {
             pubkey: param::<Pubkey>(&pubkey_str, "pubkey")?,
             commitment: commitment.unwrap_or_default(),
-            data_slice,
+            data_slice: normalize_data_slice(data_slice),
             encoding: encoding.unwrap_or(UiAccountEncoding::Binary),
         };
         self.subscribe(SubscriptionParams::Account(params))
@@ -468,7 +483,7 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
                 .account_config
                 .encoding
                 .unwrap_or(UiAccountEncoding::Binary),
-            data_slice: config.account_config.data_slice,
+            data_slice: normalize_data_slice(config.account_config.data_slice),
             commitment: config.account_config.commitment.unwrap_or_default(),
             with_context: config.with_context.unwrap_or_default(),
         };
@@ -551,11 +566,16 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
             return Err(Error::new(jsonrpc_core::ErrorCode::MethodNotFound));
         }
         let config = config.unwrap_or_default();
+        let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Base64);
+        validate_max_supported_transaction_version_for_encoding(
+            encoding,
+            config.max_supported_transaction_version,
+        )?;
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
         let params = BlockSubscriptionParams {
             commitment: config.commitment.unwrap_or_default(),
-            encoding: config.encoding.unwrap_or(UiTransactionEncoding::Base64),
+            encoding,
             kind: match filter {
                 RpcBlockSubscribeFilter::All => BlockSubscriptionKind::All,
                 RpcBlockSubscribeFilter::MentionsAccountOrProgram(key) => {
@@ -683,6 +703,39 @@ mod tests {
         };
         subscriptions.notify_subscribers(commitment_slots);
         Ok(())
+    }
+
+    #[test]
+    fn test_block_subscribe_rejects_base58_transaction_version_1_or_higher() {
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let subscriptions = Arc::new(RpcSubscriptions::default_with_bank_forks(
+            Arc::new(AtomicU64::default()),
+            bank_forks,
+        ));
+        let (rpc, _receiver) = rpc_pubsub_service::test_connection(&subscriptions);
+
+        for max_supported_transaction_version in [1, u8::MAX] {
+            for encoding in [UiTransactionEncoding::Base58, UiTransactionEncoding::Binary] {
+                let error = rpc
+                    .block_subscribe(
+                        RpcBlockSubscribeFilter::All,
+                        Some(RpcBlockSubscribeConfig {
+                            encoding: Some(encoding),
+                            max_supported_transaction_version: Some(
+                                max_supported_transaction_version,
+                            ),
+                            ..RpcBlockSubscribeConfig::default()
+                        }),
+                    )
+                    .unwrap_err();
+                assert_eq!(error.code, ErrorCode::InvalidParams);
+                assert_eq!(
+                    error.message,
+                    "base58 encoding is not supported with maxSupportedTransactionVersion >= 1"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1074,6 +1127,62 @@ mod tests {
             expected,
             serde_json::from_str::<serde_json::Value>(&response).unwrap(),
         );
+    }
+
+    #[test]
+    fn test_account_and_program_subscribe_data_slice_dedups() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let subscriptions = Arc::new(RpcSubscriptions::default_with_bank_forks(
+            Arc::new(AtomicU64::default()),
+            bank_forks,
+        ));
+        let (rpc, _receiver) = rpc_pubsub_service::test_connection(&subscriptions);
+
+        let mut io = IoHandler::<()>::default();
+        io.extend_with(rpc.to_delegate());
+        let pubkey = Pubkey::new_unique().to_string();
+        for method in ["accountSubscribe", "programSubscribe"] {
+            let subscribe = |data_slice| {
+                let request = json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": [pubkey, {
+                        "encoding": "base64",
+                        "commitment": "processed",
+                        "dataSlice": data_slice,
+                    }],
+                });
+                let response = io.handle_request_sync(&request.to_string()).unwrap();
+                let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+                response["result"].as_u64().unwrap()
+            };
+
+            let empty = subscribe(Some(UiDataSliceConfig {
+                offset: 0,
+                length: 0,
+            }));
+            for offset in [5, 9, usize::MAX] {
+                assert_eq!(
+                    subscribe(Some(UiDataSliceConfig { offset, length: 0 })),
+                    empty,
+                );
+            }
+            let full = subscribe(None);
+            let slice = subscribe(Some(UiDataSliceConfig {
+                offset: 5,
+                length: 3,
+            }));
+            let other_slice = subscribe(Some(UiDataSliceConfig {
+                offset: 9,
+                length: 3,
+            }));
+            assert_ne!(full, empty);
+            assert_ne!(slice, empty);
+            assert_ne!(slice, full);
+            assert_ne!(slice, other_slice);
+        }
     }
 
     #[test]

@@ -1,9 +1,24 @@
 use {
     crate::transaction_meta::TransactionMeta,
-    solana_svm_transaction::svm_transaction::{SVMStaticTransaction, SVMTransaction},
+    solana_pubkey::Pubkey,
+    solana_svm_transaction::{
+        svm_message::{SVMMessage, SVMStaticMessage},
+        svm_transaction::{SVMStaticTransaction, SVMTransaction},
+    },
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     std::borrow::Cow,
 };
+
+pub trait StaticMessageWithMeta: TransactionMeta + SVMStaticMessage {}
+impl<T: TransactionMeta + SVMStaticMessage> StaticMessageWithMeta for T {}
+
+pub fn writable_accounts(transaction: &impl SVMMessage) -> impl Iterator<Item = &Pubkey> + Clone {
+    transaction
+        .account_keys()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| transaction.is_writable(index).then_some(key))
+}
 
 pub trait StaticTransactionWithMeta: TransactionMeta + SVMStaticTransaction {
     /// Required to interact with several legacy interfaces that require

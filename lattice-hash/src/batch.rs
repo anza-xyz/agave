@@ -187,6 +187,12 @@ type BatchMixInFn = unsafe fn(batch: Batch<'_>, acc: &mut LtHash);
 ///
 /// Messages are *copied* into the accumulator's owned buffers, so the caller's
 /// source buffer can be transient. Those buffers are the mix-in function's input.
+///
+/// # Feed messages in length order
+///
+/// Every lane of a batch pays for the batch's *longest* message, so one long
+/// message drags the rest with it — roughly a 2x cost for an otherwise short
+/// batch. Callers free to pick the order should group messages of similar length.
 pub struct Accumulator {
     /// The lattice hash being built; the mix-in functions group-add into its raw elements.
     acc: LtHash,
@@ -226,7 +232,7 @@ impl Accumulator {
         fn select_mix_in_fn() -> (usize, Option<BatchMixInFn>) {
             #[cfg(target_arch = "x86_64")]
             {
-                if is_x86_feature_detected!("avx512f") {
+                if is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") {
                     return (16, Some(arch::mix_in_avx512));
                 }
                 if is_x86_feature_detected!("avx2") {

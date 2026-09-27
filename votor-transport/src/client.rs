@@ -352,17 +352,15 @@ impl OutboundLoop {
                     self.stats.connection_lost.fetch_add(1, Ordering::Relaxed);
                     dead_peers.push(*peer);
                 }
-                Err(SendDatagramError::UnsupportedByPeer) => {
-                    debug!("OutboundLoop: peer {peer} does not support datagrams.");
-                    // The wrong-direction reader holds a clone, so close explicitly before removal.
-                    close_codes::NORMAL_CLOSE.close(connection);
-                    // reconnecting is not likely to help, but it is the least we can do
-                    self.stats.connect_failed.fetch_add(1, Ordering::Relaxed);
-                    dead_peers.push(*peer);
-                }
-                Err(SendDatagramError::TooLarge) => {
-                    error!("Votor message too large and does not fit into transport MTU");
-                    debug_assert!(false, "Votor message too large ({} bytes)", message.len());
+                // The peer either does not support datagrams or advertises max size below our
+                // message size. Both are misconfigurations that reconnecting will not fix,
+                // so keep the connection to avoid churn but report errors for visibility.
+                Err(e @ (SendDatagramError::UnsupportedByPeer | SendDatagramError::TooLarge)) => {
+                    debug!(
+                        "OutboundLoop: peer {peer} refused a {} byte datagram: {e}",
+                        message.len()
+                    );
+                    self.stats.peer_config_error.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(SendDatagramError::Disabled) => {
                     unreachable!("By construction (we enable datagrams)");

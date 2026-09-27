@@ -1,7 +1,10 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_hash::Hash;
 use {
-    crate::bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+    crate::{
+        bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+        serde_snapshot::StartupHints,
+    },
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind, snapshot_hash::SnapshotHash},
     solana_accounts_db::account_storage_entry::AccountStorageEntry,
     solana_clock::Slot,
@@ -18,6 +21,7 @@ pub struct SnapshotPackage {
     pub hash: SnapshotHash,
     pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     pub bank_snapshot_package: BankSnapshotPackage,
+    pub startup_hints: StartupHints,
 
     /// The instant this snapshot package was sent to the queue.
     /// Used to track how long snapshot packages wait before handling.
@@ -56,6 +60,7 @@ impl SnapshotPackage {
             slot,
             hash,
             bank_snapshot_package,
+            startup_hints: StartupHints::new_from_bank(bank),
             snapshot_storages,
             enqueued: Instant::now(),
         }
@@ -79,6 +84,7 @@ impl SnapshotPackage {
             hash: SnapshotHash(Hash::default()),
             snapshot_storages: Vec::default(),
             bank_snapshot_package,
+            startup_hints: StartupHints::default(),
             enqueued: Instant::now(),
         }
     }

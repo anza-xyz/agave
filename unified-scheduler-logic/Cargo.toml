@@ -24,15 +24,20 @@ solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
-solana-transaction = { workspace = true }
+solana-svm-transaction = { workspace = true }
 static_assertions = { workspace = true }
 
 [dev-dependencies]
+agave-transaction-view = { workspace = true }
+bytes = { workspace = true }
 solana-instruction = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-signature = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 test-case = { workspace = true }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

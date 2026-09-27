@@ -703,7 +703,7 @@ pub fn make_test_cluster<R: Rng>(
     {
         let now = timestamp();
         let keypair = Keypair::new();
-        let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
+        let mut gossip_crds = cluster_info.gossip.crds.write();
         // First node is pushed to crds table by ClusterInfo constructor.
         for node in nodes.iter().skip(1) {
             let node = CrdsData::from(node);

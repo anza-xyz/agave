@@ -51,7 +51,7 @@ jobs:
           cargo install toml-cli --locked
 
           # install xtask
-          cargo install anza-xtask@0.2.1 --locked
+          cargo install anza-xtask@0.2.3 --locked
 
       - name: Process
         id: process

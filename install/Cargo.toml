@@ -28,19 +28,12 @@ ctrlc = { workspace = true, features = ["termination"] }
 dirs-next = { workspace = true }
 indicatif = { workspace = true }
 nix = { workspace = true, features = ["signal"] }
-reqwest = { workspace = true, features = [
-    "blocking",
-    "brotli",
-    "deflate",
-    "gzip",
-    "rustls-tls",
-    "json",
-] }
+reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 scopeguard = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
-solana-hash = "=4.6.0"
+solana-hash = "=4.7.0"
 solana-sha256-hasher = { workspace = true }
 solana-version = { workspace = true }
 tar = { workspace = true }

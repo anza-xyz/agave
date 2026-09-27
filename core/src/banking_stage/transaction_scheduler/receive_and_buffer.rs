@@ -1,6 +1,5 @@
 use {
     super::{
-        transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::{
             StateContainer, TransactionViewState, TransactionViewStateContainer,
@@ -128,6 +127,18 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
         return Err(PacketHandlingError::Sanitization);
     };
 
+    translate_sanitized_to_runtime_view(view, bank, transaction_account_lock_limit, None)
+}
+
+/// Load runtime metadata and addresses for an already sanitized transaction.
+/// Returns the minimum ALT deactivation slot, or `Slot::MAX` if none.
+/// Preloaded addresses, when supplied, must belong to this view and bank.
+pub(crate) fn translate_sanitized_to_runtime_view<D: TransactionData>(
+    view: SanitizedTransactionView<D>,
+    bank: &Bank,
+    transaction_account_lock_limit: usize,
+    preloaded_addresses: Option<(Option<LoadedAddresses>, Slot)>,
+) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, Slot), PacketHandlingError> {
     let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
         view,
         MessageHash::Compute,
@@ -144,7 +155,10 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
         return Err(PacketHandlingError::LockValidation);
     }
 
-    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
+    let (loaded_addresses, deactivation_slot) = match preloaded_addresses {
+        Some(addresses) => addresses,
+        None => load_addresses_for_view(&view, bank)?,
+    };
 
     let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
         view,
@@ -484,8 +498,7 @@ impl TransactionViewReceiveAndBuffer {
             return;
         }
 
-        let transaction_id = container.insert_map_only(state);
-        let priority_id = TransactionPriorityId::new(priority, transaction_id);
+        let priority_id = container.insert_map_only(state);
 
         // A validated nonce transaction is higher priority than any queued
         // conflict. Evict that conflict only after all ingress checks passed.
@@ -533,7 +546,7 @@ mod tests {
             BankingPacketBatch, to_banking_packet_batch, to_single_banking_packet_batch,
         },
         crossbeam_channel::{Receiver, Sender, bounded},
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,

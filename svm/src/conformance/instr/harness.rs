@@ -10,7 +10,7 @@ use {
         },
     },
     solana_account::AccountSharedData,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_runtime::{
         invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
         sysvar_cache::SysvarCache,

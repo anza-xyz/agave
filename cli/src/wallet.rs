@@ -834,7 +834,8 @@ pub async fn process_confirm(
                             RpcTransactionConfig {
                                 encoding: Some(UiTransactionEncoding::Base64),
                                 commitment: Some(CommitmentConfig::confirmed()),
-                                max_supported_transaction_version: Some(0),
+                                max_supported_transaction_version: Some(1),
+                                min_context_slot: None,
                             },
                         )
                         .await

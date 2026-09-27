@@ -2,7 +2,6 @@
 #[derive(Clone, Copy, Default)]
 pub struct SVMFeatureSet {
     pub move_precompile_verification_to_svm: bool,
-    pub syscall_parameter_address_restrictions: bool,
     pub virtual_address_space_adjustments: bool,
     pub account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
@@ -51,13 +50,13 @@ pub struct SVMFeatureSet {
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
+    pub loader_v3_set_program_data_to_elf_length: bool,
 }
 
 impl SVMFeatureSet {
     pub fn all_enabled() -> Self {
         Self {
             move_precompile_verification_to_svm: true,
-            syscall_parameter_address_restrictions: true,
             virtual_address_space_adjustments: true,
             account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
@@ -106,6 +105,7 @@ impl SVMFeatureSet {
             relax_post_exec_min_balance_check: true,
             define_ltds_fee_only_semantics: true,
             relax_fee_payer_constraint: true,
+            loader_v3_set_program_data_to_elf_length: true,
         }
     }
 }

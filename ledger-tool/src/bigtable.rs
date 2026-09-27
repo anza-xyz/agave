@@ -381,18 +381,16 @@ fn append_component_shreds(
     chained_merkle_root: &mut Hash,
     reed_solomon_cache: &ReedSolomonCache,
 ) {
-    let shreds: Vec<_> = shredder
-        .make_merkle_shreds_from_component(
-            keypair,
-            component,
-            is_last_in_slot,
-            *chained_merkle_root,
-            *next_shred_index,
-            *next_code_index,
-            reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        )
-        .collect();
+    let shreds = shredder.make_merkle_shreds_from_component(
+        keypair,
+        component,
+        is_last_in_slot,
+        *chained_merkle_root,
+        *next_shred_index,
+        *next_code_index,
+        reed_solomon_cache,
+        &mut ProcessShredsStats::default(),
+    );
     if let Some(last_data_shred) = shreds.iter().filter(|shred| shred.is_data()).last() {
         *next_shred_index = last_data_shred.index() + 1;
         *chained_merkle_root = last_data_shred
@@ -592,6 +590,7 @@ async fn shreds(
                 &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
+            .into_iter()
             .filter(Shred::is_data)
             .collect();
         blockstore.insert_shreds(data_shreds, false)?;

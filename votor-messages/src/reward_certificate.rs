@@ -68,6 +68,19 @@ impl SkipRewardCertificate {
     pub fn into_bitmap(self) -> Vec<u8> {
         self.bitmap
     }
+
+    /// Returns every field of the certificate. Callers that must not
+    /// silently ignore new fields (e.g. the geyser boundary conversion)
+    /// bind this tuple exhaustively, so growing it breaks them at compile
+    /// time.
+    pub fn as_parts(&self) -> (Slot, &BLSSignatureCompressed, &[u8]) {
+        let Self {
+            slot,
+            signature,
+            bitmap,
+        } = self;
+        (*slot, signature, bitmap)
+    }
 }
 
 /// Reward certificate for the validators that voted notar.
@@ -107,6 +120,20 @@ impl NotarRewardCertificate {
     /// Returns a reference to the bitmap.
     pub fn bitmap(&self) -> &[u8] {
         &self.bitmap
+    }
+
+    /// Returns every field of the certificate. Callers that must not
+    /// silently ignore new fields (e.g. the geyser boundary conversion)
+    /// bind this tuple exhaustively, so growing it breaks them at compile
+    /// time.
+    pub fn as_parts(&self) -> (Slot, &Hash, &BLSSignatureCompressed, &[u8]) {
+        let Self {
+            slot,
+            block_id,
+            signature,
+            bitmap,
+        } = self;
+        (*slot, block_id, signature, bitmap)
     }
 
     /// Returns the bitmap consuming self.

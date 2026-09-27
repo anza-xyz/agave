@@ -5,7 +5,7 @@ use {
     },
     log::*,
     solana_bincode::limited_deserialize,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_nonce as nonce,
     solana_program_runtime::{
         declare_process_instruction, invoke_context::InvokeContext,
@@ -584,7 +584,8 @@ mod tests {
         },
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
-        solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+        solana_instruction::{AccountMeta, Instruction},
+        solana_instruction_error::InstructionError,
         solana_nonce::{
             self as nonce,
             state::{Data as NonceData, DurableNonce, State as NonceState},

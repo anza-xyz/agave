@@ -6,63 +6,43 @@ source ci/upload-ci-artifact.sh
 #shellcheck source=ci/common/shared-functions.sh
 source ci/common/shared-functions.sh
 
-#
-# Add job_stats data point
-#
-if [[ -z $CI_BUILD_START ]]; then
-  echo Error: CI_BUILD_START empty
-else
-  # make sure console outputs are uploaded as soon as possible, if any
-  (
-    shopt -s nullglob
-    for console_log in ./intercepted-console-*; do
-      gzip -f "$console_log"
-      upload-ci-artifact "$console_log.gz"
-    done
-  )
+# make sure console outputs are uploaded as soon as possible, if any
+(
+  shopt -s nullglob
+  for console_log in ./intercepted-console-*; do
+    gzip -f "$console_log"
+    upload-ci-artifact "$console_log.gz"
+  done
+)
 
-  CI_BUILD_DURATION=$(( $(date +%s) - CI_BUILD_START + 1 ))
+if [[ -n $BUILDKITE ]]; then
+  if need_to_upload_test_result; then
+    if [[ -f "results.json" ]]; then
+      # extract lines which start with '{'
+      awk '/{.*/' results.json >sanitized-results.json
 
-  CI_LABEL=${BUILDKITE_LABEL:-build label missing}
-
-  PR=false
-  if [[ $BUILDKITE_BRANCH =~ pull/* ]]; then
-    PR=true
-  fi
-
-  SUCCESS=true
-  if [[ $BUILDKITE_COMMAND_EXIT_STATUS != 0 ]]; then
-    SUCCESS=false
-  fi
-
-  if [[ -n $BUILDKITE ]]; then
-    if need_to_upload_test_result; then
-      if [[ -f "results.json" ]]; then
-        # extract lines which start with '{'
-        awk '/{.*/' results.json >sanitized-results.json
-
-        if [[ -n "$BUILDKITE_ANALYTICS_TOKEN" ]]; then
-          echo "~~~ Uploading test results to Buildkite Analytics"
-          buildkite-test-collector <sanitized-results.json
-        else
-          echo "~~~ Ignore uploading to Buildkite Analytics"
-        fi
-
-        if [[ -n "$DATADOG_API_KEY" ]]; then
-          echo "~~~ Uploading test results to Datadog"
-          cargo2junit >results.xml <sanitized-results.json || true
-          if [[ -f "results.xml" ]]; then
-            datadog-ci junit upload --service solana results.xml
-          fi
-        else
-          echo "~~~ Ignore Uploading to Datadog"
-        fi
+      if [[ -n "$BUILDKITE_ANALYTICS_TOKEN" ]]; then
+        echo "~~~ Uploading test results to Buildkite Analytics"
+        buildkite-test-collector <sanitized-results.json
+      else
+        echo "~~~ Ignore uploading to Buildkite Analytics"
       fi
 
-      if [[ -f "target/nextest/ci/junit.xml" ]]; then
-        if [[ -n "$BUILDKITE_ANALYTICS_TOKEN" ]]; then
-          echo "~~~ Uploading test results to Buildkite Analytics"
-          curl \
+      if [[ -n "$DATADOG_API_KEY" ]]; then
+        echo "~~~ Uploading test results to Datadog"
+        cargo2junit >results.xml <sanitized-results.json || true
+        if [[ -f "results.xml" ]]; then
+          datadog-ci junit upload --service solana results.xml
+        fi
+      else
+        echo "~~~ Ignore Uploading to Datadog"
+      fi
+    fi
+
+    if [[ -f "target/nextest/ci/junit.xml" ]]; then
+      if [[ -n "$BUILDKITE_ANALYTICS_TOKEN" ]]; then
+        echo "~~~ Uploading test results to Buildkite Analytics"
+        curl \
             -X POST \
             -H "Authorization: Token token=\"$BUILDKITE_ANALYTICS_TOKEN\"" \
             -F "data=@target/nextest/ci/junit.xml" \
@@ -75,29 +55,18 @@ else
             -F "run_env[number]=$BUILDKITE_BUILD_NUMBER" \
             -F "run_env[job_id]=$BUILDKITE_JOB_ID" \
             -F "run_env[message]=$BUILDKITE_MESSAGE" \
-            https://analytics-api.buildkite.com/v1/uploads
-          echo # add a break line for previous command
-        else
-          echo "~~~ Ignore uploading to Buildkite Analytics"
-        fi
+          https://analytics-api.buildkite.com/v1/uploads
+        echo # add a break line for previous command
+      else
+        echo "~~~ Ignore uploading to Buildkite Analytics"
+      fi
 
-        if [[ -n "$DATADOG_API_KEY" ]]; then
-          echo "~~~ Uploading test results to Datadog"
-          datadog-ci junit upload --service solana target/nextest/ci/junit.xml
-        else
-          echo "~~~ Ignore Uploading to Datadog"
-        fi
+      if [[ -n "$DATADOG_API_KEY" ]]; then
+        echo "~~~ Uploading test results to Datadog"
+        datadog-ci junit upload --service solana target/nextest/ci/junit.xml
+      else
+        echo "~~~ Ignore Uploading to Datadog"
       fi
     fi
   fi
-
-  point_tags="pipeline=$BUILDKITE_PIPELINE_SLUG,job=$CI_LABEL,pr=$PR,success=$SUCCESS"
-  point_tags="${point_tags// /\\ }"  # Escape spaces
-
-  point_fields="duration=$CI_BUILD_DURATION"
-  point_fields="${point_fields// /\\ }"  # Escape spaces
-
-  point="job_stats,$point_tags $point_fields"
-
-  scripts/metrics-write-datapoint.sh "$point" || true
 fi

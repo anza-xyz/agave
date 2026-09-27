@@ -341,6 +341,33 @@ impl<R: BufRead> BufReaderWithOverflow<R> {
             overflow_max_capacity,
         }
     }
+
+    fn rebind_with<S: BufRead>(
+        mut self,
+        rebind_fn: impl FnOnce(R) -> io::Result<S>,
+    ) -> io::Result<BufReaderWithOverflow<S>> {
+        let reader = rebind_fn(self.reader)?;
+        self.overflow_buf.clear();
+        Ok(BufReaderWithOverflow {
+            reader,
+            overflow_buf: self.overflow_buf,
+            overflow_min_capacity: self.overflow_min_capacity,
+            overflow_max_capacity: self.overflow_max_capacity,
+        })
+    }
+}
+
+impl<const N: usize> BufReaderWithOverflow<BufferedReader<'_, N>> {
+    pub fn rebind<'b>(self) -> io::Result<BufReaderWithOverflow<BufferedReader<'b, N>>> {
+        self.rebind_with(BufferedReader::rebind)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl BufReaderWithOverflow<SequentialFileReader<'_>> {
+    pub fn rebind<'b>(self) -> io::Result<BufReaderWithOverflow<SequentialFileReader<'b>>> {
+        self.rebind_with(SequentialFileReader::rebind)
+    }
 }
 
 impl<R: BufRead> io::Read for BufReaderWithOverflow<R> {
@@ -863,5 +890,41 @@ mod tests {
                 .kind(),
             io::ErrorKind::UnexpectedEof
         );
+    }
+
+    #[test]
+    fn test_overflow_reader_rebind() {
+        let reader = BufReaderWithOverflow::new(BufferedReader::<16>::new(), 64, 128);
+        let (mut reader, allocation, capacity) = {
+            let mut file = tempfile().unwrap();
+            file.write_all(&[1; 96]).unwrap();
+            let mut reader = reader.rebind().unwrap();
+            reader.set_file(&file, 96).unwrap();
+            assert_eq!(reader.fill_buf_required(48).unwrap(), &[1; 48]);
+            let allocation = reader.overflow_buf.as_ptr();
+            let capacity = reader.overflow_buf.capacity();
+            // Rebind with unread overflow bytes, releasing the borrow before the file is dropped.
+            (reader.rebind().unwrap(), allocation, capacity)
+        };
+        assert!(reader.overflow_buf.is_empty());
+        assert_eq!(reader.get_file_offset(), 0);
+        assert_eq!(reader.overflow_buf.as_ptr(), allocation);
+        assert_eq!(reader.overflow_buf.capacity(), capacity);
+        assert_eq!(reader.overflow_min_capacity, 64);
+        assert_eq!(reader.overflow_max_capacity, 128);
+
+        let mut file = tempfile().unwrap();
+        file.write_all(&[2; 96]).unwrap();
+        reader.set_file(&file, 96).unwrap();
+        assert_eq!(reader.fill_buf_required(48).unwrap(), &[2; 48]);
+        assert_eq!(reader.overflow_buf.as_ptr(), allocation);
+        assert_eq!(reader.overflow_buf.capacity(), capacity);
+
+        // Switching files within a batch also clears data without reallocating.
+        reader.set_file(&file, 96).unwrap();
+        assert_eq!(reader.get_file_offset(), 0);
+        assert!(reader.overflow_buf.is_empty());
+        assert_eq!(reader.fill_buf_required(48).unwrap(), &[2; 48]);
+        assert_eq!(reader.overflow_buf.as_ptr(), allocation);
     }
 }

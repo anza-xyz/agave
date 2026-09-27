@@ -10,7 +10,7 @@ use {
         vm_slice::VmSlice,
     },
     solana_account::ReadableAccount,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
     std::collections::HashSet,
 };
@@ -78,7 +78,7 @@ pub struct InstructionContext<'a, 'ix_data> {
     pub(crate) index_of_caller_instruction: usize,
     pub(crate) program_account_index_in_tx: IndexOfAccount,
     pub(crate) instruction_accounts: &'a [InstructionAccount],
-    pub(crate) dedup_map: &'a [u16],
+    pub(crate) dedup_map: &'a [u8],
     pub(crate) instruction_data: &'ix_data [u8],
 }
 

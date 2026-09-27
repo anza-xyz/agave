@@ -63,6 +63,11 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_parsable::<usize>)
             .takes_value(true)
             .help("Pre-allocate the accounts index, assuming this many accounts")
+            .long_help(
+                "Pre-allocate the accounts index, assuming this many accounts. Overrides the \
+                 account count recorded in the local snapshot directory, which is otherwise used \
+                 when starting from local snapshot state rather than a snapshot archive.",
+            )
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_index_limit")
             .long("accounts-index-limit")
@@ -88,16 +93,10 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
                  the disk-backed index. The disk-backed index has lower performance; prefer \
                  higher explicit limits here. \"minimal\" is deprecated and behaves as \"25GB\".",
             ),
-        Arg::with_name("accounts_db_skip_shrink")
-            .long("accounts-db-skip-shrink")
+        Arg::with_name("accounts_db_verify_index")
+            .long("accounts-db-verify-index")
             .help(
-                "Enables faster starting of ledger-tool by skipping shrink. This option is for \
-                 use during testing.",
-            ),
-        Arg::with_name("accounts_db_verify_refcounts")
-            .long("accounts-db-verify-refcounts")
-            .help(
-                "Debug option to scan all AppendVecs and verify account index refcounts prior to \
+                "Debug option to scan all storages and verify account index slot lists prior to \
                  clean",
             )
             .hidden(hidden_unless_forced()),
@@ -242,7 +241,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         use_snapshot_archives_at_startup::cli::NAME,
         UseSnapshotArchivesAtStartup
     );
-    let accounts_db_skip_shrink = arg_matches.is_present("accounts_db_skip_shrink");
     let verify_index = arg_matches.is_present("verify_accounts_index");
     let limit_load_slot_count_from_snapshot =
         value_t!(arg_matches, "limit_load_slot_count_from_snapshot", usize).ok();
@@ -258,7 +256,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         new_hard_forks,
         runtime_config,
         accounts_db_config,
-        accounts_db_skip_shrink,
         verify_index,
         limit_load_slot_count_from_snapshot,
         run_final_accounts_hash_calc,
@@ -379,12 +376,11 @@ pub fn get_accounts_db_config(
         )
         .ok(),
         max_ancient_storages: value_t!(arg_matches, "accounts_db_max_ancient_storages", usize).ok(),
-        exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
+        verify_index: arg_matches.is_present("accounts_db_verify_index"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: None,
-        num_foreground_threads: None,
         accounts_file_provider: AccountsFileProvider::AppendVec,
     }
 }

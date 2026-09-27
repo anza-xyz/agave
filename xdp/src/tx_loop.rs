@@ -117,16 +117,34 @@ impl TxLoopBuilder<OwnedUmem> {
         let queue = dev
             .open_queue(queue_id)
             .expect("failed to open queue for AF_XDP socket");
-        let RingSizes {
-            rx: rx_size,
-            tx: tx_size,
-        } = queue.ring_sizes().unwrap_or_else(|| {
+        let ring_sizes = queue.ring_sizes().unwrap_or_else(|| {
             log::info!(
                 "using default ring sizes for {} queue {queue_id:?}",
                 dev.name()
             );
             RingSizes::default()
         });
+
+        // Align the ring sizes reported by buggy drivers. Only in copy mode, where the AF_XDP rings
+        // are decoupled from the hardware rings.
+        let ring_sizes = if zero_copy {
+            ring_sizes
+        } else {
+            let aligned = align_ring_sizes(ring_sizes);
+            if aligned != ring_sizes {
+                log::warn!(
+                    "{} queue {queue_id:?} reports ring sizes {ring_sizes:?}, which AF_XDP \
+                     rejects as not a power of two; using {aligned:?}",
+                    dev.name()
+                );
+            }
+            aligned
+        };
+
+        let RingSizes {
+            rx: rx_size,
+            tx: tx_size,
+        } = ring_sizes;
 
         let frame_count = (rx_size + tx_size) * 2;
 
@@ -186,6 +204,23 @@ impl TxLoopBuilder<OwnedUmem> {
             ring,
             completion,
         })
+    }
+}
+
+/// Rounds up ring sizes from drivers that report a depth AF_XDP rejects, like bnxt_en's 511. Zero
+/// means "no ring" and is left alone.
+fn align_ring_sizes(RingSizes { rx, tx }: RingSizes) -> RingSizes {
+    fn align(size: usize) -> usize {
+        if size == 0 {
+            0
+        } else {
+            size.next_power_of_two()
+        }
+    }
+
+    RingSizes {
+        rx: align(rx),
+        tx: align(tx),
     }
 }
 
@@ -692,7 +727,28 @@ fn kick_error(e: std::io::Error) {
 
 #[cfg(test)]
 mod tests {
-    use crate::tx_loop::{Receiver, TryRecvError, TrySendError, channel};
+    use crate::{
+        device::RingSizes,
+        tx_loop::{Receiver, TryRecvError, TrySendError, align_ring_sizes, channel},
+    };
+
+    #[test]
+    fn test_align_ring_sizes() {
+        // bnxt_en reports 511/511.
+        let aligned = align_ring_sizes(RingSizes { rx: 511, tx: 511 });
+        assert_eq!(aligned, RingSizes { rx: 512, tx: 512 });
+        // The completion ring is twice the TX ring.
+        assert!((aligned.tx * 2).is_power_of_two());
+
+        let sizes = RingSizes { rx: 1024, tx: 4096 };
+        assert_eq!(align_ring_sizes(sizes), sizes);
+        assert_eq!(align_ring_sizes(RingSizes::default()), RingSizes::default());
+
+        assert_eq!(
+            align_ring_sizes(RingSizes { rx: 0, tx: 511 }),
+            RingSizes { rx: 0, tx: 512 }
+        );
+    }
 
     #[test]
     fn test_send_full() {

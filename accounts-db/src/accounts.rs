@@ -4,7 +4,7 @@ use {
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
             AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
-            ScanAccountStorageData, ScanStorageResult, UpdateIndexThreadSelection,
+            ScanAccountStorageData, ScanStorageResult,
         },
         accounts_index::IndexKey,
         accounts_scan::{ScanConfig, ScanError, ScanResult},
@@ -111,7 +111,11 @@ impl Accounts {
         loaded_addresses: &mut LoadedAddresses,
     ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
-            .load_with_fixed_root(ancestors, address_table_lookup.account_key)
+            .load_with_fixed_root(
+                ancestors,
+                address_table_lookup.account_key,
+                None::<fn(_, &_, _) -> _>,
+            )
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
 
@@ -165,12 +169,14 @@ impl Accounts {
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
+        load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
         self.accounts_db.load(
             ancestors,
             pubkey,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::True,
+            load_filter,
         )
     }
 
@@ -186,6 +192,7 @@ impl Accounts {
             pubkey,
             LoadHint::FixedMaxRoot,
             PopulateReadCache::False,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 
@@ -199,6 +206,7 @@ impl Accounts {
             pubkey,
             LoadHint::Unspecified,
             PopulateReadCache::True,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 
@@ -493,56 +501,11 @@ impl Accounts {
     }
 
     /// Store `accounts` into the DB
-    ///
-    /// This version updates the accounts index sequentially,
-    /// using the same thread that calls the fn itself.
-    pub fn store_accounts_seq<'a>(
+    pub fn store_accounts<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: &Ancestors,
-    ) {
-        self._store_accounts(
-            accounts,
-            bank_id,
-            transactions,
-            UpdateIndexThreadSelection::Inline,
-            ancestors,
-        );
-    }
-
-    /// Store `accounts` into the DB
-    ///
-    /// This version updates the accounts index in parallel,
-    /// using the foreground AccountsDb thread pool.
-    pub fn store_accounts_par<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        bank_id: BankId,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: &Ancestors,
-    ) {
-        self._store_accounts(
-            accounts,
-            bank_id,
-            transactions,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-            ancestors,
-        );
-    }
-
-    /// Store `accounts` into the DB
-    ///
-    /// This version is a private impl, performing the common additional tasks
-    /// when storing accounts that fall outside AccountsDb itself.
-    /// E.g. geyser account update notifications.
-    fn _store_accounts<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        bank_id: BankId,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        update_index_thread_selection: UpdateIndexThreadSelection,
         ancestors: &Ancestors,
     ) {
         let accounts_db = &self.accounts_db;
@@ -568,7 +531,7 @@ impl Accounts {
             }
         }
 
-        accounts_db.store_accounts_unfrozen(accounts, update_index_thread_selection, ancestors);
+        accounts_db.store_accounts_unfrozen(accounts, ancestors);
     }
 
     /// Add a slot to root.  Root slots cannot be purged
