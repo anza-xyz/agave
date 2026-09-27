@@ -12,11 +12,11 @@ use {
 
 // A vector wrapper which preallocates vector to be used
 // with a recycler
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct RecycledVec<T: Default + Clone + Sized> {
     x: Vec<T>,
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
     recycler: Weak<RecyclerX<RecycledVec<T>>>,
 }

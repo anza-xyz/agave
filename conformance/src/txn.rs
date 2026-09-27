@@ -493,11 +493,10 @@ mod tests {
     fn proto_transaction(transaction: &VersionedTransaction) -> ProtoSanitizedTransaction {
         let message = &transaction.message;
         let header = message.header();
-        // The fixture format only distinguishes legacy from v0.
-        let (is_legacy, address_table_lookups) = match message {
-            VersionedMessage::Legacy(_) => (true, vec![]),
+        let (version, address_table_lookups) = match message {
+            VersionedMessage::Legacy(_) => (protosol::protos::TransactionVersion::Legacy, vec![]),
             VersionedMessage::V0(message) => (
-                false,
+                protosol::protos::TransactionVersion::V0,
                 message
                     .address_table_lookups
                     .iter()
@@ -523,7 +522,7 @@ mod tests {
 
         ProtoSanitizedTransaction {
             message: Some(ProtoTransactionMessage {
-                is_legacy,
+                version: version as i32,
                 header: Some(ProtoMessageHeader {
                     num_required_signatures: u32::from(header.num_required_signatures),
                     num_readonly_signed_accounts: u32::from(header.num_readonly_signed_accounts),
@@ -552,6 +551,7 @@ mod tests {
                     })
                     .collect(),
                 address_table_lookups,
+                v1_config: None,
             }),
             message_hash: vec![0; 32],
             signatures: transaction

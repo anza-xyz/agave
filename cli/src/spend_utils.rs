@@ -12,7 +12,7 @@ use {
     solana_cli_output::display::build_balance_message,
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
 };
@@ -267,7 +267,8 @@ where
                     None
                 };
             (
-                get_fee_for_messages(rpc_client, &[&dummy_message]).await?,
+                get_fee_for_messages(rpc_client, &[&VersionedMessage::Legacy(dummy_message)])
+                    .await?,
                 compute_unit_info,
             )
         }

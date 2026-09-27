@@ -1,7 +1,7 @@
 use {
+    crate::sig_verified_messages::VoteAggregate,
     agave_votor_messages::{
-        consensus_message::VoteMessage, reward_certificate::NUM_SLOTS_FOR_REWARD,
-        sig_verified_messages::VoteAggregate, vote::Vote,
+        consensus_message::VoteMessage, reward_certificate::NUM_SLOTS_FOR_REWARD, vote::Vote,
     },
     solana_clock::Slot,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,

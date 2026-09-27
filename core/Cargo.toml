@@ -28,21 +28,21 @@ dev-context-only-utils = [
     "solana-streamer/dev-context-only-utils",
     "solana-tpu-client-next/dev-context-only-utils",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-accounts-db/frozen-abi",
-    "solana-frozen-abi/frozen-abi",
-    "solana-gossip/frozen-abi",
-    "solana-hash/frozen-abi",
-    "solana-ledger/frozen-abi",
-    "solana-packet/frozen-abi",
-    "solana-perf/frozen-abi",
-    "solana-pubkey/frozen-abi",
-    "solana-runtime/frozen-abi",
-    "solana-signature/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
+    "solana-accounts-db/stable-abi",
+    "solana-frozen-abi/stable-abi",
+    "solana-gossip/stable-abi",
+    "solana-hash/stable-abi",
+    "solana-ledger/stable-abi",
+    "solana-packet/stable-abi",
+    "solana-perf/stable-abi",
+    "solana-pubkey/stable-abi",
+    "solana-runtime/stable-abi",
+    "solana-signature/stable-abi",
+    "solana-vote/stable-abi",
+    "solana-vote-program/stable-abi",
 ]
 
 [dependencies]
@@ -112,8 +112,8 @@ solana-epoch-schedule = { workspace = true }
 solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }

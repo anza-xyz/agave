@@ -32,7 +32,6 @@ mod tests {
     fn versioned_transaction_from_proto_preserves_empty_signatures() {
         let transaction = ProtoSanitizedTransaction {
             message: Some(ProtoTransactionMessage {
-                is_legacy: true,
                 ..ProtoTransactionMessage::default()
             }),
             ..ProtoSanitizedTransaction::default()

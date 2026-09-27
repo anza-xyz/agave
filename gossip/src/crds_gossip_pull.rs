@@ -63,7 +63,7 @@ const FAILED_INSERTS_RETENTION_MS: u64 = 20_000;
 pub const FALSE_RATE: f64 = 0.1f64;
 pub const KEYS: f64 = 8f64;
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct CrdsFilter {
     pub filter: Bloom<Hash>,
@@ -222,15 +222,23 @@ impl CrdsFilterSet {
         Self { filters, mask_bits }
     }
 
-    fn add(&self, hash_value: Hash) {
+    fn filter(&self, hash_value: &Hash) -> Option<&ConcurrentBloom<Hash>> {
         let shift = u64::BITS.checked_sub(self.mask_bits).unwrap();
         let index = usize::try_from(
-            CrdsFilter::hash_as_u64(&hash_value)
+            CrdsFilter::hash_as_u64(hash_value)
                 .checked_shr(shift)
                 .unwrap_or_default(),
         )
         .unwrap();
-        if let Some(filter) = &self.filters[index] {
+        self.filters[index].as_ref()
+    }
+
+    fn is_active(&self, hash_value: &Hash) -> bool {
+        self.filter(hash_value).is_some()
+    }
+
+    fn add(&self, hash_value: Hash) {
+        if let Some(filter) = self.filter(&hash_value) {
             filter.add(&hash_value);
         }
     }
@@ -472,27 +480,63 @@ impl CrdsGossipPull {
         bloom_size: usize,
     ) -> Vec<CrdsFilter> {
         const PAR_MIN_LENGTH: usize = 512;
+        // Number of hashes scanned per crds read lock.
+        const LOCK_CHUNK_SIZE: usize = 128;
         let failed_inserts = self.failed_inserts.read();
         // crds should be locked last after self.failed_inserts.
-        let crds = crds.read();
-        let num_items = crds.len() + crds.num_purged() + failed_inserts.len();
-        let num_items = MIN_NUM_BLOOM_ITEMS.max(num_items);
+        let (num_values, num_purged) = {
+            let crds = crds.read();
+            (crds.len(), crds.num_purged())
+        };
+        let num_items = MIN_NUM_BLOOM_ITEMS.max(num_values + num_purged + failed_inserts.len());
         let filters = CrdsFilterSet::new(&mut rand::rng(), num_items, bloom_size);
         thread_pool.install(|| {
-            crds.par_values()
+            failed_inserts
+                .par_iter()
                 .with_min_len(PAR_MIN_LENGTH)
-                .map(|v| *v.value.hash())
-                .chain(crds.purged().with_min_len(PAR_MIN_LENGTH))
-                .chain(
-                    failed_inserts
-                        .par_iter()
-                        .with_min_len(PAR_MIN_LENGTH)
-                        .map(|(v, _)| *v),
-                )
-                .for_each(|v| filters.add(v));
+                .for_each(|(v, _)| filters.add(*v));
         });
-        drop(crds);
         drop(failed_inserts);
+        // Values removed from the table between chunks may cause other values
+        // to be skipped, which only results in redundant pull responses.
+        thread_pool.install(|| {
+            (0..num_values)
+                .into_par_iter()
+                .step_by(LOCK_CHUNK_SIZE)
+                .for_each(|start| {
+                    let mut hashes = [Hash::default(); LOCK_CHUNK_SIZE];
+                    let mut len = 0;
+                    {
+                        let crds = crds.read();
+                        for hash in crds
+                            .value_hashes(start..start + LOCK_CHUNK_SIZE)
+                            .filter(|v| filters.is_active(v))
+                        {
+                            hashes[len] = *hash;
+                            len += 1;
+                        }
+                    }
+                    hashes[..len].iter().for_each(|v| filters.add(*v));
+                });
+            (0..num_purged)
+                .into_par_iter()
+                .step_by(LOCK_CHUNK_SIZE)
+                .for_each(|start| {
+                    let mut hashes = [Hash::default(); LOCK_CHUNK_SIZE];
+                    let mut len = 0;
+                    {
+                        let crds = crds.read();
+                        for hash in crds
+                            .purged_hashes(start..start + LOCK_CHUNK_SIZE)
+                            .filter(|v| filters.is_active(v))
+                        {
+                            hashes[len] = *hash;
+                            len += 1;
+                        }
+                    }
+                    hashes[..len].iter().for_each(|v| filters.add(*v));
+                });
+        });
         filters.into()
     }
 
@@ -927,7 +971,7 @@ pub(crate) mod tests {
         );
         assert_eq!(filters.len(), MIN_NUM_BLOOM_FILTERS.max(4));
         let crds = crds.read();
-        let purged: Vec<_> = thread_pool.install(|| crds.purged().collect());
+        let purged: Vec<_> = crds.purged_hashes(0..crds.num_purged()).copied().collect();
         let hash_values: Vec<_> = crds
             .values()
             .map(|v| *v.value.hash())

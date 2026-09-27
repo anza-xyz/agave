@@ -95,7 +95,9 @@ impl Payload {
         if let Some(nonce) = nonce {
             buffer.put_u32_le(nonce);
         }
-        BytesPacket::new(buffer.freeze(), Meta::default())
+        let mut meta = Meta::default();
+        meta.size = buffer.len();
+        BytesPacket::new(buffer.freeze(), meta)
     }
 }
 
@@ -284,6 +286,10 @@ mod test {
         let nonce: super::Nonce = 0x0A0B_0C0D;
         let mut bytes_packet = shred.payload().to_bytes_packet(Some(nonce));
         bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
+        assert_eq!(
+            bytes_packet.meta().size,
+            shred.payload().len() + std::mem::size_of::<super::Nonce>()
+        );
 
         // Ensure wire::get_shred_and_repair_nonce reads the same nonce (LE).
         let (bytes, got) = wire::get_shred_and_repair_nonce(bytes_packet.as_ref())

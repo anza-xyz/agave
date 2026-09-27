@@ -33,7 +33,7 @@ impl VoteHistoryVersions {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "MYpTecggZfULsn6SC1bojefNFK1R5kjBZg7wE8H8dHF",

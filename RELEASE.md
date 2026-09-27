@@ -128,6 +128,11 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 
 ### Miscellaneous Clean up
 
+#### Configure backporting
+
+1. Update [mergify.yml](https://github.com/anza-xyz/agave/blob/master/.mergify.yml) to add backport actions for the new branch, remove actions for the obsolete branch and update the list of non EoL version branches.
+1. Adjust the [Github backport labels](https://github.com/anza-xyz/agave/labels) to add the new branch label and remove the label for the obsolete branch.
+
 #### Newly Promoted Stable (Former Beta) Branch
 
 1. Pin the spl-token-cli version in the newly promoted stable branch by setting `splTokenCliVersion` in scripts/spl-token-cli-version.sh to the latest release that depends on the stable branch (usually this will be the latest spl-token-cli release).
@@ -137,8 +142,9 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 
 1. Update [CHANGELOG.md](https://github.com/anza-xyz/agave/blob/master/CHANGELOG.md) to remove the channel links on the new branch. Additionally, remove any wording about the new branch being unreleased.
 1. Update [CODEOWNERS](https://github.com/anza-xyz/agave/blob/master/.github/CODEOWNERS) to `* @anza-xyz/backport-reviewers` on the new branch.
-1. Update [mergify.yml](https://github.com/anza-xyz/agave/blob/master/.mergify.yml) to add backport actions for the new branch, remove actions for the obsolete branch and update the list of non EoL version branches.
-1. Adjust the [Github backport labels](https://github.com/anza-xyz/agave/labels) to add the new branch label and remove the label for the obsolete branch.
+
+#### Announcing
+
 1. Announce on Discord #development that the release branch exists so people know to use the new backport labels.
 
 ## Steps to Create a Release

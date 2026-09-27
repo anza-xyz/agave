@@ -153,7 +153,7 @@ rust-version = "1.98.1"
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
-    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+    'cfg(feature, values("stable-abi", "no-entrypoint"))',
     'cfg(target_arch, values("sbf"))',
 ]
 
@@ -226,11 +226,10 @@ bytes = "1.12.1"
 bytesize = "2.7.0"
 bzip2 = "0.6.1"
 caps = "0.5.6"
-cfg-if = "1.0.4"
 chrono = { version = "0.4.45", default-features = false }
 chrono-humanize = "0.2.3"
 clap = { version = "2.33.1", default-features = false, features = ["suggestions"] }
-console = "0.16.4"
+console = "0.16.6"
 const_format = "0.2.36"
 criterion = "0.8.2"
 crossbeam-channel = "0.5.17"
@@ -306,7 +305,7 @@ proptest = "1.11"
 prost = "0.14.4"
 prost-types = "0.14.4"
 protobuf-src = "1.1.0"
-protosol = "=15.0.0"
+protosol = "=17.0.0"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.12"
 quinn-proto = "0.11.18"
@@ -397,8 +396,8 @@ solana-fee = { path = "fee", version = "=4.5.0-alpha.0", features = ["agave-unst
 solana-fee-calculator = "3.4.0"
 solana-fee-structure = "4.1.0"
 solana-file-download = "3.1.4"
-solana-frozen-abi = "3.9.0"
-solana-frozen-abi-macro = "3.7.0"
+solana-frozen-abi = { version = "3.9.0", default-features = false }
+solana-frozen-abi-macro = { version = "3.7.0", default-features = false }
 solana-genesis = { path = "genesis", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "5.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -429,7 +428,7 @@ solana-msg = "3.1.0"
 solana-native-token = "3.0.0"
 solana-net-utils = { path = "net-utils", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-nohash-hasher = "0.2.1"
-solana-nonce = "3.3.0"
+solana-nonce = "3.4.0"
 solana-nonce-account = { version = "5.0.0", default-features = false }
 solana-notifier = { path = "notifier", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-offchain-message = "4.0.0"
@@ -440,7 +439,7 @@ solana-poh-config = "3.1.0"
 solana-poseidon = "5.0.0"
 solana-precompile-error = "3.0.0"
 solana-presigner = "4.0.0"
-solana-program = { version = "5.0.0", default-features = false }
+solana-program = { version = "5.1.0", default-features = false }
 solana-program-binaries = { path = "program-binaries", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-entrypoint = "3.1.1"
 solana-program-error = "3.0.1"
@@ -485,7 +484,7 @@ solana-slot-hashes = "4.0.0"
 solana-slot-history = "3.2.0"
 solana-stable-layout = "4.0.0"
 solana-stake-history = "2.1.0"
-solana-stake-interface = "5.0.0"
+solana-stake-interface = "5.1.0"
 solana-storage-bigtable = { path = "storage-bigtable", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-storage-proto = { path = "storage-proto", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "streamer", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }

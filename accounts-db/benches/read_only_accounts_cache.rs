@@ -89,7 +89,7 @@ fn bench_read_only_accounts_cache(c: &mut Criterion) {
                             let mut rng = SmallRng::seed_from_u64(i as u64);
                             while !stop_threads.load(Ordering::Relaxed) {
                                 let pubkey = pubkeys.choose(&mut rng).unwrap();
-                                black_box(cache.load(*pubkey, slot));
+                                black_box(cache.load(pubkey, |cached_slot| cached_slot == slot));
                             }
                         }
                     })
@@ -138,7 +138,7 @@ fn bench_read_only_accounts_cache(c: &mut Criterion) {
             b.iter_custom(|iters| {
                 let start = Instant::now();
                 for (pubkey, _) in accounts.iter().cycle().take(iters as usize) {
-                    black_box(cache.load(*pubkey, slot));
+                    black_box(cache.load(pubkey, |cached_slot| cached_slot == slot));
                 }
 
                 start.elapsed()
@@ -212,7 +212,7 @@ fn bench_read_only_accounts_cache_eviction(
                             let mut rng = SmallRng::seed_from_u64(i as u64);
                             while !stop_threads.load(Ordering::Relaxed) {
                                 let pubkey = pubkeys.choose(&mut rng).unwrap();
-                                black_box(cache.load(*pubkey, slot));
+                                black_box(cache.load(pubkey, |cached_slot| cached_slot == slot));
                             }
                         }
                     })
@@ -259,7 +259,7 @@ fn bench_read_only_accounts_cache_eviction(
                     let pubkey = pubkeys.choose(&mut rng).unwrap().to_owned();
 
                     let start = Instant::now();
-                    black_box(cache.load(pubkey, slot));
+                    black_box(cache.load(&pubkey, |cached_slot| cached_slot == slot));
                     total_time = total_time.saturating_add(start.elapsed());
                 }
 

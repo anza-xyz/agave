@@ -72,6 +72,12 @@ impl Ancestors {
     pub fn max_slot(&self) -> Slot {
         self.ancestors.max_exclusive().saturating_sub(1)
     }
+
+    /// Is an index entry at `slot` an ancestor?
+    /// This includes any ancestors and any slots older than the oldest ancestor in the list
+    pub fn is_ancestor(&self, slot: Slot) -> bool {
+        self.contains_key(&slot) || self.min_slot().is_none_or(|min_slot| slot <= min_slot)
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]

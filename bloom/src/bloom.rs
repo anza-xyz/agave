@@ -28,7 +28,7 @@ pub trait BloomHashIndex {
 /// an empty `BitVec` to `[0]` (`None`), so sampling one would leave the round-trip
 /// test exercising only the degenerate encoding. Shared via
 /// `#[stable_abi_sample(with = "...")]` by `BitVec` fields here and in gossip.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 pub fn sample_bit_vec<Block>(
     rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
 ) -> BitVec<Block>
@@ -41,12 +41,12 @@ where
     )
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Default, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct Bloom<T: BloomHashIndex> {
     pub keys: Vec<u64>,
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "sample_bit_vec(rng)")
     )]
     pub bits: BitVec<u64>,

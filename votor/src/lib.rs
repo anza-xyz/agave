@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 #[macro_use]
 extern crate log;
@@ -22,16 +21,15 @@ pub mod voting_service;
 pub mod voting_utils;
 pub mod votor;
 
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
+#[cfg_attr(feature = "stable-abi", macro_use)]
+#[cfg(feature = "stable-abi")]
 extern crate solana_frozen_abi_macro;
 
 #[cfg(test)]
 mod tests {
     use {
-        agave_votor_messages::{
-            consensus_message::VoteMessage, sig_verified_messages::VoteAggregate,
-        },
+        agave_bls_sigverify::sig_verified_messages::VoteAggregate,
+        agave_votor_messages::consensus_message::VoteMessage,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,

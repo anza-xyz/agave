@@ -1,12 +1,11 @@
 //! Defines ConsensusPool to store received and generated votes and certificates.
 use {
     crate::{
-        aggregate_accumulator::AggregateAccumulatorError,
         consensus_pool::{
             parent_ready_tracker::{ParentReady, ParentReadyTracker},
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
-            vote_pool::VotePool,
+            vote_pool::{VotePoolError, VotePools},
         },
         consensus_pool_service::{PoolMessage, PoolVote},
         event::VotorEvent,
@@ -45,7 +44,7 @@ pub(crate) enum AddVoteError {
     #[error("Received old msg with slot:{slot} in root_slot:{root_slot}")]
     OldMessage { slot: Slot, root_slot: Slot },
     #[error("Adding vote to vote_pool failed with {0}")]
-    VotePoolAddVote(AggregateAccumulatorError),
+    VotePoolAddVote(VotePoolError),
 }
 
 fn get_rank_map(bank: &Bank, slot: Slot) -> Result<&BLSPubkeyToRankMap, AddVoteError> {
@@ -64,7 +63,7 @@ fn get_rank_map(bank: &Bank, slot: Slot) -> Result<&BLSPubkeyToRankMap, AddVoteE
 pub(crate) struct ConsensusPool {
     cluster_info: Arc<ClusterInfo>,
     // Vote pools to do bean counting for votes.
-    vote_pools: BTreeMap<Slot, VotePool>,
+    vote_pools: VotePools,
     /// Completed certificates
     completed_certificates: BTreeMap<CertificateType, Arc<Certificate>>,
     /// Set of certs that the pool has generated itself.  Used to inform the bls sigverifier so it
@@ -105,7 +104,7 @@ impl ConsensusPool {
 
         Self {
             cluster_info,
-            vote_pools: BTreeMap::new(),
+            vote_pools: VotePools::new(root.slot()),
             completed_certificates: BTreeMap::new(),
             highest_finalized_slot_cert: None,
             parent_ready_tracker,
@@ -123,12 +122,13 @@ impl ConsensusPool {
         rank_map: &BLSPubkeyToRankMap,
         msg: &PoolVote,
     ) -> Result<(u64, Option<Certificate>), AddVoteError> {
-        let slot = msg.vote().slot();
-        let pool = self
-            .vote_pools
-            .entry(slot)
-            .or_insert_with(|| VotePool::new(rank_map.len()));
-        pool.add_pool_vote(rank_map.total_stake(), msg, &self.completed_certificates)
+        self.vote_pools
+            .add_pool_vote(
+                rank_map.len(),
+                rank_map.total_stake(),
+                msg,
+                &self.completed_certificates,
+            )
             .map_err(AddVoteError::VotePoolAddVote)
     }
 
@@ -311,7 +311,6 @@ impl ConsensusPool {
                 root_slot: root_bank.slot(),
             });
         }
-        let vote_type = vote.get_type();
         let (entry_stake, new_cert) = self.update_vote_pool(rank_map, &msg)?;
         let fallback_vote_counters = self
             .slot_stake_counters_map
@@ -333,7 +332,7 @@ impl ConsensusPool {
             self.stats.incr_generated_cert(&cert.cert_type);
             cert
         });
-        self.stats.incr_ingested_vote_type(vote_type);
+        self.stats.incr_ingested_vote(vote);
         Ok(new_cert)
     }
 
@@ -430,9 +429,14 @@ impl ConsensusPool {
             .unwrap_or(0)
     }
 
-    /// Checks if any block in the `slot` is finalized
+    /// Checks if any block in the `slot` received a Finalize or FinalizeFast
+    /// certificate.
+    ///
+    /// Note that this does *not* answer the question of whether `slot` is
+    /// finalized, as a slot can be finalized without getting a certificate if
+    /// it has a descendant that is finalized.
     #[cfg(test)]
-    fn is_finalized(&self, slot: Slot) -> bool {
+    fn slot_has_finalize_or_finalizefast(&self, slot: Slot) -> bool {
         self.completed_certificates
             .keys()
             .any(|cert_type| match cert_type {
@@ -490,7 +494,7 @@ impl ConsensusPool {
 
         if needs_notar_cert
             && !self.slot_has_notar_fallback_or_notar(parent_slot)
-            && !self.is_finalized(parent_slot)
+            && !self.slot_has_finalize_or_finalizefast(parent_slot)
         {
             error!("Missing notarization certificate {parent_slot}");
             return false;
@@ -526,7 +530,7 @@ impl ConsensusPool {
         self.completed_certificates
             .retain(|c, _| c.slot() >= root_slot);
         self.generated_cert_types.prune(root_slot);
-        self.vote_pools = self.vote_pools.split_off(&root_slot);
+        self.vote_pools.purge(root_slot);
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
         self.parent_ready_tracker.set_root(root_slot);
         self.pending_safe_to_notar
@@ -575,9 +579,9 @@ mod tests {
     use {
         super::{parent_ready_tracker::BlockProductionParent, *},
         crate::tests::get_cluster_info,
+        agave_bls_sigverify::sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
-            sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
             vote::Vote,
             wire::get_vote_payload_to_sign,
         },
@@ -616,15 +620,15 @@ mod tests {
         encode_base2(&bitvec).unwrap()
     }
 
-    struct TestContext {
-        validators: Vec<ValidatorVoteKeypairs>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        pool: ConsensusPool,
+    pub struct TestContext {
+        pub validators: Vec<ValidatorVoteKeypairs>,
+        pub bank_forks: Arc<RwLock<BankForks>>,
+        pub pool: ConsensusPool,
         generated_cert_types: Arc<GeneratedCertTypes>,
     }
 
     impl TestContext {
-        fn new() -> Self {
+        pub fn new() -> Self {
             let num_validators = 10;
             let validator_keypairs = (0..num_validators)
                 .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -727,7 +731,7 @@ mod tests {
             )
         }
 
-        fn new_vote_msg(&self, rank: usize, vote: Vote) -> VoteMessage {
+        pub fn new_vote_msg(&self, rank: usize, vote: Vote) -> VoteMessage {
             let bls_keypair = BLSKeypair::derive_from_signer(
                 &self.validators[rank].vote_keypair,
                 BLS_KEYPAIR_DERIVE_SEED,
@@ -1754,18 +1758,18 @@ mod tests {
         };
         ctx.add_batch(SigVerifiedBatch::Certificates(vec![cert_2]));
         assert!(ctx.pool.skip_certified(1));
-        assert!(ctx.pool.is_finalized(2));
+        assert!(ctx.pool.slot_has_finalize_or_finalizefast(2));
 
         let new_bank = Arc::new(create_bank(2, root_bank, SlotLeader::new_unique()));
         ctx.pool.maybe_prune(new_bank.slot());
         // Check that cert for 1 is gone, but cert for 2 is still there
         assert!(!ctx.pool.skip_certified(1));
-        assert!(ctx.pool.is_finalized(2));
+        assert!(ctx.pool.slot_has_finalize_or_finalizefast(2));
         let new_bank = Arc::new(create_bank(3, new_bank, SlotLeader::new_unique()));
         ctx.pool.maybe_prune(new_bank.slot());
         // Now both certs should be gone
         assert!(!ctx.pool.skip_certified(1));
-        assert!(!ctx.pool.is_finalized(2));
+        assert!(!ctx.pool.slot_has_finalize_or_finalizefast(2));
         // Send a vote on slot 1, it should be rejected
         let vote = Vote::new_skip_vote(1);
         let aggregate = new_vote_aggregate(

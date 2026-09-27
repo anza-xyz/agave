@@ -1,9 +1,7 @@
 //! Definitions of Alpenglow consensus certificates
 
 use {
-    crate::{
-        consensus_message::Block, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD, vote::Vote,
-    },
+    crate::{consensus_message::Block, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
 };
@@ -154,64 +152,5 @@ impl CertificateType {
     /// Is this a genesis certificate?
     pub fn is_genesis(&self) -> bool {
         matches!(self, Self::Genesis(_))
-    }
-
-    /// Gets the block associated with this certificate, if present
-    pub fn to_block(self) -> Option<Block> {
-        match self {
-            CertificateType::Finalize(_) | CertificateType::Skip(_) => None,
-            CertificateType::Notarize(block)
-            | CertificateType::NotarizeFallback(block)
-            | CertificateType::Genesis(block)
-            | CertificateType::FinalizeFast(block) => Some(block),
-        }
-    }
-
-    /// Reconstructs the single source `Vote` payload for this certificate.
-    ///
-    /// This method is used primarily by the signature verifier. For
-    /// certificates formed by aggregating a single type of vote
-    /// (e.g., a `Notarize` certificate from `Notarize` votes), this function
-    /// reconstructs the canonical message payload that was signed by validators.
-    ///
-    /// For `NotarizeFallback` and `Skip` certificates, this function returns the
-    /// appropriate payload *only* if the certificate was formed from a single
-    /// vote type (e.g., exclusively from `Notarize` or `Skip` votes). For
-    /// certificates formed from a mix of two vote types, use the `to_source_votes`
-    /// function.
-    pub fn to_source_vote(self) -> Vote {
-        match self {
-            Self::Notarize(block) | Self::FinalizeFast(block) | Self::NotarizeFallback(block) => {
-                Vote::new_notarization_vote(block)
-            }
-            Self::Finalize(slot) => Vote::new_finalization_vote(slot),
-            Self::Skip(slot) => Vote::new_skip_vote(slot),
-            Self::Genesis(block) => Vote::new_genesis_vote(block),
-        }
-    }
-
-    /// Reconstructs the two distinct source `Vote` payloads for this certificate.
-    ///
-    /// This method is primarily used by the signature verifier for certificates that
-    /// can be formed by aggregating two different types of votes. For example, a
-    /// `NotarizeFallback` certificate accepts both `Notarize` and `NotarizeFallback`.
-    ///
-    /// It reconstructs both potential message payloads that were signed by validators, which
-    /// the verifier uses to check the single aggregate signature.
-    pub fn to_source_votes(self) -> Option<(Vote, Vote)> {
-        match self {
-            Self::NotarizeFallback(block) => {
-                let vote1 = Vote::new_notarization_vote(block);
-                let vote2 = Vote::new_notarization_fallback_vote(block);
-                Some((vote1, vote2))
-            }
-            Self::Skip(slot) => {
-                let vote1 = Vote::new_skip_vote(slot);
-                let vote2 = Vote::new_skip_fallback_vote(slot);
-                Some((vote1, vote2))
-            }
-            // Other certificate types do not use Base3 encoding.
-            _ => None,
-        }
     }
 }

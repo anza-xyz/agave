@@ -7,6 +7,6 @@ pub mod vote_state_view;
 pub mod vote_state_view_mut;
 pub mod vote_transaction;
 
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
+#[cfg_attr(feature = "stable-abi", macro_use)]
+#[cfg(feature = "stable-abi")]
 extern crate solana_frozen_abi_macro;

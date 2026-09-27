@@ -1163,7 +1163,7 @@ pub struct ProcessedTransactionCounts {
 /// Account stats for computing the bank hash
 /// This struct is serialized and stored in the snapshot.
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Default, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BankHashStats {
     pub num_updated_accounts: u64,
@@ -6034,6 +6034,11 @@ impl Bank {
                     remove_inactive_stakes,
                 );
             });
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn stakes(&self) -> RwLockReadGuard<'_, Stakes<StakeAccount<Delegation>>> {
+        self.stakes_cache.stakes()
     }
 
     /// current vote accounts for this bank along with the stake

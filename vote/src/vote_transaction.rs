@@ -9,7 +9,7 @@ use {
 };
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(abi_digest = "BZedcpj1BV5iCF1n7Tt62rbyfY4gm6D5Fjtj5dDtGSh5")
 )]

@@ -36,7 +36,6 @@ svm-internal = ["dep:qualifier_attr"]
 [dependencies]
 base64 = { workspace = true }
 bincode = { workspace = true }
-cfg-if = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }

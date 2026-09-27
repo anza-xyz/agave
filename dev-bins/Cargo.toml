@@ -21,7 +21,7 @@ edition = "2024"
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
-    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+    'cfg(feature, values("stable-abi", "no-entrypoint"))',
 ]
 
 # Clippy lint configuration that can not be applied in clippy.toml
@@ -65,7 +65,7 @@ num_cpus = "1.17.0"
 pretty-hex = "0.4.2"
 prost = "0.14.4"
 prost-build = "0.14.4"
-protosol = "=15.0.0"
+protosol = "=17.0.0"
 rand = "0.9.4"
 rayon = "1.12.0"
 regex = "1.13.1"
@@ -87,7 +87,7 @@ solana-clap-utils = { path = "../clap-utils", version = "=4.5.0-alpha.0", featur
 solana-cli-config = { path = "../cli-config", version = "=4.5.0-alpha.0" }
 solana-cli-output = { path = "../cli-output", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-client = { path = "../client", version = "=4.5.0-alpha.0" }
-solana-clock = "3.2.0"
+solana-clock = "4.0.0"
 solana-cluster-type = "3.2.0"
 solana-commitment-config = "3.0.0"
 solana-compute-budget = { path = "../compute-budget", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -144,7 +144,7 @@ solana-signer-store = "0.1.0"
 solana-slot-hashes = "4.0.0"
 solana-slot-history = "3.2.0"
 solana-stake-history = "2.1.0"
-solana-stake-interface = "5.0.0"
+solana-stake-interface = "5.1.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm = { path = "../svm", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }

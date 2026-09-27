@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-#[cfg(any(test, feature = "frozen-abi"))]
+#[cfg(any(test, feature = "stable-abi"))]
 use wincode::SchemaWrite;
 use {
     super::{StakeAccount, Stakes},
@@ -66,7 +66,7 @@ impl From<Stakes<StakeAccount>> for SerdeStakesToStakeFormat {
 /// deserialization without creating imbl::HashMap (such conversion is deferred until
 /// data is actually needed).
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(SchemaWrite, StableAbi, StableAbiSample)
 )]
 #[derive(Clone, Debug, SchemaRead)]
@@ -75,7 +75,7 @@ pub(crate) struct DeserializableDelegationStakes {
     pub vote_accounts: VoteAccounts,
     // Sampled as `StakeAccount`s (as the serialize side does) reduced to the written `Delegation`.
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "stable_abi_sample_stake_delegations(rng)")
     )]
     pub stake_delegations: Vec<(Pubkey, Delegation)>,
@@ -84,7 +84,7 @@ pub(crate) struct DeserializableDelegationStakes {
     pub stake_history: StakeHistory,
 }
 
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 fn stable_abi_sample_stake_delegations(
     rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
 ) -> Vec<(Pubkey, Delegation)> {

@@ -54,7 +54,7 @@ export LLVM_PROFILE_FILE="$here/../target/cov/${COMMIT_HASH}/profraw/default-%p-
 
 if [[ -z $1 ]]; then
   PACKAGES=(
-    --features frozen-abi
+    --features stable-abi
     --lib
     --all
     --exclude solana-local-cluster

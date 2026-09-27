@@ -19,52 +19,35 @@ pub enum Vote {
     Genesis(GenesisVote),
 }
 
-/// Enum of different types of [`Vote`]s.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum VoteType {
-    /// Finalize vote.
-    Finalize,
-    /// Notarize vote.
-    Notarize,
-    /// Notarize fallback vote.
-    NotarizeFallback,
-    /// Skip vote
-    Skip,
-    /// Skip fallback vote.
-    SkipFallback,
-    /// Genesis vote.
-    Genesis,
-}
-
 impl Vote {
     /// Create a new notarization vote
     pub fn new_notarization_vote(block: Block) -> Self {
-        Self::from(NotarizationVote { block })
+        Self::Notarize(NotarizationVote { block })
     }
 
     /// Create a new finalization vote
     pub fn new_finalization_vote(slot: Slot) -> Self {
-        Self::from(FinalizationVote { slot })
+        Self::Finalize(FinalizationVote { slot })
     }
 
     /// Create a new skip vote
     pub fn new_skip_vote(slot: Slot) -> Self {
-        Self::from(SkipVote { slot })
+        Self::Skip(SkipVote { slot })
     }
 
     /// Create a new notarization fallback vote
     pub fn new_notarization_fallback_vote(block: Block) -> Self {
-        Self::from(NotarizationFallbackVote { block })
+        Self::NotarizeFallback(NotarizationFallbackVote { block })
     }
 
     /// Create a new skip fallback vote
     pub fn new_skip_fallback_vote(slot: Slot) -> Self {
-        Self::from(SkipFallbackVote { slot })
+        Self::SkipFallback(SkipFallbackVote { slot })
     }
 
     /// Create a new genesis vote
     pub fn new_genesis_vote(block: Block) -> Self {
-        Self::from(GenesisVote { block })
+        Self::Genesis(GenesisVote { block })
     }
 
     /// The slot which was voted for
@@ -119,18 +102,6 @@ impl Vote {
         matches!(self, Self::Genesis(_))
     }
 
-    /// Returns the [`VoteType`] for the vote.
-    pub fn get_type(&self) -> VoteType {
-        match self {
-            Vote::Notarize(_) => VoteType::Notarize,
-            Vote::NotarizeFallback(_) => VoteType::NotarizeFallback,
-            Vote::Skip(_) => VoteType::Skip,
-            Vote::SkipFallback(_) => VoteType::SkipFallback,
-            Vote::Finalize(_) => VoteType::Finalize,
-            Vote::Genesis(_) => VoteType::Genesis,
-        }
-    }
-
     #[cfg(feature = "dev-context-only-utils")]
     /// Returns a notar vote with the given slot and unique block id for test purposes
     pub fn new_unique_notar(slot: Slot) -> Vote {
@@ -148,51 +119,15 @@ impl Vote {
     }
 }
 
-impl From<NotarizationVote> for Vote {
-    fn from(vote: NotarizationVote) -> Self {
-        Self::Notarize(vote)
-    }
-}
-
-impl From<FinalizationVote> for Vote {
-    fn from(vote: FinalizationVote) -> Self {
-        Self::Finalize(vote)
-    }
-}
-
-impl From<SkipVote> for Vote {
-    fn from(vote: SkipVote) -> Self {
-        Self::Skip(vote)
-    }
-}
-
-impl From<NotarizationFallbackVote> for Vote {
-    fn from(vote: NotarizationFallbackVote) -> Self {
-        Self::NotarizeFallback(vote)
-    }
-}
-
-impl From<SkipFallbackVote> for Vote {
-    fn from(vote: SkipFallbackVote) -> Self {
-        Self::SkipFallback(vote)
-    }
-}
-
-impl From<GenesisVote> for Vote {
-    fn from(vote: GenesisVote) -> Self {
-        Self::Genesis(vote)
-    }
-}
-
 /// A notarization vote
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NotarizationVote {
     /// The block this vote is cast for
     pub block: Block,
 }
 
 /// A finalization vote
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FinalizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -201,28 +136,28 @@ pub struct FinalizationVote {
 /// A skip vote
 /// Represents a range of slots to skip
 /// inclusive on both ends
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SkipVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
 }
 
 /// A notarization fallback vote
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NotarizationFallbackVote {
     /// The block this vote is cast for
     pub block: Block,
 }
 
 /// A skip fallback vote
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SkipFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
 }
 
 /// A genesis vote. Only used during the migration from TowerBFT
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GenesisVote {
     /// The block this vote is cast for
     pub block: Block,

@@ -12,7 +12,7 @@ use {
     thiserror::Error,
     wincode::SchemaWrite,
 };
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 use {
     solana_frozen_abi::stable_abi::StableAbi,
     solana_stake_interface::{stake_flags::StakeFlags, state::Meta},
@@ -22,14 +22,14 @@ use {
 /// Generic type T enforces type-safety so that StakeAccount<Delegation> can
 /// only wrap a stake-state which is a Delegation; whereas StakeAccount<()>
 /// wraps any account with stake state.
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Default)]
 pub struct StakeAccount<T> {
     // Skipped by the custom (delegation/stake-format) serializer; sample the default.
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
     account: AccountSharedData,
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "sample_delegated_stake_state(rng)")
     )]
     stake_state: StakeStateV2,
@@ -57,7 +57,7 @@ unsafe impl<C: wincode::config::Config> SchemaWrite<C> for StakeAccount<Delegati
 
 /// Samples a random `StakeStateV2::Stake`; the delegation-format serializer unwraps
 /// `delegation_ref()`, which would panic on any other variant.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 fn sample_delegated_stake_state(
     rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
 ) -> StakeStateV2 {
@@ -80,6 +80,7 @@ pub enum Error {
 
 impl<T> StakeAccount<T> {
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn lamports(&self) -> u64 {
         self.account.lamports()
     }
@@ -90,6 +91,7 @@ impl<T> StakeAccount<T> {
     }
 
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn data_len(&self) -> usize {
         self.account.data().len()
     }
@@ -105,6 +107,7 @@ impl StakeAccount<Delegation> {
     }
 
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn stake(&self) -> &Stake {
         // Safe to unwrap here because StakeAccount<Delegation> will always
         // only wrap a stake-state.

@@ -103,7 +103,7 @@ const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 
 static_assertions::const_assert_eq!(MAX_ANCESTOR_RESPONSES, 30);
 
 /// The portion of an FEC-set Merkle root committed to by the double-Merkle tree.
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SchemaRead, SchemaWrite)]
 pub struct FecSetRoot(merkle_tree::MerkleProofEntry);
@@ -218,7 +218,7 @@ impl AncestorHashesRepairType {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "DhEfFPRMwZSyPVCX3wqoK3u7LvrWaK6SE7q6uLXSJ5ph",
@@ -276,7 +276,7 @@ impl BlockIdRepairType {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "CfbU7jxf8EKXfJYEveg2StWVK8MYbLovaQZitXsHMYLz",
@@ -435,7 +435,7 @@ struct ServeRepairStats {
     err_id_mismatch: usize,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, PartialEq))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, PartialEq))]
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequestHeader {
     signature: Signature,
@@ -445,7 +445,7 @@ pub struct RepairRequestHeader {
     nonce: Nonce,
 }
 
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 impl solana_frozen_abi::rand::prelude::Distribution<RepairRequestHeader>
     for solana_frozen_abi::rand::distr::StandardUniform
 {
@@ -486,7 +486,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 /// Removing a message is possible by first removing the sender and feature gating the response.
 /// The message can then be removed once the feature gate is active and there are no responders.
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, PartialEq),
     frozen_abi(
         abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c",
@@ -541,7 +541,7 @@ pub enum RepairProtocol {
     },
 }
 
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
     for solana_frozen_abi::rand::distr::StandardUniform
 {
@@ -612,7 +612,7 @@ fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStat
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "5qmbs9MjvFrMQ2DYmre88SLLjLLDx3pdEW37cKUEQKMK",

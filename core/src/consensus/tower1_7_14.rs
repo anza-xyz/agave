@@ -9,7 +9,7 @@ use {
 };
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(abi_digest = "D6KFhXxjZNqELNLwVMc1nJYoKDetqTm46U78LUCD5ZAz")
 )]
@@ -40,7 +40,7 @@ pub struct Tower1_7_14 {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(abi_digest = "6U5RkdsuzLHyWpjGWKCHj9AzGFreginb6cXUiXodbgRv")
 )]

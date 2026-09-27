@@ -36,7 +36,7 @@ pub(crate) type EpochSlotsIndex = u8;
 pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 
 // Helper for deprecated types
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaWrite)]
 pub(crate) struct Deprecated {}
 reject_deserialize!(Deprecated, "Trying to deserialize deprecated type");
@@ -74,7 +74,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for RejectNonzeroU8 {
 /// * LowestSlot index is deprecated
 #[allow(clippy::large_enum_variant)]
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi),
     frozen_abi(
         abi_digest = "Dqsrw64E4ALKusk5cjbckL6vNHw1ESwTzKUqKrMSQCic",
@@ -260,7 +260,7 @@ impl From<&ContactInfo> for CrdsData {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "EMCUxeoxyA9ATkmZpACEx6a6mPd5nV16g9vpeuFzpyG5",
@@ -295,7 +295,7 @@ impl Sanitize for SnapshotHashes {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "BjFXktfmwd6TT8kdWVEeMJquARTUe8cUvo2oDwzMfhPi",
@@ -370,7 +370,7 @@ impl Sanitize for LowestSlot {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi),
     frozen_abi(
         abi_digest = "BuDZ4shsJhBqELG47eMS3cDM8EcqHBGMSVu99JeW6VdM",
@@ -489,7 +489,7 @@ pub(crate) use reject_deserialize;
 // as a vote, so independent per-field sampling can't produce round-trippable
 // values. Building via `Vote::new` with a valid vote transaction does, which lets
 // the digest test use `test_roundtrip = "eq_and_wire"`.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 impl solana_frozen_abi::rand::distr::Distribution<Vote>
     for solana_frozen_abi::rand::distr::StandardUniform
 {
@@ -521,7 +521,7 @@ impl solana_frozen_abi::rand::distr::Distribution<Vote>
 // `Deprecated` and reject deserialization. This sampler emits only the
 // non-deprecated, round-trippable variants (with `LowestSlot`'s index pinned to
 // 0), so the digest test can use `test_roundtrip = "eq_and_wire"`.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 impl solana_frozen_abi::rand::distr::Distribution<CrdsData>
     for solana_frozen_abi::rand::distr::StandardUniform
 {

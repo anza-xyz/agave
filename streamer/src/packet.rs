@@ -278,7 +278,7 @@ pub(crate) fn recv_from(
     Ok(i)
 }
 pub fn send_to(
-    batch: &RecycledPacketBatch,
+    batch: &BytesPacketBatch,
     socket: &UdpSocket,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
@@ -297,12 +297,20 @@ pub fn send_to(
 mod tests {
     use {
         super::{recv_from as recv_from_impl, *},
+        bytes::Bytes,
         solana_net_utils::sockets::bind_to_localhost_unique,
         std::{
             io::{self, Write},
             net::SocketAddr,
         },
     };
+
+    fn test_packet(dest: &SocketAddr, size: usize) -> BytesPacket {
+        let mut meta = Meta::default();
+        meta.size = size;
+        meta.set_socket_addr(dest);
+        BytesPacket::new(Bytes::from(vec![0u8; size]), meta)
+    }
 
     #[test]
     fn test_packets_set_addr() {
@@ -346,13 +354,10 @@ mod tests {
         let send_socket = bind_to_localhost_unique().expect("should bind - sender");
         let saddr = send_socket.local_addr().unwrap();
 
-        let mut batch = RecycledPacketBatch::with_capacity(PACKETS_PER_BATCH);
-        batch.resize(PACKETS_PER_BATCH, Packet::default());
-
-        for m in batch.iter_mut() {
-            m.meta_mut().set_socket_addr(&addr);
-            m.meta_mut().size = PACKET_DATA_SIZE;
-        }
+        let batch = BytesPacketBatch::from(vec![
+            test_packet(&addr, PACKET_DATA_SIZE);
+            PACKETS_PER_BATCH
+        ]);
         send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
 
         let mut batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
@@ -403,13 +408,7 @@ mod tests {
         // Should only get PACKETS_PER_BATCH packets per iteration even
         // if a lot more were sent, and regardless of packet size
         for _ in 0..2 * PACKETS_PER_BATCH {
-            let batch_size = 1;
-            let mut batch = RecycledPacketBatch::with_capacity(batch_size);
-            batch.resize(batch_size, Packet::default());
-            for p in batch.iter_mut() {
-                p.meta_mut().set_socket_addr(&addr);
-                p.meta_mut().size = 1;
-            }
+            let batch = BytesPacketBatch::from(vec![test_packet(&addr, 1)]);
             send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
         }
         let mut batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);

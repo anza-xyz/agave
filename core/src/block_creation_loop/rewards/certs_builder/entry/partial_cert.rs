@@ -1,6 +1,7 @@
 use {
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor::aggregate_accumulator::{AggregateAccumulator, AggregateAccumulatorError},
-    agave_votor_messages::{consensus_message::VoteMessage, sig_verified_messages::VoteAggregate},
+    agave_votor_messages::consensus_message::VoteMessage,
     solana_bls_signatures::{SignatureCompressed as BLSSignatureCompressed, SignatureProjective},
     solana_pubkey::Pubkey,
     solana_signer_store::EncodeError,

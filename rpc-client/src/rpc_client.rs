@@ -28,7 +28,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface::Feature,
     solana_hash::Hash,
-    solana_message::{Message as LegacyMessage, v0, v1},
+    solana_message::{Message as LegacyMessage, VersionedMessage, v0, v1},
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
@@ -79,19 +79,23 @@ impl RpcClientConfig {
 
 /// Trait used to add support for versioned messages to RPC APIs while
 /// retaining backwards compatibility
+#[deprecated(since = "4.5.0", note = "Use VersionedMessage instead")]
 pub trait SerializableMessage {
     fn serialize(&self) -> Vec<u8>;
 }
+#[allow(deprecated)]
 impl SerializableMessage for LegacyMessage {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
     }
 }
+#[allow(deprecated)]
 impl SerializableMessage for v0::Message {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
     }
 }
+#[allow(deprecated)]
 impl SerializableMessage for v1::Message {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
@@ -4296,8 +4300,23 @@ impl RpcClient {
     /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
     ///
     /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    #[deprecated(since = "4.5.0", note = "Use get_fee_for_versioned_message instead")]
+    #[allow(deprecated)]
     pub fn get_fee_for_message(&self, message: &impl SerializableMessage) -> ClientResult<u64> {
         self.invoke((self.rpc_client.as_ref()).get_fee_for_message(message))
+    }
+
+    /// Returns the fee that the cluster would charge to process the provided message.
+    ///
+    /// Supports legacy, v0, and v1 messages through [`VersionedMessage`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
+    ///
+    /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    pub fn get_fee_for_versioned_message(&self, message: &VersionedMessage) -> ClientResult<u64> {
+        self.invoke((self.rpc_client.as_ref()).get_fee_for_versioned_message(message))
     }
 
     /// Fetches a fresh latest blockhash, retrying until it differs from the provided value.
@@ -4394,9 +4413,7 @@ mod tests {
         solana_hash::Hash,
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
-        solana_message::{
-            MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction,
-        },
+        solana_message::{MessageHeader, compiled_instruction::CompiledInstruction},
         solana_rpc_client_api::client_error::ErrorKind,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
@@ -5139,7 +5156,7 @@ mod tests {
         }
     }
 
-    #[test_case(LegacyMessage {
+    #[test_case(VersionedMessage::Legacy(LegacyMessage {
         header: MessageHeader {
             num_required_signatures: 1,
             num_readonly_signed_accounts: 0,
@@ -5152,8 +5169,8 @@ mod tests {
             accounts: vec![0],
             data: vec![],
         }],
-    }; "legacy message")]
-    #[test_case(v0::Message {
+    }); "legacy message")]
+    #[test_case(VersionedMessage::V0(v0::Message {
             header: MessageHeader {
                 num_required_signatures: 1,
                 num_readonly_signed_accounts: 0,
@@ -5167,17 +5184,18 @@ mod tests {
                 data: vec![],
             }],
             address_table_lookups: vec![],
-        }; "v0 message")]
-    #[test_case(v1::Message::try_compile_with_config(
-        &Pubkey::new_unique(),
-        &[],
-        Hash::new_unique(),
-        v1::TransactionConfig::empty(),
-    ).unwrap(); "v1 message")]
-    fn test_get_fee_for_message_sends_properly_serialized_message<M>(message: M)
-    where
-        M: SerializableMessage,
-    {
+        }); "v0 message")]
+    #[test_case(VersionedMessage::V1(
+        v1::Message::try_compile_with_config(
+            &Pubkey::new_unique(),
+            &[],
+            Hash::new_unique(),
+            v1::TransactionConfig::empty(),
+        ).unwrap()
+    ); "v1 message")]
+    fn test_get_fee_for_versioned_message_sends_properly_serialized_message(
+        message: VersionedMessage,
+    ) {
         let serialized_message = message.serialize();
         let serialized_message_base64 = BASE64_STANDARD.encode(serialized_message);
 
@@ -5222,8 +5240,33 @@ mod tests {
         let rpc_addr = receiver.recv().unwrap();
         let rpc_client = RpcClient::new_socket(rpc_addr);
 
-        let fee: u64 = rpc_client.get_fee_for_message(&message).unwrap();
+        let fee: u64 = rpc_client.get_fee_for_versioned_message(&message).unwrap();
         assert_eq!(fee, 42);
+    }
+
+    #[test_case(Some(0); "zero fee")]
+    #[test_case(None; "invalid blockhash")]
+    fn test_get_fee_for_versioned_message_response(fee: Option<u64>) {
+        let mocks = Mocks::from([(
+            RpcRequest::GetFeeForMessage,
+            json!(Response {
+                context: RpcResponseContext {
+                    slot: 1,
+                    api_version: None
+                },
+                value: fee,
+            }),
+        )]);
+        let rpc_client = RpcClient::new_mock_with_mocks("succeeds".to_string(), mocks);
+        let message = VersionedMessage::Legacy(LegacyMessage::default());
+        let result = rpc_client.get_fee_for_versioned_message(&message);
+        match fee {
+            Some(fee) => assert_eq!(result.unwrap(), fee),
+            None => assert_matches!(
+                result.unwrap_err().kind(),
+                ErrorKind::Custom(message) if message == "Invalid blockhash"
+            ),
+        }
     }
 
     #[test]

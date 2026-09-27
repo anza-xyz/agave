@@ -42,8 +42,8 @@ extern crate solana_metrics;
 #[macro_use]
 extern crate log;
 
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
+#[cfg_attr(feature = "stable-abi", macro_use)]
+#[cfg(feature = "stable-abi")]
 extern crate solana_frozen_abi_macro;
 
 mod wire_format_tests;

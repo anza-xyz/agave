@@ -80,9 +80,27 @@ pub fn bytes_packet_from_data<T>(dest: Option<&SocketAddr>, data: T) -> WriteRes
 where
     T: SchemaWrite<PacketConfig, Src = T>,
 {
+    bytes_packet_from_data_with_config(dest, data, packet_config_inner())
+}
+
+/// Like [`bytes_packet_from_data`], but serializes with a caller-provided wincode `config`.
+///
+/// Wincode's preallocation limit bounds in-memory collection size (`len * size_of::<T>()`),
+/// not serialized bytes, so the default [`PacketConfig`] rejects payloads whose sequences
+/// are small on the wire but large in memory. Output is still bounded to [`PACKET_DATA_SIZE`]
+/// by the destination buffer.
+pub fn bytes_packet_from_data_with_config<T, C>(
+    dest: Option<&SocketAddr>,
+    data: T,
+    config: C,
+) -> WriteResult<BytesPacket>
+where
+    C: Config,
+    T: SchemaWrite<C, Src = T>,
+{
     let mut buffer = [0u8; PACKET_DATA_SIZE];
     let mut wr = Cursor::new(buffer.as_mut_slice());
-    wincode::config::serialize_into(&mut wr, &data, packet_config_inner())?;
+    wincode::config::serialize_into(&mut wr, &data, config)?;
     let size = wr.position() as usize;
     let mut meta = Meta::default();
     meta.size = size;
@@ -96,11 +114,11 @@ where
 }
 
 /// Representation of a packet used in TPU.
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BytesPacket {
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "solana_frozen_abi::stable_abi::sample_collection(rng)")
     )]
     buffer: Bytes,
@@ -193,7 +211,7 @@ impl BytesPacket {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PacketBatch {
     Pinned(RecycledPacketBatch),
@@ -665,7 +683,7 @@ impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RecycledPacketBatch {
     packets: RecycledVec<Packet>,
@@ -849,7 +867,7 @@ fn to_packet_batches_for_tests<T: wincode::Serialize<Src = T>>(items: &[T]) -> V
     to_packet_batches(items, NUM_PACKETS)
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BytesPacketBatch {
     packets: Vec<BytesPacket>,

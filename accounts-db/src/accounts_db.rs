@@ -3029,12 +3029,15 @@ impl AccountsDb {
             return should_load_account.then(|| (cached_account.account.clone(), cached_slot));
         }
 
-        let (slot, storage_location, _maybe_account_accessor) =
-            self.read_index_for_accessor_or_load_slow(ancestors, pubkey, false)?;
-        // Notice the subtle `?` at previous line, we bail out pretty early if missing.
-
-        let result = self.read_only_accounts_cache.load(*pubkey, slot);
-        if let Some(account) = result {
+        // Then the read cache. It holds one version per pubkey: loads store only the newest
+        // version in the index, and flushing a newer version drops the entry, so a hit is the
+        // newest version in storage; anything newer than that is still in the write cache,
+        // checked above. So the slot the account was cached at only has to be visible from
+        // `ancestors`, and the index is not consulted.
+        if let Some((account, slot)) = self
+            .read_only_accounts_cache
+            .load(pubkey, |slot| ancestors.is_ancestor(slot))
+        {
             self.load_account_stats
                 .num_loaded_from_read_cache
                 .fetch_add(1, Ordering::Relaxed);
@@ -3045,6 +3048,10 @@ impl AccountsDb {
 
             return should_load_account.then_some((account, slot));
         }
+
+        let (slot, storage_location, _maybe_account_accessor) =
+            self.read_index_for_accessor_or_load_slow(ancestors, pubkey, false)?;
+        // Notice the subtle `?` at previous line, we bail out pretty early if missing.
 
         let (mut account_accessor, slot) = self.retry_to_get_account_accessor(
             slot,
@@ -3060,23 +3067,28 @@ impl AccountsDb {
         let maybe_account =
             account_accessor.check_and_get_loaded_account_shared_data(load_filter.as_ref());
 
+        // Skip zero lamport accounts; a cached one would still be returned after clean removes it
         if let Some(ref account) = maybe_account
             && populate_read_cache == PopulateReadCache::True
+            && !account.is_zero_lamport()
         {
-            /*
-            We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
-            safe/reflect 'A''s latest state on this fork.
-            This safety holds if during replay of slot 'S', we show we only read 'A' from the write cache,
-            not the read-only cache, after it's been updated in replay of slot 'S'.
-            Assume for contradiction this is not true, and we read 'A' from the read-only cache *after* it had been updated in 'S'.
-            This means an entry '(S, A)' was added to the read-only cache after 'A' had been updated in 'S'.
-            Now when '(S, A)' was being added to the read-only cache, it must have been true that  'is_cache == false',
-            which means '(S', A)' does not exist in the write cache yet.
-            However, by the assumption for contradiction above ,  'A' has already been updated in 'S' which means '(S, A)'
-            must exist in the write cache, which is a contradiction.
-            */
-            self.read_only_accounts_cache
-                .store(*pubkey, slot, account.clone());
+            // Store only while `slot` is the newest version in the index, under the entry's lock;
+            // the read cache removals in `store_accounts_for_flush`, `store_accounts_for_squash`
+            // and `purge_slot_storage` rely on this.
+            self.accounts_index.get_and_then(pubkey, |entry| {
+                if let Some(entry) = entry {
+                    let slot_list = entry.slot_list_read_lock();
+                    if self
+                        .accounts_index
+                        .latest_slot(None, &slot_list, None)
+                        .is_some_and(|newest| slot_list[newest].0 == slot)
+                    {
+                        self.read_only_accounts_cache
+                            .store(*pubkey, slot, account.clone());
+                    }
+                }
+                (false, ())
+            });
         }
         if load_hint == LoadHint::FixedMaxRoot {
             // If the load hint is that the max root is fixed, the max root should be fixed.
@@ -3329,7 +3341,12 @@ impl AccountsDb {
 
         let mut purge_accounts_index_elapsed = Measure::start("purge_accounts_index_elapsed");
         // Purge this slot from the accounts index
-        let reclaims = self.purge_keys_exact(stored_keys);
+        let reclaims = self.purge_keys_exact(stored_keys.iter().copied());
+        // The read cache is checked before the index, so drop the purged keys from it too
+        for (pubkey, _slot) in &stored_keys {
+            self.read_only_accounts_cache
+                .remove_assume_not_present(pubkey);
+        }
         purge_accounts_index_elapsed.stop();
         purge_stats
             .purge_accounts_index_elapsed

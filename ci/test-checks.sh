@@ -35,7 +35,7 @@ _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 # Only force up-to-date lock files on edge
 if [[ $CI_BASE_BRANCH = "$EDGE_CHANNEL" ]]; then
   if _ scripts/cargo-for-all-lock-files.sh "+${rust_nightly}" check \
-    --locked --workspace --all-targets --features dummy-for-ci-check,frozen-abi; then
+    --locked --workspace --all-targets --features dummy-for-ci-check,stable-abi; then
     true
   else
     check_status=$?

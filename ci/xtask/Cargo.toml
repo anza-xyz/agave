@@ -15,7 +15,7 @@ publish = false
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = []
-frozen-abi = []
+stable-abi = []
 integration-tests = []
 
 [dependencies]

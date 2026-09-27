@@ -25,7 +25,7 @@ use {
         instruction::{self as loader_v3_instruction, MINIMUM_EXTEND_PROGRAM_BYTES},
         state::UpgradeableLoaderState,
     },
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -2340,7 +2340,7 @@ async fn test_cli_program_write_buffer() {
     );
     close_message.recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
     let close_fee = rpc_client
-        .get_fee_for_message(&close_message)
+        .get_fee_for_versioned_message(&VersionedMessage::Legacy(close_message))
         .await
         .unwrap();
     config.signers = vec![&keypair];

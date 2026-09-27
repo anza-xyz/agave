@@ -45,7 +45,7 @@ use {
     solana_rpc_client_api::config::RpcGetVoteAccountsConfig,
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_system_interface::error::SystemError,
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, CommissionKind, CreateVoteAccountConfig, withdraw},
@@ -1553,6 +1553,7 @@ pub async fn process_vote_authorize(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1648,6 +1649,7 @@ pub async fn process_vote_update_validator(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1736,6 +1738,7 @@ pub async fn process_vote_update_commission(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1845,6 +1848,7 @@ pub async fn process_vote_update_commission_bps(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1947,6 +1951,7 @@ pub async fn process_vote_update_commission_collector(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -2194,9 +2199,10 @@ pub async fn process_withdraw_from_vote_account(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -2265,9 +2271,10 @@ pub async fn process_close_vote_account(
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
+    let tx = VersionedTransaction::from(tx);
     check_account_for_fee_with_commitment(
         rpc_client,
-        &tx.message.account_keys[0],
+        &tx.message.static_account_keys()[0],
         &tx.message,
         config.commitment,
     )

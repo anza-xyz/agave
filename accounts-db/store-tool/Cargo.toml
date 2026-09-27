@@ -14,7 +14,7 @@ workspace = "../../dev-bins"
 agave-unstable-api = []
 dev-context-only-utils = []
 dummy-for-ci-check = []
-frozen-abi = []
+stable-abi = []
 
 [dependencies]
 ahash = { workspace = true }

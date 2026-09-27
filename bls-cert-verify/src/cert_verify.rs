@@ -17,7 +17,9 @@ use {
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    agave_votor_messages::{certificate::CertificateType, wire::get_vote_payload_to_sign},
+    agave_votor_messages::{
+        certificate::CertificateType, vote::Vote, wire::get_vote_payload_to_sign,
+    },
     qualifier_attr::qualifiers,
     solana_bls_signatures::Keypair as BLSKeypair,
     solana_signer_store::{encode_base2, encode_base3},
@@ -277,6 +279,35 @@ fn default_bitvec(max_validators: usize) -> BitVec<u8> {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
+fn base2_cert_vote(cert_type: &CertificateType) -> Vote {
+    match cert_type {
+        CertificateType::Notarize(block) | CertificateType::FinalizeFast(block) => {
+            Vote::new_notarization_vote(*block)
+        }
+        CertificateType::Finalize(slot) => Vote::new_finalization_vote(*slot),
+        CertificateType::Genesis(block) => Vote::new_genesis_vote(*block),
+        CertificateType::NotarizeFallback(_) | CertificateType::Skip(_) => unreachable!(),
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+fn base3_cert_votes(cert_type: &CertificateType) -> (Vote, Vote) {
+    match cert_type {
+        CertificateType::NotarizeFallback(block) => {
+            let vote1 = Vote::new_notarization_vote(*block);
+            let vote2 = Vote::new_notarization_fallback_vote(*block);
+            (vote1, vote2)
+        }
+        CertificateType::Skip(slot) => {
+            let vote1 = Vote::new_skip_vote(*slot);
+            let vote2 = Vote::new_skip_fallback_vote(*slot);
+            (vote1, vote2)
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
 /// Creates a certificate without any checks for testing and benchmarking.
 pub fn test_create_base2_unverified_certificate(
     bls_keypairs: &[BLSKeypair],
@@ -284,8 +315,7 @@ pub fn test_create_base2_unverified_certificate(
     cert_type: CertificateType,
     ranks: &[usize],
 ) -> UnverifiedCertificate {
-    assert!(cert_type.to_source_votes().is_none());
-    let vote = cert_type.to_source_vote();
+    let vote = base2_cert_vote(&cert_type);
     let payload = get_vote_payload_to_sign(vote, shred_version);
     let max_validators = ranks.iter().max().unwrap().saturating_add(1);
     let mut bitmap = default_bitvec(max_validators);
@@ -333,7 +363,7 @@ pub fn test_create_base3_unverified_certificate(
     primary_ranks: &[usize],
     fallback_ranks: &[usize],
 ) -> UnverifiedCertificate {
-    let (primary_vote, fallback_vote) = cert_type.to_source_votes().unwrap();
+    let (primary_vote, fallback_vote) = base3_cert_votes(&cert_type);
     let primary_payload = get_vote_payload_to_sign(primary_vote, shred_version);
     let fallback_payload = get_vote_payload_to_sign(fallback_vote, shred_version);
     let max_validators = std::cmp::max(
