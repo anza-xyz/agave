@@ -22,6 +22,7 @@ agave-unstable-api = []
 agave-feature-set = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-wake-channel = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
@@ -31,6 +32,7 @@ lru = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
+solana-address = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-cost-model = { workspace = true }
