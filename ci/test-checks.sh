@@ -27,7 +27,7 @@ _ rumdl check CHANGELOG.md
 _ scripts/check-dev-context-only-utils.sh tree
 
 # fmt
-_ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
+_ scripts/do-fmt.sh --check
 
 # run cargo check for all rust files in this monorepo for faster turnaround in
 # case of any compilation/build error for nightly
