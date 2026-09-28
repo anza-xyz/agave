@@ -75,6 +75,16 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=0.4.16
   # Agave Ok:  Bigtable is the only use and is being considered a trusted peer
   --ignore RUSTSEC-2026-0258
+
+  # Crate:     imbl-sized-chunks
+  # Version:   0.1.3
+  # Title:     Double free / use-after-free in `Chunk` and `InlineArray` removal methods when an element's `Drop` panics
+  # Date:      2026-09-04
+  # ID:        RUSTSEC-2026-0292
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0292
+  # Solution:  Upgrade to >=0.2.0 (requires imbl >=7.0.2)
+  # Agave Ok:  only imbl::HashMap is used, which never calls the affected methods; stored types have no panicking Drop
+  --ignore RUSTSEC-2026-0292
 )
 
 xtask_cargo_audit_extra_args=(
