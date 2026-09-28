@@ -5280,7 +5280,6 @@ pub mod tests {
                 }
                 TransactionStatusMessage::Freeze(_) => {}
                 TransactionStatusMessage::PurgeTransactionHistory { .. } => unreachable!(),
-                TransactionStatusMessage::Root(_) => {}
             }
         }
         indexes.sort();

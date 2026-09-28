@@ -58,7 +58,6 @@ pub enum TransactionStatusMessage {
         requested_at: Instant,
         done_sender: Option<crossbeam_channel::Sender<()>>,
     },
-    Root(Slot),
 }
 
 /// Data used to reconstruct the transaction-history keys removed by a purge.
@@ -344,13 +343,6 @@ impl TransactionStatusSender {
                 done_sender,
             })
             .map_err(|err| err.to_string())
-    }
-
-    /// Queues a canonical root for transaction-history startup recovery.
-    pub fn send_transaction_status_root(&self, slot: Slot) {
-        if let Err(err) = self.sender.send(TransactionStatusMessage::Root(slot)) {
-            warn!("Slot {slot} transaction status root send failed: {err:?}");
-        }
     }
 }
 
