@@ -10,13 +10,21 @@ jobs:
     if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-24.04
     steps:
+      - name: Build env vars JSON
+        id: build-env-vars
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "json=$(jq -cn --arg tag "$REF_NAME" '{"TRIGGERED_BUILDKITE_TAG": $tag}')" >> "$GITHUB_OUTPUT"
+
       - name: Trigger a Buildkite Build
         uses: "buildkite/trigger-pipeline-action@41fd38b69189bf186cf69cf10ec807a850cae593"  # v2.5.0
         with:
           buildkite_api_access_token: ${{ secrets.TRIGGER_BK_BUILD_TOKEN }}
           pipeline: "anza/agave-secondary"
           branch: "${{ github.ref_name }}"
-          build_env_vars: '{"TRIGGERED_BUILDKITE_TAG": "${{ github.ref_name }}"}'
+          build_env_vars: ${{ steps.build-env-vars.outputs.json }}
           commit: "HEAD"
           message: ":github: Triggered from a GitHub Action"
 
