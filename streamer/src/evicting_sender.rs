@@ -1,31 +1,43 @@
 use {
-    crate::streamer::ChannelSend,
+    crate::streamer::{ChannelSend, ChannelTryRecv},
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
+    std::marker::PhantomData,
 };
 
 /// A sender implementation that evicts the oldest message when the channel is full.
-pub struct EvictingSender<T> {
-    sender: Sender<T>,
-    receiver: Receiver<T>,
+///
+/// Generic over the two channel ends; the defaults are crossbeam's, and `agave_wake_channel`'s
+/// work the same way.
+pub struct EvictingSender<T, S = Sender<T>, R = Receiver<T>> {
+    sender: S,
+    receiver: R,
+    _message: PhantomData<fn() -> T>,
 }
 
 // Manual implementation of Clone since `T` is not required to implement Clone.
-impl<T> Clone for EvictingSender<T> {
+impl<T, S: Clone, R: Clone> Clone for EvictingSender<T, S, R> {
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
             receiver: self.receiver.clone(),
+            _message: PhantomData,
+        }
+    }
+}
+
+impl<T, S, R> EvictingSender<T, S, R> {
+    /// Create a new evicting sender with provided sender, receiver.
+    #[inline]
+    pub fn new(sender: S, receiver: R) -> Self {
+        Self {
+            sender,
+            receiver,
+            _message: PhantomData,
         }
     }
 }
 
 impl<T> EvictingSender<T> {
-    /// Create a new evicting sender with provided sender, receiver.
-    #[inline]
-    pub fn new(sender: Sender<T>, receiver: Receiver<T>) -> Self {
-        Self { sender, receiver }
-    }
-
     /// Create a new `EvictingSender` with a bounded channel of the specified capacity.
     #[inline]
     pub fn new_bounded(capacity: usize) -> (Self, Receiver<T>) {
@@ -34,9 +46,11 @@ impl<T> EvictingSender<T> {
     }
 }
 
-impl<T> ChannelSend<T> for EvictingSender<T>
+impl<T, S, R> ChannelSend<T> for EvictingSender<T, S, R>
 where
     T: Send + 'static,
+    S: ChannelSend<T>,
+    R: ChannelTryRecv<T> + Send + 'static,
 {
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
         let Err(e) = self.sender.try_send(msg) else {
@@ -67,11 +81,28 @@ where
 
     #[inline]
     fn is_empty(&self) -> bool {
-        self.receiver.is_empty()
+        self.sender.is_empty()
     }
 
     #[inline]
     fn len(&self) -> usize {
-        self.receiver.len()
+        self.sender.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_evicts_oldest_on_wake_channel() {
+        let (sender, receiver) = agave_wake_channel::bounded(2);
+        let sender = EvictingSender::new(sender, receiver.clone());
+        sender.try_send(1).unwrap();
+        sender.try_send(2).unwrap();
+        assert_eq!(sender.try_send(3), Err(TrySendError::Full(1)));
+        assert_eq!(receiver.try_recv(), Ok(2));
+        assert_eq!(receiver.try_recv(), Ok(3));
+        assert!(sender.is_empty());
     }
 }
