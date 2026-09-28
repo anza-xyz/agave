@@ -139,7 +139,7 @@ pub enum ShredRepairType {
         index: u32,
         fec_set_merkle_root: FecSetRoot,
         // Double merkle block id
-        block_id: Hash,
+        block_id: BlockId,
     },
 }
 
@@ -155,7 +155,7 @@ impl ShredRepairType {
 
     pub fn block_id(&self) -> Option<Hash> {
         match self {
-            ShredRepairType::ShredForBlockId { block_id, .. } => Some(*block_id),
+            ShredRepairType::ShredForBlockId { block_id, .. } => Some(block_id.to_hash()),
             ShredRepairType::Orphan(_)
             | ShredRepairType::HighestShred(_, _)
             | ShredRepairType::Shred(_, _) => None,
@@ -1867,7 +1867,7 @@ impl ServeRepair {
                 header,
                 slot: *slot,
                 shred_index: *index,
-                block_id: *block_id,
+                block_id: block_id.to_hash(),
             },
         };
         Self::repair_proto_to_bytes(&request_proto, identity_keypair)
@@ -3184,7 +3184,7 @@ mod tests {
             slot,
             index,
             fec_set_merkle_root,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         };
         assert!(request.verify_response(shred.payload()));
         // bad FEC-set root prefix
@@ -3194,7 +3194,7 @@ mod tests {
             slot,
             index,
             fec_set_merkle_root: Hash::new_from_array(bad_merkle_root).into(),
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         };
         assert!(!request.verify_response(shred.payload()));
         // coding shred

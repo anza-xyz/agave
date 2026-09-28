@@ -651,7 +651,7 @@ impl BlockIdRepairService {
                             slot,
                             index,
                             fec_set_merkle_root,
-                            block_id: block_id.to_hash(),
+                            block_id,
                         })
                     }));
 
@@ -905,7 +905,7 @@ impl BlockIdRepairService {
         };
 
         blockstore
-            .has_alternate_data_shred(*slot, u64::from(*index), *block_id)
+            .has_alternate_data_shred(*slot, u64::from(*index), block_id.to_hash())
             .ok()
             .unwrap_or(false)
     }
@@ -1323,20 +1323,20 @@ mod tests {
             slot: 103,
             index: 5,
             fec_set_merkle_root: Hash::new_unique().into(),
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         });
         state
             .sent_requests
             .insert(expired_shred_not_received.clone(), expired_time);
 
         // 5. Expired shred request, shred IS in blockstore - should NOT retry
-        let received_block_id = Hash::new_unique();
+        let received_block_id = BlockId::new_unique();
         let received_slot = 104u64;
         let received_shred_index = 10u32;
         blockstore
             .insert_shred_index_for_alternate_block(
                 received_slot,
-                received_block_id,
+                received_block_id.to_hash(),
                 received_shred_index,
             )
             .unwrap();
@@ -1356,7 +1356,7 @@ mod tests {
             slot: 105,
             index: 15,
             fec_set_merkle_root: Hash::new_unique().into(),
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         });
         state.sent_requests.insert(recent_shred.clone(), now);
 
@@ -1539,7 +1539,7 @@ mod tests {
                             && index < fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32
                     );
                     assert_eq!(fec_set_merkle_root, fec_set_root);
-                    assert_eq!(b, block_id);
+                    assert_eq!(b.to_hash(), block_id);
                 }
                 _ => panic!("Expected ShredForBlockId request"),
             }
