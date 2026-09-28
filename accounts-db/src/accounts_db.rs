@@ -5653,11 +5653,7 @@ impl AccountsDb {
             let idx = rng().random_range(0..num);
             let account = self.do_load_for_tests(&ancestors, &pubkeys[idx]);
             let account1 = Some((
-                AccountSharedData::new(
-                    (idx + count) as u64,
-                    0,
-                    AccountSharedData::default().owner(),
-                ),
+                AccountSharedData::new((idx + count) as u64, 0, &Pubkey::default()),
                 slot,
             ));
             assert_eq!(account, account1);
@@ -5698,11 +5694,7 @@ impl AccountsDb {
     #[allow(clippy::needless_range_loop)]
     pub fn modify_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
         for idx in 0..num {
-            let account = AccountSharedData::new(
-                (idx + count) as u64,
-                0,
-                AccountSharedData::default().owner(),
-            );
+            let account = AccountSharedData::new((idx + count) as u64, 0, &Pubkey::default());
             self.store_for_tests((slot, [(&pubkeys[idx], &account)].as_slice()));
         }
     }
@@ -5724,8 +5716,7 @@ impl AccountsDb {
         let ancestors = Ancestors::from(vec![slot]);
         for t in 0..num {
             let pubkey = solana_pubkey::new_rand();
-            let account =
-                AccountSharedData::new((t + 1) as u64, space, AccountSharedData::default().owner());
+            let account = AccountSharedData::new((t + 1) as u64, space, &Pubkey::default());
             pubkeys.push(pubkey);
             assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));

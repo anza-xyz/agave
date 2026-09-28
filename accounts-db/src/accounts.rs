@@ -1263,10 +1263,10 @@ mod tests {
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();
-        let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+        let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
         for i in 0..2_000 {
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
+            let account = AccountSharedData::new(i + 1, 0, &Pubkey::default());
             accounts.store_for_tests(i, &pubkey, &account);
             accounts.store_for_tests(i, &old_pubkey, &zero_account);
             old_pubkey = pubkey;
