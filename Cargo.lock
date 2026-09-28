@@ -8661,6 +8661,7 @@ dependencies = [
  "agave-votor-messages",
  "anyhow",
  "arc-swap",
+ "arrayvec",
  "assert_matches",
  "bs58",
  "bv",

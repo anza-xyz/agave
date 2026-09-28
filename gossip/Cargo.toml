@@ -45,6 +45,7 @@ agave-logger = { workspace = true }
 agave-random = { workspace = true }
 agave-votor-messages = { workspace = true }
 arc-swap = { workspace = true }
+arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 bv = { workspace = true }
 bytes = { workspace = true }
