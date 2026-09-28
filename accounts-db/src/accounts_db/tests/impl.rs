@@ -2042,7 +2042,7 @@ fn test_accounts_db_purge_keep_live() {
     let some_lamport = 223;
     let zero_lamport = 0;
     let no_data = 0;
-    let owner = *&Pubkey::default();
+    let owner = Pubkey::default();
 
     let account = AccountSharedData::new(some_lamport, no_data, &owner);
     let pubkey = solana_pubkey::new_rand();
@@ -2112,7 +2112,7 @@ fn test_accounts_db_purge1() {
     let some_lamport = 223;
     let zero_lamport = 0;
     let no_data = 0;
-    let owner = *&Pubkey::default();
+    let owner = Pubkey::default();
 
     let account = AccountSharedData::new(some_lamport, no_data, &owner);
     let pubkey = solana_pubkey::new_rand();
@@ -2464,7 +2464,7 @@ fn do_full_clean_refcount(accounts: AccountsDb, store1_first: bool) {
     // size data so only 1 fits in a 4k store
     let data_size = 2200;
 
-    let owner = *&Pubkey::default();
+    let owner = Pubkey::default();
 
     let account = AccountSharedData::new(old_lamport, data_size, &owner);
     let account2 = AccountSharedData::new(old_lamport + 100_001, data_size, &owner);
@@ -2601,7 +2601,7 @@ fn test_shrink_candidate_slots() {
 
     let some_lamport = 223;
     let no_data = 0;
-    let owner = *&Pubkey::default();
+    let owner = Pubkey::default();
 
     let account = AccountSharedData::new(some_lamport, no_data, &owner);
 
@@ -2681,7 +2681,7 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
         .min_by(|a, b| a.data_len.cmp(&b.data_len))
         .unwrap()
         .pubkey;
-    let modified_account_owner = *&Pubkey::default();
+    let modified_account_owner = Pubkey::default();
     let modified_account = AccountSharedData::new(223, 0, &modified_account_owner);
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap().abs();
     let current_slot = epoch_schedule.slots_per_epoch + ancient_append_vec_offset as u64 + 1;
