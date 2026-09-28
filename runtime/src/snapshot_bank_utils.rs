@@ -859,7 +859,7 @@ mod tests {
         semver::Version,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsFileId},
-            accounts_file::AccountsFile,
+            accounts_file::{AccountsFile, AccountsFileProvider},
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -968,10 +968,23 @@ mod tests {
 
     /// Test roundtrip of bank to a full snapshot, then back again.  This test creates the simplest
     /// bank possible, so the contents of the snapshot archive will be quite minimal.
-    #[test]
-    fn test_roundtrip_bank_to_and_from_full_snapshot_simple() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_roundtrip_bank_to_and_from_full_snapshot_simple(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
         let genesis_config = GenesisConfig::default();
-        let original_bank = Bank::new_for_tests(&genesis_config);
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let original_bank = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        );
 
         original_bank.fill_bank_with_ticks_for_tests();
         original_bank.set_block_id(Some(Hash::default()));
@@ -1001,7 +1014,7 @@ mod tests {
             None,
             false,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -1011,8 +1024,10 @@ mod tests {
 
     /// This tests handling of obsolete accounts during a full snapshot with obsolete accounts
     /// marked in the accounts database. This test injects them directly
-    #[test]
-    fn test_roundtrip_bank_to_and_from_full_snapshot_with_obsolete_account() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_roundtrip_bank_to_and_from_full_snapshot_with_obsolete_account(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1027,10 +1042,21 @@ mod tests {
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
 
-        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        )
+        .wrap_with_bank_forks_for_tests();
 
-        let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank);
         let leader = *bank0.leader();
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
@@ -1081,7 +1107,7 @@ mod tests {
             None,
             false,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -1092,8 +1118,10 @@ mod tests {
     /// Test roundtrip of bank to a full snapshot, then back again.  This test is more involved
     /// than the simple version above; creating multiple banks over multiple slots and doing
     /// multiple transfers.  So this full snapshot should contain more data.
-    #[test]
-    fn test_roundtrip_bank_to_and_from_snapshot_complex() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_roundtrip_bank_to_and_from_snapshot_complex(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1109,7 +1137,19 @@ mod tests {
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
-        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        )
+        .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
@@ -1199,8 +1239,10 @@ mod tests {
     /// This is intended to mimic the real behavior of transactions, where only a small number of
     /// accounts are modified often, which are captured by the incremental snapshot.  The majority
     /// of the accounts are not modified often, and are captured by the full snapshot.
-    #[test]
-    fn test_roundtrip_bank_to_and_from_incremental_snapshot() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_roundtrip_bank_to_and_from_incremental_snapshot(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1216,7 +1258,19 @@ mod tests {
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
-        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        )
+        .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
@@ -1295,7 +1349,7 @@ mod tests {
             None,
             false,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -1304,8 +1358,8 @@ mod tests {
     }
 
     /// Test rebuilding bank from the latest snapshot archives
-    #[test]
-    fn test_bank_from_latest_snapshot_archives() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_bank_from_latest_snapshot_archives(accounts_file_provider: AccountsFileProvider) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1319,7 +1373,19 @@ mod tests {
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
-        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        )
+        .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
@@ -1392,7 +1458,7 @@ mod tests {
             None,
             false,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -1475,8 +1541,8 @@ mod tests {
     /// so that rebuilding from full + incremental overrides the still-funded full-snapshot version
     /// and the account ends up deleted. If the tombstone were dropped during shrink, the rebuild
     /// would resurrect Account1 from the full snapshot and the checks below would fail.
-    #[test]
-    fn test_incremental_snapshots_handle_tombstones() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_incremental_snapshots_handle_tombstones(accounts_file_provider: AccountsFileProvider) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
@@ -1502,10 +1568,21 @@ mod tests {
         // test expects 0 transaction fee
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
-        let (bank0, bank_forks) =
-            Bank::new_with_paths_for_tests(&genesis_config, None, vec![accounts_dir.clone()], None)
-                .wrap_with_bank_forks_for_tests();
+        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![accounts_dir.clone()],
+            None,
+        )
+        .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -1586,7 +1663,7 @@ mod tests {
             None,
             false,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -1625,8 +1702,10 @@ mod tests {
     /// of the cleaning/purging at slot 4, the incremental snapshot at slot 4 will no longer have
     /// information about Account1, but the full snapshost _does_ have info for Account1, which is
     /// no longer correct!
-    #[test]
-    fn test_incremental_snapshots_handle_zero_lamport_accounts() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_incremental_snapshots_handle_zero_lamport_accounts(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
@@ -1652,10 +1731,21 @@ mod tests {
         // test expects 0 transaction fee
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
-        let (bank0, bank_forks) =
-            Bank::new_with_paths_for_tests(&genesis_config, None, vec![accounts_dir.clone()], None)
-                .wrap_with_bank_forks_for_tests();
+        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![accounts_dir.clone()],
+            None,
+        )
+        .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -1716,7 +1806,7 @@ mod tests {
             None,
             false,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config.clone(),
             None,
             Arc::default(),
         )
@@ -1765,7 +1855,7 @@ mod tests {
             None,
             false,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -2031,8 +2121,8 @@ mod tests {
     ///     - remove Account2's reference back to slot 2 by transferring from the mint to Account2
     ///     - take a full snap shot
     ///     - verify that recovery from full snapshot does not bring account1 back to life
-    #[test]
-    fn test_snapshots_handle_zero_lamport_accounts() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_snapshots_handle_zero_lamport_accounts(accounts_file_provider: AccountsFileProvider) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -2049,15 +2139,20 @@ mod tests {
             1_000_000 * LAMPORTS_PER_SOL,
         );
 
-        let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
-        let bank_test_config = BankTestConfig {
-            accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
 
-        let bank0 =
-            Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None);
+        let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
+        let bank_test_config = BankTestConfig {
+            accounts_db_config: accounts_db_config.clone(),
+        };
 
-        let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
+        let (bank0, bank_forks) =
+            Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None)
+                .wrap_with_bank_forks_for_tests();
+
         let leader = *bank0.leader();
 
         bank0
@@ -2140,7 +2235,7 @@ mod tests {
             None,
             false,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -2170,8 +2265,8 @@ mod tests {
     ///
     /// If zero lamport accounts are not handled correctly, Account1 or Account2 will come back
     /// failing the test
-    #[test]
-    fn test_fastboot_handle_zero_lamport_accounts() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_fastboot_handle_zero_lamport_accounts(accounts_file_provider: AccountsFileProvider) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
@@ -2188,11 +2283,22 @@ mod tests {
 
         // Disable fees so fees don't need to be calculated
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
 
         let lamports = 123_456 * LAMPORTS_PER_SOL;
 
-        let bank0 = Bank::new_for_tests(&genesis_config);
-        let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
+        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        )
+        .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0.transfer(lamports, &mint, &key2.pubkey()).unwrap();
         bank0.transfer(lamports, &mint, &key1.pubkey()).unwrap();
@@ -2240,7 +2346,7 @@ mod tests {
             None, // leader_for_tests
             None,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -2288,15 +2394,26 @@ mod tests {
         .unwrap();
     }
 
-    #[test]
-    fn test_bank_from_snapshot_dir_good() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_bank_from_snapshot_dir_good(accounts_file_provider: AccountsFileProvider) {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let bank = Bank::new_for_tests(&genesis_config);
+        let bank = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        );
         bank.fill_bank_with_ticks_for_tests();
         bank.set_block_id(Some(Hash::default()));
 
@@ -2323,7 +2440,7 @@ mod tests {
             None, // leader_for_tests
             None,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -2349,15 +2466,28 @@ mod tests {
     /// `bank_from_snapshot_dir`, and verify that the fastboot rebuild path removes it (because
     /// the `(slot, id)` pair isn't in the storages list) while keeping the snapshot's own
     /// storage files in place and producing a working bank.
-    #[test]
-    fn test_bank_from_snapshot_dir_prunes_stale_storage() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_bank_from_snapshot_dir_prunes_stale_storage(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let bank = Bank::new_for_tests(&genesis_config);
+        let bank = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        );
         bank.fill_bank_with_ticks_for_tests();
         bank.set_block_id(Some(Hash::default()));
 
@@ -2408,7 +2538,7 @@ mod tests {
             None,
             None,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_db_config,
             None,
             Arc::default(),
         )
