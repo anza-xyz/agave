@@ -34,6 +34,14 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+### Geyser
+
+#### Changes
+
+* Contact info notifications now include unchanged gossip republishes. Plugins that subscribe to
+  contact info receive more callbacks and should deduplicate them if they only want field changes.
+  Plugins loaded later can learn about unchanged nodes from subsequent republishes.
+
 ## 4.4.0
 
 ### RPC
