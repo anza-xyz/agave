@@ -64,7 +64,8 @@ const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // target: 1 signature reported per minute
 // log2(680k) = ~19.375.
 pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
-// Number of entries read per crds read lock in chunked walks.
+// Number of entries read, or incoming values checked, per crds read lock in
+// chunked loops.
 pub(crate) const LOCK_CHUNK_SIZE: usize = 128;
 
 pub struct Crds {
@@ -503,6 +504,11 @@ impl Crds {
             cursor.consume(ordinal);
             self.table.index(index)
         })
+    }
+
+    /// Returns true if the table has any values from the pubkey.
+    pub(crate) fn has_records(&self, pubkey: &Pubkey) -> bool {
+        self.records.contains_key(pubkey)
     }
 
     /// Returns all records associated with a pubkey.
