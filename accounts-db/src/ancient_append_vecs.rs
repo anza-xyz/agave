@@ -1005,15 +1005,8 @@ mod tests {
         let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let (storages, slots, _infos) = get_sample_storages(&db, 1, None);
         let accounts_to_combine = AccountsToCombine::default();
-        let offset = 0;
-        let account = storages
-            .first()
-            .unwrap()
-            .accounts
-            .get_stored_account_without_data_callback(offset, |account| {
-                AccountFromStorage::new(offset, &account)
-            })
-            .unwrap();
+        let stored_accounts = db.get_unique_accounts_from_storage(storages.first().unwrap());
+        let account = *stored_accounts.stored_accounts.first().unwrap();
         let accounts = [&account];
 
         let packed_contents = vec![PackedAncientStorage {
@@ -1086,7 +1079,16 @@ mod tests {
 
                 let account_template = storages
                     .first()
-                    .and_then(|storage| storage.accounts.get_account_shared_data(0))
+                    .map(|storage| {
+                        let accounts = db.get_unique_accounts_from_storage(storage);
+                        let offset = accounts
+                            .stored_accounts
+                            .first()
+                            .unwrap()
+                            .index_info
+                            .offset();
+                        storage.accounts.get_account_shared_data(offset).unwrap()
+                    })
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
                 let mut lamports = 1000;
