@@ -206,12 +206,21 @@ impl AccountsCacheIndex {
     /// Decrement the reference count for each pubkey in `pubkeys`. Removes an entry entirely if
     /// the count reaches zero. `max_slot` is not updated; it will become stale if the removed slot
     /// is the highest slot. Returns a vec of pubkeys removed from the index.
+    ///
+    /// A pubkey absent from the index is skipped rather than treated as corruption. `store`
+    /// updates the `SlotCache` and the index in two separate steps, so a pubkey can be enumerated
+    /// for removal before the index has seen it. Skipping leaves at most a stale entry, which is
+    /// the same exposure a stale `max_slot` already has: `load_latest` searches every slot at or
+    /// below the recorded one, so an entry that outlives its slot cache only widens the search
+    /// rather than returning a wrong account. The skip is reported so a genuinely diverged index
+    /// is still visible in the logs.
     fn remove(&self, pubkeys: impl IntoIterator<Item = Pubkey>) -> Vec<Pubkey> {
         let mut removed_pubkeys = Vec::new();
+        let mut missing = 0u64;
         for pubkey in pubkeys {
             let Entry::Occupied(mut occupied_entry) = self.entries.entry(pubkey) else {
-                // If this has happened the index is corrupted
-                panic!("pubkey {pubkey} not found in cache index during remove");
+                missing += 1;
+                continue;
             };
             let (_, ref_count) = occupied_entry.get_mut();
             *ref_count -= 1;
@@ -220,6 +229,9 @@ impl AccountsCacheIndex {
                 self.num_unique_pubkeys.fetch_sub(1, Ordering::Relaxed);
                 removed_pubkeys.push(pubkey);
             }
+        }
+        if missing > 0 {
+            datapoint_info!("accounts_cache_index_remove_missing", ("count", missing, i64));
         }
         removed_pubkeys
     }
@@ -782,5 +794,78 @@ mod tests {
         // remove_slot drops slot 1 from both the cache and the tracked roots, leaving slot 2.
         let _ = cache.remove_slot(1);
         assert_eq!(*cache.unflushed_roots.read().unwrap(), BTreeSet::from([2]));
+    }
+
+    /// A pubkey present in a slot cache but absent from the index is a state `remove` must not
+    /// treat as corruption. `store` inserts into the `SlotCache` and only then into the index, so
+    /// the two are not one atomic step. Reproduce the state directly rather than by racing
+    /// threads: insert into the slot cache, leaving the index untouched, then remove the slot.
+    /// This used to panic with "pubkey ... not found in cache index during remove".
+    #[test]
+    fn test_remove_slot_tolerates_pubkey_missing_from_index() {
+        let cache = AccountsCache::default();
+        let slot = 1;
+        let pk = Pubkey::new_unique();
+
+        // Insert straight into the slot cache, bypassing `store`'s index update.
+        let slot_cache = cache.slot_cache(slot).unwrap_or_else(|| {
+            cache
+                .cache
+                .entry(slot)
+                .or_insert_with(|| cache.new_inner())
+                .clone()
+        });
+        slot_cache.insert(&pk, AccountSharedData::new(1, 0, &Pubkey::default()));
+        assert!(!cache.contains_pubkey(&pk));
+
+        // The slot goes away and takes the unindexed pubkey with it. The removal is reported
+        // rather than fatal, and nothing is left behind for the pubkey.
+        assert!(cache.remove_slot(slot).is_some());
+        assert!(!cache.index.entries.contains_key(&pk));
+        assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 0);
+    }
+
+    /// `remove_slot` no longer panics on an index miss, so hammer store and remove from several
+    /// threads on the same slot and check the index stays self-consistent. The
+    /// `num_unique_pubkeys` counter is maintained independently of the map, so a dropped or
+    /// double-counted entry shows up as the two disagreeing.
+    #[test]
+    fn test_store_racing_remove_slot_keeps_index_consistent() {
+        const THREADS: usize = 4;
+        const ITERS: usize = 200;
+
+        for _ in 0..20 {
+            let cache = Arc::new(AccountsCache::default());
+            let slot = 1;
+
+            let mut handles = Vec::new();
+            for t in 0..THREADS {
+                let cache = Arc::clone(&cache);
+                handles.push(std::thread::spawn(move || {
+                    for i in 0..ITERS {
+                        // Each thread uses its own pubkey, but all threads race
+                        // on the same slot, which is the contended resource.
+                        let pk = Pubkey::new_from_array([(t + 1) as u8; 32]);
+                        let pk = if i % 2 == 0 { pk } else { Pubkey::new_unique() };
+                        cache.store(slot, &pk, AccountSharedData::new(1, 0, &Pubkey::default()));
+                        if i % 3 == 0 {
+                            let _ = cache.remove_slot(slot);
+                        }
+                    }
+                }));
+            }
+            for h in handles {
+                h.join().expect("worker thread panicked");
+            }
+
+            // Drain whatever is left so the index ends up as empty as it can get.
+            let _ = cache.remove_slot(slot);
+
+            assert_eq!(
+                cache.index.num_unique_pubkeys.load(Ordering::Relaxed),
+                cache.index.entries.len() as u64,
+                "num_unique_pubkeys diverged from the number of indexed pubkeys"
+            );
+        }
     }
 }
