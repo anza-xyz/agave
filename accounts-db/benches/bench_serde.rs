@@ -45,10 +45,14 @@ fn bench_account_deserialize(c: &mut Criterion) {
         let serialized_account = wincode::config::serialize(&account, WINCODE_CONFIG).unwrap();
         group.throughput(Throughput::Bytes(serialized_account.len() as u64));
         group.bench_function(BenchmarkId::new("wincode", data_size), |b| {
-            b.iter(|| {
-                wincode::config::deserialize::<Account, _>(&serialized_account, WINCODE_CONFIG)
-                    .unwrap()
-            });
+            b.iter_batched(
+                || (),
+                |()| {
+                    wincode::config::deserialize::<Account, _>(&serialized_account, WINCODE_CONFIG)
+                        .unwrap()
+                },
+                BatchSize::PerIteration,
+            );
         });
     }
 }
