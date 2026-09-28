@@ -590,10 +590,18 @@ impl BlockIdRepairService {
 
         debug!("{my_pubkey}: Received valid response for request {request:?}");
 
-        // Remove from sent_requests since we got a response
-        state
+        // A retry sends the request again with a fresh nonce, and the nonce of the
+        // earlier attempt stays live. Only the first valid reply is processed: a
+        // reply to another attempt finds no sent_requests entry and is dropped.
+        if state
             .sent_requests
-            .remove(&OutgoingMessage::Metadata(request));
+            .remove(&OutgoingMessage::Metadata(request))
+            .is_none()
+        {
+            debug!("{my_pubkey}: Dropping reply for already answered request {request:?}");
+            state.response_stats.late_replies += 1;
+            return;
+        }
 
         let Block { slot, block_id } = request.block();
 
@@ -1587,6 +1595,66 @@ mod tests {
 
         // Verify: invalid packet stat was incremented
         assert_eq!(state.response_stats.invalid_packets, 1);
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_drops_late_reply() {
+        // A timed-out request is requeued and removed from sent_requests while it
+        // waits to be resent. The nonce of the earlier attempt stays live, so a
+        // reply to it still verifies, but it finds no sent_requests entry and is
+        // dropped: the resent request covers the repair instead.
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+
+        let slot = 100u64;
+        let parent_slot = 99u64;
+        let parent_block_id = Hash::new_unique();
+        let fec_set_count = 2u32;
+
+        // Create valid merkle tree for the response
+        let fec_set_roots: Vec<Hash> = (0..fec_set_count).map(|_| Hash::new_unique()).collect();
+        let parent_info_leaf = hashv(&[
+            &parent_slot.to_le_bytes(),
+            parent_block_id.as_ref(),
+            &fec_set_count.to_le_bytes(),
+        ]);
+        let mut leaves = fec_set_roots.clone();
+        leaves.push(parent_info_leaf);
+        let (block_id, proofs) = build_merkle_tree(&leaves);
+        let parent_proof = proofs[usize::try_from(fec_set_count).unwrap()].clone();
+
+        // Create the request that would have been sent. It is registered in
+        // outstanding_requests but NOT tracked in sent_requests, like a request
+        // that timed out and is waiting in the queue to be resent.
+        let request = BlockIdRepairType::ParentAndFecSetCount { slot, block_id };
+        let nonce = state.outstanding_requests.add_request(request, timestamp());
+
+        // Build the response
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count,
+            parent_info: (parent_slot, parent_block_id),
+            parent_proof,
+        };
+
+        // Serialize and create packet
+        let data = serialize_response(&response, nonce);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            (&packet).into(),
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        // Verify: the reply was dropped - no events or requests generated
+        assert!(state.pending_repair_events.is_empty());
+        assert!(state.pending_repair_requests.is_empty());
+
+        // Verify: the late reply stat was incremented
+        assert_eq!(state.response_stats.late_replies, 1);
     }
 
     #[test]
