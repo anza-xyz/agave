@@ -1315,6 +1315,9 @@ mod tests {
         solana_test_validator::TestValidator,
         solana_transaction_status::TransactionConfirmationStatus,
         std::slice,
+        std::thread::sleep,
+        std::time::Duration,
+        std::time::Instant,
     };
 
     fn one_signer_message(client: &RpcClient) -> Message {
@@ -2036,11 +2039,28 @@ mod tests {
         );
         let message = Message::new(&instructions, Some(&sender_keypair.pubkey()));
         let signers = [sender_keypair, &stake_account_keypair];
-        let blockhash = client.get_latest_blockhash().unwrap();
-        let transaction = Transaction::new(&signers, message, blockhash);
-        client
-            .send_and_confirm_transaction_with_spinner(&transaction)
-            .unwrap();
+        // The stake program is deployed at genesis, but programs added to
+        // genesis are not immediately usable: the new program only becomes
+        // visible from a later slot, and under load that can take a while.
+        // Retry until it succeeds instead of failing the test.
+        const DEPLOY_WAIT: Duration = Duration::from_secs(60);
+        let deadline = Instant::now() + DEPLOY_WAIT;
+        loop {
+            let blockhash = client.get_latest_blockhash().unwrap();
+            let transaction = Transaction::new(&signers, message.clone(), blockhash);
+            match client.send_and_confirm_transaction_with_spinner(&transaction) {
+                Ok(_) => break,
+                Err(err) => {
+                    if !format!("{err:?}").contains("Program is not deployed") {
+                        panic!("Unexpected error creating the stake account: {err:?}");
+                    }
+                    if Instant::now() >= deadline {
+                        panic!("Timed out waiting for the stake program to become deployable");
+                    }
+                    sleep(Duration::from_millis(100));
+                }
+            }
+        }
 
         let sender_stake_args = SenderStakeArgs {
             stake_account_address,
