@@ -606,6 +606,33 @@ fn extend_and_serialize_multiple(derivation_paths: &[&DerivationPath]) -> Vec<u8
     concat_derivation
 }
 
+/// Label shown for a device in the interactive wallet picker
+fn device_label(info: &RemoteWalletInfo) -> String {
+    format!("{} ({})", info.get_pretty_path(), info.model)
+}
+
+/// Pair each matched device info with its picker label, ordered by label.
+///
+/// The index of the returned index vector selects the matching entry in
+/// `infos`, so the label order and the device order stay consistent. Matching
+/// is not done on `host_device_path` because that is empty for Trezor, which
+/// would make every Trezor look like the same device.
+fn sorted_matches(infos: &[RemoteWalletInfo]) -> (Vec<usize>, Vec<String>) {
+    let mut labelled: Vec<(String, usize)> = infos
+        .iter()
+        .enumerate()
+        .map(|(index, info)| (device_label(info), index))
+        .collect();
+    labelled.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut indices = Vec::with_capacity(labelled.len());
+    let mut items = Vec::with_capacity(labelled.len());
+    for (item, index) in labelled {
+        items.push(item);
+        indices.push(index);
+    }
+    (indices, items)
+}
+
 /// Choose a Ledger wallet based on matching info fields
 pub fn get_wallet_from_info(
     info: RemoteWalletInfo,
@@ -620,33 +647,28 @@ pub fn get_wallet_from_info(
             return Err(device.info.error.clone().unwrap());
         }
     }
-    let mut matches: Vec<(String, String)> = matches
+    let matches: Vec<&Device> = matches
         .filter(|&device| device.info.error.is_none())
-        .map(|device| {
-            let query_item = format!("{} ({})", device.info.get_pretty_path(), device.info.model,);
-            (device.info.host_device_path.clone(), query_item)
-        })
         .collect();
     if matches.is_empty() {
         return Err(RemoteWalletError::NoDeviceFound);
     }
-    matches.sort_by(|a, b| a.1.cmp(&b.1));
-    let (host_device_paths, items): (Vec<String>, Vec<String>) = matches.into_iter().unzip();
+    let infos: Vec<RemoteWalletInfo> = matches.iter().map(|device| device.info.clone()).collect();
+    let (indices, items) = sorted_matches(&infos);
 
-    let wallet_host_device_path = if host_device_paths.len() > 1 {
-        let selection = Select::with_theme(&ColorfulTheme::default())
+    let selection = if items.len() > 1 {
+        Select::with_theme(&ColorfulTheme::default())
             .with_prompt(format!(
                 "Multiple hardware wallets found. Please select a device for {keypair_name:?}"
             ))
             .default(0)
             .items(&items[..])
             .interact()
-            .unwrap();
-        &host_device_paths[selection]
+            .unwrap()
     } else {
-        &host_device_paths[0]
+        0
     };
-    wallet_manager.get_wallet(wallet_host_device_path)
+    Ok(matches[indices[selection]].clone())
 }
 
 //
@@ -657,6 +679,57 @@ fn is_last_part(p2: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::locator::Manufacturer;
+
+    #[test]
+    fn test_sorted_matches_distinguishes_trezors_with_empty_host_device_path() {
+        // Trezor never populates `host_device_path` (trezor.rs `read_device`),
+        // so a selection cannot be resolved by looking that field up again.
+        let first = RemoteWalletInfo {
+            model: "T".to_string(),
+            manufacturer: Manufacturer::Trezor,
+            serial: "1".to_string(),
+            host_device_path: String::new(),
+            pubkey: solana_pubkey::new_rand(),
+            error: None,
+        };
+        let second = RemoteWalletInfo {
+            serial: "2".to_string(),
+            pubkey: solana_pubkey::new_rand(),
+            ..first.clone()
+        };
+        let infos = vec![first.clone(), second.clone()];
+
+        let (indices, items) = sorted_matches(&infos);
+
+        // The key the picker used to resolve a selection is identical for both
+        // devices, so it could not distinguish them.
+        assert_eq!(infos[0].host_device_path, infos[1].host_device_path);
+        assert_eq!(items.len(), 2);
+        assert_ne!(items[0], items[1]);
+        // Each picker entry resolves back to the device it was built from.
+        for (selection, item) in items.iter().enumerate() {
+            let info = &infos[indices[selection]];
+            assert_eq!(&device_label(info), item);
+        }
+        // Selecting the second entry picks the second device, not the first.
+        assert_ne!(infos[indices[0]].serial, infos[indices[1]].serial);
+    }
+
+    #[test]
+    fn test_sorted_matches_single_device() {
+        let info = RemoteWalletInfo {
+            model: "nano-s".to_string(),
+            manufacturer: Manufacturer::Ledger,
+            serial: "0001".to_string(),
+            host_device_path: "/host/device/path".to_string(),
+            pubkey: solana_pubkey::new_rand(),
+            error: None,
+        };
+        let (indices, items) = sorted_matches(&[info.clone()]);
+        assert_eq!(indices, vec![0]);
+        assert_eq!(items, vec![device_label(&info)]);
+    }
 
     #[test]
     fn test_is_last_part() {
