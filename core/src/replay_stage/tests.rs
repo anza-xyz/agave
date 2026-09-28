@@ -2895,7 +2895,10 @@ fn test_switch_bank_purges_cleared_descendants() {
     assert!(
         latest_switch_request
             .try_advance(SwitchBankEvent::Switch {
-                block: Block { slot: 1, block_id },
+                block: Block {
+                    slot: 1,
+                    block_id: block_id.into(),
+                },
             })
             .is_none()
     );

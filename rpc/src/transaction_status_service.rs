@@ -324,11 +324,6 @@ impl TransactionStatusService {
                     let _ = done_sender.send(());
                 }
             }
-            TransactionStatusMessage::Root(slot) => {
-                if enable_rpc_transaction_history {
-                    blockstore.set_transaction_history_safe_root(slot)?;
-                }
-            }
         }
         Ok(())
     }
@@ -413,14 +408,10 @@ pub(crate) mod tests {
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
         solana_clock::{BankId, Slot},
-        solana_entry::entry::next_entry_mut,
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::{
-            blockstore::entries_to_test_shreds, genesis_utils::create_genesis_config,
-            get_tmp_ledger_path_auto_delete,
-        },
+        solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_message::SimpleAddressLoader,
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
@@ -766,81 +757,6 @@ pub(crate) mod tests {
         assert_eq!(
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
-        );
-    }
-
-    #[test]
-    fn test_root_is_processed_after_purge() {
-        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
-        let transaction_status_sender = TransactionStatusSender {
-            sender: transaction_status_sender,
-            dependency_tracker: None,
-        };
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let slot = 42;
-        let payer = Keypair::new();
-        let address = Pubkey::new_unique();
-        let transaction = system_transaction::transfer(&payer, &address, 1, Hash::new_unique());
-        let signature = transaction.signatures[0];
-        let entry = next_entry_mut(&mut Hash::default(), 1, vec![transaction]);
-        blockstore
-            .insert_shreds(
-                entries_to_test_shreds(&[entry], slot, slot - 1, true, 0),
-                true,
-            )
-            .unwrap();
-
-        blockstore
-            .write_transaction_status(
-                slot,
-                signature,
-                std::iter::once((&address, true)),
-                TransactionStatusMeta::default(),
-                0,
-            )
-            .unwrap();
-        blockstore
-            .write_transaction_memos(&signature, slot, "memo".to_string())
-            .unwrap();
-
-        let exit = Arc::new(AtomicBool::new(false));
-        let transaction_status_service = TransactionStatusService::new(
-            transaction_status_receiver,
-            Arc::new(AtomicU64::default()),
-            true,
-            None,
-            blockstore.clone(),
-            false,
-            None,
-            exit.clone(),
-        );
-
-        transaction_status_sender
-            .enqueue_purge_transaction_history_for_slot(
-                slot,
-                TransactionHistoryPurgeSource::SwitchBank,
-                TransactionHistoryPurgeInput::SwitchBank,
-            )
-            .unwrap();
-        transaction_status_sender.send_transaction_status_root(slot);
-        transaction_status_service.quiesce_and_join_for_tests(exit);
-
-        assert!(
-            blockstore
-                .read_transaction_status((signature, slot))
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            blockstore
-                .read_transaction_memos(signature, slot)
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(
-            blockstore.transaction_history_safe_root().unwrap(),
-            Some(slot)
         );
     }
 

@@ -1384,7 +1384,6 @@ impl ReplayStage {
                             rpc_subscriptions.as_deref(),
                             &block_commitment_cache,
                             &bank_notification_sender,
-                            transaction_status_sender.as_ref(),
                             &mut tracked_vote_transactions,
                             &mut has_new_vote_been_rooted,
                             &mut replay_timing,
@@ -3160,7 +3159,6 @@ impl ReplayStage {
         rpc_subscriptions: Option<&RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        transaction_status_sender: Option<&TransactionStatusSender>,
         tracked_vote_transactions: &mut Vec<TrackedVoteTransaction>,
         has_new_vote_been_rooted: &mut bool,
         replay_timing: &mut ReplayLoopTiming,
@@ -3181,9 +3179,6 @@ impl ReplayStage {
         });
 
         if let Some(new_root) = new_root {
-            if let Some(transaction_status_sender) = transaction_status_sender {
-                transaction_status_sender.send_transaction_status_root(new_root);
-            }
             let highest_super_majority_root = Some(
                 block_commitment_cache
                     .read()

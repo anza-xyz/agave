@@ -19,7 +19,6 @@ use {
     solana_runtime::{
         bank_forks::BankForks, bank_forks_controller::BankForksController,
         installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
-        transaction_execution::TransactionStatusSender,
     },
     solana_time_utils::timestamp,
     std::{
@@ -33,7 +32,6 @@ use {
 pub(crate) struct RootContext {
     pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub(crate) bank_forks_controller: Arc<dyn BankForksController>,
-    pub(crate) transaction_status_sender: Option<TransactionStatusSender>,
 }
 
 /// Sets the root for the votor event handling loop. Handles rooting all things
@@ -58,10 +56,6 @@ pub(crate) fn set_root(
         block_id: BlockId::default(),
     });
     *received_shred = received_shred.split_off(&new_root_slot);
-
-    if let Some(transaction_status_sender) = &rctx.transaction_status_sender {
-        transaction_status_sender.send_transaction_status_root(new_root_slot);
-    }
 
     rctx.bank_forks_controller.enqueue_set_root(new_root);
 
