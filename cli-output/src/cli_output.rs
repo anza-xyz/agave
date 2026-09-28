@@ -2352,12 +2352,9 @@ impl fmt::Display for CliAccountBalances {
         for account in &self.accounts {
             writeln!(
                 f,
-                "{:<44}  {}",
+                "{:<44}  {} SOL",
                 account.address,
-                &format!(
-                    "{} SOL",
-                    build_balance_message(account.lamports, false, false)
-                ),
+                build_balance_message(account.lamports, false, false)
             )?;
         }
         Ok(())
@@ -2677,11 +2674,8 @@ impl fmt::Display for CliProgramsV4 {
         for program in self.programs.iter() {
             writeln!(
                 f,
-                "{}",
-                &format!(
-                    "{:<44} | {:<9} | {:<44} | {:<10}",
-                    program.program_id, program.last_deploy_slot, program.authority, program.status,
-                )
+                "{:<44} | {:<9} | {:<44} | {:<10}",
+                program.program_id, program.last_deploy_slot, program.authority, program.status,
             )?;
         }
         Ok(())
@@ -2753,14 +2747,11 @@ impl fmt::Display for CliUpgradeablePrograms {
         for program in self.programs.iter() {
             writeln!(
                 f,
-                "{}",
-                &format!(
-                    "{:<44} | {:<9} | {:<44} | {}",
-                    program.program_id,
-                    program.last_deploy_slot,
-                    program.authority,
-                    build_balance_message(program.lamports, self.use_lamports_unit, true)
-                )
+                "{:<44} | {:<9} | {:<44} | {}",
+                program.program_id,
+                program.last_deploy_slot,
+                program.authority,
+                build_balance_message(program.lamports, self.use_lamports_unit, true)
             )?;
         }
         Ok(())
@@ -2866,13 +2857,10 @@ impl fmt::Display for CliUpgradeableBuffers {
         for buffer in self.buffers.iter() {
             writeln!(
                 f,
-                "{}",
-                &format!(
-                    "{:<44} | {:<44} | {}",
-                    buffer.address,
-                    buffer.authority,
-                    build_balance_message(buffer.lamports, self.use_lamports_unit, true)
-                )
+                "{:<44} | {:<44} | {}",
+                buffer.address,
+                buffer.authority,
+                build_balance_message(buffer.lamports, self.use_lamports_unit, true)
             )?;
         }
         Ok(())
