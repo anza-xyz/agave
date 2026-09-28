@@ -12,7 +12,7 @@ use {
     solana_cli_output::display::format_labeled_address,
     solana_hash::Hash,
     solana_metrics::{datapoint_error, datapoint_info},
-    solana_native_token::{Sol, sol_str_to_lamports},
+    solana_native_token::{LAMPORTS_PER_SOL, Sol, sol_str_to_lamports},
     solana_notifier::{NotificationType, Notifier},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -365,7 +365,7 @@ fn get_minimum_vat_vote_account_balance(
 fn query_endpoint(
     config: &Config,
     endpoint: &mut EndpointData,
-) -> client_error::Result<Option<(&'static str, String)>> {
+) -> client_error::Result<Vec<(&'static str, String)>> {
     info!("Querying {}", endpoint.rpc_client.url());
 
     match get_cluster_info(config, &endpoint.rpc_client) {
@@ -432,6 +432,7 @@ fn query_endpoint(
             }
 
             let mut validator_errors = vec![];
+            let mut balance_errors = vec![];
             let minimum_vat_vote_account_balance = if config.validator_identity_pubkeys.is_empty() {
                 None
             } else {
@@ -458,9 +459,12 @@ fn query_endpoint(
                 if let Some(balance) = validator_balances.get(validator_identity)
                     && *balance < config.minimum_validator_identity_balance
                 {
-                    failures.push((
-                        "balance",
-                        format!("{} has {}", formatted_validator_identity, Sol(*balance)),
+                    // Two decimals: the notification is deduplicated by its
+                    // text, and a nine-decimal balance changes every poll.
+                    balance_errors.push(format!(
+                        "{} has {:.2} SOL",
+                        formatted_validator_identity,
+                        *balance as f64 / LAMPORTS_PER_SOL as f64
                     ));
                 }
 
@@ -500,6 +504,9 @@ fn query_endpoint(
                 }
             }
 
+            if !balance_errors.is_empty() {
+                failures.push(("balance", balance_errors.join(",")));
+            }
             if !validator_errors.is_empty() {
                 failures.push(("delinquent", validator_errors.join(",")));
             }
@@ -508,7 +515,7 @@ fn query_endpoint(
                 error!("{} sanity failure: {}", failure.0, failure.1);
             }
 
-            Ok(failures.into_iter().next()) // Only report the first failure if any
+            Ok(failures)
         }
         Err(err) => {
             if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind()
@@ -516,7 +523,7 @@ fn query_endpoint(
                 && config.ignore_http_bad_gateway
             {
                 warn!("Error suppressed: {err}");
-                return Ok(None);
+                return Ok(Vec::new());
             }
             warn!("rpc-error: {err}");
             Err(err)
@@ -569,6 +576,33 @@ fn validate_endpoints(
     Ok(())
 }
 
+/// Failure kinds from most to least urgent. When one poll finds several,
+/// the most urgent one is reported; a kind not listed here ranks last.
+const FAILURE_SEVERITY: [&str; 7] = [
+    "watchtower-reliability",
+    "delinquent",
+    "transaction-count",
+    "recent-blockhash",
+    "current-stake",
+    "vat-vote-account-balance",
+    "balance",
+];
+
+/// The most urgent of the collected failures, by [`FAILURE_SEVERITY`].
+fn most_severe_failure<'a>(
+    failures: &'a HashMap<&'static str, String>,
+) -> Option<(&'static str, &'a String)> {
+    failures
+        .iter()
+        .min_by_key(|(name, _)| {
+            FAILURE_SEVERITY
+                .iter()
+                .position(|s| s == *name)
+                .unwrap_or(FAILURE_SEVERITY.len())
+        })
+        .map(|(name, message)| (*name, message))
+}
+
 fn main() -> Result<(), Box<dyn error::Error>> {
     agave_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("watchtower", /*version:*/ None);
@@ -606,20 +640,17 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         let mut num_reachable = 0;
 
         for endpoint in &mut endpoints {
-            match query_endpoint(&config, endpoint) {
-                Ok(None) => {
+            if let Ok(endpoint_failures) = query_endpoint(&config, endpoint) {
+                num_reachable += 1;
+                if endpoint_failures.is_empty() {
                     num_healthy += 1;
-                    num_reachable += 1;
                 }
-                Ok(Some((failure_test_name, failure_error_message))) => {
-                    num_reachable += 1;
-
-                    // Collecting only one failure of each type
+                // Collecting only one failure of each type
+                for (failure_test_name, failure_error_message) in endpoint_failures {
                     failures
                         .entry(failure_test_name)
-                        .or_insert(failure_error_message.clone());
+                        .or_insert(failure_error_message);
                 }
-                Err(_) => {}
             }
         }
 
@@ -644,7 +675,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 failures.insert("watchtower-reliability", watchtower_unreliable_msg);
             }
 
-            let (failure_test_name, failure_error_message) = failures.iter().next().unwrap();
+            let (failure_test_name, failure_error_message) = most_severe_failure(&failures)
+                .expect("an endpoint reported a failure or the reliability failure was inserted");
             let notification_msg = format!(
                 "agave-watchtower{}: Error: {}: {}",
                 config.name_suffix, failure_test_name, failure_error_message
@@ -690,5 +722,52 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             incident = Hash::new_unique();
         }
         sleep(config.interval);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_most_severe_failure() {
+        let mut failures = HashMap::new();
+        failures.insert(
+            "recent-blockhash",
+            "Unable to get new blockhash".to_string(),
+        );
+        failures.insert(
+            "transaction-count",
+            "Transaction count is not advancing".to_string(),
+        );
+
+        let most_severe = most_severe_failure(&failures);
+        assert_eq!(
+            most_severe,
+            Some((
+                "transaction-count",
+                &"Transaction count is not advancing".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_most_severe_failure_map_balance() {
+        let mut failures = HashMap::new();
+        failures.insert("balance", "Validator balance is low".to_string());
+        failures.insert("delinquent", "Validator is delinquent".to_string());
+
+        let most_severe = most_severe_failure(&failures);
+        assert_eq!(
+            most_severe,
+            Some(("delinquent", &"Validator is delinquent".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_empty_map_returns_none() {
+        let failures: HashMap<&'static str, String> = HashMap::new();
+        let most_severe = most_severe_failure(&failures);
+        assert_eq!(most_severe, None);
     }
 }
