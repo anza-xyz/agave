@@ -91,6 +91,7 @@ use {
     },
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, GenesisCert},
+        consensus_message::BlockId,
         migration::GENESIS_CERTIFICATE_ACCOUNT,
         unverified_vote_message::UnverifiedCertificate,
         wire::{WireBlockCertMessage, WireCertSignature},
@@ -548,7 +549,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) accounts_data_len: u64,
     pub(crate) accounts_lt_hash: AccountsLtHash,
     pub(crate) bank_hash_stats: BankHashStats,
-    pub(crate) block_id: Option<Hash>, // Option wrapper can be removed in version after v4.1
+    pub(crate) block_id: Option<BlockId>, // Option wrapper can be removed in version after v4.1
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -588,7 +589,7 @@ impl Default for BankFieldsToDeserialize {
             accounts_data_len: u64::default(),
             accounts_lt_hash: AccountsLtHash(LtHash::identity()),
             bank_hash_stats: BankHashStats::default(),
-            block_id: Option::<Hash>::default(),
+            block_id: Option::<BlockId>::default(),
         }
     }
 }
@@ -1058,7 +1059,7 @@ pub struct Bank {
     /// The unique identifier for the corresponding block for this bank.
     /// None for banks that have not yet completed replay or for leader banks as we cannot populate block_id
     /// until bankless leader. Can be computed directly from shreds without needing to execute transactions.
-    block_id: RwLock<Option<Hash>>,
+    block_id: RwLock<Option<BlockId>>,
 
     /// Expected bank hash provided by block footer (if any). Set when processing footer; verified
     /// later when the bank is frozen.
@@ -6780,13 +6781,13 @@ impl Bank {
     }
 
     pub fn block_id(&self) -> Option<Hash> {
-        *self.block_id.read().unwrap()
+        self.block_id.read().unwrap().map(|b| b.to_hash())
     }
 
     pub fn set_block_id(&self, block_id: Option<Hash>) {
         let mut block_id_w = self.block_id.write().unwrap();
-        debug_assert!(block_id_w.is_none() || *block_id_w == block_id);
-        *block_id_w = block_id
+        debug_assert!(block_id_w.is_none() || block_id_w.map(|b| b.to_hash()) == block_id);
+        *block_id_w = block_id.map(BlockId::from)
     }
 
     pub fn compute_budget(&self) -> Option<ComputeBudget> {

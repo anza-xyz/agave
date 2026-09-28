@@ -16,6 +16,7 @@ use {
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
+    agave_votor_messages::consensus_message::BlockId,
     log::*,
     smallvec::SmallVec,
     solana_accounts_db::{
@@ -445,8 +446,8 @@ struct ExtraFieldsToDeserialize {
     versioned_epoch_stakes: Vec<(u64, DeserializableVersionedEpochStakes)>,
     #[wincode(with = "DefaultOnEmptyRead<Option<SerdeAccountsLtHash>>")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    #[wincode(with = "DefaultOnEmptyRead<Option<Hash>>")]
-    block_id: Option<Hash>,
+    #[wincode(with = "DefaultOnEmptyRead<Option<BlockId>>")]
+    block_id: Option<BlockId>,
 }
 
 /// Extra fields that are serialized at the end of snapshots.
