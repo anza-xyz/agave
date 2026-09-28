@@ -617,6 +617,7 @@ mod tests {
         agave_banking_stage_ingress_types::{
             BankingPacketBatch, BankingPacketReceiver, to_banking_packet_batch,
         },
+        agave_votor::slot_clock::SharedAlpenglowSlotClock,
         crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
@@ -723,7 +724,11 @@ mod tests {
 
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 
-        let decision_maker = DecisionMaker::new(shared_leader_state.clone());
+        let decision_maker = DecisionMaker::new(
+            shared_leader_state.clone(),
+            bank_forks.read().unwrap().migration_status(),
+            SharedAlpenglowSlotClock::default(),
+        );
 
         let (banking_packet_sender, banking_packet_receiver) = bounded(1024);
         let receive_and_buffer =
