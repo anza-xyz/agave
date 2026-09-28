@@ -1530,12 +1530,13 @@ impl AccountsDb {
 
         let purges_old_accounts_count = AtomicU64::default();
 
+        // Report store stats outside of the clean measuring window
+        self.report_store_stats();
+
         let mut measure_all = Measure::start("clean_accounts");
         let max_clean_root_inclusive = self
             .max_clean_root(Some(max_clean_root_inclusive))
             .expect("max_clean_root_inclusive must be Some");
-
-        let (_, report_store_stats_us) = measure_us!(self.report_store_stats());
 
         // purge_slots_from_cache delays handling of the pubkeys it removes from the cache
         // so that the purge path never modifies the accounts index. Handle them here
@@ -1686,7 +1687,6 @@ impl AccountsDb {
             "clean_accounts",
             ("max_clean_root", max_clean_root_inclusive, i64),
             ("total_us", measure_all.as_us(), i64),
-            ("report_store_stats_us", report_store_stats_us, i64),
             (
                 "collect_delta_keys_us",
                 key_timings.collect_delta_keys_us,
@@ -3844,6 +3844,7 @@ impl AccountsDb {
     }
 
     fn report_store_stats(&self) {
+        let mut measure = Measure::start("report_store_stats");
         let mut total_count = 0;
         let mut newest_slot = 0;
         let mut oldest_slot = u64::MAX;
@@ -3867,9 +3868,11 @@ impl AccountsDb {
         } else {
             0.
         };
+        measure.stop();
 
         datapoint_info!(
             "accounts_db-stores",
+            ("report_store_stats_us", measure.as_us(), i64),
             ("total_count", total_count, i64),
             ("total_bytes", total_bytes, i64),
             ("total_alive_bytes", total_alive_bytes, i64),
