@@ -3832,12 +3832,22 @@ fn test_load_filter_with_closed_accounts() {
     let slot = 1;
     db.set_latest_full_snapshot_slot(slot - 1);
     let storage = db.create_store(slot, DEFAULT_FILE_SIZE);
-    append_single_account_with_default_hash(
-        &storage,
-        &stored_key,
-        &zero_lamport_account,
+    let stored_accounts_info = storage
+        .accounts
+        .write_accounts(&(slot, [(stored_key, zero_lamport_account)].as_slice()))
+        .unwrap();
+    storage.add_accounts(1, stored_accounts_info.size);
+    let account_info = AccountInfo::new(
+        StorageLocation::AccountsFile(storage.id(), stored_accounts_info.offsets[0]),
         true,
-        Some(&db.accounts_index),
+    );
+    db.accounts_index.upsert(
+        slot,
+        slot,
+        &stored_key,
+        account_info,
+        &mut ReclaimsSlotList::new(),
+        UpsertReclaim::IgnoreReclaims,
     );
     db.storage.insert(Arc::new(storage));
     db.add_root(slot);

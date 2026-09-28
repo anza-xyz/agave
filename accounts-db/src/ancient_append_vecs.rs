@@ -764,11 +764,8 @@ mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            accounts_db::{
-                AccountsDbConfig,
-                tests::{ACCOUNTS_DB_CONFIG_APPEND_VEC, append_single_account_with_default_hash},
-            },
-            accounts_index::{ReclaimsSlotList, UpsertReclaim},
+            accounts_db::{AccountsDbConfig, tests::ACCOUNTS_DB_CONFIG_APPEND_VEC},
+            accounts_index::{AccountsIndex, ReclaimsSlotList, UpsertReclaim},
             append_vec::{self, AppendVec},
             is_zero_lamport::IsZeroLamport as _,
             storable_accounts::StorableAccountsBySlot,
@@ -986,6 +983,39 @@ mod tests {
                 vec
             })
             .collect::<Vec<_>>()
+    }
+
+    fn append_single_account_with_default_hash(
+        storage: &AccountStorageEntry,
+        pubkey: &Pubkey,
+        account: &AccountSharedData,
+        mark_alive: bool,
+        add_to_index: Option<&AccountsIndex<AccountInfo, AccountInfo>>,
+    ) {
+        let slot = storage.slot();
+        let accounts = [(pubkey, account)];
+        let slice = &accounts[..];
+        let storable_accounts = (slot, slice);
+        let stored_accounts_info = storage.accounts.write_accounts(&storable_accounts).unwrap();
+        if mark_alive {
+            // updates 'alive_bytes' on the storage
+            storage.add_accounts(1, stored_accounts_info.size);
+        }
+
+        if let Some(index) = add_to_index {
+            let account_info = AccountInfo::new(
+                StorageLocation::AccountsFile(storage.id(), stored_accounts_info.offsets[0]),
+                account.lamports() == 0,
+            );
+            index.upsert(
+                slot,
+                slot,
+                pubkey,
+                account_info,
+                &mut ReclaimsSlotList::new(),
+                UpsertReclaim::IgnoreReclaims,
+            );
+        }
     }
 
     #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
