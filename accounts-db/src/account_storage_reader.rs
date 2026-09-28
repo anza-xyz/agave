@@ -268,35 +268,35 @@ mod tests {
         );
     }
 
-    #[test_case(0, 0, 0, TombstonesFilter::Include)]
-    #[test_case(1, 0, 0, TombstonesFilter::Include)]
-    #[test_case(1, 1, 0, TombstonesFilter::Include)]
-    #[test_case(1, 1, 0, TombstonesFilter::Exclude)]
-    #[test_case(1, 0, 1, TombstonesFilter::Include)]
-    #[test_case(100, 0, 0, TombstonesFilter::Include)]
-    #[test_case(100, 0, 10, TombstonesFilter::Include)]
-    #[test_case(100, 0, 100, TombstonesFilter::Include)]
-    #[test_case(100, 10, 0, TombstonesFilter::Include)]
-    #[test_case(100, 10, 0, TombstonesFilter::Exclude)]
-    #[test_case(100, 100, 0, TombstonesFilter::Include)]
-    #[test_case(100, 100, 0, TombstonesFilter::Exclude)]
-    #[test_case(100, 10, 10, TombstonesFilter::Include)]
-    #[test_case(100, 10, 10, TombstonesFilter::Exclude)]
+    #[test_matrix(
+        [AccountsFileProvider::AppendVec],
+        [
+            (0, 0, 0, TombstonesFilter::Include),
+            (1, 0, 0, TombstonesFilter::Include),
+            (1, 1, 0, TombstonesFilter::Include),
+            (1, 1, 0, TombstonesFilter::Exclude),
+            (1, 0, 1, TombstonesFilter::Include),
+            (100, 0, 0, TombstonesFilter::Include),
+            (100, 0, 10, TombstonesFilter::Include),
+            (100, 0, 100, TombstonesFilter::Include),
+            (100, 10, 0, TombstonesFilter::Include),
+            (100, 10, 0, TombstonesFilter::Exclude),
+            (100, 100, 0, TombstonesFilter::Include),
+            (100, 100, 0, TombstonesFilter::Exclude),
+            (100, 10, 10, TombstonesFilter::Include),
+            (100, 10, 10, TombstonesFilter::Exclude),
+        ]
+    )]
     fn test_account_storage_reader_with_excluded_accounts(
-        total_accounts: usize,
-        num_tombstones: usize,
-        num_obsolete: usize,
-        tombstones_filter: TombstonesFilter,
+        accounts_file_provider: AccountsFileProvider,
+        test_case: (usize, usize, usize, TombstonesFilter),
     ) {
+        let (total_accounts, num_tombstones, num_obsolete, tombstones_filter) = test_case;
+
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
-        let storage = AccountStorageEntry::new(
-            temp_dir.path(),
-            slot,
-            11,
-            1_000_000,
-            AccountsFileProvider::AppendVec,
-        );
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -448,17 +448,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_account_storage_reader_filter_by_slot() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_account_storage_reader_filter_by_slot(accounts_file_provider: AccountsFileProvider) {
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
-        let storage = AccountStorageEntry::new(
-            temp_dir.path(),
-            slot,
-            11,
-            1_000_000,
-            AccountsFileProvider::AppendVec,
-        );
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
         let total_accounts = 30;
 
         // Create a bunch of accounts and add them to the storage
@@ -615,19 +610,19 @@ mod tests {
     /// * excluded accounts
     /// * exceeding the file reader's stack buffer
     #[test_matrix(
+        [AccountsFileProvider::AppendVec],
         [false, true],
         [0, 1, 2, 3, 4, 5, 6, 7])
     ]
-    fn test_write_to(exclude_last_account: bool, data_len_last_account: usize) {
+    fn test_write_to(
+        accounts_file_provider: AccountsFileProvider,
+        exclude_last_account: bool,
+        data_len_last_account: usize,
+    ) {
         let slot = 11;
         let temp_dir = TempDir::new().unwrap();
-        let storage = AccountStorageEntry::new(
-            temp_dir.path(),
-            slot,
-            11,
-            1_000_000,
-            AccountsFileProvider::AppendVec,
-        );
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
         let accounts: Vec<_> = [3, 256 * 1024 + 1, data_len_last_account]
             .into_iter()
             .enumerate()
