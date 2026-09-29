@@ -691,7 +691,8 @@ mod tests {
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
-        let mut shreds = shredder.make_merkle_shreds_from_entries(
+        // Only older leaders resign shreds.
+        let (data_shreds, coding_shreds) = shredder.entries_to_resigned_merkle_shreds_for_tests(
             &leader_keypair,
             &entries,
             is_last_in_slot,
@@ -699,8 +700,8 @@ mod tests {
             0,
             0,
             &ReedSolomonCache::default(),
-            &mut ProcessShredsStats::default(),
         );
+        let mut shreds: Vec<_> = data_shreds.into_iter().chain(coding_shreds).collect();
 
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&leader_pubkey, timestamp()),
