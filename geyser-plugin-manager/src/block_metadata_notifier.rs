@@ -66,7 +66,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
 
         for plugin in plugin_manager.plugins.iter() {
             let block_info = ReplicaBlockInfoVersions::V0_0_5(&block_info);
-            match plugin.notify_block_metadata_for_bank(block_info, bank_id) {
+            match plugin.notify_block_metadata_for_bank(block_info, bank_id.0) {
                 Err(err) => {
                     error!(
                         "Failed to update block metadata at slot {}, error: {} to plugin {}",

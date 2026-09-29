@@ -208,7 +208,7 @@ impl RecordReceiver {
 
     /// Re-enable the channel after a shutdown.
     pub fn restart(&mut self, bank_id: BankId) {
-        assert!(bank_id <= BankIdAllowedInsertions::MAX_BANK_ID);
+        assert!(bank_id.0 <= BankIdAllowedInsertions::MAX_BANK_ID.0);
         assert!(self.receiver.is_empty()); // Should be empty before restarting.
 
         // Reset transaction indexes if tracking them - BEFORE allowing new insertions.
@@ -332,8 +332,8 @@ impl BankIdAllowedInsertions {
     const ALLOWED_INSERTIONS_BITS: u64 = 10;
     const BANK_ID_BITS: u64 = Self::NUM_BITS - Self::ALLOWED_INSERTIONS_BITS;
 
-    const DISABLED_BANK_ID: BankId = (1 << Self::BANK_ID_BITS) - 1;
-    const MAX_BANK_ID: BankId = Self::DISABLED_BANK_ID - 1;
+    const DISABLED_BANK_ID: BankId = BankId((1 << Self::BANK_ID_BITS) - 1);
+    const MAX_BANK_ID: BankId = BankId(Self::DISABLED_BANK_ID.0 - 1);
     const MAX_ALLOWED_INSERTIONS: u64 = (1 << Self::ALLOWED_INSERTIONS_BITS) - 1;
 
     const SHUTDOWN: u64 = Self::encoded_value(Self::DISABLED_BANK_ID, 0);
@@ -352,14 +352,14 @@ impl BankIdAllowedInsertions {
     }
 
     const fn encoded_value(bank_id: BankId, allowed_insertions: u64) -> u64 {
-        assert!(bank_id <= Self::DISABLED_BANK_ID);
+        assert!(bank_id.0 <= Self::DISABLED_BANK_ID.0);
         assert!(allowed_insertions <= Self::MAX_ALLOWED_INSERTIONS);
-        (bank_id << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
+        (bank_id.0 << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
     }
 
     /// The current bank_id, or [`Self::DISABLED_BANK_ID`] if shutdown.
     fn bank_id(value: u64) -> BankId {
-        (value >> Self::ALLOWED_INSERTIONS_BITS) & Self::DISABLED_BANK_ID
+        BankId((value >> Self::ALLOWED_INSERTIONS_BITS) & Self::DISABLED_BANK_ID.0)
     }
 
     /// How many insertions/sends are allowed at this time.

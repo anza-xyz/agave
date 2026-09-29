@@ -180,7 +180,7 @@ impl AccountsUpdateNotifierImpl {
             match plugin.update_account_for_bank(
                 ReplicaAccountInfoVersions::V0_0_3(&account),
                 slot,
-                bank_id,
+                bank_id.0,
             ) {
                 Err(err) => {
                     error!(

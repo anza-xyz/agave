@@ -344,13 +344,13 @@ impl PrioritizationFeeCache {
             if pre_purge_bank_count > 0 && post_purge_bank_count == 0 {
                 warn!(
                     "Finalized bank has empty prioritization fee cache. slot {slot} bank id \
-                     {bank_id}"
+                     {bank_id:?}"
                 );
             }
 
             if let Some(prioritization_fee) = &mut prioritization_fee {
                 if let Err(err) = prioritization_fee.mark_block_completed() {
-                    error!("Unsuccessful finalizing slot {slot}, bank ID {bank_id}: {err:?}");
+                    error!("Unsuccessful finalizing slot {slot}, bank ID {bank_id:?}: {err:?}");
                 }
                 prioritization_fee.report_metrics(slot);
             }

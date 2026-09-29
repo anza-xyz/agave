@@ -37,8 +37,10 @@
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 pub use {
     crate::slot_params::DEFAULT_MAX_ENTRY_BYTES_PER_SLOT,
-    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_accounts_db::bank_id::BankId,
-    solana_leader_schedule::SlotLeader, solana_reward_info::RewardType,
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions,
+    solana_accounts_db::bank_id::{BankId, BankIdGenerator},
+    solana_leader_schedule::SlotLeader,
+    solana_reward_info::RewardType,
 };
 use {
     crate::{
@@ -338,7 +340,7 @@ pub struct BankRc {
     /// Previous checkpoint of this bank
     pub(crate) parent: RwLock<Option<Arc<Bank>>>,
 
-    pub(crate) bank_id_generator: Arc<AtomicU64>,
+    pub(crate) bank_id_generator: Arc<BankIdGenerator>,
 }
 
 impl BankRc {
@@ -347,7 +349,7 @@ impl BankRc {
         Self {
             accounts: Arc::new(accounts),
             parent: RwLock::new(None),
-            bank_id_generator: Arc::new(AtomicU64::new(0)),
+            bank_id_generator: Arc::default(),
         }
     }
 }
@@ -1270,8 +1272,10 @@ impl Bank {
             .accounts_db
             .partitioned_epoch_rewards_config
             .stake_account_stores_per_block;
+        let rc = BankRc::new(accounts);
+        let bank_id = rc.bank_id_generator.next();
         let mut bank = Self {
-            rc: BankRc::new(accounts),
+            rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             store_transaction_signatures_in_status_cache: !RuntimeConfig::default()
                 .skip_transaction_signatures_in_status_cache,
@@ -1300,7 +1304,7 @@ impl Bank {
             slots_per_year: f64::default(),
             slot_params: SlotParamsArchive::default(),
             slot: Slot::default(),
-            bank_id: BankId::default(),
+            bank_id,
             epoch: Epoch::default(),
             block_height: u64::default(),
             leader: SlotLeader::default(),
@@ -1497,7 +1501,7 @@ impl Bank {
             FeeRateGovernor::new_derived(&parent.fee_rate_governor, parent.signature_count())
         );
 
-        let bank_id = rc.bank_id_generator.fetch_add(1, Relaxed) + 1;
+        let bank_id = rc.bank_id_generator.next();
         let (blockhash_queue, blockhash_queue_time_us) =
             measure_us!(RwLock::new(parent.blockhash_queue.read().unwrap().clone()));
 
@@ -2244,6 +2248,7 @@ impl Bank {
             .accounts_db
             .partitioned_epoch_rewards_config
             .stake_account_stores_per_block;
+        let bank_id = bank_rc.bank_id_generator.next();
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
@@ -2274,7 +2279,7 @@ impl Bank {
             slots_per_year: fields.slots_per_year,
             slot_params: SlotParamsArchive::default(),
             slot,
-            bank_id: 0,
+            bank_id,
             epoch,
             block_height: fields.block_height,
             leader,

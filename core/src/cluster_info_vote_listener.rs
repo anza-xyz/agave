@@ -261,7 +261,7 @@ impl BufferedVote {
             (Self::Executed(parsed_vote), ReplayVoteAction::Executed(_)) => {
                 debug_assert!(
                     false,
-                    "duplicate Executed replay vote for same bank {replay_bank_id} message hash \
+                    "duplicate Executed replay vote for same bank {replay_bank_id:?} message hash \
                      {message_hash}"
                 );
                 Some(Self::Executed(parsed_vote))
@@ -356,7 +356,7 @@ impl VoteBuffer {
                 } => {
                     debug_assert!(
                         !message_hashes.is_empty(),
-                        "empty replay Verified message for bank {replay_bank_id}, slot \
+                        "empty replay Verified message for bank {replay_bank_id:?}, slot \
                          {replay_slot}"
                     );
                     match self.bank_votes.entry(replay_bank_id) {
