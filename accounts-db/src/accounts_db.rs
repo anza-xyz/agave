@@ -1508,19 +1508,13 @@ impl AccountsDb {
     // collection
     // Only remove those accounts where the entire rooted history of the account
     // can be purged because there are no live append vecs in the ancestors
-    pub fn clean_accounts(&self, max_clean_root_inclusive: Slot, is_startup: bool) {
+    pub fn clean_accounts(&self, max_clean_root_inclusive: Slot) {
         if self.verify_index {
             // verify_index calls par_iter, so give it a pool of its own rather than inheriting
-            // whichever one the caller happens to be running on. At startup there is no replay to
-            // protect, so use all cores; otherwise stay narrow and leave the rest for replay.
-            let num_threads = if is_startup {
-                num_cpus::get()
-            } else {
-                quarter_thread_count()
-            };
+            // whichever one the caller happens to be running on.
             let pool = rayon::ThreadPoolBuilder::new()
                 .thread_name(|i| format!("solAcctsDbVfy{i:02}"))
-                .num_threads(num_threads)
+                .num_threads(quarter_thread_count())
                 .build()
                 .expect("new rayon threadpool");
             pool.install(|| self.verify_index(max_clean_root_inclusive));
@@ -1659,11 +1653,7 @@ impl AccountsDb {
             .activate(ActiveStatItem::CleanScanCandidates);
         let mut accounts_scan = Measure::start("accounts_scan");
         if num_candidates > 0 {
-            if is_startup {
-                do_clean_scan();
-            } else {
-                self.thread_pool_background.install(do_clean_scan);
-            }
+            self.thread_pool_background.install(do_clean_scan);
         }
         accounts_scan.stop();
         drop(active_guard);
@@ -5600,7 +5590,7 @@ impl AccountsDb {
             .map(|(slot, _storage)| slot)
             .max()
             .unwrap_or_default();
-        self.clean_accounts(max_storage_slot, false)
+        self.clean_accounts(max_storage_slot)
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {

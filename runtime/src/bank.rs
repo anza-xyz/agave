@@ -6217,7 +6217,7 @@ impl Bank {
         self.rc
             .accounts
             .accounts_db
-            .clean_accounts(highest_slot_to_clean, false);
+            .clean_accounts(highest_slot_to_clean);
     }
 
     pub fn print_accounts_stats(&self) {
