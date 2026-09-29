@@ -24,14 +24,10 @@ if ! command -v grcov >/dev/null 2>&1; then
   exit 1
 fi
 
-# nightly, since the ci image ships llvm-tools only for the nightly toolchain
-# shellcheck source=ci/rust-version.sh
-source "$here/../ci/rust-version.sh" nightly
-
 # Check llvm path
-llvm_profdata="$(find "$(rustc +"$rust_nightly" --print sysroot)" -name llvm-profdata)"
+llvm_profdata="$(find "$(rustc --print sysroot)" -name llvm-profdata)"
 if [ -z "$llvm_profdata" ]; then
-  echo "Error: couldn't find llvm-profdata. Try installing the llvm-tools component with \`rustup component add llvm-tools-preview --toolchain=$rust_nightly\`"
+  echo "Error: couldn't find llvm-profdata. Try installing the llvm-tools component with \`rustup component add llvm-tools-preview\`"
   exit 1
 fi
 llvm_path="$(dirname "$llvm_profdata")"
@@ -75,7 +71,7 @@ TEST_ARGS=(
 # redirecting the stderr altogether on CI, where all tests are run unlike
 # developing.
 RUST_LOG="solana=trace,agave=trace,$RUST_LOG" INTERCEPT_OUTPUT=/dev/null "$here/../ci/intercept.sh" \
-  cargo +"$rust_nightly" test --target-dir "$here/../target/cov" "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
+  cargo test --target-dir "$here/../target/cov" "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
 
 # Generate test reports
 echo "--- grcov"
