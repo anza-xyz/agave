@@ -2,6 +2,8 @@
 //! node stakes
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::{
         alpenglow_epoch_type::RewardEpochDelegatedStakes, stake_account,

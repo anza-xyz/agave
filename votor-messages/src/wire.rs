@@ -40,6 +40,8 @@
 //! `VoteMessage` verification happens in the bls-sigverify crate and
 //! `Certificate` verfication happens in the `bls-cert-verify` crate.
 
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{
         certificate::{Certificate, CertificateType},

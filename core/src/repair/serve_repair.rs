@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[cfg(test)]
 use {
     crate::repair::standard_repair_handler::StandardRepairHandler,

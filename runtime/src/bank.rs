@@ -33,6 +33,8 @@
 //! It offers a high-level API that signs transactions
 //! on behalf of the caller, and a low-level API for when they have
 //! already been signed and verified.
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 pub use {
     crate::slot_params::DEFAULT_MAX_ENTRY_BYTES_PER_SLOT,
     partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_leader_schedule::SlotLeader,

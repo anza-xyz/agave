@@ -52,7 +52,3 @@ pub use {
 
 #[macro_use]
 extern crate solana_metrics;
-
-#[cfg_attr(feature = "stable-abi", macro_use)]
-#[cfg(feature = "stable-abi")]
-extern crate solana_frozen_abi_macro;

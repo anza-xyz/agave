@@ -15,10 +15,6 @@ pub mod unverified_vote_message;
 pub mod vote;
 pub mod wire;
 
-#[cfg_attr(feature = "stable-abi", macro_use)]
-#[cfg(feature = "stable-abi")]
-extern crate solana_frozen_abi_macro;
-
 #[derive(Debug, PartialEq, Eq)]
 /// Different ways of storing a list of vote account pubkeys.
 pub enum VoteAccountPubkeys {

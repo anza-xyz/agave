@@ -2,6 +2,8 @@
 
 #[cfg(feature = "shuttle-test")]
 use shuttle::sync::Mutex;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::Mutex;
 use {

@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, frozen_abi};
 use {
     crate::{client_ids::ClientId, compute_commit},
     rand::{Rng, rng},

@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::recycler::{RecyclerX, Reset},
     rand::{Rng, seq::SliceRandom},

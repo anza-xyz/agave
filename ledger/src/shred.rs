@@ -52,6 +52,8 @@
 pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 #[cfg(test)]
 use rand::Rng;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},

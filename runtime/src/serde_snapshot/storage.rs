@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// The serialized AccountsFileId type is fixed as usize

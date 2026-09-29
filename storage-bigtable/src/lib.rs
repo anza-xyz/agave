@@ -1,6 +1,8 @@
 #![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::bigtable::RowKey,
     agave_reserved_account_keys::ReservedAccountKeys,
@@ -41,10 +43,6 @@ use {
 
 #[macro_use]
 extern crate solana_metrics;
-
-#[cfg_attr(feature = "stable-abi", macro_use)]
-#[cfg(feature = "stable-abi")]
-extern crate solana_frozen_abi_macro;
 
 mod access_token;
 mod bigtable;

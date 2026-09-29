@@ -11695,7 +11695,6 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
  "solana-hash",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",

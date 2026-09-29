@@ -1,4 +1,6 @@
 //! Put Alpenglow consensus messages here so all clients can agree on the format.
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::{certificate::Certificate, vote::Vote},
     serde::{Deserialize, Serialize},

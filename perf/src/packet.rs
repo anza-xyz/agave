@@ -1,4 +1,6 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 #[cfg(feature = "dev-context-only-utils")]
 use wincode::{ReadError, ReadResult, SchemaRead, config::DefaultConfig};
 use {

@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[expect(deprecated)]
 use solana_stake_interface::config::Config as StakeConfig;
 use {

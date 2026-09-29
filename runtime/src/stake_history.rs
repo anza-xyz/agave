@@ -1,5 +1,7 @@
 //! This module implements clone-on-write semantics for the SDK's `StakeHistory` to reduce
 //! unnecessary cloning of the underlying vector.
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 pub use solana_stake_history::StakeHistoryGetEntry;
 use {
     solana_clock::Epoch,

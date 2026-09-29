@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes;
 use {

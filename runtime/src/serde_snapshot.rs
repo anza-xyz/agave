@@ -1,5 +1,7 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi::stable_abi;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use std::{
     ffi::{CStr, CString},

@@ -1,5 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::crds_data::sanitize_wallclock,
     itertools::Itertools,

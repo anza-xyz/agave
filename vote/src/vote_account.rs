@@ -7,6 +7,8 @@ use qualifier_attr::field_qualifiers;
 use rand::{Rng, RngCore};
 #[cfg(all(feature = "stable-abi", not(feature = "dev-context-only-utils")))]
 use solana_frozen_abi::rand::{Rng, RngCore};
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::vote_state_view::VoteStateView,
     log::*,

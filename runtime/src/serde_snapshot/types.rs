@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     solana_accounts_db::accounts_hash::AccountsLtHash,
     solana_clock::Epoch,

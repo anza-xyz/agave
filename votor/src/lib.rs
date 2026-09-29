@@ -21,10 +21,6 @@ pub mod voting_service;
 pub mod voting_utils;
 pub mod votor;
 
-#[cfg_attr(feature = "stable-abi", macro_use)]
-#[cfg(feature = "stable-abi")]
-extern crate solana_frozen_abi_macro;
-
 #[cfg(test)]
 mod tests {
     use {
