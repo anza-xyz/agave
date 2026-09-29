@@ -1,15 +1,21 @@
-use {crate::banking_stage::scheduler_messages::TransactionId, std::cmp::Ordering};
+use std::{cmp::Ordering, collections::BTreeSet};
 
-/// A unique identifier tied with priority ordering for a transaction/packet:
+/// Queued transaction IDs ordered by priority, then arrival order, then ID.
+///
+/// Pop the last entry for scheduling or the first entry for eviction. Transaction ownership,
+/// capacity enforcement, and assignment of IDs and arrival order belong to the caller.
+pub type TransactionPriorityQueue = BTreeSet<TransactionPriorityId>;
+
+/// Orders transactions by priority, favoring earlier arrivals and then smaller IDs on ties.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TransactionPriorityId {
-    pub(crate) priority: u64,
-    pub(crate) arrival_order: u64,
-    pub(crate) id: TransactionId,
+pub struct TransactionPriorityId {
+    pub priority: u64,
+    pub arrival_order: u64,
+    pub id: usize,
 }
 
 impl TransactionPriorityId {
-    pub(crate) fn new(priority: u64, arrival_order: u64, id: TransactionId) -> Self {
+    pub fn new(priority: u64, arrival_order: u64, id: usize) -> Self {
         Self {
             priority,
             arrival_order,

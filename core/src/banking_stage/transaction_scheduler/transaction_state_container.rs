@@ -1,6 +1,9 @@
 use {
-    super::{transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState},
+    super::transaction_state::TransactionState,
     crate::banking_stage::scheduler_messages::TransactionId,
+    agave_scheduling_utils::transaction_priority_queue::{
+        TransactionPriorityId, TransactionPriorityQueue,
+    },
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     slab::{Slab, VacantEntry},
     solana_perf::packet::bytes::Bytes,
@@ -9,7 +12,7 @@ use {
         runtime_transaction::RuntimeTransaction, transaction_with_meta::StaticTransactionWithMeta,
     },
     std::{
-        collections::{BTreeSet, HashMap, hash_map::Entry},
+        collections::{HashMap, hash_map::Entry},
         iter::Rev,
         ops::Bound,
     },
@@ -42,7 +45,7 @@ use {
 /// a new transaction, the lowest priority transaction will be dropped.
 pub(crate) struct TransactionStateContainer<Tx: StaticTransactionWithMeta> {
     capacity: usize,
-    priority_queue: BTreeSet<TransactionPriorityId>,
+    priority_queue: TransactionPriorityQueue,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
     next_arrival_order: u64,
     held_transactions: Vec<TransactionPriorityId>,
@@ -144,7 +147,7 @@ impl<Tx: StaticTransactionWithMeta> StateContainer<Tx> for TransactionStateConta
     fn with_capacity(capacity: usize) -> Self {
         Self {
             capacity,
-            priority_queue: BTreeSet::new(),
+            priority_queue: TransactionPriorityQueue::new(),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
             next_arrival_order: 0,
             held_transactions: Vec::with_capacity(capacity),
