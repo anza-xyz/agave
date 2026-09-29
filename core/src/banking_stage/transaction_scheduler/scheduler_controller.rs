@@ -22,10 +22,10 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    solana_clock::{BankId, DEFAULT_MS_PER_SLOT},
+    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
-    solana_runtime::bank_forks::SharableBanks,
+    solana_runtime::{bank::BankId, bank_forks::SharableBanks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},

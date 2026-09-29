@@ -9,8 +9,8 @@ use {
     },
     arc_swap::ArcSwap,
     log::*,
-    solana_clock::{BankId, UnixTimestamp},
-    solana_runtime::bank::KeyedRewardsAndNumPartitions,
+    solana_clock::UnixTimestamp,
+    solana_runtime::bank::{BankId, KeyedRewardsAndNumPartitions},
     std::sync::Arc,
 };
 

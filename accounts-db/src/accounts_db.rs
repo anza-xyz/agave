@@ -55,6 +55,7 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         append_vec::{self, AppendVec},
+        bank_id::BankId,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::PartitionedEpochRewardsConfig,
@@ -72,7 +73,7 @@ use {
     rayon::{ThreadPool, prelude::*},
     seqlock::SeqLock,
     solana_account::{Account, AccountSharedData, ReadableAccount},
-    solana_clock::{BankId, Epoch, Slot},
+    solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::{
         batch,

@@ -9,6 +9,7 @@ use {
         accounts_index::IndexKey,
         accounts_scan::{ScanConfig, ScanError, ScanResult},
         ancestors::Ancestors,
+        bank_id::BankId,
         is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
     },
@@ -17,7 +18,7 @@ use {
     solana_address_lookup_table_interface::{
         self as address_lookup_table, error::AddressLookupError, state::AddressLookupTable,
     },
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_message::v0::LoadedAddresses,
     solana_pubkey::Pubkey,
     solana_slot_hashes::SlotHashes,

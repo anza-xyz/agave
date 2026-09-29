@@ -23,7 +23,7 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded},
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_entry::{
         block_component::{BlockFooterV1, VersionedBlockMarker},
         entry::Entry,
@@ -37,7 +37,8 @@ use {
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank, block_component_processor::BankFooterError,
+        bank::{Bank, BankId},
+        block_component_processor::BankFooterError,
         installed_scheduler_pool::BankWithScheduler,
         validated_reward_certificate::Error as ValidatedRewardCertError,
     },

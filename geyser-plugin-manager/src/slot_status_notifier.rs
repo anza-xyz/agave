@@ -1,11 +1,8 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
-    agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
-    arc_swap::ArcSwap,
-    log::*,
-    solana_clock::{BankId, Slot},
-    solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
-    std::sync::Arc,
+    agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus, arc_swap::ArcSwap, log::*,
+    solana_clock::Slot, solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
+    solana_runtime::bank::BankId, std::sync::Arc,
 };
 
 pub struct SlotStatusNotifierImpl {

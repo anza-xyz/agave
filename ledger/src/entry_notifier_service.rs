@@ -1,8 +1,9 @@
 use {
     crate::entry_notifier_interface::{EntryNotifierArc, EntryUpdateParentInfo},
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError, bounded},
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
+    solana_runtime::bank::BankId,
     std::{
         sync::{
             Arc,

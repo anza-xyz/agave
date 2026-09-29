@@ -1,7 +1,7 @@
 use {
-    crate::accounts_db::AccountsDb,
+    crate::{accounts_db::AccountsDb, bank_id::BankId},
     solana_account::AccountSharedData,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
 };

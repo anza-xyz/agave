@@ -63,7 +63,7 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        BankId, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot,
+        DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot,
         UnixTimestamp,
     },
     solana_cluster_type::ClusterType,

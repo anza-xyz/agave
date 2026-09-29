@@ -1,6 +1,6 @@
 use {
-    crate::ancestors::Ancestors,
-    solana_clock::{BankId, Slot},
+    crate::{ancestors::Ancestors, bank_id::BankId},
+    solana_clock::Slot,
     std::{
         collections::{HashSet, btree_map::BTreeMap},
         sync::{

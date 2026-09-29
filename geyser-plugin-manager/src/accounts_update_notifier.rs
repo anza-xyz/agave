@@ -10,8 +10,9 @@ use {
     solana_accounts_db::accounts_update_notifier_interface::{
         AccountForGeyser, AccountsUpdateNotifierInterface,
     },
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
+    solana_runtime::bank::BankId,
     solana_transaction::sanitized::SanitizedTransaction,
     std::sync::Arc,
 };

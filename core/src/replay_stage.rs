@@ -53,7 +53,7 @@ use {
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
     solana_accounts_db::contains::Contains,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -84,7 +84,7 @@ use {
         slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
-        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions, bank_hash_details},
+        bank::{Bank, BankId, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions, bank_hash_details},
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommand, BankForksCommandReceiver, SetRootCommand},
         block_component_processor::BlockComponentProcessorError,

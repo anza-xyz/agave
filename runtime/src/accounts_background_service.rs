@@ -9,7 +9,7 @@ pub use pending_snapshot_packages::PendingSnapshotPackages;
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        bank::{Bank, BankSlotDelta, DropCallback},
+        bank::{Bank, BankId, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
         snapshot_controller::SnapshotController,
         snapshot_package::SnapshotPackage,
@@ -17,7 +17,7 @@ use {
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind, error::SnapshotError},
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_measure::{measure::Measure, measure_us},
     stats::StatsManager,
     std::{

@@ -37,8 +37,8 @@
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 pub use {
     crate::slot_params::DEFAULT_MAX_ENTRY_BYTES_PER_SLOT,
-    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_leader_schedule::SlotLeader,
-    solana_reward_info::RewardType,
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_accounts_db::bank_id::BankId,
+    solana_leader_schedule::SlotLeader, solana_reward_info::RewardType,
 };
 use {
     crate::{
@@ -123,8 +123,8 @@ use {
     },
     solana_builtins::{BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
-        BankId, Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
-        Slot, SlotIndex, UnixTimestamp,
+        Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot,
+        SlotIndex, UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,

@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        bank::{Bank, SquashTiming, bank_hash_details},
+        bank::{Bank, BankId, SquashTiming, bank_hash_details},
         installed_scheduler_pool::{
             BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
         },
@@ -12,7 +12,7 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},

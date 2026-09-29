@@ -28,7 +28,7 @@ use {
         account_locks::validate_account_locks, accounts_db::AccountsDbConfig,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_entry::{
         block_component::{ParsedBlockComponent, VersionedBlockMarker},
         entry::{
@@ -42,7 +42,7 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, NewBankOptions},
+        bank::{Bank, BankId, NewBankOptions},
         bank_forks::BankForks,
         block_component_processor::BlockComponentProcessorError,
         commitment::VOTE_THRESHOLD_SIZE,

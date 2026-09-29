@@ -13,7 +13,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         crds::Cursor,
@@ -28,7 +28,7 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, BankId},
         bank_forks::{BankForks, SharableBanks},
         commitment::VOTE_THRESHOLD_SIZE,
         epoch_stakes::VersionedEpochStakes,

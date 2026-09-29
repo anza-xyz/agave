@@ -11,7 +11,7 @@ use std::sync::{
 use {
     crate::poh_recorder::Record,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, bounded},
-    solana_clock::BankId,
+    solana_runtime::bank::BankId,
     std::time::Duration,
 };
 

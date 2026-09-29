@@ -1,6 +1,6 @@
 use {
     crate::{
-        bank::{Bank, TransactionBalancesSet},
+        bank::{Bank, BankId, TransactionBalancesSet},
         bank_utils,
         dependency_tracker::DependencyTracker,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -9,7 +9,7 @@ use {
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     log::{trace, warn},
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_measure::measure::Measure,
     solana_runtime_transaction::transaction_with_meta::{TransactionWithMeta, writable_accounts},

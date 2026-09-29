@@ -1,9 +1,12 @@
 use {
-    crate::{bank::Bank, prioritization_fee::PrioritizationFee},
+    crate::{
+        bank::{Bank, BankId},
+        prioritization_fee::PrioritizationFee,
+    },
     crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
     log::*,
     solana_accounts_db::account_locks::validate_account_locks,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,

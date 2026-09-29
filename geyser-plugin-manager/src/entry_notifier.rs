@@ -11,9 +11,10 @@ use {
     },
     arc_swap::ArcSwap,
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_entry::{block_component, entry::EntrySummary},
     solana_ledger::entry_notifier_interface::{EntryNotifier, EntryUpdateParentInfo},
+    solana_runtime::bank::BankId,
     std::sync::Arc,
 };
 
