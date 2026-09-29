@@ -24,6 +24,7 @@ agave-scheduler-handshake = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 rts-alloc = { workspace = true }
 shaq = { workspace = true }
+slab = { workspace = true }
 solana-clock = { workspace = true }
 
 [dev-dependencies]

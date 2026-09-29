@@ -20,6 +20,14 @@ use {
 
 mod progress_tracker;
 mod tpu_ingress;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "used by the upcoming check worker response handler"
+    )
+)]
+mod transaction_container;
 
 #[cfg(test)]
 mod tests;

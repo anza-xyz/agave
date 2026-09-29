@@ -72,6 +72,7 @@ dependencies = [
  "agave-scheduling-utils",
  "rts-alloc",
  "shaq",
+ "slab",
  "solana-clock",
 ]
 
