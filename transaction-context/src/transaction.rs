@@ -477,7 +477,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Pushes the next instruction
-    pub fn push(&mut self) -> Result<(), InstructionError> {
+    pub fn push(&mut self, detect_overflow_early: bool) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_stack_height();
         if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
             return Err(InstructionError::UnbalancedInstruction);
@@ -490,7 +490,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction.nesting_level = nesting_level as u16;
         }
 
-        if self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity {
+        if !detect_overflow_early
+            && self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity
+        {
+            return Err(InstructionError::MaxInstructionTraceLengthExceeded);
+        }
+
+        if detect_overflow_early
+            && self.transaction_frame.total_number_of_instructions_in_trace as usize
+                > self.instruction_trace_capacity
+        {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
 
@@ -784,7 +793,7 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
 
 #[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
-    use super::*;
+    use {super::*, test_case::test_case};
 
     #[test]
     fn test_instructions_sysvar_store_index_checked() {
@@ -808,7 +817,7 @@ mod tests {
         let account =
             AccountSharedData::new(rent_exempt_lamports, correct_space, &Pubkey::new_unique());
         assert_eq!(
-            build_transaction_context(account).push(),
+            build_transaction_context(account).push(false),
             Err(InstructionError::InvalidAccountOwner),
         );
 
@@ -816,7 +825,7 @@ mod tests {
         let account =
             AccountSharedData::new(rent_exempt_lamports, 0, &solana_sdk_ids::sysvar::id());
         assert_eq!(
-            build_transaction_context(account).push(),
+            build_transaction_context(account).push(false),
             Err(InstructionError::AccountDataTooSmall),
         );
 
@@ -826,7 +835,7 @@ mod tests {
             correct_space,
             &solana_sdk_ids::sysvar::id(),
         );
-        assert_eq!(build_transaction_context(account).push(), Ok(()),);
+        assert_eq!(build_transaction_context(account).push(false), Ok(()),);
     }
 
     #[test]
@@ -878,7 +887,7 @@ mod tests {
                 vec![1, 2, 3, 4],
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
 
         let instruction_accounts_2 = vec![
             InstructionAccount::new(0, false, true),
@@ -892,7 +901,7 @@ mod tests {
                 vec![5, 6, 7, 8, 9],
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
 
         let instruction_accounts_3 = vec![
             InstructionAccount::new(0, false, true),
@@ -908,7 +917,7 @@ mod tests {
                 vec![10, 11],
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
 
         let first_ix_context = transaction_context
             .get_instruction_context_at_index_in_trace(0)
@@ -1029,7 +1038,7 @@ mod tests {
             .unwrap();
 
         // Executing instruction #0
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1099,7 +1108,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1149,7 +1158,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1226,7 +1235,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1354,7 +1363,7 @@ mod tests {
 
         // Let's go to Instruction #1 (top level)
         transaction_context.pop().unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1377,7 +1386,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
 
         assert_eq!(
             transaction_context
@@ -1474,7 +1483,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
             0
@@ -1482,7 +1491,7 @@ mod tests {
 
         transaction_context.pop().unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
             1
@@ -1499,7 +1508,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
             2
@@ -1516,7 +1525,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
             3
@@ -1723,5 +1732,93 @@ mod tests {
         assert_eq!(acc.index_in_transaction, 0);
         assert!(acc.is_signer());
         assert!(acc.is_writable());
+    }
+
+    #[test_case(false; "simd_582_disabled")]
+    #[test_case(true; "simd_582_enabled")]
+    fn test_max_instruction_trace_len_exceeded(fail_early: bool) {
+        const IX_TRACE_CAPACITY: usize = 5;
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+
+        for number_of_top_level_instructions in 4..=5 {
+            // Simulate a trace capacity of 5
+            let mut transaction_context = TransactionContext::new(
+                transaction_accounts.clone(),
+                Rent::default(),
+                6,
+                IX_TRACE_CAPACITY,
+                number_of_top_level_instructions,
+            );
+
+            // Configure top-level instructions
+            for idx_to_configure in 0..number_of_top_level_instructions {
+                transaction_context
+                    .configure_instruction_at_index(
+                        idx_to_configure,
+                        0,
+                        vec![InstructionAccount::new(1, false, false)],
+                        vec![0; 3],
+                        Vec::new().into(),
+                        None,
+                    )
+                    .unwrap();
+            }
+
+            // Execute instructions
+            let mut pushed_ixs: usize = 0;
+            let mut ix_in_trace = number_of_top_level_instructions;
+            for ix_num in 0..number_of_top_level_instructions {
+                let result = transaction_context.push(fail_early);
+                pushed_ixs = pushed_ixs.saturating_add(1);
+                if !fail_early && pushed_ixs > IX_TRACE_CAPACITY {
+                    assert_eq!(pushed_ixs, IX_TRACE_CAPACITY.saturating_add(1));
+                    assert_eq!(
+                        transaction_context.number_of_called_instructions_in_trace(),
+                        IX_TRACE_CAPACITY
+                    );
+                    assert_eq!(
+                        result,
+                        Err(InstructionError::MaxInstructionTraceLengthExceeded)
+                    );
+                    break;
+                } else {
+                    assert!(result.is_ok());
+                }
+
+                // Two first ixs perform a CPI
+                if ix_num < 2 {
+                    transaction_context
+                        .configure_next_cpi_for_tests(
+                            0,
+                            vec![InstructionAccount::new(2, false, false)],
+                            Vec::new(),
+                        )
+                        .unwrap();
+
+                    ix_in_trace = ix_in_trace.saturating_add(1);
+                    pushed_ixs = pushed_ixs.saturating_add(1);
+                    let result = transaction_context.push(fail_early);
+                    if fail_early && ix_in_trace > IX_TRACE_CAPACITY {
+                        assert_eq!(ix_in_trace, IX_TRACE_CAPACITY.saturating_add(1));
+                        assert_eq!(
+                            transaction_context
+                                .transaction_frame
+                                .total_number_of_instructions_in_trace
+                                as usize,
+                            IX_TRACE_CAPACITY.saturating_add(1)
+                        );
+                        assert_eq!(
+                            result,
+                            Err(InstructionError::MaxInstructionTraceLengthExceeded)
+                        );
+                        break;
+                    } else {
+                        assert!(result.is_ok());
+                    }
+                    transaction_context.pop().unwrap();
+                }
+                transaction_context.pop().unwrap();
+            }
+        }
     }
 }

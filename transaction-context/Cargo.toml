@@ -46,6 +46,7 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 static_assertions = { workspace = true }
+test-case = { workspace = true }
 
 [lints]
 workspace = true

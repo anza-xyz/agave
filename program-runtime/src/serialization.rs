@@ -1538,7 +1538,7 @@ mod tests {
         transaction_context
             .configure_top_level_instruction_for_tests(6, instruction_accounts, vec![])
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
