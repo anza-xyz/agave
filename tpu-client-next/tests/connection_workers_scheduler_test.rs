@@ -2,8 +2,9 @@ use {
     crossbeam_channel::Receiver as CrossbeamReceiver,
     futures::future::BoxFuture,
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{
-        bind_to, localhost_port_range_for_tests, unique_port_range_for_tests,
+    solana_net_utils::{
+        SocketAddrSpace,
+        sockets::{bind_to, localhost_port_range_for_tests, unique_port_range_for_tests},
     },
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -437,6 +438,7 @@ async fn test_staked_connection() {
     } = setup_quic_server(
         Some(staked_nodes),
         QuicStreamerConfig {
+            socket_addr_space: SocketAddrSpace::Unspecified,
             ..QuicStreamerConfig::default()
         },
         SwQosConfig {

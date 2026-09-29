@@ -13,7 +13,10 @@ use {
     crossbeam_channel::bounded,
     log::{debug, info},
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{SocketConfiguration, bind_to_with_config},
+    solana_net_utils::{
+        SocketAddrSpace,
+        sockets::{SocketConfiguration, bind_to_with_config},
+    },
     solana_pubkey::Pubkey,
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
@@ -124,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
         QuicStreamerConfig {
             stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+            socket_addr_space: SocketAddrSpace::Unspecified,
             ..QuicStreamerConfig::default()
         },
         SwQosConfig {
