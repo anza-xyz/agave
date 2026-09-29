@@ -1306,6 +1306,7 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
 mod tests {
     use {
         super::*,
+        solana_clock::DEFAULT_MS_PER_SLOT,
         solana_instruction::AccountMeta,
         solana_keypair::{read_keypair_file, write_keypair_file},
         solana_native_token::LAMPORTS_PER_SOL,
@@ -1314,10 +1315,7 @@ mod tests {
         solana_stake_interface::instruction::StakeInstruction,
         solana_test_validator::TestValidator,
         solana_transaction_status::TransactionConfirmationStatus,
-        std::slice,
-        std::thread::sleep,
-        std::time::Duration,
-        std::time::Instant,
+        std::{slice, thread::sleep, time::Duration},
     };
 
     fn one_signer_message(client: &RpcClient) -> Message {
@@ -2039,28 +2037,11 @@ mod tests {
         );
         let message = Message::new(&instructions, Some(&sender_keypair.pubkey()));
         let signers = [sender_keypair, &stake_account_keypair];
-        // The stake program is deployed at genesis, but programs added to
-        // genesis are not immediately usable: the new program only becomes
-        // visible from a later slot, and under load that can take a while.
-        // Retry until it succeeds instead of failing the test.
-        const DEPLOY_WAIT: Duration = Duration::from_secs(60);
-        let deadline = Instant::now() + DEPLOY_WAIT;
-        loop {
-            let blockhash = client.get_latest_blockhash().unwrap();
-            let transaction = Transaction::new(&signers, message.clone(), blockhash);
-            match client.send_and_confirm_transaction_with_spinner(&transaction) {
-                Ok(_) => break,
-                Err(err) => {
-                    if !format!("{err:?}").contains("Program is not deployed") {
-                        panic!("Unexpected error creating the stake account: {err:?}");
-                    }
-                    if Instant::now() >= deadline {
-                        panic!("Timed out waiting for the stake program to become deployable");
-                    }
-                    sleep(Duration::from_millis(100));
-                }
-            }
-        }
+        let blockhash = client.get_latest_blockhash().unwrap();
+        let transaction = Transaction::new(&signers, message, blockhash);
+        client
+            .send_and_confirm_transaction_with_spinner(&transaction)
+            .unwrap();
 
         let sender_stake_args = SenderStakeArgs {
             stake_account_address,
@@ -2078,7 +2059,21 @@ mod tests {
     }
 
     fn simple_test_validator(alice: Pubkey) -> TestValidator {
-        TestValidator::start_with_config(alice, None, SocketAddrSpace::Unspecified)
+        let test_validator =
+            TestValidator::start_with_config(alice, None, SocketAddrSpace::Unspecified);
+        // Programs deployed at genesis (e.g. the stake program) are only usable
+        // after the first slots are processed. Wait until the validator is ready,
+        // following the CLI's check_ready.
+        let rpc_client =
+            RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+        while rpc_client
+            .get_slot_with_commitment(CommitmentConfig::processed())
+            .unwrap()
+            < 5
+        {
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
+        }
+        test_validator
     }
 
     #[test]
