@@ -92,39 +92,16 @@ impl ThreadAwareAccountLocks {
         allowed_threads: ThreadSet,
         thread_selector: impl FnOnce(ThreadSet) -> ThreadId,
     ) -> Result<ThreadId, TryLockError> {
-        let mut schedulable_threads = ThreadSet::any(self.num_threads);
-
-        for (account, is_writable) in account_locks.clone() {
-            schedulable_threads &= if is_writable {
-                self.write_schedulable_threads(account)
-            } else {
-                self.read_schedulable_threads(account)
-            };
-
-            if schedulable_threads.is_empty() {
-                return Err(TryLockError::MultipleConflicts);
-            }
-        }
-
-        schedulable_threads &= allowed_threads;
+        let schedulable_threads = self
+            .accounts_schedulable_threads(account_locks.clone())
+            .ok_or(TryLockError::MultipleConflicts)?;
+        let schedulable_threads = schedulable_threads & allowed_threads;
         if schedulable_threads.is_empty() {
             return Err(TryLockError::ThreadNotAllowed);
         }
 
         let thread_id = thread_selector(schedulable_threads);
-        assert!(
-            thread_id < self.num_threads,
-            "thread_id must be < num_threads"
-        );
-
-        for (account, is_writable) in account_locks {
-            if is_writable {
-                self.write_lock_account(account, thread_id);
-            } else {
-                self.read_lock_account(account, thread_id);
-            }
-        }
-
+        self.lock_accounts(account_locks, thread_id);
         Ok(thread_id)
     }
 
@@ -138,6 +115,44 @@ impl ThreadAwareAccountLocks {
                 self.write_unlock_account(account, thread_id);
             } else {
                 self.read_unlock_account(account, thread_id);
+            }
+        }
+    }
+
+    /// Returns the threads on which all accounts can be scheduled.
+    fn accounts_schedulable_threads<'a>(
+        &self,
+        account_locks: impl Iterator<Item = (&'a Pubkey, bool)>,
+    ) -> Option<ThreadSet> {
+        let mut schedulable_threads = ThreadSet::any(self.num_threads);
+        for (account, is_writable) in account_locks {
+            schedulable_threads &= if is_writable {
+                self.write_schedulable_threads(account)
+            } else {
+                self.read_schedulable_threads(account)
+            };
+            if schedulable_threads.is_empty() {
+                return None;
+            }
+        }
+        Some(schedulable_threads)
+    }
+
+    /// Adds all account locks on the selected thread.
+    fn lock_accounts<'a>(
+        &mut self,
+        account_locks: impl Iterator<Item = (&'a Pubkey, bool)>,
+        thread_id: ThreadId,
+    ) {
+        assert!(
+            thread_id < self.num_threads,
+            "thread_id must be < num_threads"
+        );
+        for (account, is_writable) in account_locks {
+            if is_writable {
+                self.write_lock_account(account, thread_id);
+            } else {
+                self.read_lock_account(account, thread_id);
             }
         }
     }
