@@ -223,19 +223,17 @@ impl AccountsFile {
         Ok(())
     }
 
-    /// Copy each account metadata, account and hash to the internal buffer.
-    /// If there is no room to write the first entry, None is returned.
-    /// Otherwise, returns the starting offset of each account metadata.
-    /// Plus, the final return value is the offset where the next entry would be appended.
-    /// So, return.len() is 1 + (number of accounts written)
-    /// After each account is appended, the internal `current_len` is updated
-    /// and will be available to other threads.
+    /// Writes `accounts` to the file.
+    ///
+    /// Returns the starting offset of each written account.
     pub fn write_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
-    ) -> Option<StoredAccountsInfo> {
+    ) -> Result<StoredAccountsInfo> {
         match self {
-            Self::AppendVec(av) => av.append_accounts(accounts),
+            Self::AppendVec(av) => Ok(av
+                .append_accounts(accounts)
+                .ok_or_else(|| io::Error::other("AppendVec did not write any accounts"))?),
         }
     }
 

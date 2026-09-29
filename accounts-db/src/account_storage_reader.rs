@@ -245,7 +245,10 @@ mod tests {
             (&Pubkey::new_unique(), &account2),
         ];
 
-        storage.accounts.write_accounts(&(slot, &accounts[..]));
+        storage
+            .accounts
+            .write_accounts(&(slot, &accounts[..]))
+            .unwrap();
 
         let files = open_storage_files(iter::once(&storage), false)
             .collect::<io::Result<Vec<_>>>()
@@ -469,7 +472,8 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .write_accounts(&(slot, &accounts_to_append[..]));
+            .write_accounts(&(slot, &accounts_to_append[..]))
+            .unwrap();
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -478,20 +482,13 @@ mod tests {
         // Use a seedable RNG with the generated seed for reproducibility
         let mut rng = StdRng::seed_from_u64(seed);
 
-        let max_offset = offsets
-            .as_ref()
-            .and_then(|offsets| offsets.offsets.iter().max().cloned())
-            .unwrap();
+        let max_offset = offsets.offsets.iter().max().cloned().unwrap();
 
         let mut obsolete_account_offset = offsets
-            .map(|offsets| {
-                offsets
-                    .offsets
-                    .choose_multiple(&mut rng, total_accounts - 1)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            .offsets
+            .choose_multiple(&mut rng, total_accounts - 1)
+            .cloned()
+            .collect::<Vec<_>>();
 
         // Ensure that the last entry will be marked obsolete at some point
         if !obsolete_account_offset.contains(&max_offset) {

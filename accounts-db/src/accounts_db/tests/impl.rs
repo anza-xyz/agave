@@ -155,7 +155,7 @@ fn test_generate_index_duplicates_within_slot() {
     let storable_accounts = (slot0, &data[..]);
 
     // construct store with account to generate an index from
-    store.accounts.write_accounts(&storable_accounts);
+    store.accounts.write_accounts(&storable_accounts).unwrap();
     db.storage.insert(Arc::new(store));
 
     assert!(!db.accounts_index.contains(&pubkey));
@@ -175,7 +175,10 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
 
     let data = [(&pubkey, &account)];
     let storable_accounts = (slot0, &data[..]);
-    append_vec.accounts.write_accounts(&storable_accounts);
+    append_vec
+        .accounts
+        .write_accounts(&storable_accounts)
+        .unwrap();
     let append_vec = Arc::new(append_vec);
     db.storage.insert(Arc::clone(&append_vec));
     assert!(!db.accounts_index.contains(&pubkey));
@@ -2758,7 +2761,8 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     ));
     store1
         .accounts
-        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
+        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
+        .unwrap();
     db.storage.insert(Arc::clone(&store1));
     store1.num_alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
@@ -2773,7 +2777,8 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     ));
     store2
         .accounts
-        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
+        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
+        .unwrap();
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
@@ -2790,7 +2795,8 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     ));
     store3
         .accounts
-        .write_accounts(&(store3_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
+        .write_accounts(&(store3_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
+        .unwrap();
     db.storage.insert(Arc::clone(&store3));
     store3
         .num_alive_bytes
@@ -2831,7 +2837,8 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     ));
     store1
         .accounts
-        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
+        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
+        .unwrap();
     db.storage.insert(Arc::clone(&store1));
     store1.num_alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
@@ -2846,7 +2853,8 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     ));
     store2
         .accounts
-        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
+        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
+        .unwrap();
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
@@ -2863,7 +2871,8 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     ));
     store3
         .accounts
-        .write_accounts(&(store3_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
+        .write_accounts(&(store3_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
+        .unwrap();
     db.storage.insert(Arc::clone(&store3));
     store3
         .num_alive_bytes
@@ -2901,7 +2910,8 @@ fn test_select_candidates_by_total_usage_all_clean() {
     ));
     store1
         .accounts
-        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
+        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
+        .unwrap();
     db.storage.insert(Arc::clone(&store1));
     store1
         .num_alive_bytes
@@ -2918,7 +2928,8 @@ fn test_select_candidates_by_total_usage_all_clean() {
     ));
     store2
         .accounts
-        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
+        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
+        .unwrap();
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
@@ -5277,14 +5288,17 @@ fn test_is_shrinking_productive() {
         file_size,
         accounts.accounts_file_provider,
     ));
-    store.accounts.write_accounts(&(
-        slot,
-        [(
-            Pubkey::new_unique(),
-            AccountSharedData::new(1, account_size, &Pubkey::default()),
-        )]
-        .as_slice(),
-    ));
+    store
+        .accounts
+        .write_accounts(&(
+            slot,
+            [(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, account_size, &Pubkey::default()),
+            )]
+            .as_slice(),
+        ))
+        .unwrap();
 
     store.add_accounts(5, store.written_bytes() as usize);
     assert!(!accounts.is_shrinking_productive(&store));
@@ -5310,14 +5324,17 @@ fn test_is_candidate_for_shrink() {
         store_file_size,
         accounts.accounts_file_provider,
     ));
-    entry.accounts.write_accounts(&(
-        slot,
-        [(
-            Pubkey::new_unique(),
-            AccountSharedData::new(1, 100, &Pubkey::default()),
-        )]
-        .as_slice(),
-    ));
+    entry
+        .accounts
+        .write_accounts(&(
+            slot,
+            [(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 100, &Pubkey::default()),
+            )]
+            .as_slice(),
+        ))
+        .unwrap();
     let written_bytes = entry.written_bytes() as usize;
     match accounts.shrink_ratio {
         AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
@@ -5364,7 +5381,8 @@ fn test_calculate_storage_count_and_alive_bytes() {
     let storage = accounts.create_store(slot0, 4_000);
     storage
         .accounts
-        .write_accounts(&(slot0, &[(&shared_key, &account)][..]));
+        .write_accounts(&(slot0, &[(&shared_key, &account)][..]))
+        .unwrap();
     accounts.storage.insert(Arc::new(storage));
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
@@ -5420,7 +5438,8 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
     let storage = accounts.create_store(slot0, 4_000);
     storage
         .accounts
-        .write_accounts(&(slot0, &[(&keys[0], &account), (&keys[1], &account_big)][..]));
+        .write_accounts(&(slot0, &[(&keys[0], &account), (&keys[1], &account_big)][..]))
+        .unwrap();
 
     let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);

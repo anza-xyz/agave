@@ -4661,10 +4661,10 @@ impl AccountsDb {
         let stored_accounts_info = storage
             .accounts
             .write_accounts(accounts_and_meta_to_store)
-            .unwrap_or_else(|| {
+            .unwrap_or_else(|err| {
                 panic!(
-                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, len: {} \
-                     bytes, num accounts: {num_accounts}",
+                    "failed to write accounts to storage! slot: {slot}, id: {store_id}, len: {} \
+                     bytes, num accounts: {num_accounts}, error: {err}",
                     storage.accounts.len(),
                 )
             });

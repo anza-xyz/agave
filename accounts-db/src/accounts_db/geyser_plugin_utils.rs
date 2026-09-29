@@ -117,14 +117,16 @@ mod tests {
         let storage0 = accounts_db.create_store(slot0, /*size*/ 4_096);
         storage0
             .accounts
-            .write_accounts(&(slot0, [(&key1, &account)].as_slice()));
+            .write_accounts(&(slot0, [(&key1, &account)].as_slice()))
+            .unwrap();
         accounts_db.storage.insert(Arc::new(storage0));
 
         let slot1 = 1;
         let storage1 = accounts_db.create_store(slot1, /*size*/ 4_096);
         storage1
             .accounts
-            .write_accounts(&(slot1, [(&key1, &account)].as_slice()));
+            .write_accounts(&(slot1, [(&key1, &account)].as_slice()))
+            .unwrap();
         accounts_db.storage.insert(Arc::new(storage1));
 
         // Account with key2 is updated in a single slot, should get notified once
@@ -132,7 +134,8 @@ mod tests {
         let storage2 = accounts_db.create_store(slot2, /*size*/ 4_096);
         storage2
             .accounts
-            .write_accounts(&(slot2, [(&key2, &account)].as_slice()));
+            .write_accounts(&(slot2, [(&key2, &account)].as_slice()))
+            .unwrap();
         accounts_db.storage.insert(Arc::new(storage2));
 
         // Do the notification
