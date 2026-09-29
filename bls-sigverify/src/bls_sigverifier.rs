@@ -6,6 +6,7 @@ use {
         bls_vote_sigverify::verify_and_send_votes,
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
+        rank_map_cache::RankMapCache,
         rewards::{RewardInput, rewards_wants_vote},
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
@@ -28,7 +29,7 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError, select},
     log::{error, info},
     rayon::{ThreadPool, ThreadPoolBuilder},
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
@@ -146,14 +147,13 @@ struct SigVerifier {
     verified_certs: HashSet<CertificateType>,
     /// Tracks when the cache was last pruned.
     last_checked_root_slot: Slot,
-    last_checked_root_epoch: Epoch,
     cluster_info: Arc<ClusterInfo>,
     leader_schedule: Arc<LeaderScheduleCache>,
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
     vote_pool: VotePool,
-    rank_map_cache: HashMap<Epoch, Arc<BLSPubkeyToRankMap>>,
+    rank_map_cache: RankMapCache,
 }
 
 impl SigVerifier {
@@ -183,12 +183,11 @@ impl SigVerifier {
             verified_certs: HashSet::new(),
             vote_pool: VotePool::default(),
             last_checked_root_slot: 0,
-            last_checked_root_epoch: 0,
             cluster_info,
             leader_schedule,
             thread_pool,
             generated_cert_types,
-            rank_map_cache: HashMap::new(),
+            rank_map_cache: RankMapCache::default(),
         }
     }
 
@@ -308,12 +307,7 @@ impl SigVerifier {
             self.verified_certs.retain(|cert| cert.slot() >= root_slot);
             self.vote_pool.prune(root_slot);
         }
-        if self.last_checked_root_epoch < root_epoch {
-            self.last_checked_root_epoch = root_epoch;
-            // Keeping previous epoch as we need to look up slots older than root_slot for rewards.
-            self.rank_map_cache
-                .retain(|epoch, _| *epoch >= root_epoch.saturating_sub(1));
-        }
+        self.rank_map_cache.purge(root_epoch);
     }
 
     fn add_certificate_to_group(
@@ -491,16 +485,10 @@ impl SigVerifier {
             Entry::Vacant(e) => {
                 let vote_slot = unverified_vote.vote.slot();
                 let vote_epoch = root_bank.epoch_schedule().get_epoch(vote_slot);
-                let rank_map = match self.rank_map_cache.entry(vote_epoch) {
-                    Entry::Occupied(entry) => entry.get().clone(),
-                    Entry::Vacant(entry) => {
-                        let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
-                            self.stats.discard_vote_no_epoch_stakes += 1;
-                            self.stats.num_keep_vote_failed += 1;
-                            return;
-                        };
-                        entry.insert(rank_map.clone()).clone()
-                    }
+                let Some(rank_map) = self.rank_map_cache.get_rank_map(root_bank, vote_epoch) else {
+                    self.stats.discard_vote_no_epoch_stakes += 1;
+                    self.stats.num_keep_vote_failed += 1;
+                    return;
                 };
                 match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
                     Some((payload, sender_vote_account_pubkey)) => {
