@@ -119,19 +119,19 @@ backport is needed. To release the override, open a PR on master that clears the
    Note: if `ci/channel-overrides` on master has `PINNED_BETA_CHANNEL` /
    `PINNED_STABLE_CHANNEL` set, those values override auto-detect everywhere.
 
-### Update the Changelog
-
-Create a PR that makes the following updates to [CHANGELOG.md](https://github.com/anza-xyz/agave/blob/master/CHANGELOG.md) in master:
-* Advance the channel links with the newly created branch becoming beta.
-* Add a new section `X.Y.0-Unreleased` for the new master version.
-* Remove the `Unreleased` annotation for the section that has now become beta.
-
-### Miscellaneous Clean up
+### Miscellaneous Cleanup
 
 #### Configure backporting
 
 1. Update [mergify.yml](https://github.com/anza-xyz/agave/blob/master/.mergify.yml) to add backport actions for the new branch, remove actions for the obsolete branch and update the list of non EoL version branches.
 1. Adjust the [Github backport labels](https://github.com/anza-xyz/agave/labels) to add the new branch label and remove the label for the obsolete branch.
+
+#### Master Branch
+
+Create a PR that makes the following updates to [CHANGELOG.md](https://github.com/anza-xyz/agave/blob/master/CHANGELOG.md):
+* Advance the channel links with the newly created branch becoming beta.
+* Add a new section `X.Y.0-Unreleased` for the new master version.
+* Remove the `Unreleased` annotation for the section that has now become beta.
 
 #### Newly Promoted Stable (Former Beta) Branch
 
