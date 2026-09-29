@@ -291,6 +291,16 @@ impl<T: Clone> Stakes<T> {
     }
 }
 
+/// Compares a delegation from a snapshot with the one stored in the stake
+/// account.  The reserved bytes, which formerly held `warmup_cooldown_rate`,
+/// are ignored: they carry no meaning, so a snapshot need not reproduce them.
+fn delegation_matches_account(delegation: &Delegation, account: &Delegation) -> bool {
+    delegation.voter_pubkey == account.voter_pubkey
+        && delegation.stake == account.stake
+        && delegation.activation_epoch == account.activation_epoch
+        && delegation.deactivation_epoch == account.deactivation_epoch
+}
+
 impl Stakes<StakeAccount> {
     pub(crate) fn new_from_accounts_for_genesis<'a, T: ReadableAccount + 'a>(
         new_rate_activation_epoch: Option<Epoch>,
@@ -380,7 +390,7 @@ impl Stakes<StakeAccount> {
                 let stake_account = StakeAccount::try_from(stake_account)?;
                 // Sanity check that the delegation is consistent with what is
                 // stored in the account.
-                if stake_account.delegation() == &delegation {
+                if delegation_matches_account(&delegation, stake_account.delegation()) {
                     map.insert(pubkey, stake_account);
                     Ok(map)
                 } else {
@@ -1541,5 +1551,54 @@ pub(crate) mod tests {
             !stakes.stake_delegations().contains_key(&stake_pubkey),
             case.is_droppable(in_epoch_rewards_period)
         );
+    }
+
+    #[test]
+    fn test_load_from_deserialized_delegations_ignores_reserved_bytes() {
+        let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
+            create_staked_node_accounts(10, &Rent::default());
+        let StakeStateV2::Stake(_, stake, _) = stake_account.state().unwrap() else {
+            unreachable!()
+        };
+        let get_account = |pubkey: &Pubkey| {
+            if *pubkey == vote_pubkey {
+                Some(vote_account.clone())
+            } else if *pubkey == stake_pubkey {
+                Some(stake_account.clone())
+            } else {
+                None
+            }
+        };
+        let deserialized = |delegation: Delegation| {
+            let mut vote_accounts = VoteAccounts::default();
+            vote_accounts.insert(
+                vote_pubkey,
+                VoteAccount::try_from(vote_account.clone()).unwrap(),
+                || 0,
+            );
+            DeserializableDelegationStakes {
+                vote_accounts,
+                stake_delegations: vec![(stake_pubkey, delegation)],
+                unused: 0,
+                epoch: 0,
+                stake_history: StakeHistory::default(),
+            }
+        };
+
+        // A snapshot written with the old `warmup_cooldown_rate` bytes loads.
+        let mut delegation = stake.delegation;
+        delegation._reserved = 0.25f64.to_le_bytes();
+        let stakes =
+            Stakes::load_from_deserialized_delegations(deserialized(delegation), get_account)
+                .unwrap();
+        assert!(stakes.stake_delegations().contains_key(&stake_pubkey));
+
+        // The other fields are still checked.
+        let mut delegation = stake.delegation;
+        delegation.stake += 1;
+        assert!(matches!(
+            Stakes::load_from_deserialized_delegations(deserialized(delegation), get_account),
+            Err(Error::InvalidDelegation(pubkey)) if pubkey == stake_pubkey
+        ));
     }
 }
