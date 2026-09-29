@@ -76,7 +76,7 @@ impl DecisionMaker {
         state: &LeaderState,
         now: Instant,
     ) -> BufferedPacketsDecision {
-        let Some((leader_slot, _)) = state.next_leader_slot_range() else {
+        let Some((leader_slot, last_leader_slot)) = state.next_leader_slot_range() else {
             return BufferedPacketsDecision::Forward;
         };
         let Some(slot_info) = self.alpenglow_slot_clock.load() else {
@@ -88,6 +88,9 @@ impl DecisionMaker {
             now.saturating_duration_since(slot_info.started_at),
             slot_info.slot_duration,
         );
+        if current_slot > last_leader_slot {
+            return BufferedPacketsDecision::Forward;
+        }
         let slots_until_leader = leader_slot.saturating_sub(current_slot);
         if slots_until_leader < FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET {
             BufferedPacketsDecision::Hold
@@ -190,6 +193,18 @@ mod tests {
         assert_matches!(
             decision_maker.make_consume_or_forward_decision_at(started_at),
             BufferedPacketsDecision::Hold
+        );
+
+        // Keep buffering through the final slot of our leader window.
+        assert_matches!(
+            decision_maker.make_consume_or_forward_decision_at(started_at + slot_duration * 3),
+            BufferedPacketsDecision::Hold
+        );
+        // A newer observation beyond our window must stop buffering.
+        clock.update(28, started_at, slot_duration);
+        assert_matches!(
+            decision_maker.make_consume_or_forward_decision_at(started_at),
+            BufferedPacketsDecision::Forward
         );
 
         shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None, None)));
