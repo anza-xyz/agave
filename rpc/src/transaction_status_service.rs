@@ -20,6 +20,7 @@ use {
         map_inner_instructions,
     },
     std::{
+        collections::BTreeMap,
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -71,7 +72,16 @@ impl TransactionStatusService {
                 let transaction_status_receiver = transaction_status_receiver.clone();
                 move || {
                     info!("{} has started", Self::SERVICE_NAME);
-                    loop {
+                    // Work ids are declared by the thread that submits a batch, but
+                    // the batch reaches this channel from a later step, so a batch
+                    // can arrive before an earlier work id. Marking a later id
+                    // processed implies every lower id is processed, so hold a batch
+                    // whose work id has a gap below it until the gap is filled.
+                    // `declare_work` hands out ids from 1 with no gaps, so any id
+                    // above the next expected one is waiting on a lower id.
+                    let mut next_work_sequence: u64 = 1;
+                    let mut pending_batches = BTreeMap::new();
+                    'service: loop {
                         if exit.load(Ordering::Relaxed) {
                             break;
                         }
@@ -89,20 +99,37 @@ impl TransactionStatusService {
                             }
                         };
 
-                        match Self::write_transaction_status_batch(
-                            message,
-                            &max_complete_transaction_status_slot,
-                            enable_rpc_transaction_history,
-                            transaction_notifier.clone(),
-                            &blockstore,
-                            enable_extended_tx_metadata_storage,
-                            depenency_tracker.clone(),
-                        ) {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("{} is stopping because: {err}", Self::SERVICE_NAME);
-                                exit.store(true, Ordering::Relaxed);
-                                break;
+                        let mut ready = vec![message];
+                        if let Some(work_sequence) = Self::work_sequence(&ready[0]) {
+                            if work_sequence > next_work_sequence {
+                                // An earlier work id is still in flight, so writing
+                                // this batch now would mark a gap as processed.
+                                pending_batches.insert(work_sequence, ready.remove(0));
+                                continue;
+                            }
+                            next_work_sequence += 1;
+                            while let Some(pending) = pending_batches.remove(&next_work_sequence) {
+                                next_work_sequence += 1;
+                                ready.push(pending);
+                            }
+                        }
+
+                        for message in ready {
+                            match Self::write_transaction_status_batch(
+                                message,
+                                &max_complete_transaction_status_slot,
+                                enable_rpc_transaction_history,
+                                transaction_notifier.clone(),
+                                &blockstore,
+                                enable_extended_tx_metadata_storage,
+                                depenency_tracker.clone(),
+                            ) {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    error!("{} is stopping because: {err}", Self::SERVICE_NAME);
+                                    exit.store(true, Ordering::Relaxed);
+                                    break 'service;
+                                }
                             }
                         }
                     }
@@ -114,6 +141,17 @@ impl TransactionStatusService {
             thread_hdl,
             #[cfg(feature = "dev-context-only-utils")]
             transaction_status_receiver,
+        }
+    }
+
+    /// The work id the message was submitted under, if it carries one.
+    ///
+    /// `Freeze` messages and batches sent without a dependency tracker have no
+    /// work id and are always ready to write.
+    fn work_sequence(message: &TransactionStatusMessage) -> Option<u64> {
+        match message {
+            TransactionStatusMessage::Batch((_, work_sequence)) => *work_sequence,
+            TransactionStatusMessage::Freeze(_) => None,
         }
     }
 
@@ -658,7 +696,9 @@ pub(crate) mod tests {
             Some(dependency_tracker.clone()),
             exit.clone(),
         );
-        let work_id = 345;
+        // Ids are handed out from 1 with no gaps, so this is the first batch the
+        // service will see.
+        let work_id = 1;
         transaction_status_sender
             .send(TransactionStatusMessage::Batch((
                 transaction_status_batch,
@@ -703,5 +743,136 @@ pub(crate) mod tests {
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
         );
+    }
+
+    /// Builds a one-transaction batch so out-of-order arrivals can be told apart
+    /// by the transaction index they carry.
+    fn build_test_status_batch(
+        bank: &Bank,
+        transaction: SanitizedTransaction,
+        transaction_index: usize,
+    ) -> TransactionStatusBatch {
+        let commit_result = Ok(CommittedTransaction {
+            status: Ok(()),
+            log_messages: None,
+            inner_instructions: None,
+            return_data: None,
+            executed_units: 0,
+            fee_details: FeeDetails::default(),
+            loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            fee_payer_post_balance: 0,
+        });
+        TransactionStatusBatch {
+            slot: bank.slot(),
+            bank_id: bank.bank_id(),
+            transactions: vec![transaction],
+            commit_results: vec![commit_result],
+            balances: TransactionBalancesSet {
+                pre_balances: vec![vec![123456]],
+                post_balances: vec![vec![234567]],
+            },
+            token_balances: TransactionTokenBalancesSet {
+                pre_token_balances: vec![vec![]],
+                post_token_balances: vec![vec![]],
+            },
+            costs: vec![Some(123)],
+            transaction_indexes: vec![transaction_index],
+        }
+    }
+
+    /// A batch whose work id has a gap below it must not be written, because
+    /// `mark_this_and_all_previous_work_processed` treats the id as implying every
+    /// lower id is done. Work id 2 is sent first here, while id 1 is still in
+    /// flight, which is the order two submitter threads can produce.
+    #[test]
+    fn test_out_of_order_batch_is_held_until_gap_is_filled() {
+        let genesis_config = create_genesis_config(2).genesis_config;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let blockstore = Arc::new(blockstore);
+
+        let slot = bank.slot();
+        let bank_id = bank.bank_id();
+        let transaction_index1: usize = bank.transaction_count().try_into().unwrap();
+        let transaction_index2: usize = transaction_index1 + 1;
+
+        let transaction1 = SanitizedTransaction::try_create(
+            VersionedTransaction::from(build_test_transaction_legacy()),
+            MessageHash::Compute,
+            None,
+            SimpleAddressLoader::Disabled,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+        let transaction2 = SanitizedTransaction::try_create(
+            VersionedTransaction::from(build_test_transaction_legacy()),
+            MessageHash::Compute,
+            None,
+            SimpleAddressLoader::Disabled,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+
+        let batch1 = build_test_status_batch(&bank, transaction1.clone(), transaction_index1);
+        let batch2 = build_test_status_batch(&bank, transaction2.clone(), transaction_index2);
+
+        let test_notifier = Arc::new(TestTransactionNotifier::new());
+
+        let dependency_tracker = Arc::new(DependencyTracker::default());
+        let exit = Arc::new(AtomicBool::new(false));
+        let transaction_status_service = TransactionStatusService::new(
+            transaction_status_receiver,
+            Arc::new(AtomicU64::default()),
+            false,
+            Some(test_notifier.clone()),
+            blockstore,
+            false,
+            Some(dependency_tracker.clone()),
+            exit.clone(),
+        );
+
+        // Id 2 arrives while id 1 is still in flight.
+        transaction_status_sender
+            .send(TransactionStatusMessage::Batch((batch2, Some(2))))
+            .unwrap();
+        // Give the service time to have drained the channel, so a write of work id
+        // 2 would already have shown up if it were not held back.
+        for _ in 0..20 {
+            if test_notifier.notifications.len() > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(TSS_TEST_QUIESCE_SLEEP_TIME_MS));
+        }
+        assert_eq!(
+            test_notifier.notifications.len(),
+            0,
+            "batch with work id 2 was written before work id 1 arrived",
+        );
+
+        // Id 1 fills the gap, so both are written.
+        transaction_status_sender
+            .send(TransactionStatusMessage::Batch((batch1, Some(1))))
+            .unwrap();
+        transaction_status_service.quiesce_and_join_for_tests(exit);
+
+        for (transaction, transaction_index) in [
+            (&transaction1, transaction_index1),
+            (&transaction2, transaction_index2),
+        ] {
+            let key = TestNotifierKey {
+                slot,
+                bank_id,
+                transaction_index,
+                message_hash: *transaction.message_hash(),
+            };
+            assert!(
+                test_notifier.notifications.contains_key(&key),
+                "batch with work id {transaction_index} was never written",
+            );
+        }
     }
 }
