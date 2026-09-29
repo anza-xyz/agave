@@ -2,7 +2,7 @@
 mod serde_snapshot_tests {
     use {
         crate::{
-            bank::{Bank, BankHashStats, test_utils as bank_test_utils},
+            bank::{Bank, BankHashStats, BankId, test_utils as bank_test_utils},
             epoch_stakes::{
                 EpochAuthorizedVoters, EpochStakes, NodeIdToVoteAccounts, VersionedEpochStakes,
             },
@@ -225,7 +225,12 @@ mod serde_snapshot_tests {
 
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
-            accounts.store_accounts((slot, [(pubkey, &account)].as_slice()), 0, None, &ancestors);
+            accounts.store_accounts(
+                (slot, [(pubkey, &account)].as_slice()),
+                BankId(0),
+                None,
+                &ancestors,
+            );
         }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
@@ -265,7 +270,7 @@ mod serde_snapshot_tests {
     fn test_remove_unrooted_slot_snapshot() {
         agave_logger::setup();
         let unrooted_slot = 9;
-        let unrooted_bank_id = 9;
+        let unrooted_bank_id = BankId(9);
         let db = AccountsDb::default_for_tests();
         let key = solana_pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &key);

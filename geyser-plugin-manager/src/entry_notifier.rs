@@ -229,11 +229,11 @@ mod tests {
         std::sync::{Arc, Mutex},
     };
 
-    type EntryUpdate = (Slot, BankId, usize, usize);
-    type EntryUpdateParent = (Slot, BankId, Slot, Hash);
+    type EntryUpdate = (Slot, u64, usize, usize);
+    type EntryUpdateParent = (Slot, u64, Slot, Hash);
     // The mirror borrows from the notifying call's stack, so the mock stores
     // an owned Debug snapshot instead of the borrowed struct itself.
-    type BlockFooterUpdate = (Slot, BankId, String);
+    type BlockFooterUpdate = (Slot, u64, String);
 
     #[derive(Debug)]
     struct TestEntryPlugin {
@@ -252,7 +252,7 @@ mod tests {
         fn notify_entry_for_bank(
             &self,
             entry: ReplicaEntryInfoVersions,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> Result<()> {
             let ReplicaEntryInfoVersions::V0_0_2(entry) = entry else {
                 panic!("expected V0_0_2 entry info");
@@ -269,7 +269,7 @@ mod tests {
         fn notify_block_footer(
             &self,
             block_footer: ReplicaBlockFooterInfoVersions,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> Result<()> {
             let ReplicaBlockFooterInfoVersions::V0_0_2(block_footer) = block_footer;
             self.block_footer_updates.lock().unwrap().push((
@@ -397,14 +397,14 @@ mod tests {
             });
         let parent_block_id = Hash::new_unique();
 
-        notifier.notify_entry(42, 9, 3, &entry, 7);
+        notifier.notify_entry(42, BankId(9), 3, &entry, 7);
         notifier.notify_entry_update_parent(&EntryUpdateParentInfo {
             slot: 42,
-            cleared_bank_id: 9,
+            cleared_bank_id: BankId(9),
             parent_slot: 40,
             parent_block_id,
         });
-        notifier.notify_block_footer(42, 9, &block_footer);
+        notifier.notify_block_footer(42, BankId(9), &block_footer);
 
         assert_eq!(
             *entry_plugin_entry_updates.lock().unwrap(),

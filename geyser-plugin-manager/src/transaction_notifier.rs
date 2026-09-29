@@ -349,7 +349,7 @@ mod tests {
             &self,
             transaction_info: ReplicaTransactionInfoVersions,
             slot: Slot,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> Result<()> {
             let ReplicaTransactionInfoVersions::V0_0_4(info) = transaction_info;
             self.captured.lock().unwrap().push(format!(
@@ -451,7 +451,7 @@ mod tests {
 
         notifier.notify_transaction(
             42,
-            9,
+            BankId(9),
             3,
             &Signature::default(),
             &Hash::default(),
@@ -540,7 +540,7 @@ mod tests {
         };
         notifier.notify_transaction(
             43,
-            9,
+            BankId(9),
             0,
             &Signature::default(),
             &Hash::default(),

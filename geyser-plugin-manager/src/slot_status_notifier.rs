@@ -116,7 +116,7 @@ mod tests {
         std::sync::{Arc, Mutex},
     };
 
-    type SlotStatusUpdate = (Slot, Option<Slot>, SlotStatus, BankId);
+    type SlotStatusUpdate = (Slot, Option<Slot>, SlotStatus, u64);
 
     #[derive(Debug)]
     struct TestSlotStatusPlugin {
@@ -133,7 +133,7 @@ mod tests {
             slot: Slot,
             parent: Option<u64>,
             status: &SlotStatus,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> Result<()> {
             self.updates
                 .lock()
@@ -168,8 +168,8 @@ mod tests {
         let updates = Arc::new(Mutex::new(Vec::new()));
         let notifier = create_notifier(updates.clone());
 
-        notifier.notify_created_bank(42, 41, 9);
-        notifier.notify_slot_processed(42, Some(41), 9);
+        notifier.notify_created_bank(42, 41, BankId(9));
+        notifier.notify_slot_processed(42, Some(41), BankId(9));
 
         assert_eq!(
             *updates.lock().unwrap(),

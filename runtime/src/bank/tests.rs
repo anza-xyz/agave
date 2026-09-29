@@ -8275,7 +8275,7 @@ fn setup_banks_on_fork_to_remove(
                 slot,
             ));
             if lamports_this_round == 0 {
-                lamports_this_round = bank_at_fork_tip.bank_id() + starting_lamports + 1;
+                lamports_this_round = bank_at_fork_tip.bank_id().0 + starting_lamports + 1;
             }
             let pubkey_to_modify_starting_index = i * pubkeys_to_modify_per_slot;
             let account = AccountSharedData::new(lamports_this_round, 0, program_id);
@@ -13647,7 +13647,7 @@ fn test_new_for_txn_tests_system_transfer() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts((parent_slot, refs.as_slice()), 0, None, &ancestors);
+    accounts.store_accounts((parent_slot, refs.as_slice()), BankId(0), None, &ancestors);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
@@ -13826,7 +13826,7 @@ fn test_new_for_block_tests_with_vote_account() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts((parent_slot, refs.as_slice()), 0, None, &ancestors);
+    accounts.store_accounts((parent_slot, refs.as_slice()), BankId(0), None, &ancestors);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);

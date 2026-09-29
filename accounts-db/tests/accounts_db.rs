@@ -3,6 +3,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountsDb, LoadHint, PopulateReadCache},
         ancestors::Ancestors,
+        bank_id::BankId,
     },
     solana_pubkey::Pubkey,
     std::{
@@ -35,7 +36,7 @@ use {
 #[test]
 fn test_load_after_remove_unrooted_and_restore_to_same_slot() {
     let slot = 402240429;
-    let bank_id = 1;
+    let bank_id = BankId(1);
     let pubkey = Pubkey::new_unique();
     let account = AccountSharedData::new(42, 0, &Pubkey::default());
 

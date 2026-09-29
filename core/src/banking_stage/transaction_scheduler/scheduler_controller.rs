@@ -630,7 +630,10 @@ mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
-        solana_runtime::{bank::Bank, bank_forks::BankForks},
+        solana_runtime::{
+            bank::{Bank, BankIdGenerator},
+            bank_forks::BankForks,
+        },
         solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
@@ -647,28 +650,32 @@ mod tests {
         // bank_id is globally unique regardless of slot, so tracking it alone
         // also correctly handles a sad leader handover: a new bank for the same
         // slot still carries a new bank_id and is treated as a transition below.
-        let mut scheduling_bank_id = Some(100);
+        let bank_id_generator = BankIdGenerator::default();
+        let in_flight_bank_id = bank_id_generator.next();
+        let newer_bank_id = bank_id_generator.next();
+        let latest_bank_id = bank_id_generator.next();
+        let mut scheduling_bank_id = Some(in_flight_bank_id);
 
         assert_eq!(
-            update_scheduling_bank(&mut scheduling_bank_id, Some(101), true),
+            update_scheduling_bank(&mut scheduling_bank_id, Some(newer_bank_id), true),
             BankTransitionStatus::WaitingForInFlight
         );
-        assert_eq!(scheduling_bank_id, Some(100));
+        assert_eq!(scheduling_bank_id, Some(in_flight_bank_id));
 
         // Ingestion may observe a newer bank while old work is still in flight.
         assert_eq!(
-            update_scheduling_bank(&mut scheduling_bank_id, Some(102), true),
+            update_scheduling_bank(&mut scheduling_bank_id, Some(latest_bank_id), true),
             BankTransitionStatus::WaitingForInFlight
         );
-        assert_eq!(scheduling_bank_id, Some(100));
+        assert_eq!(scheduling_bank_id, Some(in_flight_bank_id));
 
         assert_eq!(
-            update_scheduling_bank(&mut scheduling_bank_id, Some(102), false),
+            update_scheduling_bank(&mut scheduling_bank_id, Some(latest_bank_id), false),
             BankTransitionStatus::Transitioned
         );
-        assert_eq!(scheduling_bank_id, Some(102));
+        assert_eq!(scheduling_bank_id, Some(latest_bank_id));
         assert_eq!(
-            update_scheduling_bank(&mut scheduling_bank_id, Some(102), true),
+            update_scheduling_bank(&mut scheduling_bank_id, Some(latest_bank_id), true),
             BankTransitionStatus::Ready
         );
     }

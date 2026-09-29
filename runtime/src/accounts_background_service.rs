@@ -747,7 +747,7 @@ mod test {
             &AccountSharedData::new(264, 0, &Pubkey::default()),
         );
         assert!(bank0.get_account(&account_key).is_some());
-        pruned_banks_sender.send((0, 0)).unwrap();
+        pruned_banks_sender.send((0, BankId(0))).unwrap();
 
         assert!(!bank0.rc.accounts.scan_slot(0, |_| Some(())).is_empty());
 

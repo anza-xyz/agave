@@ -2520,7 +2520,7 @@ pub mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::bank_hash_details::SlotDetails,
+            bank::{BankIdGenerator, bank_hash_details::SlotDetails},
             genesis_utils::{
                 self, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
@@ -5298,6 +5298,7 @@ pub mod tests {
             AsyncVerificationProgress::new(result_channel_capacity),
             AsyncVerificationProgress::new(result_channel_capacity),
         ];
+        let bank_id_generator = BankIdGenerator::default();
 
         // simulate full slots
         for _ in 0..fake_max_fec_sets_per_slot {
@@ -5340,7 +5341,7 @@ pub mod tests {
                         &worker_pool,
                         unverified_signatures,
                         slot,
-                        slot,
+                        bank_id_generator.next(),
                         None,
                     )
                     .unwrap();
