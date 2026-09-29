@@ -70,6 +70,7 @@ use {
     },
     thiserror::Error,
     tokio::task::JoinHandle,
+    wincode::Serialize,
 };
 // Export types so test clients can limit their solana crate dependencies
 pub use {
@@ -319,7 +320,7 @@ pub fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
 struct SyscallStubs {}
 
 impl SyscallStubs {
-    fn fetch_and_write_sysvar<T: wincode::Serialize<Src = T>>(
+    fn fetch_and_write_sysvar<T: Serialize<Src = T>>(
         &self,
         var_addr: *mut u8,
         offset: u64,
@@ -656,7 +657,7 @@ fn required_sysvar_data_len(sysvar_id: &Pubkey, serialized_len: usize) -> usize 
         .max(serialized_len)
 }
 
-fn create_sysvar_account<T: SysvarId + wincode::Serialize<Src = T>>(sysvar: &T) -> Account {
+fn create_sysvar_account<T: SysvarId + Serialize<Src = T>>(sysvar: &T) -> Account {
     let serialized_len = wincode::serialized_size(sysvar).unwrap() as usize;
     let data_len = required_sysvar_data_len(&T::id(), serialized_len);
     let mut account = Account::new(1, data_len, &sysvar::id());
@@ -837,7 +838,7 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: SysvarId + wincode::Serialize<Src = S>>(
+    pub fn add_sysvar_account<S: SysvarId + Serialize<Src = S>>(
         &mut self,
         address: Pubkey,
         sysvar: &S,
@@ -1406,7 +1407,7 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarId + wincode::Serialize<Src = T>>(&self, sysvar: &T) {
+    pub fn set_sysvar<T: SysvarId + Serialize<Src = T>>(&self, sysvar: &T) {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);
