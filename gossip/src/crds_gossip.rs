@@ -335,7 +335,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     let active_cutoff = now.saturating_sub(ACTIVE_TIMEOUT.as_millis() as u64);
     // Copy out the needed fields one chunk of nodes per read lock, and apply the
     // other filters outside the lock.
-    let mut cursor = NodesCursor::new(&crds.read());
+    let mut cursor = NodesCursor::new(crds.read());
     while !cursor.is_done() {
         cursor.read_chunk(&crds.read(), LOCK_CHUNK_SIZE, |value| {
             let node = value.value.contact_info()?;
