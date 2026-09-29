@@ -4,10 +4,13 @@ use {
     ahash::{AHashMap, AHashSet},
     solana_message::AccountKeys,
     solana_pubkey::Pubkey,
-    solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{cell::RefCell, collections::hash_map},
 };
+
+/// Default maximum number of accounts a transaction may lock.
+/// The runtime configuration may override this limit.
+pub const DEFAULT_TX_ACCOUNT_LOCKS: usize = 64;
 
 #[derive(Debug, Default)]
 pub struct AccountLocks {
@@ -154,7 +157,7 @@ pub fn validate_account_locks(
 }
 
 thread_local! {
-    static HAS_DUPLICATES_SET: RefCell<AHashSet<Pubkey>> = RefCell::new(AHashSet::with_capacity(MAX_TX_ACCOUNT_LOCKS));
+    static HAS_DUPLICATES_SET: RefCell<AHashSet<Pubkey>> = RefCell::new(AHashSet::with_capacity(DEFAULT_TX_ACCOUNT_LOCKS));
 }
 
 /// Check for duplicate account keys.
@@ -189,7 +192,7 @@ mod tests {
     fn test_validate_account_locks_valid_no_dynamic() {
         let static_keys = &[Pubkey::new_unique(), Pubkey::new_unique()];
         let account_keys = AccountKeys::new(static_keys, None);
-        assert!(validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS).is_ok());
+        assert!(validate_account_locks(account_keys, DEFAULT_TX_ACCOUNT_LOCKS).is_ok());
     }
 
     #[test]
@@ -208,7 +211,7 @@ mod tests {
         let static_keys = &[duplicate_key, Pubkey::new_unique(), duplicate_key];
         let account_keys = AccountKeys::new(static_keys, None);
         assert_eq!(
-            validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS),
+            validate_account_locks(account_keys, DEFAULT_TX_ACCOUNT_LOCKS),
             Err(TransactionError::AccountLoadedTwice)
         );
     }
@@ -221,7 +224,7 @@ mod tests {
             readonly: vec![Pubkey::new_unique()],
         };
         let account_keys = AccountKeys::new(static_keys, Some(&dynamic_keys));
-        assert!(validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS).is_ok());
+        assert!(validate_account_locks(account_keys, DEFAULT_TX_ACCOUNT_LOCKS).is_ok());
     }
 
     #[test]
@@ -248,7 +251,7 @@ mod tests {
         };
         let account_keys = AccountKeys::new(static_keys, Some(&dynamic_keys));
         assert_eq!(
-            validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS),
+            validate_account_locks(account_keys, DEFAULT_TX_ACCOUNT_LOCKS),
             Err(TransactionError::AccountLoadedTwice)
         );
     }

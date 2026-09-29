@@ -5119,6 +5119,32 @@ fn test_duplicate_account_key() {
     assert_eq!(result, Err(TransactionError::AccountLoadedTwice));
 }
 
+#[test_case(None, 64; "default")]
+#[test_case(Some(32), 32; "lower runtime override")]
+#[test_case(Some(128), 128; "higher runtime override")]
+fn test_transaction_account_lock_limit(configured_limit: Option<usize>, expected_limit: usize) {
+    let (genesis_config, _) = create_genesis_config(500);
+    let bank = Bank::new_from_genesis(
+        &genesis_config,
+        Arc::new(RuntimeConfig {
+            transaction_account_lock_limit: configured_limit,
+            ..RuntimeConfig::default()
+        }),
+        vec![],
+        None,
+        BankTestConfig::default().accounts_db_config,
+        None,
+        None,
+        Arc::default(),
+        None,
+        None,
+    );
+    assert_eq!(bank.get_transaction_account_lock_limit(), expected_limit);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let child = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
+    assert_eq!(child.get_transaction_account_lock_limit(), expected_limit);
+}
+
 #[test]
 fn test_process_transaction_with_too_many_account_locks() {
     agave_logger::setup();
@@ -5858,7 +5884,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "XzhvzUyAju54kWicURtXRxYEbnstg6z6qRwvtnysPHq",
+        "JAbFNn23jGyaiMM6owjaJaQT8L2EosPWeBzdvoWHD9kx",
     );
 }
 
