@@ -278,9 +278,12 @@ pub enum AccountsFileProvider {
 }
 
 impl AccountsFileProvider {
-    pub fn new_writable(&self, path: impl Into<PathBuf>, file_size: u64) -> AccountsFile {
+    pub fn new_writable(&self, path: impl Into<PathBuf>, file_size: u64) -> Result<AccountsFile> {
         match self {
-            Self::AppendVec => AccountsFile::AppendVec(AppendVec::new(path, file_size as usize)),
+            Self::AppendVec => Ok(AccountsFile::AppendVec(AppendVec::new(
+                path,
+                file_size as usize,
+            ))),
         }
     }
 }

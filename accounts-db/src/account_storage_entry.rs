@@ -61,7 +61,9 @@ impl AccountStorageEntry {
     ) -> Self {
         let tail = AccountsFile::file_name(slot, id);
         let path = Path::new(path).join(tail);
-        let accounts = provider.new_writable(path, file_size);
+        let accounts = provider
+            .new_writable(path, file_size)
+            .expect("new writable accounts file");
 
         Self {
             id,
