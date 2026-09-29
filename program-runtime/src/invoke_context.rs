@@ -299,7 +299,11 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             }
         }
 
-        self.transaction_context.push()?;
+        let detect_overflow_early = self
+            .environment_config
+            .feature_set
+            .early_instruction_trace_overflow_detection;
+        self.transaction_context.push(detect_overflow_early)?;
         self.memory_contexts.push_placeholder();
         Ok(())
     }
@@ -1408,7 +1412,7 @@ mod tests {
             MAX_INSTRUCTIONS,
         );
         for _ in 0..MAX_INSTRUCTIONS {
-            transaction_context.push().unwrap();
+            transaction_context.push(false).unwrap();
             transaction_context
                 .configure_top_level_instruction_for_tests(
                     0,
@@ -1419,7 +1423,7 @@ mod tests {
             transaction_context.pop().unwrap();
         }
         assert_eq!(
-            transaction_context.push(),
+            transaction_context.push(false),
             Err(InstructionError::MaxInstructionTraceLengthExceeded)
         );
     }
@@ -1463,7 +1467,7 @@ mod tests {
             .unwrap();
 
         for _ in 0..MAX_INSTRUCTIONS {
-            transaction_context.push().unwrap();
+            transaction_context.push(false).unwrap();
             transaction_context
                 .configure_next_cpi_for_tests(
                     0,
@@ -1474,7 +1478,7 @@ mod tests {
         }
 
         assert_eq!(
-            transaction_context.push(),
+            transaction_context.push(false),
             Err(InstructionError::MaxInstructionTraceLengthExceeded)
         );
     }
@@ -1804,12 +1808,12 @@ mod tests {
 
         test_case_1(&invoke_context);
 
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(false).unwrap();
         invoke_context.transaction_context.pop().unwrap();
 
         test_case_2(&invoke_context);
 
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(false).unwrap();
         invoke_context
             .build_instruction_frame(instruction_1)
             .unwrap();
@@ -1818,7 +1822,7 @@ mod tests {
             .unwrap();
         test_case_1(&invoke_context);
 
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(false).unwrap();
         invoke_context
             .build_instruction_frame(instruction_2)
             .unwrap();
@@ -1892,7 +1896,7 @@ mod tests {
             }
         }
 
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(false).unwrap();
 
         let instruction = Instruction::new_with_bytes(
             program_id,

@@ -1695,30 +1695,30 @@ mod tests {
         }
 
         // Execute ix #0
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // ix #0 does a CPI
         transaction_context
             .configure_next_cpi_for_tests(0, vec![], vec![0, 0])
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // Returning from everything
         transaction_context.pop().unwrap();
         transaction_context.pop().unwrap();
         // Execute ix #1
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         transaction_context.pop().unwrap();
         // Execute ix #2
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // ix #2 does a CPI
         transaction_context
             .configure_next_cpi_for_tests(0, vec![], vec![2, 0])
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // A nested CPI
         transaction_context
             .configure_next_cpi_for_tests(0, vec![], vec![2, 1])
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // Return from nested CPI
         transaction_context.pop().unwrap();
         // Return from CPI
@@ -1727,27 +1727,27 @@ mod tests {
         transaction_context
             .configure_next_cpi_for_tests(0, vec![], vec![2, 2])
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // Return from everything related to ix #2
         transaction_context.pop().unwrap();
         transaction_context.pop().unwrap();
         // Execute ix #3
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // ix #3 does a CPI
         transaction_context
             .configure_next_cpi_for_tests(0, vec![], vec![3, 0])
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // ix #3 does a nested CPI
         transaction_context
             .configure_next_cpi_for_tests(0, vec![], vec![3, 1])
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // ix #3 does a second nested CPI
         transaction_context
             .configure_next_cpi_for_tests(0, vec![], vec![3, 2])
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(false).unwrap();
         // Return from everything related to ix #3
         transaction_context.pop().unwrap();
         transaction_context.pop().unwrap();
