@@ -5639,11 +5639,20 @@ pub mod tests {
 
     #[test]
     fn test_rpc_get_cluster_nodes() {
+        fn sorted_nodes(mut nodes: Value) -> Value {
+            // The order of nodes is not specified.
+            nodes
+                .as_array_mut()
+                .expect("getClusterNodes returns an array")
+                .sort_by(|a, b| a["pubkey"].as_str().cmp(&b["pubkey"].as_str()));
+            nodes
+        }
+
         let rpc = RpcHandler::start();
         let version = solana_version::Version::default();
         let request = create_test_request("getClusterNodes", None);
-        let result: Value = parse_success_result(rpc.handle_request_sync(request));
-        let expected = json!([{
+        let result = sorted_nodes(parse_success_result(rpc.handle_request_sync(request)));
+        let expected = sorted_nodes(json!([{
             "pubkey": rpc.identity.to_string(),
             "gossip": "127.0.0.1:8000",
             "shredVersion": 0u16,
@@ -5675,7 +5684,7 @@ pub mod tests {
             "version": format!("{version}"),
             "featureSet": version.feature_set(),
             "clientId": "Agave",
-        }]);
+        }]));
         assert_eq!(result, expected);
     }
 

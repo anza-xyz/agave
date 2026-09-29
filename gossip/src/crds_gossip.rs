@@ -335,20 +335,19 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     let active_cutoff = now.saturating_sub(ACTIVE_TIMEOUT.as_millis() as u64);
     // Copy out the needed fields one chunk of nodes per read lock, and apply the
     // other filters outside the lock.
-    let mut cursor = NodesCursor::new(&crds.read());
+    let mut cursor = NodesCursor::new(crds.read());
     while !cursor.is_done() {
         cursor.read_chunk(&crds.read(), LOCK_CHUNK_SIZE, |value| {
             let node = value.value.contact_info()?;
             if !verify_shred_version(node.shred_version()) {
                 return None;
             }
-            Some((node.gossip()?, *node.pubkey(), value.local_timestamp))
+            Some((node.gossip()?, value.local_timestamp))
         });
     }
-    let nodes = cursor.into_unique(|&(_, node_pubkey, _)| node_pubkey);
-    nodes
-        .into_iter()
-        .filter_map(|(gossip, node_pubkey, local_timestamp)| {
+    cursor
+        .into_unique()
+        .filter_map(|(node_pubkey, (gossip, local_timestamp))| {
             if !socket_addr_space.check(&gossip)
                 || &node_pubkey == pubkey
                 || gossip_validators.is_some_and(|nodes| !nodes.contains(&node_pubkey))

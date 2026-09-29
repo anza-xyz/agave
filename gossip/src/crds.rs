@@ -50,7 +50,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
-        ops::{Bound, Index, IndexMut, Range},
+        ops::{Bound, Deref, Index, IndexMut, Range},
         sync::Mutex,
     },
 };
@@ -157,7 +157,7 @@ impl Cursor {
     }
 }
 
-/// Walks the nodes from the back in chunks, collecting a value per node. The
+/// Walks the nodes from the back in chunks, recording a result per node. The
 /// crds lock can be released between chunks: Crds::remove only moves the last
 /// node into the freed position, so a node present for the whole walk is read
 /// at least once, but may be read more than once.
@@ -166,16 +166,20 @@ pub(crate) struct NodesCursor<T> {
     end: usize,
     initial_num_nodes_removed: u64,
     node_removed_between_chunks: bool,
-    values: Vec<T>,
+    values: Vec<(Pubkey, Option<T>)>,
 }
 
 impl<T> NodesCursor<T> {
-    pub(crate) fn new(crds: &Crds) -> Self {
+    /// Takes the crds lock guard by value to release it before allocating.
+    pub(crate) fn new(crds: impl Deref<Target = Crds>) -> Self {
+        let num_nodes = crds.nodes.len();
+        let initial_num_nodes_removed = crds.num_nodes_removed;
+        drop(crds);
         Self {
-            end: crds.nodes.len(),
-            initial_num_nodes_removed: crds.num_nodes_removed,
+            end: num_nodes,
+            initial_num_nodes_removed,
             node_removed_between_chunks: false,
-            values: Vec::with_capacity(crds.nodes.len()),
+            values: Vec::with_capacity(num_nodes),
         }
     }
 
@@ -183,7 +187,7 @@ impl<T> NodesCursor<T> {
         self.end == 0
     }
 
-    /// Reads up to `size` nodes, keeping the values returned by `f`.
+    /// Reads up to `size` nodes, recording the result of `f` for each node.
     pub(crate) fn read_chunk(
         &mut self,
         crds: &Crds,
@@ -195,22 +199,24 @@ impl<T> NodesCursor<T> {
         let end = self.end.min(crds.nodes.len());
         let start = end.saturating_sub(size);
         for &index in crds.nodes[start..end].iter().rev() {
-            if let Some(value) = f(crds.table.index(index)) {
-                self.values.push(value);
-            }
+            let value = crds.table.index(index);
+            // A rejected reread must replace an earlier accepted value.
+            self.values.push((value.value.pubkey(), f(value)));
         }
         self.end = start;
     }
 
-    /// Returns the values collected, keeping only the latest read of each node.
-    pub(crate) fn into_unique(mut self, pubkey: impl Fn(&T) -> Pubkey) -> Vec<T> {
+    /// Returns each node's pubkey and value from its latest read.
+    pub(crate) fn into_unique(mut self) -> impl Iterator<Item = (Pubkey, T)> {
         if self.node_removed_between_chunks {
             // Stable sort after reversing keeps the latest read first.
             self.values.reverse();
-            self.values.sort_by_key(|value| pubkey(value));
-            self.values.dedup_by_key(|value| pubkey(value));
+            self.values.sort_by_key(|(pubkey, _)| *pubkey);
+            self.values.dedup_by_key(|(pubkey, _)| *pubkey);
         }
         self.values
+            .into_iter()
+            .filter_map(|(pubkey, value)| value.map(|value| (pubkey, value)))
     }
 }
 
@@ -1484,15 +1490,15 @@ mod tests {
     #[test]
     fn test_nodes_cursor() {
         const CHUNK_SIZE: usize = 16;
-        // Walks the nodes, calling f after each chunk. Values are pubkeys and
-        // the order of the read.
-        fn walk(crds: &mut Crds, mut f: impl FnMut(&mut Crds)) -> NodesCursor<(Pubkey, usize)> {
-            let mut cursor = NodesCursor::new(crds);
+        // Walks the nodes, calling f after each chunk. Values are the order of
+        // the read.
+        fn walk(crds: &mut Crds, mut f: impl FnMut(&mut Crds)) -> NodesCursor<usize> {
+            let mut cursor = NodesCursor::new(&*crds);
             let mut num_reads = 0;
             while !cursor.is_done() {
-                cursor.read_chunk(crds, CHUNK_SIZE, |value| {
+                cursor.read_chunk(crds, CHUNK_SIZE, |_| {
                     num_reads += 1;
-                    Some((value.value.pubkey(), num_reads))
+                    Some(num_reads)
                 });
                 f(crds);
             }
@@ -1531,12 +1537,9 @@ mod tests {
                 }
             });
             assert!(!cursor.node_removed_between_chunks);
-            let reads = cursor.into_unique(|&(pubkey, _)| pubkey);
+            let reads = cursor.into_unique();
             assert!(
-                reads
-                    .into_iter()
-                    .map(|(p, _)| p)
-                    .eq(nodes.into_iter().rev()),
+                reads.map(|(p, _)| p).eq(nodes.into_iter().rev()),
                 "walk must read each node once, from the back"
             );
 
@@ -1566,14 +1569,14 @@ mod tests {
                 .values
                 .iter()
                 .rev()
-                .copied()
+                .filter_map(|(pubkey, value)| value.map(|value| (*pubkey, value)))
                 .unique_by(|&(p, _)| p)
                 .sorted_by_key(|&(p, _)| p)
                 .collect();
             if expected.len() < cursor.values.len() {
                 num_repeats += 1;
             }
-            let reads = cursor.into_unique(|&(pubkey, _)| pubkey);
+            let reads: Vec<_> = cursor.into_unique().collect();
             assert_eq!(reads, expected);
             let reads: HashSet<_> = reads.into_iter().map(|(p, _)| p).collect();
             for node in nodes.iter().filter(|node| !removed.contains(node)) {
@@ -1584,6 +1587,63 @@ mod tests {
         // Dropping half the pubkeys after the first chunk moves nodes already
         // read to lower positions, so some are read again and deduplicated.
         assert!(num_repeats > 0, "no walk read a node more than once");
+    }
+
+    #[test]
+    fn test_nodes_cursor_rejected_reread() {
+        let removed_pubkey = Pubkey::new_unique();
+        let target_pubkey = Pubkey::new_unique();
+        let mut crds = Crds::default();
+        for pubkey in std::iter::once(removed_pubkey)
+            .chain(repeat_with(Pubkey::new_unique).take(32))
+            .chain(std::iter::once(target_pubkey))
+        {
+            let node = ContactInfo::new_localhost(&pubkey, 0);
+            crds.insert(
+                CrdsValue::new_unsigned(CrdsData::from(node)),
+                0,
+                GossipRoute::LocalMessage,
+            )
+            .unwrap();
+        }
+        let mut cursor = NodesCursor::new(&crds);
+        let query = |value: &VersionedCrdsValue| {
+            value
+                .value
+                .contact_info()
+                .filter(|node| node.tvu(crate::contact_info::Protocol::UDP).is_some())
+                .cloned()
+        };
+        cursor.read_chunk(&crds, 32, query);
+        // Removing an unread node moves the already-read target to the front.
+        crds.remove(&CrdsValueLabel::ContactInfo(removed_pubkey), 1);
+        let mut target = crds.get::<&ContactInfo>(target_pubkey).unwrap().clone();
+        target.remove_tvu();
+        target.set_wallclock(1);
+        crds.insert(
+            CrdsValue::new_unsigned(CrdsData::from(target)),
+            1,
+            GossipRoute::LocalMessage,
+        )
+        .unwrap();
+        let mut target_reread = false;
+        cursor.read_chunk(&crds, 32, |value| {
+            if value.value.pubkey() == target_pubkey {
+                target_reread = true;
+                assert!(query(value).is_none());
+            }
+            query(value)
+        });
+        assert!(target_reread);
+        assert!(cursor.is_done());
+        let nodes: Vec<_> = cursor.into_unique().collect();
+        assert_eq!(nodes.len(), 32, "other peers must still be retained");
+        assert!(
+            !nodes
+                .iter()
+                .any(|(_, node)| node.pubkey() == &target_pubkey),
+            "a rejected reread must replace the older accepted candidate"
+        );
     }
 
     #[test]
