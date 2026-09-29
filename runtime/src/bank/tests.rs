@@ -13969,3 +13969,52 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
         bank.calculate_capitalization_for_tests()
     );
 }
+
+#[test]
+fn test_stake_delegation_to_uncached_vote_account() {
+    // A stakes cache restored from a snapshot that listed only delegated vote
+    // accounts lacks the idle ones.  A delegation to such a vote account must
+    // still bring it into the cache, or its stake is never counted.
+    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000_000);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
+        crate::stakes::tests::create_staked_node_accounts(1_000_000_000, &bank.rent_collector.rent);
+    bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
+
+    // Restore the cache without the idle vote account, as such a snapshot
+    // would.
+    let restored_stakes = {
+        let stakes = bank.stakes_cache.stakes();
+        let mut vote_accounts = stakes.vote_accounts().clone();
+        vote_accounts.remove(&vote_pubkey);
+        let deserialized_stakes = DeserializableDelegationStakes {
+            vote_accounts,
+            stake_delegations: stakes
+                .stake_delegations()
+                .iter()
+                .map(|(pubkey, stake_account)| (*pubkey, *stake_account.delegation()))
+                .collect(),
+            unused: 0,
+            epoch: 0,
+            stake_history: stakes.history().clone(),
+        };
+        Stakes::load_from_deserialized_delegations(deserialized_stakes, |pubkey| {
+            bank.get_account(pubkey)
+        })
+        .unwrap()
+    };
+    bank.stakes_cache = StakesCache::new(restored_stakes);
+    assert!(
+        bank.stakes_cache
+            .stakes()
+            .vote_accounts()
+            .get(&vote_pubkey)
+            .is_none()
+    );
+
+    bank.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
+
+    let stakes = bank.stakes_cache.stakes();
+    assert!(stakes.stake_delegations().contains_key(&stake_pubkey));
+    assert!(stakes.vote_accounts().get_delegated_stake(&vote_pubkey) > 0);
+}

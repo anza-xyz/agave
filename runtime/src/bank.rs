@@ -5010,12 +5010,13 @@ impl Bank {
             // `unimplemented!()`, but this is only done internally to accounts-db;
             // every impl passed to `store_accounts()` is a wrapper over `AccountSharedData`.
             accounts.account_for_geyser(i, |pubkey, account| {
-                self.stakes_cache.check_and_store(
+                self.stakes_cache.check_and_store_with_loader(
                     pubkey,
                     account,
                     new_warmup_cooldown_rate_epoch,
                     in_epoch_rewards_period,
                     remove_inactive_stakes,
+                    |voter_pubkey| self.get_account(voter_pubkey),
                 )
             })
         });
@@ -6026,12 +6027,13 @@ impl Bank {
             .for_each(|(pubkey, account)| {
                 // note that this could get timed to: self.rc.accounts.accounts_db.stats.stakes_cache_check_and_store_us,
                 //  but this code path is captured separately in ExecuteTimingType::UpdateStakesCacheUs
-                self.stakes_cache.check_and_store(
+                self.stakes_cache.check_and_store_with_loader(
                     pubkey,
                     account,
                     new_warmup_cooldown_rate_epoch,
                     in_epoch_rewards_period,
                     remove_inactive_stakes,
+                    |voter_pubkey| self.get_account(voter_pubkey),
                 );
             });
     }
