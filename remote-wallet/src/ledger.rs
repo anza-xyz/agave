@@ -90,9 +90,9 @@ mod commands {
     pub const SIGN_OFFCHAIN_MESSAGE: u8 = 0x07;
 }
 
-enum ConfigurationVersion {
-    Deprecated(Vec<u8>),
-    Current(Vec<u8>),
+struct Configuration {
+    settings: LedgerSettings,
+    firmware_version: FirmwareVersion,
 }
 
 #[derive(Debug)]
@@ -317,48 +317,49 @@ impl LedgerWallet {
     }
 
     fn get_firmware_version(&self) -> Result<FirmwareVersion, RemoteWalletError> {
-        self.get_configuration_vector().map(|config| match config {
-            ConfigurationVersion::Current(config) => {
-                FirmwareVersion::new(config[2].into(), config[3].into(), config[4].into())
-            }
-            ConfigurationVersion::Deprecated(config) => {
-                FirmwareVersion::new(config[1].into(), config[2].into(), config[3].into())
-            }
-        })
+        self.get_configuration()
+            .map(|config| config.firmware_version)
     }
 
     pub fn get_settings(&self) -> Result<LedgerSettings, RemoteWalletError> {
-        self.get_configuration_vector().map(|config| match config {
-            ConfigurationVersion::Current(config) => {
-                let enable_blind_signing = config[0] != 0;
-                let pubkey_display = if config[1] == 0 {
-                    PubkeyDisplayMode::Long
-                } else {
-                    PubkeyDisplayMode::Short
-                };
-                LedgerSettings {
-                    enable_blind_signing,
-                    pubkey_display,
-                }
-            }
-            ConfigurationVersion::Deprecated(_) => LedgerSettings {
-                enable_blind_signing: false,
-                pubkey_display: PubkeyDisplayMode::Short,
-            },
-        })
+        self.get_configuration().map(|config| config.settings)
     }
 
-    fn get_configuration_vector(&self) -> Result<ConfigurationVersion, RemoteWalletError> {
+    fn get_configuration(&self) -> Result<Configuration, RemoteWalletError> {
         if let Ok(config) = self._send_apdu(commands::GET_APP_CONFIGURATION, 0, 0, &[], false) {
             check_app_config_len(config.len())?;
-            Ok(ConfigurationVersion::Current(config))
+            Ok(Configuration {
+                settings: LedgerSettings {
+                    enable_blind_signing: config[0] != 0,
+                    pubkey_display: if config[1] == 0 {
+                        PubkeyDisplayMode::Long
+                    } else {
+                        PubkeyDisplayMode::Short
+                    },
+                },
+                firmware_version: FirmwareVersion::new(
+                    config[2].into(),
+                    config[3].into(),
+                    config[4].into(),
+                ),
+            })
         } else {
             let config =
                 self._send_apdu(commands::DEPRECATED_GET_APP_CONFIGURATION, 0, 0, &[], true)?;
             if config.len() != 4 {
                 return Err(RemoteWalletError::Protocol("Version packet size mismatch"));
             }
-            Ok(ConfigurationVersion::Deprecated(config))
+            Ok(Configuration {
+                settings: LedgerSettings {
+                    enable_blind_signing: false,
+                    pubkey_display: PubkeyDisplayMode::Short,
+                },
+                firmware_version: FirmwareVersion::new(
+                    config[1].into(),
+                    config[2].into(),
+                    config[3].into(),
+                ),
+            })
         }
     }
 
