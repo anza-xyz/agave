@@ -203,7 +203,8 @@ impl RouteMonitorState {
         self.sock = bind_socket();
         self.pending_events.errors = self.pending_events.errors.saturating_add(1);
         log_router_rebuild(self.route_table, &self.pending_events);
-        let router = match rebuild_router(self.route_table) {
+        let previous = atomic_router.load_full();
+        let router = match rebuild_router(self.route_table, Some(&previous)) {
             Ok(router) => router,
             Err(e) => {
                 // If we fail to rebuild the router (unlikely but possible if route updates keep
@@ -232,7 +233,8 @@ impl RouteMonitorState {
     ) {
         if !self.pending_events.is_empty() && self.last_publish.elapsed() >= update_interval {
             log_router_rebuild(self.route_table, &self.pending_events);
-            match rebuild_router(self.route_table) {
+            let previous = atomic_router.load_full();
+            match rebuild_router(self.route_table, Some(&previous)) {
                 Ok(router) => {
                     log_router_publish(self.route_table, &router);
                     atomic_router.store(Arc::new(router));
@@ -281,7 +283,7 @@ fn bind_socket() -> NetlinkSocket {
         .expect("failed to bind netlink socket")
 }
 
-fn rebuild_router(route_table: RouteTable) -> Result<Router, Error> {
+fn rebuild_router(route_table: RouteTable, previous: Option<&Router>) -> Result<Router, Error> {
     let mut retries = 0u8;
     loop {
         if retries == 10 {
@@ -292,7 +294,17 @@ fn rebuild_router(route_table: RouteTable) -> Result<Router, Error> {
         }
 
         match RoutingTables::from_netlink(route_table) {
-            Ok(tables) => return Router::from_tables(tables),
+            Ok(mut tables) => {
+                // The router is rebuilt from a fresh dump on every publish and
+                // nothing else carries the neighbor MAC addresses across, so a
+                // dump taken mid NUD-transition can leave an entry without its
+                // lladdr and blackhole every packet to that next hop until a
+                // later dump resolves it. See RoutingTables::retain_lladdr_from.
+                if let Some(previous) = previous {
+                    tables.retain_lladdr_from(previous);
+                }
+                return Router::from_tables(tables);
+            }
             Err(e) if e.kind() == ErrorKind::Interrupted => {
                 warn!("interrupted while building routing table, retrying");
                 thread::sleep(Duration::from_secs(1));

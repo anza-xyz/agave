@@ -274,6 +274,34 @@ impl Neighbors {
         }
         false
     }
+
+    /// Fills in `lladdr` for entries this dump reported without one, using the
+    /// matching entry from `previous`.
+    ///
+    /// The kernel keeps an installed entry's `lladdr` across NUD transitions and
+    /// only drops it when the entry itself is deleted, but a dump taken during a
+    /// transition can come back with `NDA_LLADDR` absent. Without this, a single
+    /// such transition makes every packet to that next hop unresolvable until a
+    /// later dump resolves it.
+    ///
+    /// Only entries the dump still reports are filled in, so a neighbor the
+    /// kernel deleted is never resurrected, and a dump that does carry an
+    /// `lladdr` always wins over the retained one.
+    fn retain_lladdr(&mut self, previous: &Neighbors) {
+        for entry in &mut self.neighbors {
+            if entry.lladdr.is_some() {
+                continue;
+            }
+            let Some(key) = entry.key() else {
+                continue;
+            };
+            entry.lladdr = previous
+                .neighbors
+                .iter()
+                .find(|old| old.key() == Some(key))
+                .and_then(|old| old.lladdr);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -413,6 +441,15 @@ impl RoutingTables {
 
     pub fn remove_interface(&mut self, if_index: u32) -> bool {
         self.interfaces.remove(if_index)
+    }
+
+    /// Carries forward `lladdr` for neighbors this dump reported without one.
+    ///
+    /// Applied to the tables before `Router::from_tables` so the default-route
+    /// cache is built from the retained addresses. See
+    /// [`Neighbors::retain_lladdr`].
+    pub fn retain_lladdr_from(&mut self, previous: &Router) {
+        self.neighbors.retain_lladdr(&previous.neighbors);
     }
 }
 
@@ -714,7 +751,7 @@ mod tests {
     use {
         super::*,
         crate::netlink::{MacAddress, NeighborEntry, RouteEntry, VlanLinkInfo},
-        libc::{AF_INET, NUD_NOARP, NUD_PERMANENT, NUD_REACHABLE},
+        libc::{AF_INET, NUD_NOARP, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -1734,5 +1771,114 @@ mod tests {
         let router = router_from_tables(vec![], routes, interfaces);
         let next_hop = router.route_v4(dst).unwrap();
         assert!(next_hop.mac_addr.is_none());
+    }
+
+    fn lladdr_tables(
+        gateway: Ipv4Addr,
+        if_index: u32,
+        lladdr: Option<MacAddress>,
+    ) -> RoutingTables {
+        let mut tables = empty_tables();
+        assert!(tables.upsert_interface(InterfaceInfo {
+            if_index,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }));
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(gateway)),
+            lladdr,
+            ifindex: if_index as i32,
+            state: NUD_STALE,
+            flags: 0,
+            flags_ext: 0,
+        }));
+        assert!(tables.upsert_route(test_route_entry(
+            None,
+            Some(gateway),
+            if_index,
+            0,
+            u32::from(RouteTable::Main),
+        )));
+        tables
+    }
+
+    #[test]
+    fn test_retain_lladdr_survives_dump_without_nda_lladdr() {
+        let gateway = Ipv4Addr::new(10, 255, 255, 1);
+        let dst = Ipv4Addr::new(203, 0, 113, 7);
+        let mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+
+        let previous = Router::from_tables(lladdr_tables(gateway, 1, Some(mac))).unwrap();
+        assert_eq!(previous.route_v4(dst).unwrap().mac_addr, Some(mac));
+
+        // The gateway re-dumps without NDA_LLADDR. Without retention the next hop
+        // resolves to no MAC and every packet to this default route is dropped.
+        let mut tables = lladdr_tables(gateway, 1, None);
+        assert_eq!(
+            Router::from_tables(tables.clone())
+                .unwrap()
+                .route_v4(dst)
+                .unwrap()
+                .mac_addr,
+            None
+        );
+
+        tables.retain_lladdr_from(&previous);
+        let next_hop = Router::from_tables(tables).unwrap().route_v4(dst).unwrap();
+        assert_eq!(next_hop.mac_addr, Some(mac));
+    }
+
+    #[test]
+    fn test_retain_lladdr_does_not_resurrect_or_override() {
+        let gateway = Ipv4Addr::new(10, 255, 255, 1);
+        let other = Ipv4Addr::new(10, 255, 255, 2);
+        let old_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+        let new_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02]);
+
+        let mut previous_tables = lladdr_tables(gateway, 1, Some(old_mac));
+        assert!(previous_tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(other)),
+            lladdr: Some(old_mac),
+            ifindex: 1,
+            state: NUD_STALE,
+            flags: 0,
+            flags_ext: 0,
+        }));
+        let previous = Router::from_tables(previous_tables).unwrap();
+
+        // A dump that carries an lladdr wins, and a neighbor the kernel deleted
+        // (absent from the dump) stays absent.
+        let mut tables = lladdr_tables(gateway, 1, Some(new_mac));
+        tables.retain_lladdr_from(&previous);
+        assert_eq!(
+            tables
+                .neighbors
+                .lookup(IpAddr::V4(gateway), 1)
+                .and_then(|n| n.lladdr),
+            Some(new_mac)
+        );
+        assert!(tables.neighbors.lookup(IpAddr::V4(other), 1).is_none());
+        assert_eq!(tables.neighbors.iter().len(), 1);
+    }
+
+    #[test]
+    fn test_retain_lladdr_respects_ifindex_key() {
+        let gateway = Ipv4Addr::new(10, 255, 255, 1);
+        let old_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+
+        let previous = Router::from_tables(lladdr_tables(gateway, 1, Some(old_mac))).unwrap();
+
+        // Same IP on a different interface is a different neighbor, so nothing
+        // may be carried over from the other interface's entry.
+        let mut tables = lladdr_tables(gateway, 2, None);
+        tables.retain_lladdr_from(&previous);
+        assert!(
+            tables
+                .neighbors
+                .lookup(IpAddr::V4(gateway), 2)
+                .and_then(|n| n.lladdr)
+                .is_none()
+        );
     }
 }
