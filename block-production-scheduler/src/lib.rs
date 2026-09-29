@@ -19,6 +19,7 @@ use {
 };
 
 mod progress_tracker;
+mod tpu_ingress;
 
 #[cfg(test)]
 mod tests;
@@ -62,6 +63,7 @@ struct Scheduler {
     tpu_receiver: shaq::spsc::Consumer<TpuToPackMessage>,
     progress_receiver: shaq::spsc::Consumer<ProgressMessage>,
     check_sender: shaq::mpmc::Producer<PackToCheckWorkerMessage>,
+    outstanding_check_packets: usize,
     check_receiver: shaq::mpmc::Consumer<CheckWorkerToPackMessage>,
     workers: Vec<ClientWorkerSession>,
 }
@@ -87,6 +89,7 @@ impl Scheduler {
             tpu_receiver: tpu_to_pack,
             progress_receiver: progress_tracker,
             check_sender: pack_to_check_worker,
+            outstanding_check_packets: 0,
             check_receiver: check_worker_to_pack,
             workers,
         })
@@ -94,6 +97,7 @@ impl Scheduler {
 
     fn run_iteration(&mut self) {
         self.handle_leader_progress();
+        self.handle_tpu_ingress();
         std::hint::spin_loop();
     }
 
@@ -106,7 +110,7 @@ impl Scheduler {
 ///
 /// If exit is already set, returns without connecting. Otherwise, attempts the handshake once
 /// and returns any error to the caller. Shared resources remain alive until the loop exits.
-/// The loop receives leader progress updates until exit is set.
+/// The loop receives leader progress updates and dispatches TPU packets to check workers.
 ///
 /// The exit flag cannot interrupt an in-progress handshake. The timeout has the syscall-level
 /// semantics of [`client::connect`], rather than imposing a deadline on the entire handshake.

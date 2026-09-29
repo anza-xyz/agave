@@ -68,6 +68,7 @@ version = "4.5.0-alpha.4"
 dependencies = [
  "agave-scheduler-bindings",
  "agave-scheduler-handshake",
+ "agave-scheduling-utils",
  "rts-alloc",
  "shaq",
  "solana-clock",
