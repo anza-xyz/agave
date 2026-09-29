@@ -1,7 +1,7 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
     clap::{Arg, ArgMatches, value_t},
-    solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
+    solana_clap_utils::input_validators::is_parsable,
     solana_rpc::rpc::RpcBigtableConfig,
     std::{sync::LazyLock, time::Duration},
 };
@@ -31,7 +31,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
         Arg::with_name("enable_bigtable_ledger_upload")
             .long("enable-bigtable-ledger-upload")
             .takes_value(false)
-            .hidden(hidden_unless_forced())
+            .requires("enable_rpc_transaction_history")
             .help("Upload new confirmed blocks into a BigTable instance"),
         Arg::with_name("rpc_bigtable_instance_name")
             .long("rpc-bigtable-instance-name")
@@ -67,7 +67,11 @@ mod tests {
     use {
         super::*,
         crate::commands::run::args::{
-            RunArgs, tests::verify_args_struct_by_command_run_with_identity_setup,
+            RunArgs,
+            tests::{
+                verify_args_struct_by_command_run_is_error_with_identity_setup,
+                verify_args_struct_by_command_run_with_identity_setup,
+            },
         },
         solana_rpc::rpc::JsonRpcConfig,
     };
@@ -123,6 +127,11 @@ mod tests {
                 "--enable-bigtable-ledger-upload",
             ],
             expected_args,
+        );
+        // --enable-bigtable-ledger-upload fails if used without --enable-rpc-transaction-history
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            crate::commands::run::args::RunArgs::default(),
+            vec!["--enable-bigtable-ledger-upload"],
         );
     }
 
