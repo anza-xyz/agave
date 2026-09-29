@@ -212,6 +212,13 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("Keep this amount of shreds in root slots."),
         replaced_by: "limit-blockstore-size",
     );
+    add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("no_skip_initial_accounts_db_clean")
+            .long("no-skip-initial-accounts-db-clean")
+            .help("No-op; initial accounts cleaning is no longer performed"),
+        usage_warning: "Initial accounts cleaning is no longer performed.",
+    );
     res
 }
 

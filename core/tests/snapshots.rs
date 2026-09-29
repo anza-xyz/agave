@@ -141,7 +141,6 @@ fn restore_from_snapshot(
         None, // leader_for_tests
         None,
         false,
-        false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         Arc::default(),
@@ -539,7 +538,6 @@ fn restore_from_snapshots_and_check_banks_are_equal(
         None,
         None,
         false,
-        false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         Arc::default(),
@@ -726,7 +724,6 @@ fn test_snapshots_with_background_services() {
         &RuntimeConfig::default(),
         None,
         None,
-        false,
         false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,

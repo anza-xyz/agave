@@ -978,12 +978,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("no_skip_initial_accounts_db_clean")
-            .long("no-skip-initial-accounts-db-clean")
-            .help("Do not skip the initial cleaning of accounts when verifying snapshot bank")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
         Arg::with_name("accounts_db_ancient_append_vecs")
             .long("accounts-db-ancient-append-vecs")
             .value_name("SLOT-OFFSET")

@@ -2373,7 +2373,6 @@ pub(crate) mod tests {
             None, // leader_for_tests
             None,
             false,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),

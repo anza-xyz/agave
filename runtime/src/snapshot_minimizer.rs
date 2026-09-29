@@ -847,7 +847,6 @@ mod tests {
             None, // leader_for_tests
             None,
             false,
-            false,
             accounts_db_config,
             None,
             Arc::default(),

@@ -5886,12 +5886,9 @@ impl Bank {
         SnapshotHash::new(self.accounts_lt_hash.lock().unwrap().0.checksum())
     }
 
-    /// A snapshot bank should be purged of 0 lamport accounts which are not part of the hash
-    /// calculation and could shield other real accounts.
+    /// Verifies bank hash and accounts after starting up from a snapshot.
     pub fn verify_snapshot_bank(
         &self,
-        force_clean: bool,
-        latest_full_snapshot_slot: Slot,
         calculated_accounts_lt_hash: Option<&AccountsLtHash>,
     ) -> bool {
         let (verified_accounts, verify_accounts_time_us) = measure_us!({
@@ -5904,30 +5901,12 @@ impl Bank {
             }
         });
 
-        let (_, clean_time_us) = measure_us!({
-            if force_clean {
-                info!("Cleaning...");
-                // We cannot clean past the latest full snapshot's slot because we are about to
-                // perform an accounts hash calculation *up to that slot*.  If we cleaned *past*
-                // that slot, then accounts could be removed from older storages, which would
-                // change the accounts hash.
-                self.rc
-                    .accounts
-                    .accounts_db
-                    .clean_accounts(latest_full_snapshot_slot, true);
-                info!("Cleaning... Done.");
-            } else {
-                info!("Cleaning... Skipped.");
-            }
-        });
-
         info!("Verifying bank...");
         let (verified_bank, verify_bank_time_us) = measure_us!(self.verify_hash());
         info!("Verifying bank... Done.");
 
         datapoint_info!(
             "verify_snapshot_bank",
-            ("clean_us", clean_time_us, i64),
             ("verify_accounts_us", verify_accounts_time_us, i64),
             ("verify_bank_us", verify_bank_time_us, i64),
         );
