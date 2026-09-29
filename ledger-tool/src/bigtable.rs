@@ -1846,6 +1846,7 @@ fn missing_blocks(reference: &[Slot], owned: &[Slot]) -> MissingBlocksData {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::block_component::{BlockFooterV1, BlockHeaderV1, GenesisCertBlockMarker},
     };
@@ -1891,7 +1892,7 @@ mod tests {
             genesis: Some(VersionedBlockMarker::from_genesis_cert_block_marker(
                 GenesisCertBlockMarker {
                     slot: 42,
-                    block_id: blockhash,
+                    block_id: BlockId::from(blockhash),
                     bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                     bitmap: vec![1, 2, 3],
                 },
