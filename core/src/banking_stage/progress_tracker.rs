@@ -304,7 +304,7 @@ fn next_alpenglow_progress_deadline(
     started_at.checked_add(Duration::from_nanos_u128(next_boundary_nanos))
 }
 
-fn alpenglow_slot_progress(
+pub(super) fn alpenglow_slot_progress(
     window_start_slot: Slot,
     elapsed: Duration,
     slot_duration: Duration,
