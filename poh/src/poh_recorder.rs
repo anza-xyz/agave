@@ -1781,7 +1781,7 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank.last_blockhash();
         let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
             0,
@@ -1806,14 +1806,8 @@ mod tests {
         );
 
         // However we hand over a bad bank id so record fails
-        let other_bank = Bank::new_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
-            bank.clone(),
-            SlotLeader::default(),
-            bank.slot() + 1,
-        );
         assert_matches!(
-            poh_recorder.record(other_bank.bank_id(), h1, vec![tx.into()]),
+            poh_recorder.record(bank.bank_id().next_bank_id(), h1, vec![tx.into()]),
             Err(PohRecorderError::MaxHeightReached)
         );
     }
