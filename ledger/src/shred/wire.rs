@@ -282,28 +282,21 @@ pub fn set_retransmitter_signature(shred: &mut [u8], signature: &Signature) -> R
 /// Turbine broadcast tree. This signature is in addition to leader's
 /// signature which is left intact.
 pub fn resign_packet(packet: &mut PacketRefMut, keypair: &Keypair) -> Result<(), Error> {
-    match packet {
-        PacketRefMut::Packet(packet) => {
-            let shred = get_shred_mut(packet.buffer_mut()).ok_or(Error::InvalidPacketSize)?;
-            resign_shred(shred, keypair)
-        }
-        // `Bytes` are immutable. Therefore, to resign the shred from
-        // `BytesPacket`, we need to copy the packet's buffer, then modify that
-        // copy and assign it to the packet.
-        // We resign only the trailing 1-2 FEC set(s) in the block. For 50mbps
-        // coming to turbine, only around 2mbps are resigned. For now, we
-        // accept the necessity of copying that minority of packets.
-        PacketRefMut::Bytes(packet) => {
-            let mut buffer = packet.buffer().to_vec();
-            let shred = get_shred_mut(&mut buffer).ok_or(Error::InvalidPacketSize)?;
+    let PacketRefMut::Bytes(packet) = packet;
+    // `Bytes` are immutable. Therefore, to resign the shred from
+    // `BytesPacket`, we need to copy the packet's buffer, then modify that
+    // copy and assign it to the packet.
+    // We resign only the trailing 1-2 FEC set(s) in the block. For 50mbps
+    // coming to turbine, only around 2mbps are resigned. For now, we
+    // accept the necessity of copying that minority of packets.
+    let mut buffer = packet.buffer().to_vec();
+    let shred = get_shred_mut(&mut buffer).ok_or(Error::InvalidPacketSize)?;
 
-            resign_shred(shred, keypair)?;
+    resign_shred(shred, keypair)?;
 
-            packet.set_buffer(buffer);
+    packet.set_buffer(buffer);
 
-            Ok(())
-        }
-    }
+    Ok(())
 }
 
 /// Resigns the shred's Merkle root as the retransmitter node in the
@@ -451,12 +444,6 @@ mod tests {
             if resigned {
                 shred.set_retransmitter_signature(&signature).unwrap();
 
-                let packet = &mut shred.payload().to_packet(nonce);
-                if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
-                }
-                resign_packet(&mut packet.into(), &keypair).unwrap();
-
                 let packet = &mut shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
@@ -465,15 +452,6 @@ mod tests {
             } else {
                 assert_matches!(
                     shred.set_retransmitter_signature(&signature),
-                    Err(Error::InvalidShredVariant)
-                );
-
-                let packet = &mut shred.payload().to_packet(nonce);
-                if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
-                }
-                assert_matches!(
-                    resign_packet(&mut packet.into(), &keypair),
                     Err(Error::InvalidShredVariant)
                 );
 
@@ -514,11 +492,11 @@ mod tests {
 
         for (shred, &resigned) in shreds.iter().zip(&resigned) {
             let nonce = repaired.then(|| rng.random::<Nonce>());
-            let mut packet = shred.payload().to_packet(nonce);
+            let mut packet = shred.payload().to_bytes_packet(nonce);
             if repaired {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
             }
-            let packet = PacketRef::Packet(&packet);
+            let packet = PacketRef::from(&packet);
             assert_eq!(
                 packet.data(..).map(get_shred_size).unwrap().unwrap(),
                 shred.payload().len()

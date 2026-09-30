@@ -56,7 +56,6 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stab
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
-solana-metrics = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode"] }
 solana-pubkey = { workspace = true, default-features = false, features = ["rand"] }
 solana-runtime-transaction = { workspace = true }
@@ -93,10 +92,6 @@ jemallocator = { workspace = true }
 
 [[bench]]
 name = "dedup"
-harness = false
-
-[[bench]]
-name = "recycler"
 harness = false
 
 [[bench]]

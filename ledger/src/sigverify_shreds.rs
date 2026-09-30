@@ -104,7 +104,6 @@ mod tests {
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_packet::Packet,
         solana_perf::packet::BytesPacketBatch,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
@@ -136,7 +135,6 @@ mod tests {
 
     fn run_test_sigverify_shred_cpu(slot: Slot) {
         agave_logger::setup();
-        let mut packet = Packet::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
         let keypair = Keypair::new();
@@ -154,8 +152,7 @@ mod tests {
         let shred = shreds.pop().unwrap();
         assert_eq!(shred.slot(), slot);
         trace!("signature {}", shred.signature());
-        packet.buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        packet.meta_mut().size = shred.payload().len();
+        let packet = shred.payload().to_bytes_packet(None);
 
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
         assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));

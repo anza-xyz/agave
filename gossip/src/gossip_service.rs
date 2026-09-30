@@ -7,7 +7,6 @@ use {
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
     },
-    bytes::Bytes,
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
     solana_net_utils::{
@@ -418,19 +417,16 @@ struct GossipXdpSender(XdpSender);
 impl ResponseSender for GossipXdpSender {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = batch.iter().filter_map(|pkt| {
+            let PacketRef::Bytes(pkt) = pkt;
             let addr = pkt.meta().socket_addr();
-            let data = pkt.data(..)?;
 
             // For XDP, we don't support IPv6 and no private or loopback IPv4 addresses.
-            if let IpAddr::V4(ip) = addr.ip()
+            if !pkt.meta().discard()
+                && let IpAddr::V4(ip) = addr.ip()
                 && !ip.is_private()
                 && !ip.is_loopback()
             {
-                let payload = match pkt {
-                    PacketRef::Bytes(pkt) => pkt.buffer().clone(),
-                    PacketRef::Packet(_) => Bytes::copy_from_slice(data),
-                };
-                Some((payload, addr))
+                Some((pkt.buffer().clone(), addr))
             } else {
                 None
             }

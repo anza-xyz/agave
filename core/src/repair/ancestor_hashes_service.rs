@@ -904,7 +904,7 @@ mod test {
             get_tmp_ledger_path_auto_delete, shred::Nonce,
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_perf::packet::Packet,
+        solana_perf::packet::BytesPacket,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
         std::collections::HashMap,
@@ -1912,8 +1912,7 @@ mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         // Create invalid packet with fewer bytes than the size of the nonce
-        let mut packet = Packet::default();
-        packet.meta_mut().size = 0;
+        let packet = BytesPacket::empty();
 
         assert!(
             AncestorHashesService::verify_and_process_ancestor_response(

@@ -529,7 +529,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{PACKET_DATA_SIZE, Packet, RecycledPacketBatch},
+            packet::{BytesPacket, BytesPacketBatch, Meta, PACKET_DATA_SIZE, Packet},
             sendmmsg::batch_send,
             streamer::receiver,
         },
@@ -578,7 +578,7 @@ mod test {
     #[test]
     fn streamer_debug() {
         write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", RecycledPacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", BytesPacketBatch::default()).unwrap();
     }
     #[test]
     fn streamer_send_test() {
@@ -615,15 +615,14 @@ mod test {
                     );
                 })
                 .unwrap();
-            let mut packet_batch = RecycledPacketBatch::default();
+            let mut packet_batch = BytesPacketBatch::with_capacity(NUM_PACKETS);
             for i in 0..NUM_PACKETS {
-                let mut p = Packet::default();
-                {
-                    p.buffer_mut()[0] = i as u8;
-                    p.meta_mut().size = PACKET_DATA_SIZE;
-                    p.meta_mut().set_socket_addr(&addr);
-                }
-                packet_batch.push(p);
+                let mut buffer = vec![0u8; PACKET_DATA_SIZE];
+                buffer[0] = i as u8;
+                let mut meta = Meta::default();
+                meta.size = PACKET_DATA_SIZE;
+                meta.set_socket_addr(&addr);
+                packet_batch.push(BytesPacket::new(buffer.into(), meta));
             }
             let packet_batch = PacketBatch::from(packet_batch);
             s_responder.send(packet_batch).expect("send");

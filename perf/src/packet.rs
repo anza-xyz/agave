@@ -3,29 +3,27 @@
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 #[cfg(feature = "dev-context-only-utils")]
 use wincode::{ReadError, ReadResult, SchemaRead, config::DefaultConfig};
+pub use {
+    bytes,
+    solana_packet::{self, Meta, PACKET_DATA_SIZE, Packet, PacketFlags},
+};
 use {
-    crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bytes::Bytes,
     rayon::{
-        iter::{IndexedParallelIterator, ParallelIterator},
+        iter::ParallelIterator,
         prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     },
     serde::{Deserialize, Serialize},
     std::{
-        borrow::Borrow,
         io::Cursor,
         net::SocketAddr,
-        ops::{Deref, DerefMut, Index, IndexMut},
+        ops::{Deref, DerefMut},
         slice::{Iter, SliceIndex},
     },
     wincode::{
         SchemaWrite, WriteResult,
         config::{Config, Configuration},
     },
-};
-pub use {
-    bytes,
-    solana_packet::{self, Meta, PACKET_DATA_SIZE, Packet, PacketFlags},
 };
 
 pub const NUM_PACKETS: usize = 1024 * 8;
@@ -216,116 +214,81 @@ impl BytesPacket {
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PacketBatch {
-    Pinned(RecycledPacketBatch),
     Bytes(BytesPacketBatch),
     Single(BytesPacket),
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl From<&Packet> for BytesPacket {
+    fn from(packet: &Packet) -> Self {
+        let buffer = packet.data(..).map(Bytes::copy_from_slice);
+        Self::new(buffer.unwrap_or_default(), packet.meta().clone())
+    }
+}
+
 impl PacketBatch {
+    fn packets(&self) -> &[BytesPacket] {
+        match self {
+            Self::Bytes(batch) => batch,
+            Self::Single(packet) => core::array::from_ref(packet),
+        }
+    }
+
+    fn packets_mut(&mut self) -> &mut [BytesPacket] {
+        match self {
+            Self::Bytes(batch) => batch,
+            Self::Single(packet) => core::array::from_mut(packet),
+        }
+    }
+
     #[cfg(feature = "dev-context-only-utils")]
     pub fn first(&self) -> Option<PacketRef<'_>> {
-        match self {
-            Self::Pinned(batch) => batch.first().map(PacketRef::from),
-            Self::Bytes(batch) => batch.first().map(PacketRef::from),
-            Self::Single(packet) => Some(PacketRef::from(packet)),
-        }
+        self.packets().first().map(PacketRef::from)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn first_mut(&mut self) -> Option<PacketRefMut<'_>> {
-        match self {
-            Self::Pinned(batch) => batch.first_mut().map(PacketRefMut::from),
-            Self::Bytes(batch) => batch.first_mut().map(PacketRefMut::from),
-            Self::Single(packet) => Some(PacketRefMut::from(packet)),
-        }
+        self.packets_mut().first_mut().map(PacketRefMut::from)
     }
 
     /// Returns `true` if the batch contains no elements.
     pub fn is_empty(&self) -> bool {
-        match self {
-            Self::Pinned(batch) => batch.is_empty(),
-            Self::Bytes(batch) => batch.is_empty(),
-            Self::Single(_) => false,
-        }
+        self.packets().is_empty()
     }
 
     /// Returns a reference to an element.
     pub fn get(&self, index: usize) -> Option<PacketRef<'_>> {
-        match self {
-            Self::Pinned(batch) => batch.get(index).map(PacketRef::from),
-            Self::Bytes(batch) => batch.get(index).map(PacketRef::from),
-            Self::Single(packet) => (index == 0).then_some(PacketRef::from(packet)),
-        }
+        self.packets().get(index).map(PacketRef::from)
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<PacketRefMut<'_>> {
-        match self {
-            Self::Pinned(batch) => batch.get_mut(index).map(PacketRefMut::from),
-            Self::Bytes(batch) => batch.get_mut(index).map(PacketRefMut::from),
-            Self::Single(packet) => (index == 0).then_some(PacketRefMut::from(packet)),
-        }
+        self.packets_mut().get_mut(index).map(PacketRefMut::from)
     }
 
     pub fn iter(&self) -> PacketBatchIter<'_> {
-        match self {
-            Self::Pinned(batch) => PacketBatchIter::Pinned(batch.iter()),
-            Self::Bytes(batch) => PacketBatchIter::Bytes(batch.iter()),
-            Self::Single(packet) => PacketBatchIter::Bytes(core::array::from_ref(packet).iter()),
-        }
+        self.packets().iter().map(PacketRef::Bytes as fn(_) -> _)
     }
 
     pub fn iter_mut(&mut self) -> PacketBatchIterMut<'_> {
-        match self {
-            Self::Pinned(batch) => PacketBatchIterMut::Pinned(batch.iter_mut()),
-            Self::Bytes(batch) => PacketBatchIterMut::Bytes(batch.iter_mut()),
-            Self::Single(packet) => {
-                PacketBatchIterMut::Bytes(core::array::from_mut(packet).iter_mut())
-            }
-        }
+        self.packets_mut()
+            .iter_mut()
+            .map(PacketRefMut::Bytes as fn(_) -> _)
     }
 
     pub fn par_iter(&self) -> PacketBatchParIter<'_> {
-        match self {
-            Self::Pinned(batch) => {
-                PacketBatchParIter::Pinned(batch.par_iter().map(PacketRef::from))
-            }
-            Self::Bytes(batch) => PacketBatchParIter::Bytes(batch.par_iter().map(PacketRef::from)),
-            Self::Single(packet) => PacketBatchParIter::Bytes(
-                core::array::from_ref(packet)
-                    .par_iter()
-                    .map(PacketRef::from),
-            ),
-        }
+        self.packets()
+            .par_iter()
+            .map(PacketRef::Bytes as fn(_) -> _)
     }
 
     pub fn par_iter_mut(&mut self) -> PacketBatchParIterMut<'_> {
-        match self {
-            Self::Pinned(batch) => {
-                PacketBatchParIterMut::Pinned(batch.par_iter_mut().map(PacketRefMut::from))
-            }
-            Self::Bytes(batch) => {
-                PacketBatchParIterMut::Bytes(batch.par_iter_mut().map(PacketRefMut::from))
-            }
-            Self::Single(packet) => PacketBatchParIterMut::Bytes(
-                core::array::from_mut(packet)
-                    .par_iter_mut()
-                    .map(PacketRefMut::from),
-            ),
-        }
+        self.packets_mut()
+            .par_iter_mut()
+            .map(PacketRefMut::Bytes as fn(_) -> _)
     }
 
     pub fn len(&self) -> usize {
-        match self {
-            Self::Pinned(batch) => batch.len(),
-            Self::Bytes(batch) => batch.len(),
-            Self::Single(_) => 1,
-        }
-    }
-}
-
-impl From<RecycledPacketBatch> for PacketBatch {
-    fn from(batch: RecycledPacketBatch) -> Self {
-        Self::Pinned(batch)
+        self.packets().len()
     }
 }
 
@@ -375,25 +338,12 @@ impl<'a> IntoParallelIterator for &'a mut PacketBatch {
 
 #[derive(Clone, Copy, Debug, Eq)]
 pub enum PacketRef<'a> {
-    Packet(&'a Packet),
     Bytes(&'a BytesPacket),
 }
 
 impl PartialEq for PacketRef<'_> {
     fn eq(&self, other: &PacketRef<'_>) -> bool {
         self.meta().eq(other.meta()) && self.data(..).eq(&other.data(..))
-    }
-}
-
-impl<'a> From<&'a Packet> for PacketRef<'a> {
-    fn from(packet: &'a Packet) -> Self {
-        Self::Packet(packet)
-    }
-}
-
-impl<'a> From<&'a mut Packet> for PacketRef<'a> {
-    fn from(packet: &'a mut Packet) -> Self {
-        Self::Packet(packet)
     }
 }
 
@@ -414,56 +364,30 @@ impl<'a> PacketRef<'a> {
     where
         I: SliceIndex<[u8]>,
     {
-        match self {
-            Self::Packet(packet) => packet.data(index),
-            Self::Bytes(packet) => packet.data(index),
-        }
+        let Self::Bytes(packet) = self;
+        packet.data(index)
     }
 
     #[inline]
     pub fn meta(&self) -> &Meta {
-        match self {
-            Self::Packet(packet) => packet.meta(),
-            Self::Bytes(packet) => packet.meta(),
-        }
+        let Self::Bytes(packet) = self;
+        packet.meta()
     }
 
     pub fn to_bytes_packet(&self) -> BytesPacket {
-        match self {
-            // In case of the legacy `Packet` variant, we unfortunately need to
-            // make a copy.
-            Self::Packet(packet) => {
-                let buffer = packet
-                    .data(..)
-                    .map(|data| Bytes::from(data.to_vec()))
-                    .unwrap_or_else(Bytes::new);
-                BytesPacket::new(buffer, self.meta().clone())
-            }
-            // Cheap clone of `Bytes`.
-            // We call `to_owned()` twice, because `packet` is `&&BytesPacket`
-            // at this point. This will become less annoying once we switch to
-            // `BytesPacket` entirely and deal just with `Vec<BytesPacket>`
-            // everywhere.
-            Self::Bytes(packet) => packet.to_owned().to_owned(),
-        }
+        let Self::Bytes(packet) = self;
+        BytesPacket::clone(packet)
     }
 }
 
 #[derive(Debug, Eq)]
 pub enum PacketRefMut<'a> {
-    Packet(&'a mut Packet),
     Bytes(&'a mut BytesPacket),
 }
 
 impl<'a> PartialEq for PacketRefMut<'a> {
     fn eq(&self, other: &PacketRefMut<'a>) -> bool {
         self.data(..).eq(&other.data(..)) && self.meta().eq(other.meta())
-    }
-}
-
-impl<'a> From<&'a mut Packet> for PacketRefMut<'a> {
-    fn from(packet: &'a mut Packet) -> Self {
-        Self::Packet(packet)
     }
 }
 
@@ -478,370 +402,51 @@ impl PacketRefMut<'_> {
     where
         I: SliceIndex<[u8]>,
     {
-        match self {
-            Self::Packet(packet) => packet.data(index),
-            Self::Bytes(packet) => packet.data(index),
-        }
+        let Self::Bytes(packet) = self;
+        packet.data(index)
     }
 
     #[inline]
     pub fn meta(&self) -> &Meta {
-        match self {
-            Self::Packet(packet) => packet.meta(),
-            Self::Bytes(packet) => packet.meta(),
-        }
+        let Self::Bytes(packet) = self;
+        packet.meta()
     }
 
     #[inline]
     pub fn meta_mut(&mut self) -> &mut Meta {
-        match self {
-            Self::Packet(packet) => packet.meta_mut(),
-            Self::Bytes(packet) => packet.meta_mut(),
-        }
+        let Self::Bytes(packet) = self;
+        packet.meta_mut()
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     #[inline]
     pub fn copy_from_slice(&mut self, src: &[u8]) {
-        match self {
-            Self::Packet(packet) => {
-                let size = src.len();
-                packet.buffer_mut()[..size].copy_from_slice(src);
-            }
-            Self::Bytes(packet) => packet.copy_from_slice(src),
-        }
+        let Self::Bytes(packet) = self;
+        packet.copy_from_slice(src)
     }
 
     #[inline]
     pub fn as_ref(&self) -> PacketRef<'_> {
-        match self {
-            Self::Packet(packet) => PacketRef::Packet(packet),
-            Self::Bytes(packet) => PacketRef::Bytes(packet),
-        }
+        let Self::Bytes(packet) = self;
+        PacketRef::Bytes(packet)
     }
 }
 
-pub enum PacketBatchIter<'a> {
-    Pinned(std::slice::Iter<'a, Packet>),
-    Bytes(std::slice::Iter<'a, BytesPacket>),
-}
+pub type PacketBatchIter<'a> =
+    std::iter::Map<std::slice::Iter<'a, BytesPacket>, fn(&'a BytesPacket) -> PacketRef<'a>>;
 
-impl DoubleEndedIterator for PacketBatchIter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Pinned(iter) => iter.next_back().map(PacketRef::Packet),
-            Self::Bytes(iter) => iter.next_back().map(PacketRef::Bytes),
-        }
-    }
-}
+pub type PacketBatchIterMut<'a> = std::iter::Map<
+    std::slice::IterMut<'a, BytesPacket>,
+    fn(&'a mut BytesPacket) -> PacketRefMut<'a>,
+>;
 
-impl<'a> Iterator for PacketBatchIter<'a> {
-    type Item = PacketRef<'a>;
+pub type PacketBatchParIter<'a> =
+    rayon::iter::Map<rayon::slice::Iter<'a, BytesPacket>, fn(&'a BytesPacket) -> PacketRef<'a>>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Pinned(iter) => iter.next().map(PacketRef::Packet),
-            Self::Bytes(iter) => iter.next().map(PacketRef::Bytes),
-        }
-    }
-}
-
-pub enum PacketBatchIterMut<'a> {
-    Pinned(std::slice::IterMut<'a, Packet>),
-    Bytes(std::slice::IterMut<'a, BytesPacket>),
-}
-
-impl DoubleEndedIterator for PacketBatchIterMut<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Pinned(iter) => iter.next_back().map(PacketRefMut::Packet),
-            Self::Bytes(iter) => iter.next_back().map(PacketRefMut::Bytes),
-        }
-    }
-}
-
-impl<'a> Iterator for PacketBatchIterMut<'a> {
-    type Item = PacketRefMut<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Pinned(iter) => iter.next().map(PacketRefMut::Packet),
-            Self::Bytes(iter) => iter.next().map(PacketRefMut::Bytes),
-        }
-    }
-}
-
-type PacketParIter<'a> = rayon::slice::Iter<'a, Packet>;
-type BytesPacketParIter<'a> = rayon::slice::Iter<'a, BytesPacket>;
-
-pub enum PacketBatchParIter<'a> {
-    Pinned(
-        rayon::iter::Map<
-            PacketParIter<'a>,
-            fn(<PacketParIter<'a> as ParallelIterator>::Item) -> PacketRef<'a>,
-        >,
-    ),
-    Bytes(
-        rayon::iter::Map<
-            BytesPacketParIter<'a>,
-            fn(<BytesPacketParIter<'a> as ParallelIterator>::Item) -> PacketRef<'a>,
-        >,
-    ),
-}
-
-impl<'a> ParallelIterator for PacketBatchParIter<'a> {
-    type Item = PacketRef<'a>;
-    fn drive_unindexed<C>(self, consumer: C) -> C::Result
-    where
-        C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
-    {
-        match self {
-            Self::Pinned(iter) => iter.drive_unindexed(consumer),
-            Self::Bytes(iter) => iter.drive_unindexed(consumer),
-        }
-    }
-}
-
-impl IndexedParallelIterator for PacketBatchParIter<'_> {
-    fn len(&self) -> usize {
-        match self {
-            Self::Pinned(iter) => iter.len(),
-            Self::Bytes(iter) => iter.len(),
-        }
-    }
-
-    fn drive<C: rayon::iter::plumbing::Consumer<Self::Item>>(self, consumer: C) -> C::Result {
-        match self {
-            Self::Pinned(iter) => iter.drive(consumer),
-            Self::Bytes(iter) => iter.drive(consumer),
-        }
-    }
-
-    fn with_producer<CB: rayon::iter::plumbing::ProducerCallback<Self::Item>>(
-        self,
-        callback: CB,
-    ) -> CB::Output {
-        match self {
-            Self::Pinned(iter) => iter.with_producer(callback),
-            Self::Bytes(iter) => iter.with_producer(callback),
-        }
-    }
-}
-
-type PacketParIterMut<'a> = rayon::slice::IterMut<'a, Packet>;
-type BytesPacketParIterMut<'a> = rayon::slice::IterMut<'a, BytesPacket>;
-
-pub enum PacketBatchParIterMut<'a> {
-    Pinned(
-        rayon::iter::Map<
-            PacketParIterMut<'a>,
-            fn(<PacketParIterMut<'a> as ParallelIterator>::Item) -> PacketRefMut<'a>,
-        >,
-    ),
-    Bytes(
-        rayon::iter::Map<
-            BytesPacketParIterMut<'a>,
-            fn(<BytesPacketParIterMut<'a> as ParallelIterator>::Item) -> PacketRefMut<'a>,
-        >,
-    ),
-}
-
-impl<'a> ParallelIterator for PacketBatchParIterMut<'a> {
-    type Item = PacketRefMut<'a>;
-    fn drive_unindexed<C>(self, consumer: C) -> C::Result
-    where
-        C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
-    {
-        match self {
-            Self::Pinned(iter) => iter.drive_unindexed(consumer),
-            Self::Bytes(iter) => iter.drive_unindexed(consumer),
-        }
-    }
-}
-
-impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
-    fn len(&self) -> usize {
-        match self {
-            Self::Pinned(iter) => iter.len(),
-            Self::Bytes(iter) => iter.len(),
-        }
-    }
-
-    fn drive<C: rayon::iter::plumbing::Consumer<Self::Item>>(self, consumer: C) -> C::Result {
-        match self {
-            Self::Pinned(iter) => iter.drive(consumer),
-            Self::Bytes(iter) => iter.drive(consumer),
-        }
-    }
-
-    fn with_producer<CB: rayon::iter::plumbing::ProducerCallback<Self::Item>>(
-        self,
-        callback: CB,
-    ) -> CB::Output {
-        match self {
-            Self::Pinned(iter) => iter.with_producer(callback),
-            Self::Bytes(iter) => iter.with_producer(callback),
-        }
-    }
-}
-
-#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RecycledPacketBatch {
-    packets: RecycledVec<Packet>,
-}
-
-pub type PacketBatchRecycler = Recycler<RecycledVec<Packet>>;
-
-impl RecycledPacketBatch {
-    pub fn new(packets: Vec<Packet>) -> Self {
-        Self {
-            packets: RecycledVec::from_vec(packets),
-        }
-    }
-
-    pub fn with_capacity(capacity: usize) -> Self {
-        let packets = RecycledVec::with_capacity(capacity);
-        Self { packets }
-    }
-
-    pub fn new_with_recycler(
-        recycler: &PacketBatchRecycler,
-        capacity: usize,
-        name: &'static str,
-    ) -> Self {
-        let mut packets = recycler.allocate(name);
-        packets.preallocate(capacity);
-        Self { packets }
-    }
-
-    pub fn new_with_recycler_data(
-        recycler: &PacketBatchRecycler,
-        name: &'static str,
-        packets: impl IntoIterator<Item = Packet, IntoIter: ExactSizeIterator>,
-    ) -> Self {
-        let packets = packets.into_iter();
-        let mut batch = Self::new_with_recycler(recycler, packets.len(), name);
-        batch.packets.extend(packets);
-        batch
-    }
-
-    pub fn new_with_recycler_data_and_dests<S, T>(
-        recycler: &PacketBatchRecycler,
-        name: &'static str,
-        dests_and_data: impl IntoIterator<Item = (S, T), IntoIter: ExactSizeIterator>,
-    ) -> Self
-    where
-        S: Borrow<SocketAddr>,
-        T: solana_packet::Encode,
-    {
-        let dests_and_data = dests_and_data.into_iter();
-        let mut batch = Self::new_with_recycler(recycler, dests_and_data.len(), name);
-        batch
-            .packets
-            .resize(dests_and_data.len(), Packet::default());
-
-        for ((addr, data), packet) in dests_and_data.zip(batch.packets.iter_mut()) {
-            let addr = addr.borrow();
-            if !addr.ip().is_unspecified() && addr.port() != 0 {
-                if let Err(e) = Packet::populate_packet(packet, Some(addr), &data) {
-                    // TODO: This should never happen. Instead the caller should
-                    // break the payload into smaller messages, and here any errors
-                    // should be propagated.
-                    error!("Couldn't write to packet {e:?}. Data skipped.");
-                    packet.meta_mut().set_discard(true);
-                }
-            } else {
-                trace!("Dropping packet, as destination is unknown");
-                packet.meta_mut().set_discard(true);
-            }
-        }
-        batch
-    }
-
-    pub fn set_addr(&mut self, addr: &SocketAddr) {
-        for p in self.iter_mut() {
-            p.meta_mut().set_socket_addr(addr);
-        }
-    }
-
-    pub fn push(&mut self, packet: Packet) {
-        self.packets.push(packet)
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        self.packets.truncate(len)
-    }
-
-    pub fn resize(&mut self, packets_per_batch: usize, value: Packet) {
-        self.packets.resize(packets_per_batch, value)
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.packets.capacity()
-    }
-}
-
-impl Deref for RecycledPacketBatch {
-    type Target = [Packet];
-
-    fn deref(&self) -> &Self::Target {
-        &self.packets
-    }
-}
-
-impl DerefMut for RecycledPacketBatch {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.packets
-    }
-}
-
-impl<I: SliceIndex<[Packet]>> Index<I> for RecycledPacketBatch {
-    type Output = I::Output;
-
-    #[inline]
-    fn index(&self, index: I) -> &Self::Output {
-        &self.packets[index]
-    }
-}
-
-impl<I: SliceIndex<[Packet]>> IndexMut<I> for RecycledPacketBatch {
-    #[inline]
-    fn index_mut(&mut self, index: I) -> &mut Self::Output {
-        &mut self.packets[index]
-    }
-}
-
-impl<'a> IntoIterator for &'a RecycledPacketBatch {
-    type Item = &'a Packet;
-    type IntoIter = Iter<'a, Packet>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.packets.iter()
-    }
-}
-
-impl<'a> IntoParallelIterator for &'a RecycledPacketBatch {
-    type Iter = rayon::slice::Iter<'a, Packet>;
-    type Item = &'a Packet;
-    fn into_par_iter(self) -> Self::Iter {
-        self.packets.par_iter()
-    }
-}
-
-impl<'a> IntoParallelIterator for &'a mut RecycledPacketBatch {
-    type Iter = rayon::slice::IterMut<'a, Packet>;
-    type Item = &'a mut Packet;
-    fn into_par_iter(self) -> Self::Iter {
-        self.packets.par_iter_mut()
-    }
-}
-
-impl From<RecycledPacketBatch> for Vec<Packet> {
-    fn from(batch: RecycledPacketBatch) -> Self {
-        batch.packets.into()
-    }
-}
+pub type PacketBatchParIterMut<'a> = rayon::iter::Map<
+    rayon::slice::IterMut<'a, BytesPacket>,
+    fn(&'a mut BytesPacket) -> PacketRefMut<'a>,
+>;
 
 pub fn to_packet_batches<T: wincode::Serialize<Src = T>>(
     items: &[T],
@@ -964,14 +569,5 @@ mod tests {
         assert_eq!(rv.len(), 2);
         assert_eq!(rv[0].len(), NUM_PACKETS);
         assert_eq!(rv[1].len(), 1);
-    }
-
-    #[test]
-    fn test_to_packets_pinning() {
-        let recycler = PacketBatchRecycler::default();
-        for i in 0..2 {
-            let _first_packets =
-                RecycledPacketBatch::new_with_recycler(&recycler, i + 1, "first one");
-        }
     }
 }

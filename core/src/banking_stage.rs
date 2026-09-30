@@ -86,11 +86,10 @@ const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
-fn packet_bytes(packet: PacketRef<'_>, packet_data: &[u8]) -> Bytes {
-    match packet {
-        PacketRef::Bytes(packet) => packet.buffer().clone(),
-        PacketRef::Packet(_) => Bytes::copy_from_slice(packet_data),
-    }
+// Returns the packet's payload, or None if the packet is discarded.
+fn packet_bytes(packet: PacketRef<'_>) -> Option<Bytes> {
+    let PacketRef::Bytes(packet) = packet;
+    (!packet.meta().discard()).then(|| packet.buffer().clone())
 }
 
 #[derive(Debug, Default)]

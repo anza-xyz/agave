@@ -106,9 +106,8 @@ impl LatestValidatorVote {
             return Err(DeserializedPacketError::VoteTransaction);
         }
 
-        let packet_data = packet.data(..).unwrap();
         let vote = SanitizedTransactionView::try_new_sanitized(
-            packet_bytes(packet, packet_data),
+            packet_bytes(packet).unwrap(),
             &solana_runtime_transaction::sanitize_config::sanitize_config(),
         )
         .unwrap();

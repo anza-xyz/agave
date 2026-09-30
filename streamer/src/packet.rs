@@ -20,8 +20,8 @@ use {
 pub use {
     solana_packet::{Meta, PACKET_DATA_SIZE, Packet},
     solana_perf::packet::{
-        BytesPacket, BytesPacketBatch, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch,
-        PacketBatchRecycler, PacketRef, PacketRefMut, RecycledPacketBatch,
+        BytesPacket, BytesPacketBatch, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch, PacketRef,
+        PacketRefMut,
     },
 };
 
@@ -312,16 +312,6 @@ mod tests {
         BytesPacket::new(Bytes::from(vec![0u8; size]), meta)
     }
 
-    #[test]
-    fn test_packets_set_addr() {
-        // test that the address is actually being updated
-        let send_addr: SocketAddr = "127.0.0.1:123".parse().unwrap();
-        let packets = vec![Packet::default()];
-        let mut packet_batch = RecycledPacketBatch::new(packets);
-        packet_batch.set_addr(&send_addr);
-        assert_eq!(packet_batch[0].meta().socket_addr(), send_addr);
-    }
-
     fn recv_from(
         batch: &mut BytesPacketBatch,
         socket: &UdpSocket,
@@ -378,7 +368,7 @@ mod tests {
     #[test]
     pub fn debug_trait() {
         write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", RecycledPacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", BytesPacketBatch::default()).unwrap();
     }
 
     #[test]

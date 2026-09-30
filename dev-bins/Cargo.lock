@@ -7431,7 +7431,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-message",
- "solana-metrics",
  "solana-packet",
  "solana-pubkey 4.4.0",
  "solana-runtime-transaction",

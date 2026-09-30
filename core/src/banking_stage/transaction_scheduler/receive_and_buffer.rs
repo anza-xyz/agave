@@ -451,7 +451,7 @@ impl TransactionViewReceiveAndBuffer {
         stats: &mut ReceivingStats,
     ) -> Result<(), DisconnectedError> {
         for packet in batch.iter() {
-            let Some(packet_data) = packet.data(..) else {
+            let Some(work) = packet_bytes(packet) else {
                 continue;
             };
 
@@ -461,7 +461,6 @@ impl TransactionViewReceiveAndBuffer {
                 continue;
             }
 
-            let work = packet_bytes(packet, packet_data);
             match self.check_work_sender.try_send(work) {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) => {
@@ -557,7 +556,7 @@ mod tests {
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{BytesPacket, Packet, PacketBatch, RecycledPacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_sdk_ids::system_program,
@@ -950,9 +949,10 @@ mod tests {
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
-        let packet_batch = Arc::new(PacketBatch::from(RecycledPacketBatch::new(vec![
-            Packet::new([1u8; PACKET_DATA_SIZE], Meta::default()),
-        ])));
+        let packet_batch = Arc::new(PacketBatch::from(vec![BytesPacket::new(
+            vec![1u8; PACKET_DATA_SIZE].into(),
+            Meta::default(),
+        )]));
         sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
@@ -1205,7 +1205,7 @@ mod tests {
     }
 
     #[test]
-    fn test_receive_and_buffer_pinned_packet() {
+    fn test_receive_and_buffer_bytes_batch() {
         let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
@@ -1217,11 +1217,9 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet = Packet::from_data(None, transaction).unwrap();
+        let packet = BytesPacket::from_data(transaction).unwrap();
         sender
-            .send(Arc::new(PacketBatch::from(RecycledPacketBatch::new(vec![
-                packet,
-            ]))))
+            .send(Arc::new(PacketBatch::from(vec![packet])))
             .unwrap();
 
         let stats = receive(&mut receive_and_buffer, &mut container);

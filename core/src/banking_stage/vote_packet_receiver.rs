@@ -134,14 +134,11 @@ impl VotePacketReceiver {
         stats.num_packets_received += packet_batch.len();
 
         for packet in packet_batch.iter() {
-            let Some(packet_data) = packet.data(..) else {
+            let Some(bytes) = packet_bytes(packet) else {
                 continue;
             };
 
-            match SanitizedTransactionView::try_new_sanitized(
-                packet_bytes(packet, packet_data),
-                sanitize_config,
-            ) {
+            match SanitizedTransactionView::try_new_sanitized(bytes, sanitize_config) {
                 Ok(packet) => {
                     if self.should_filter_packet(&packet) {
                         stats.packet_stats.filtered_account_key_count += 1;

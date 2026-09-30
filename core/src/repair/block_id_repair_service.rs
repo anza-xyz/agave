@@ -1069,7 +1069,7 @@ mod tests {
             shred::merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY},
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::Packet,
+        solana_perf::packet::BytesPacket,
         solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config},
         solana_sha256_hasher::hashv,
         std::sync::RwLock,
@@ -1100,11 +1100,8 @@ mod tests {
     }
 
     /// Create a packet from serialized data
-    fn make_packet(data: &[u8]) -> Packet {
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..data.len()].copy_from_slice(data);
-        packet.meta_mut().size = data.len();
-        packet
+    fn make_packet(data: &[u8]) -> BytesPacket {
+        BytesPacket::from_bytes(None, data.to_vec())
     }
 
     fn new_test_cluster_info() -> ClusterInfo {

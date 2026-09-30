@@ -718,27 +718,6 @@ mod tests {
             let keypair = Keypair::new();
             let nonce = repaired.then(|| rng.random::<Nonce>());
             if is_last_in_slot {
-                let packet = &mut shred.payload().to_packet(nonce);
-                let buf_before = packet.buffer_mut().to_vec();
-                if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
-                }
-                maybe_verify_and_resign_packet(
-                    &mut packet.into(),
-                    &root_bank,
-                    &working_bank,
-                    &cluster_info,
-                    &leader_schedule_cache,
-                    &cluster_nodes_cache,
-                    &stats,
-                    &keypair,
-                )
-                .expect("packet should pass the verification");
-                assert!(!packet.meta().discard());
-
-                // Check whether the packet was modified.
-                assert_ne!(&buf_before, &packet.data(..).unwrap());
-
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
@@ -761,23 +740,6 @@ mod tests {
                 let buf_addr_after = bytes_packet.buffer().as_ptr().addr();
                 assert_ne!(buf_addr, buf_addr_after);
             } else {
-                let packet = &mut shred.payload().to_packet(nonce);
-                if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
-                }
-                maybe_verify_and_resign_packet(
-                    &mut packet.into(),
-                    &root_bank,
-                    &working_bank,
-                    &cluster_info,
-                    &leader_schedule_cache,
-                    &cluster_nodes_cache,
-                    &stats,
-                    &keypair,
-                )
-                .expect("packet should pass the verification");
-                assert!(!packet.meta().discard());
-
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
@@ -794,7 +756,7 @@ mod tests {
                     &keypair,
                 )
                 .expect("packet should pass the verification");
-                assert!(!packet.meta().discard());
+                assert!(!bytes_packet.meta().discard());
 
                 // Packet should not be modified.
                 let buf_addr_after = bytes_packet.buffer().as_ptr().addr();

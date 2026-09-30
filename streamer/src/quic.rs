@@ -1145,26 +1145,19 @@ mod test {
                     debug!("Received packet batch (iteration {iterations})");
 
                     // Verify we get the client pubkey
-                    match &packet_batch {
-                        PacketBatch::Bytes(_) => {
-                            panic!("Expected PacketBatch::Simple but got PacketBatch::Bytes");
-                        }
-                        PacketBatch::Pinned(_) => {
-                            panic!("Expected PacketBatch::Simple but got PacketBatch::Pinned");
-                        }
-                        PacketBatch::Single(packet) => {
-                            if *packet.data(0).unwrap() == 0u8 {
-                                debug!("Packet from stream with client 1");
-                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_1);
-                            } else if *packet.data(0).unwrap() == 1u8 {
-                                debug!("Packet from stream with client 2");
-                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_2);
-                            } else {
-                                panic!("Unexpected data in packet: {:?}", packet.data(0));
-                            }
-                            total_packets += 1;
-                        }
+                    let PacketBatch::Single(packet) = &packet_batch else {
+                        panic!("Expected PacketBatch::Single but got PacketBatch::Bytes");
+                    };
+                    if *packet.data(0).unwrap() == 0u8 {
+                        debug!("Packet from stream with client 1");
+                        assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_1);
+                    } else if *packet.data(0).unwrap() == 1u8 {
+                        debug!("Packet from stream with client 2");
+                        assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_2);
+                    } else {
+                        panic!("Unexpected data in packet: {:?}", packet.data(0));
                     }
+                    total_packets += 1;
                 }
                 Err(e) => {
                     if iterations % 10 == 0 {

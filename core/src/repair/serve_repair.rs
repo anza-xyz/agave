@@ -2124,7 +2124,7 @@ mod tests {
     }
 
     fn make_remote_request(packet: &Packet) -> BytesPacket {
-        PacketRef::from(packet).to_bytes_packet()
+        BytesPacket::from(packet)
     }
 
     #[test]

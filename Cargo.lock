@@ -9420,7 +9420,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-message",
- "solana-metrics",
  "solana-packet",
  "solana-perf",
  "solana-pubkey 4.4.0",
