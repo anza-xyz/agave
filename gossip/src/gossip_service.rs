@@ -7,6 +7,7 @@ use {
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
     },
+    bytes::Bytes,
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
     solana_net_utils::{
@@ -14,7 +15,7 @@ use {
         TrySendError,
         multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
     },
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::{PacketBatch, PacketRef},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
@@ -421,9 +422,17 @@ impl ResponseSender for GossipXdpSender {
             let data = pkt.data(..)?;
 
             // For XDP, we don't support IPv6 and no private or loopback IPv4 addresses.
-            match addr.ip() {
-                IpAddr::V4(ip) if !ip.is_private() && !ip.is_loopback() => Some((data, addr)),
-                _ => None,
+            if let IpAddr::V4(ip) = addr.ip()
+                && !ip.is_private()
+                && !ip.is_loopback()
+            {
+                let payload = match pkt {
+                    PacketRef::Bytes(pkt) => pkt.buffer().clone(),
+                    PacketRef::Packet(_) => Bytes::copy_from_slice(data),
+                };
+                Some((payload, addr))
+            } else {
+                None
             }
         });
 
@@ -432,10 +441,7 @@ impl ResponseSender for GossipXdpSender {
         let mut num_dropped_disconnected = 0;
 
         for (idx, (payload, addr)) in packets.enumerate() {
-            match self
-                .0
-                .try_send(idx, addr, bytes::Bytes::copy_from_slice(payload))
-            {
+            match self.0.try_send(idx, addr, payload) {
                 Ok(()) => {
                     num_sent += 1;
                 }
