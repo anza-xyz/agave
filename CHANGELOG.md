@@ -45,6 +45,7 @@ Release channels have their own copy of this changelog:
 #### Breaking
 
 * Prebuilt Windows releases are no longer provided.
+* `solana-genesis` no longer accepts the `--alpenglow` option.
 
 #### Changes
 
@@ -52,6 +53,7 @@ Release channels have their own copy of this changelog:
   when the request fails on devnet or testnet.
 * `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
   no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
+* `solana-genesis` now activates Alpenglow consensus at genesis by default.
 
 ## 4.4.0
 

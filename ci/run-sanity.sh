@@ -22,7 +22,12 @@ rm -rf config/run/init-completed config/ledger
 # Also the banking_tracer thread needs some extra time to flush due to
 # unsynchronized and buffered IO.
 validator_timeout="${SOLANA_VALIDATOR_EXIT_TIMEOUT:-120}"
-SOLANA_RUN_SH_VALIDATOR_ARGS="${SOLANA_RUN_SH_VALIDATOR_ARGS} --full-snapshot-interval-slots 200 --incremental-snapshot-interval-slots 100 --enable-banking-trace $((1024 * 1024 * 1024))" \
+# simulate-block-production uses the legacy PoH simulator, which cannot produce
+# valid Alpenglow blocks.
+alpenglow_feature_id=A1pengvuM6JEcyNuTnMqepBKhwHE3N6PmUrdATGawhJS
+run_sh_genesis_args="$SOLANA_RUN_SH_GENESIS_ARGS --deactivate-feature $alpenglow_feature_id"
+SOLANA_RUN_SH_GENESIS_ARGS="$run_sh_genesis_args" \
+  SOLANA_RUN_SH_VALIDATOR_ARGS="${SOLANA_RUN_SH_VALIDATOR_ARGS} --full-snapshot-interval-slots 200 --incremental-snapshot-interval-slots 100 --enable-banking-trace $((1024 * 1024 * 1024))" \
   SOLANA_VALIDATOR_EXIT_TIMEOUT="$validator_timeout" \
   timeout "$validator_timeout" ./scripts/run.sh &
 
