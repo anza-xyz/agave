@@ -67,7 +67,7 @@ pub fn execute_batch<'a>(
     timings: &'a mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&'a PrioritizationFeeCache>,
-) -> TransactionResult<()> {
+) -> TransactionResult<Vec<TransactionCost>> {
     let TransactionBatchWithIndexes {
         batch,
         transaction_indexes,
@@ -93,24 +93,12 @@ pub fn execute_batch<'a>(
     let mut check_block_costs_elapsed = Measure::start("check_block_costs");
 
     let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions())?;
-    let checked_tx_costs_result = {
-        let mut cost_tracker = bank.write_cost_tracker().unwrap();
-        batch
-            .sanitized_transactions()
-            .iter()
-            .zip(&tx_costs)
-            .try_for_each(|(transaction, tx_cost)| {
-                check_block_cost_limits(&mut cost_tracker, transaction, tx_cost.tracked_cost())
-            })
-    };
 
     check_block_costs_elapsed.stop();
     timings.saturating_add_in_place(
         ExecuteTimingType::CheckBlockLimitsUs,
         check_block_costs_elapsed.as_us(),
     );
-
-    checked_tx_costs_result?;
 
     bank_utils::find_and_send_votes(
         batch.sanitized_transactions(),
@@ -158,10 +146,10 @@ pub fn execute_batch<'a>(
         );
     }
 
-    Ok(())
+    Ok(tx_costs)
 }
 
-fn check_block_cost_limits(
+pub fn check_block_cost_limits(
     cost_tracker: &mut CostTracker,
     transaction: &impl TransactionWithMeta,
     tracked_cost: TrackedCost,
@@ -474,8 +462,8 @@ mod tests {
             None,
         );
 
-        assert_eq!(result, expected_tx_result);
         if expected_tx_result.is_ok() {
+            let tx_costs = result.unwrap();
             assert_eq!(bank.transaction_count(), 1);
             if matches!(tx_result, TxResult::ExecutedWithFailure) {
                 assert_eq!(bank.transaction_error_count(), 1);
@@ -484,10 +472,11 @@ mod tests {
             }
             assert_matches!(
                 receiver.try_recv(),
-                Ok(TransactionStatusMessage::Batch((TransactionStatusBatch{transaction_indexes, ..}, _sequence)))
-                    if transaction_indexes.is_empty()
+                Ok(TransactionStatusMessage::Batch((TransactionStatusBatch{transaction_indexes, costs, ..}, _sequence)))
+                    if transaction_indexes.is_empty() && costs == vec![Some(tx_costs[0].sum())]
             );
         } else {
+            assert_eq!(result.err(), expected_tx_result.err());
             // The pre-commit callback surfaced the processing error and
             // cancelled the commit
             assert_eq!(bank.transaction_count(), 0);

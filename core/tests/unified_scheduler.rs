@@ -14,6 +14,7 @@ use {
         replay_stage::{ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
+    solana_cost_model::transaction_cost::TrackedCost,
     solana_hash::Hash,
     solana_leader_schedule::SlotLeader,
     solana_ledger::genesis_utils::create_genesis_config,
@@ -50,7 +51,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             scheduling_context: &SchedulingContext,
             task: &Task,
             handler_context: &HandlerContext,
-        ) -> Result<()> {
+        ) -> Result<TrackedCost> {
             info!("Stalling at StallingHandler::handle()...");
             *LOCK_TO_STALL.lock().unwrap();
             // Wait a bit for the replay stage to prune banks
