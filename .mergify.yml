@@ -31,16 +31,6 @@ pull_request_rules:
       request_reviews:
         teams:
           - "@anza-xyz/community-pr-subscribers"
-  - name: v4.2 backport
-    conditions:
-      - label=v4.2
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        branches:
-          - v4.2
   - name: v4.3 backport
     conditions:
       - label=v4.3
@@ -64,7 +54,6 @@ pull_request_rules:
   - name: backport warning comment
     conditions:
       - or:
-        - label=v4.2
         - label=v4.3
         - label=v4.4
     actions:
@@ -82,7 +71,6 @@ pull_request_rules:
   - name: close PRs against EoL version branches
     conditions:
       - base ~= ^v[0-9]+\.[0-9]+$
-      - base != v4.2
       - base != v4.3
       - base != v4.4
     actions:
