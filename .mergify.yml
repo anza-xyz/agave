@@ -31,6 +31,7 @@ pull_request_rules:
       request_reviews:
         teams:
           - "@anza-xyz/community-pr-subscribers"
+<<<<<<< HEAD
   - name: automatic merge (squash) on CI success
     conditions:
       - and:
@@ -62,6 +63,9 @@ pull_request_rules:
       comment:
         message: automerge label removed due to a CI failure
   - name: v4.2 feature-gate backport
+=======
+  - name: v4.2 backport
+>>>>>>> 08bea7e (ci: remove automerge setup from mergify (#15631))
     conditions:
       - label=v4.2
       - label=feature-gate
