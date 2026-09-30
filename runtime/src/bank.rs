@@ -2443,11 +2443,6 @@ impl Bank {
         self.bank_id
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn bank_id_generator(&self) -> &BankIdGenerator {
-        &self.rc.bank_id_generator
-    }
-
     pub fn epoch(&self) -> Epoch {
         self.epoch
     }
@@ -7328,6 +7323,10 @@ impl Bank {
 
     pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
         &self.transaction_processor
+    }
+
+    pub fn bank_id_generator(&self) -> &BankIdGenerator {
+        &self.rc.bank_id_generator
     }
 
     pub fn set_fee_structure(&mut self, fee_structure: &FeeStructure) {
