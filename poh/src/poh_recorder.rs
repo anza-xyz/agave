@@ -1807,7 +1807,7 @@ mod tests {
 
         // However we hand over a bad bank id so record fails
         assert_matches!(
-            poh_recorder.record(bank.bank_id().next_bank_id(), h1, vec![tx.into()]),
+            poh_recorder.record(bank.bank_id_generator().next(), h1, vec![tx.into()]),
             Err(PohRecorderError::MaxHeightReached)
         );
     }

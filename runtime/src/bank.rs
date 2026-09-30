@@ -2443,6 +2443,11 @@ impl Bank {
         self.bank_id
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn bank_id_generator(&self) -> &BankIdGenerator {
+        &self.rc.bank_id_generator
+    }
+
     pub fn epoch(&self) -> Epoch {
         self.epoch
     }

@@ -12,13 +12,6 @@ impl BankId {
     }
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-impl BankId {
-    pub fn next_bank_id(&self) -> BankId {
-        Self::new(self.0 + 1)
-    }
-}
-
 impl From<BankId> for u64 {
     fn from(bank_id: BankId) -> Self {
         bank_id.0

@@ -478,7 +478,10 @@ mod tests {
 
 #[cfg(all(test, feature = "shuttle-test"))]
 mod shuttle_tests {
-    use super::{tests::test_record, *};
+    use {
+        super::{tests::test_record, *},
+        solana_runtime::bank::BankIdGenerator,
+    };
 
     #[test]
     fn test_sender_shutdown_safety_race() {
@@ -491,14 +494,15 @@ mod shuttle_tests {
 
                 shuttle::thread::spawn(move || {
                     let mut successful_sends = 0;
-                    let mut bank_id = BankId::new(0);
+                    let bank_ids = BankIdGenerator::default();
+                    let mut bank_id = bank_ids.next();
                     let mut had_successful_send = false;
                     while successful_sends < ITERATIONS_PER_RUN {
                         if sender.try_send(test_record(bank_id, 1)).is_ok() {
                             had_successful_send = true;
                             successful_sends += 1;
                         } else if had_successful_send {
-                            bank_id = bank_id.next_bank_id();
+                            bank_id = bank_ids.next();
                             had_successful_send = false;
                         }
                     }
@@ -508,12 +512,13 @@ mod shuttle_tests {
                 // the receiver can receive a record after shutdown is called.
                 // This can cause PoH to panic because it may receive a record
                 // for a bank_id that has already been completed.
-                let mut current_bank_id = BankId::new(0);
+                let bank_ids = BankIdGenerator::default();
+                let mut current_bank_id = bank_ids.next();
                 receiver.restart(current_bank_id);
                 let mut receives = 0;
                 while receives < ITERATIONS_PER_RUN {
                     if receiver.is_shutdown() && receiver.is_safe_to_restart() {
-                        current_bank_id = current_bank_id.next_bank_id();
+                        current_bank_id = bank_ids.next();
                         receiver.restart(current_bank_id);
                     }
 

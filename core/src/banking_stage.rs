@@ -1276,9 +1276,9 @@ mod tests {
         );
         assert!(record_receiver.try_recv().is_err());
 
-        // Once bank is set to a new bank (setting bank id + 1 in record_transactions),
+        // Once bank is set to a new bank (next bank id in record_transactions),
         // record_transactions should throw MaxHeightReached
-        let next_bank_id = bank.bank_id().next_bank_id();
+        let next_bank_id = bank.bank_id_generator().next();
         let RecordTransactionsSummary { result, .. } =
             recorder.record_transactions(next_bank_id, txs);
         assert_matches!(result, Err(PohRecorderError::MaxHeightReached));
