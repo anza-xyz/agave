@@ -41,8 +41,8 @@ use {
 const MIN_LOOP_INTERVAL: Duration = Duration::from_millis(100);
 // Set the clean interval duration to be approximately how long before the next incremental
 // snapshot request is received, plus some buffer.  The default incremental snapshot interval is
-// 100 slots, which ends up being 40 seconds plus buffer.
-const CLEAN_INTERVAL: Duration = Duration::from_secs(50);
+// 200 slots, which ends up being 50 seconds plus buffer.
+const CLEAN_INTERVAL: Duration = Duration::from_secs(60);
 const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type SnapshotRequestSender = Sender<SnapshotRequest>;
