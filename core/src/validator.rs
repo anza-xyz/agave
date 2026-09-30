@@ -1594,7 +1594,7 @@ impl Validator {
         let wait_for_vote_to_start_leader =
             !waited_for_supermajority && !config.no_wait_for_vote_to_start_leader;
 
-        // Pass RecordReceiver from PohService to BlockCreationLoop when shutting down. Gives us a strong guarentee
+        // Pass RecordReceiver from PohService to BlockCreationLoop when shutting down. Gives us a strong guarantee
         // that both block producers are not running at the same time
         let (record_receiver_sender, record_receiver_receiver) = bounded(1);
         // Sender for notifications about our leader window. We allow for a maximum of 7 leader windows in case we have
