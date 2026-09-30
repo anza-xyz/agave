@@ -112,10 +112,10 @@ impl RecordSender {
                 BankIdAllowedInsertions::allowed_insertions(current_bank_id_allowed_insertions),
             );
 
-            if bank_id == BankIdAllowedInsertions::DISABLED_BANK_ID {
+            if bank_id == EncodedBankId::DISABLED {
                 return Err(RecordSenderError::Shutdown);
             }
-            if bank_id != record.bank_id {
+            if bank_id != EncodedBankId::new(record.bank_id) {
                 return Err(RecordSenderError::InactiveBankId);
             }
             if allowed_insertions == 0 {
@@ -203,12 +203,12 @@ impl RecordReceiver {
     /// Check if the channel is shutdown.
     pub fn is_shutdown(&self) -> bool {
         BankIdAllowedInsertions::bank_id(self.bank_id_allowed_insertions.0.load(Ordering::Acquire))
-            == BankIdAllowedInsertions::DISABLED_BANK_ID
+            == EncodedBankId::DISABLED
     }
 
     /// Re-enable the channel after a shutdown.
     pub fn restart(&mut self, bank_id: BankId) {
-        assert!(bank_id.0 <= BankIdAllowedInsertions::MAX_BANK_ID.0);
+        let bank_id = EncodedBankId::new(bank_id);
         assert!(self.receiver.is_empty()); // Should be empty before restarting.
 
         // Reset transaction indexes if tracking them - BEFORE allowing new insertions.
@@ -313,6 +313,25 @@ impl RecordReceiver {
     }
 }
 
+/// The bank_id field of [`BankIdAllowedInsertions`]: a [`BankId`], or
+/// [`Self::DISABLED`] while shutdown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EncodedBankId(u64);
+
+impl EncodedBankId {
+    const BITS: u64 =
+        BankIdAllowedInsertions::NUM_BITS - BankIdAllowedInsertions::ALLOWED_INSERTIONS_BITS;
+
+    const DISABLED: Self = Self((1 << Self::BITS) - 1);
+    const MAX: Self = Self(Self::DISABLED.0 - 1);
+
+    fn new(bank_id: BankId) -> Self {
+        let bank_id = u64::from(bank_id);
+        assert!(bank_id <= Self::MAX.0);
+        Self(bank_id)
+    }
+}
+
 /// Encoded u64 where the upper 54 bits are the bank_id and the lower 10 bits are
 /// the number of allowed insertions at the current time.
 /// Each [`Record`] is a separate hash in the PoH stream, so the number of allowed
@@ -330,17 +349,14 @@ impl BankIdAllowedInsertions {
     const NUM_BITS: u64 = 64;
     /// Number of bits used to track allowed insertions.
     const ALLOWED_INSERTIONS_BITS: u64 = 10;
-    const BANK_ID_BITS: u64 = Self::NUM_BITS - Self::ALLOWED_INSERTIONS_BITS;
 
-    const DISABLED_BANK_ID: BankId = BankId((1 << Self::BANK_ID_BITS) - 1);
-    const MAX_BANK_ID: BankId = BankId(Self::DISABLED_BANK_ID.0 - 1);
     const MAX_ALLOWED_INSERTIONS: u64 = (1 << Self::ALLOWED_INSERTIONS_BITS) - 1;
 
-    const SHUTDOWN: u64 = Self::encoded_value(Self::DISABLED_BANK_ID, 0);
+    const SHUTDOWN: u64 = Self::encoded_value(EncodedBankId::DISABLED, 0);
 
     /// Create a new `BankIdAllowedInsertions` with state consistent with a
     /// shutdown state:
-    /// - bank_id = `DISABLED_BANK_ID`
+    /// - bank_id = `EncodedBankId::DISABLED`
     /// - allowed_insertions = 0
     fn new_shutdown() -> Self {
         Self(Arc::new(AtomicU64::new(Self::SHUTDOWN)))
@@ -351,15 +367,14 @@ impl BankIdAllowedInsertions {
         self.0.store(Self::SHUTDOWN, Ordering::Release);
     }
 
-    const fn encoded_value(bank_id: BankId, allowed_insertions: u64) -> u64 {
-        assert!(bank_id.0 <= Self::DISABLED_BANK_ID.0);
+    const fn encoded_value(bank_id: EncodedBankId, allowed_insertions: u64) -> u64 {
         assert!(allowed_insertions <= Self::MAX_ALLOWED_INSERTIONS);
         (bank_id.0 << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
     }
 
-    /// The current bank_id, or [`Self::DISABLED_BANK_ID`] if shutdown.
-    fn bank_id(value: u64) -> BankId {
-        BankId((value >> Self::ALLOWED_INSERTIONS_BITS) & Self::DISABLED_BANK_ID.0)
+    /// The current bank_id, or [`EncodedBankId::DISABLED`] if shutdown.
+    fn bank_id(value: u64) -> EncodedBankId {
+        EncodedBankId(value >> Self::ALLOWED_INSERTIONS_BITS)
     }
 
     /// How many insertions/sends are allowed at this time.
@@ -483,7 +498,7 @@ mod shuttle_tests {
                             had_successful_send = true;
                             successful_sends += 1;
                         } else if had_successful_send {
-                            bank_id.0 += 1;
+                            bank_id = bank_id.next_bank_id();
                             had_successful_send = false;
                         }
                     }
@@ -498,7 +513,7 @@ mod shuttle_tests {
                 let mut receives = 0;
                 while receives < ITERATIONS_PER_RUN {
                     if receiver.is_shutdown() && receiver.is_safe_to_restart() {
-                        current_bank_id.0 += 1;
+                        current_bank_id = current_bank_id.next_bank_id();
                         receiver.restart(current_bank_id);
                     }
 
