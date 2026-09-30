@@ -277,8 +277,8 @@ mod test {
         );
 
         // Ensure wire::get_shred_and_repair_nonce reads the same nonce (LE).
-        let (bytes, got) = wire::get_shred_and_repair_nonce(bytes_packet.as_ref())
-            .expect("valid packet and nonce");
+        let (bytes, got) =
+            wire::get_shred_and_repair_nonce(&bytes_packet).expect("valid packet and nonce");
         assert_eq!(bytes, shred.payload().as_ref());
         assert_eq!(got, Some(nonce));
     }

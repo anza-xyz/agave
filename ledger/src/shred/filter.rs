@@ -10,7 +10,7 @@ use {
     agave_feature_set as feature_set,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
-    solana_perf::packet::PacketRef,
+    solana_perf::packet::BytesPacket,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
@@ -253,11 +253,7 @@ impl ShredFilterContext {
     }
 
     #[must_use]
-    pub fn should_discard_packet<'a, P>(&mut self, packet: P) -> bool
-    where
-        P: Into<PacketRef<'a>>,
-    {
-        let packet = packet.into();
+    pub fn should_discard_packet(&mut self, packet: &BytesPacket) -> bool {
         if self
             .cached_turbine_mode
             .should_discard_packet(packet.meta().repair())

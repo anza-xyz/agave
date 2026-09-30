@@ -501,22 +501,22 @@ mod tests {
         bytes_batch.push(BytesPacket::from_bytes(None, tx_v1_bytes.clone()));
         packet_s.send(PacketBatch::from(bytes_batch)).unwrap();
         let sentinel_batch = to_packet_batches(&[test_tx()], 1).pop().unwrap();
-        let sentinel_bytes = sentinel_batch.get(0).unwrap().data(..).unwrap().to_vec();
+        let sentinel_bytes = sentinel_batch.first().unwrap().data(..).unwrap().to_vec();
         packet_s.send(sentinel_batch).unwrap();
 
         let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(verified_batch.len(), 1);
-        assert!(!verified_batch.get(0).unwrap().meta().discard());
+        assert!(!verified_batch.first().unwrap().meta().discard());
         assert_eq!(
-            verified_batch.get(0).unwrap().data(..).unwrap(),
+            verified_batch.first().unwrap().data(..).unwrap(),
             tx_v1_bytes
         );
         // Receiving the sentinel proves that the preceding v1 packet was processed.
         let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(verified_batch.len(), 1);
-        assert!(!verified_batch.get(0).unwrap().meta().discard());
+        assert!(!verified_batch.first().unwrap().meta().discard());
         assert_eq!(
-            verified_batch.get(0).unwrap().data(..).unwrap(),
+            verified_batch.first().unwrap().data(..).unwrap(),
             sentinel_bytes
         );
 

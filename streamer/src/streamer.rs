@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        packet::{self, BytesPacketBatch, PACKETS_PER_BATCH, PacketBatch, PacketRef},
+        packet::{self, BytesPacket, BytesPacketBatch, PACKETS_PER_BATCH, PacketBatch},
         recvmmsg::PacketBufferPool,
         sendmmsg::SendPktsError,
     },
@@ -386,7 +386,7 @@ impl StreamerSendStats {
         self.since = Some(Instant::now());
     }
 
-    fn record(&mut self, pkt: PacketRef) {
+    fn record(&mut self, pkt: &BytesPacket) {
         let ent = self.host_map.entry(pkt.meta().addr).or_default();
         ent.count += 1;
         ent.bytes += pkt.data(..).map(<[u8]>::len).unwrap_or_default() as u64;
@@ -430,7 +430,7 @@ impl StakedNodes {
 }
 
 pub fn filter_packets_by_socket_addr_space<'a>(
-    packets: impl Iterator<Item = PacketRef<'a>> + 'a,
+    packets: impl Iterator<Item = &'a BytesPacket> + 'a,
     socket_addr_space: &'a SocketAddrSpace,
 ) -> impl Iterator<Item = (&'a [u8], SocketAddr)> + 'a {
     packets.filter_map(move |pkt| {

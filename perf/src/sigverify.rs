@@ -2,7 +2,7 @@
 //! By default, signatures are verified in parallel using all available CPU
 //! cores.
 use {
-    crate::packet::{PacketBatch, PacketFlags, PacketRefMut},
+    crate::packet::{BytesPacket, PacketBatch, PacketFlags},
     agave_transaction_view::{
         transaction_data::TransactionData, transaction_version::TransactionVersion,
         transaction_view::SanitizedTransactionView,
@@ -17,7 +17,7 @@ pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 /// Returns true if the signature on the packet verifies.
 /// Caller must do packet.set_discard(true) if this returns false.
 #[must_use]
-fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
+fn verify_packet(packet: &mut BytesPacket, reject_non_vote: bool) -> bool {
     // If this packet was already marked as discard, drop it
     if packet.meta().discard() {
         return false;
@@ -109,8 +109,8 @@ pub fn ed25519_verify(
 ) {
     debug!("CPU ECDSA for {packet_count}");
     thread_pool.install(|| {
-        batches.par_iter_mut().flatten().for_each(|mut packet| {
-            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+        batches.par_iter_mut().flatten().for_each(|packet| {
+            if !packet.meta().discard() && !verify_packet(packet, reject_non_vote) {
                 packet.meta_mut().set_discard(true);
             }
         });
@@ -118,8 +118,8 @@ pub fn ed25519_verify(
 }
 
 pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool) {
-    for mut packet in batch.iter_mut() {
-        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+    for packet in batch.iter_mut() {
+        if !packet.meta().discard() && !verify_packet(packet, reject_non_vote) {
             packet.meta_mut().set_discard(true);
         }
     }
@@ -226,7 +226,7 @@ mod tests {
         let actual_num_sigs = 5;
 
         let mut packet = packet_from_num_sigs(required_num_sigs, actual_num_sigs);
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(&mut packet, false));
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod tests {
         data.truncate(2);
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(&mut packet, false));
     }
 
     #[test]
@@ -253,12 +253,12 @@ mod tests {
         tx.message.header.num_required_signatures = NUM_SIG as u8;
         let mut packet = BytesPacket::from_data(tx).unwrap();
 
-        assert!(!verify_packet(&mut packet.as_mut(), false));
+        assert!(!verify_packet(&mut packet, false));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
         ed25519_verify(&mut batches);
-        assert!(batches[0].get(0).unwrap().meta().discard());
+        assert!(batches[0].first().unwrap().meta().discard());
     }
 
     #[test]
@@ -284,12 +284,12 @@ mod tests {
 
         let mut packet = BytesPacket::from_data(tx).unwrap();
 
-        assert!(!verify_packet(&mut packet.as_mut(), false));
+        assert!(!verify_packet(&mut packet, false));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
         ed25519_verify(&mut batches);
-        assert!(batches[0].get(0).unwrap().meta().discard());
+        assert!(batches[0].first().unwrap().meta().discard());
     }
 
     #[test]
@@ -301,7 +301,7 @@ mod tests {
         data[0] = 0x7f;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(&mut packet, false));
     }
 
     #[test]
@@ -316,7 +316,7 @@ mod tests {
         data[3] = 0xff;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(&mut packet, false));
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
         data[PUBKEY_OFFSET] = 0x7f;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(&mut packet, false));
     }
 
     #[test]
@@ -348,7 +348,7 @@ mod tests {
         let mut tx = Transaction::new_unsigned(message);
         tx.signatures = vec![Signature::default()];
         let mut packet = BytesPacket::from_data(tx).unwrap();
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(&mut packet, false));
     }
 
     #[test]
@@ -362,7 +362,7 @@ mod tests {
         data[MESSAGE_OFFSET] = MESSAGE_VERSION_PREFIX + 2;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
-        assert!(!sigverify::verify_packet(&mut packet.as_mut(), false));
+        assert!(!sigverify::verify_packet(&mut packet, false));
     }
 
     fn generate_bytes_packet_batches(
@@ -547,7 +547,7 @@ mod tests {
             tx.message.instructions[0].data = vec![1, 2, 3];
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
-                packet.as_ref().data(..).unwrap(),
+                packet.data(..).unwrap(),
                 &sanitize_config(),
             )
             .unwrap();
@@ -560,7 +560,7 @@ mod tests {
             tx.message.instructions[0].data = vec![1, 2, 3];
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
-                packet.as_ref().data(..).unwrap(),
+                packet.data(..).unwrap(),
                 &sanitize_config(),
             )
             .unwrap();
@@ -573,7 +573,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
 
             let view = SanitizedTransactionView::try_new_sanitized(
-                packet.as_ref().data(..).unwrap(),
+                packet.data(..).unwrap(),
                 &sanitize_config(),
             )
             .unwrap();
@@ -598,7 +598,7 @@ mod tests {
             );
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
-                packet.as_ref().data(..).unwrap(),
+                packet.data(..).unwrap(),
                 &sanitize_config(),
             )
             .unwrap();
@@ -613,7 +613,7 @@ mod tests {
             tx.message.instructions[0].data = vec![1, 2, 3];
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
-                packet.as_ref().data(..).unwrap(),
+                packet.data(..).unwrap(),
                 &sanitize_config(),
             )
             .unwrap();
@@ -639,10 +639,7 @@ mod tests {
             BytesPacket::from_data(tx.clone()).unwrap()
         };
 
-        assert_eq!(
-            sigverify::verify_packet(&mut packet.as_mut(), false),
-            !too_many_ixs
-        );
+        assert_eq!(sigverify::verify_packet(&mut packet, false), !too_many_ixs);
     }
 
     #[test]
@@ -650,6 +647,6 @@ mod tests {
         let tx = test_tx_v1();
         let mut packet = BytesPacket::from_bytes(None, wincode::serialize(&tx).unwrap());
 
-        assert!(verify_packet(&mut packet.as_mut(), false));
+        assert!(verify_packet(&mut packet, false));
     }
 }

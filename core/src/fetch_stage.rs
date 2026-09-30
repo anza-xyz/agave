@@ -5,7 +5,7 @@ use {
     crossbeam_channel::{RecvTimeoutError, TrySendError, unbounded},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_packet::PacketFlags,
-    solana_perf::packet::{PacketBatch, PacketRefMut},
+    solana_perf::packet::{BytesPacket, PacketBatch},
     solana_poh::poh_recorder::PohRecorder,
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -123,7 +123,7 @@ impl FetchStage {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         stats: &mut ForwardingStats,
     ) -> Result<()> {
-        let mark_forwarded = |mut packet: PacketRefMut| {
+        let mark_forwarded = |packet: &mut BytesPacket| {
             packet.meta_mut().flags |= PacketFlags::FORWARDED;
         };
 

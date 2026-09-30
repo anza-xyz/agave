@@ -1,5 +1,5 @@
 #[cfg(test)]
-use {crate::banking_stage::packet_bytes, solana_perf::packet::PacketRef};
+use {crate::banking_stage::packet_bytes, solana_perf::packet::BytesPacket};
 use {
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     solana_bincode::limited_deserialize,
@@ -98,7 +98,7 @@ impl LatestValidatorVote {
 
     #[cfg(test)]
     pub fn new(
-        packet: PacketRef,
+        packet: &BytesPacket,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {

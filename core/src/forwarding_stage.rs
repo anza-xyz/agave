@@ -350,8 +350,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                     usize::from(!dropped_packet.meta().is_simple_vote_tx());
             }
 
-            self.packet_container
-                .insert(packet.to_bytes_packet(), priority);
+            self.packet_container.insert(packet.clone(), priority);
         }
     }
 

@@ -9,10 +9,7 @@ pub use {
 };
 use {
     bytes::Bytes,
-    rayon::{
-        iter::ParallelIterator,
-        prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
-    },
+    rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     serde::{Deserialize, Serialize},
     std::{
         io::Cursor,
@@ -189,16 +186,6 @@ impl BytesPacket {
     }
 
     #[inline]
-    pub fn as_ref(&self) -> PacketRef<'_> {
-        PacketRef::Bytes(self)
-    }
-
-    #[inline]
-    pub fn as_mut(&mut self) -> PacketRefMut<'_> {
-        PacketRefMut::Bytes(self)
-    }
-
-    #[inline]
     pub fn buffer(&self) -> &Bytes {
         &self.buffer
     }
@@ -226,69 +213,33 @@ impl From<&Packet> for BytesPacket {
     }
 }
 
-impl PacketBatch {
-    fn packets(&self) -> &[BytesPacket] {
+impl Deref for PacketBatch {
+    type Target = [BytesPacket];
+
+    fn deref(&self) -> &Self::Target {
         match self {
             Self::Bytes(batch) => batch,
             Self::Single(packet) => core::array::from_ref(packet),
         }
     }
+}
 
-    fn packets_mut(&mut self) -> &mut [BytesPacket] {
+impl DerefMut for PacketBatch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             Self::Bytes(batch) => batch,
             Self::Single(packet) => core::array::from_mut(packet),
         }
     }
+}
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn first(&self) -> Option<PacketRef<'_>> {
-        self.packets().first().map(PacketRef::from)
+impl PacketBatch {
+    pub fn par_iter(&self) -> rayon::slice::Iter<'_, BytesPacket> {
+        (**self).par_iter()
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn first_mut(&mut self) -> Option<PacketRefMut<'_>> {
-        self.packets_mut().first_mut().map(PacketRefMut::from)
-    }
-
-    /// Returns `true` if the batch contains no elements.
-    pub fn is_empty(&self) -> bool {
-        self.packets().is_empty()
-    }
-
-    /// Returns a reference to an element.
-    pub fn get(&self, index: usize) -> Option<PacketRef<'_>> {
-        self.packets().get(index).map(PacketRef::from)
-    }
-
-    pub fn get_mut(&mut self, index: usize) -> Option<PacketRefMut<'_>> {
-        self.packets_mut().get_mut(index).map(PacketRefMut::from)
-    }
-
-    pub fn iter(&self) -> PacketBatchIter<'_> {
-        self.packets().iter().map(PacketRef::Bytes as fn(_) -> _)
-    }
-
-    pub fn iter_mut(&mut self) -> PacketBatchIterMut<'_> {
-        self.packets_mut()
-            .iter_mut()
-            .map(PacketRefMut::Bytes as fn(_) -> _)
-    }
-
-    pub fn par_iter(&self) -> PacketBatchParIter<'_> {
-        self.packets()
-            .par_iter()
-            .map(PacketRef::Bytes as fn(_) -> _)
-    }
-
-    pub fn par_iter_mut(&mut self) -> PacketBatchParIterMut<'_> {
-        self.packets_mut()
-            .par_iter_mut()
-            .map(PacketRefMut::Bytes as fn(_) -> _)
-    }
-
-    pub fn len(&self) -> usize {
-        self.packets().len()
+    pub fn par_iter_mut(&mut self) -> rayon::slice::IterMut<'_, BytesPacket> {
+        (**self).par_iter_mut()
     }
 }
 
@@ -305,148 +256,36 @@ impl From<Vec<BytesPacket>> for PacketBatch {
 }
 
 impl<'a> IntoIterator for &'a PacketBatch {
-    type Item = PacketRef<'a>;
-    type IntoIter = PacketBatchIter<'a>;
+    type Item = &'a BytesPacket;
+    type IntoIter = Iter<'a, BytesPacket>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
 
 impl<'a> IntoIterator for &'a mut PacketBatch {
-    type Item = PacketRefMut<'a>;
-    type IntoIter = PacketBatchIterMut<'a>;
+    type Item = &'a mut BytesPacket;
+    type IntoIter = std::slice::IterMut<'a, BytesPacket>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter_mut()
     }
 }
 
 impl<'a> IntoParallelIterator for &'a PacketBatch {
-    type Iter = PacketBatchParIter<'a>;
-    type Item = PacketRef<'a>;
+    type Iter = rayon::slice::Iter<'a, BytesPacket>;
+    type Item = &'a BytesPacket;
     fn into_par_iter(self) -> Self::Iter {
         self.par_iter()
     }
 }
 
 impl<'a> IntoParallelIterator for &'a mut PacketBatch {
-    type Iter = PacketBatchParIterMut<'a>;
-    type Item = PacketRefMut<'a>;
+    type Iter = rayon::slice::IterMut<'a, BytesPacket>;
+    type Item = &'a mut BytesPacket;
     fn into_par_iter(self) -> Self::Iter {
         self.par_iter_mut()
     }
 }
-
-#[derive(Clone, Copy, Debug, Eq)]
-pub enum PacketRef<'a> {
-    Bytes(&'a BytesPacket),
-}
-
-impl PartialEq for PacketRef<'_> {
-    fn eq(&self, other: &PacketRef<'_>) -> bool {
-        self.meta().eq(other.meta()) && self.data(..).eq(&other.data(..))
-    }
-}
-
-impl<'a> From<&'a BytesPacket> for PacketRef<'a> {
-    fn from(packet: &'a BytesPacket) -> Self {
-        Self::Bytes(packet)
-    }
-}
-
-impl<'a> From<&'a mut BytesPacket> for PacketRef<'a> {
-    fn from(packet: &'a mut BytesPacket) -> Self {
-        Self::Bytes(packet)
-    }
-}
-
-impl<'a> PacketRef<'a> {
-    pub fn data<I>(&self, index: I) -> Option<&'a <I as SliceIndex<[u8]>>::Output>
-    where
-        I: SliceIndex<[u8]>,
-    {
-        let Self::Bytes(packet) = self;
-        packet.data(index)
-    }
-
-    #[inline]
-    pub fn meta(&self) -> &Meta {
-        let Self::Bytes(packet) = self;
-        packet.meta()
-    }
-
-    pub fn to_bytes_packet(&self) -> BytesPacket {
-        let Self::Bytes(packet) = self;
-        BytesPacket::clone(packet)
-    }
-}
-
-#[derive(Debug, Eq)]
-pub enum PacketRefMut<'a> {
-    Bytes(&'a mut BytesPacket),
-}
-
-impl<'a> PartialEq for PacketRefMut<'a> {
-    fn eq(&self, other: &PacketRefMut<'a>) -> bool {
-        self.data(..).eq(&other.data(..)) && self.meta().eq(other.meta())
-    }
-}
-
-impl<'a> From<&'a mut BytesPacket> for PacketRefMut<'a> {
-    fn from(packet: &'a mut BytesPacket) -> Self {
-        Self::Bytes(packet)
-    }
-}
-
-impl PacketRefMut<'_> {
-    pub fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
-    where
-        I: SliceIndex<[u8]>,
-    {
-        let Self::Bytes(packet) = self;
-        packet.data(index)
-    }
-
-    #[inline]
-    pub fn meta(&self) -> &Meta {
-        let Self::Bytes(packet) = self;
-        packet.meta()
-    }
-
-    #[inline]
-    pub fn meta_mut(&mut self) -> &mut Meta {
-        let Self::Bytes(packet) = self;
-        packet.meta_mut()
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    #[inline]
-    pub fn copy_from_slice(&mut self, src: &[u8]) {
-        let Self::Bytes(packet) = self;
-        packet.copy_from_slice(src)
-    }
-
-    #[inline]
-    pub fn as_ref(&self) -> PacketRef<'_> {
-        let Self::Bytes(packet) = self;
-        PacketRef::Bytes(packet)
-    }
-}
-
-pub type PacketBatchIter<'a> =
-    std::iter::Map<std::slice::Iter<'a, BytesPacket>, fn(&'a BytesPacket) -> PacketRef<'a>>;
-
-pub type PacketBatchIterMut<'a> = std::iter::Map<
-    std::slice::IterMut<'a, BytesPacket>,
-    fn(&'a mut BytesPacket) -> PacketRefMut<'a>,
->;
-
-pub type PacketBatchParIter<'a> =
-    rayon::iter::Map<rayon::slice::Iter<'a, BytesPacket>, fn(&'a BytesPacket) -> PacketRef<'a>>;
-
-pub type PacketBatchParIterMut<'a> = rayon::iter::Map<
-    rayon::slice::IterMut<'a, BytesPacket>,
-    fn(&'a mut BytesPacket) -> PacketRefMut<'a>,
->;
 
 pub fn to_packet_batches<T: wincode::Serialize<Src = T>>(
     items: &[T],

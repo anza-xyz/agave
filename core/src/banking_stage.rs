@@ -24,7 +24,7 @@ use {
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
-    solana_perf::packet::{PACKETS_PER_BATCH, PacketRef, bytes::Bytes},
+    solana_perf::packet::{BytesPacket, PACKETS_PER_BATCH, bytes::Bytes},
     solana_poh::{
         poh_controller::PohController, poh_recorder::PohRecorder,
         transaction_recorder::TransactionRecorder,
@@ -86,9 +86,8 @@ const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
-// Returns the packet's payload, or None if the packet is discarded.
-fn packet_bytes(packet: PacketRef<'_>) -> Option<Bytes> {
-    let PacketRef::Bytes(packet) = packet;
+/// Returns the packet's payload, or None if the packet is discarded.
+fn packet_bytes(packet: &BytesPacket) -> Option<Bytes> {
     (!packet.meta().discard()).then(|| packet.buffer().clone())
 }
 

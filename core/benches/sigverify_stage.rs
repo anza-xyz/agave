@@ -153,7 +153,7 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
 
     let mut c = 0;
     batches.iter_mut().for_each(|batch| {
-        batch.iter_mut().for_each(|mut p| {
+        batch.iter_mut().for_each(|p| {
             let throw = die.sample(&mut rng);
             if throw < discard_factor {
                 p.meta_mut().set_discard(true);

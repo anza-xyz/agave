@@ -22,7 +22,7 @@ use {
     solana_gossip::{contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{Keypair, Signer, signable::Signable},
     solana_ledger::blockstore::Blockstore,
-    solana_perf::packet::{PacketBatch, PacketRef, packet_config},
+    solana_perf::packet::{BytesPacket, PacketBatch, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
@@ -352,19 +352,15 @@ impl AncestorHashesService {
     /// Returns `Some((request_slot, decision))`, where `decision` is an actionable
     /// result after processing sufficient responses for the subject of the query,
     /// `request_slot`
-    fn verify_and_process_ancestor_response<'a, P>(
-        packet: P,
+    fn verify_and_process_ancestor_response(
+        packet: &BytesPacket,
         ancestor_hashes_request_statuses: &DashMap<Slot, AncestorRequestStatus>,
         stats: &mut AncestorHashesResponsesStats,
         outstanding_requests: &RwLock<OutstandingAncestorHashesRepairs>,
         blockstore: &Blockstore,
         keypair: &Keypair,
         ancestor_socket: &UdpSocket,
-    ) -> Option<AncestorRequestDecision>
-    where
-        P: Into<PacketRef<'a>>,
-    {
-        let packet = packet.into();
+    ) -> Option<AncestorRequestDecision> {
         let from_addr = packet.meta().socket_addr();
         let Some(packet_data) = packet.data(..) else {
             stats.invalid_packets += 1;
@@ -1515,12 +1511,12 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(1_000))
             .unwrap();
-        let packet = &mut response_packet.first_mut().unwrap();
+        let packet = response_packet.first_mut().unwrap();
         packet
             .meta_mut()
             .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
         let decision = AncestorHashesService::verify_and_process_ancestor_response(
-            packet.as_ref(),
+            packet,
             &ancestor_hashes_request_statuses,
             &mut AncestorHashesResponsesStats::default(),
             &outstanding_requests,
@@ -1558,7 +1554,7 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(10_000))
             .unwrap();
-        let packet = &mut response_packet.first_mut().unwrap();
+        let packet = response_packet.first_mut().unwrap();
         packet
             .meta_mut()
             .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
@@ -1567,7 +1563,7 @@ mod test {
             request_type,
             decision,
         } = AncestorHashesService::verify_and_process_ancestor_response(
-            packet.as_ref(),
+            packet,
             &ancestor_hashes_request_statuses,
             &mut AncestorHashesResponsesStats::default(),
             &outstanding_requests,
@@ -1618,7 +1614,7 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(10_000))
             .unwrap();
-        let packet = &mut response_packet.first_mut().unwrap();
+        let packet = response_packet.first_mut().unwrap();
         packet
             .meta_mut()
             .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
@@ -1627,7 +1623,7 @@ mod test {
             request_type,
             decision,
         } = AncestorHashesService::verify_and_process_ancestor_response(
-            packet.as_ref(),
+            packet,
             &ancestor_hashes_request_statuses,
             &mut AncestorHashesResponsesStats::default(),
             &outstanding_requests,
@@ -1997,12 +1993,12 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(10_000))
             .unwrap();
-        let packet = &mut response_packet.first_mut().unwrap();
+        let packet = response_packet.first_mut().unwrap();
         packet
             .meta_mut()
             .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
         let decision = AncestorHashesService::verify_and_process_ancestor_response(
-            packet.as_ref(),
+            packet,
             &ancestor_hashes_request_statuses,
             &mut AncestorHashesResponsesStats::default(),
             &outstanding_requests,
@@ -2060,7 +2056,7 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(10_000))
             .unwrap();
-        let packet = &mut response_packet.first_mut().unwrap();
+        let packet = response_packet.first_mut().unwrap();
         packet
             .meta_mut()
             .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
@@ -2069,7 +2065,7 @@ mod test {
             request_type,
             decision,
         } = AncestorHashesService::verify_and_process_ancestor_response(
-            packet.as_ref(),
+            packet,
             &ancestor_hashes_request_statuses,
             &mut AncestorHashesResponsesStats::default(),
             &outstanding_requests,

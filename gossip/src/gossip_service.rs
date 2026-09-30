@@ -14,7 +14,7 @@ use {
         TrySendError,
         multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
     },
-    solana_perf::packet::{PacketBatch, PacketRef},
+    solana_perf::packet::PacketBatch,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
@@ -417,7 +417,6 @@ struct GossipXdpSender(XdpSender);
 impl ResponseSender for GossipXdpSender {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = batch.iter().filter_map(|pkt| {
-            let PacketRef::Bytes(pkt) = pkt;
             let addr = pkt.meta().socket_addr();
 
             // For XDP, we don't support IPv6 and no private or loopback IPv4 addresses.

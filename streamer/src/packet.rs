@@ -20,8 +20,7 @@ use {
 pub use {
     solana_packet::{Meta, PACKET_DATA_SIZE, Packet},
     solana_perf::packet::{
-        BytesPacket, BytesPacketBatch, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch, PacketRef,
-        PacketRefMut,
+        BytesPacket, BytesPacketBatch, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch,
     },
 };
 

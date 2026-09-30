@@ -39,7 +39,7 @@ use {
         blockstore_meta::BlockLocation,
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
-    solana_perf::packet::{PacketBatch, PacketRef, packet_config},
+    solana_perf::packet::{BytesPacket, PacketBatch, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::SharableBanks,
     solana_streamer::{
@@ -528,7 +528,7 @@ impl BlockIdRepairService {
     /// - Queue more repair requests or events
     fn process_block_id_repair_response(
         my_pubkey: &Pubkey,
-        packet: PacketRef<'_>,
+        packet: &BytesPacket,
         keypair: &solana_keypair::Keypair,
         block_id_repair_socket: &UdpSocket,
         state: &mut RepairState,
@@ -1431,7 +1431,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1514,7 +1514,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1580,7 +1580,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1640,7 +1640,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1671,7 +1671,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1710,7 +1710,7 @@ mod tests {
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1723,7 +1723,7 @@ mod tests {
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1749,7 +1749,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,

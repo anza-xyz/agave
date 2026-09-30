@@ -50,7 +50,7 @@ use {
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::{
-        BytesPacket, BytesPacketBatch, PacketBatch, PacketConfig, PacketRef, bytes_packet_from_data,
+        BytesPacket, BytesPacketBatch, PacketBatch, PacketConfig, bytes_packet_from_data,
     },
     solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
@@ -612,7 +612,7 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
 const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + SIGNATURE_BYTES;
 const REPAIR_REQUEST_MIN_BYTES: usize = REPAIR_REQUEST_PONG_SERIALIZED_BYTES;
 
-fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStats) -> bool {
+fn is_well_formed_repair_request(packet: &BytesPacket, stats: &mut ServeRepairStats) -> bool {
     let well_formed = packet
         .data(..)
         .is_some_and(|data| data.len() >= REPAIR_REQUEST_MIN_BYTES);
@@ -1221,15 +1221,15 @@ impl ServeRepair {
 
         let mut requests = Vec::<BytesPacket>::with_capacity(64);
         for packet in initial_batch.iter() {
-            if is_well_formed_repair_request(&packet, stats) {
-                requests.push(packet.to_bytes_packet());
+            if is_well_formed_repair_request(packet, stats) {
+                requests.push(packet.clone());
             }
         }
         while let Ok(batch) = requests_receiver.try_recv() {
             total_requests += batch.len();
             for packet in batch.into_iter() {
-                if is_well_formed_repair_request(&packet, stats) {
-                    requests.push(packet.to_bytes_packet());
+                if is_well_formed_repair_request(packet, stats) {
+                    requests.push(packet.clone());
                 }
             }
 
@@ -1922,7 +1922,7 @@ impl ServeRepair {
         stats: &mut ShredFetchStats,
     ) {
         let mut pending_pongs = Vec::default();
-        for mut packet in packet_batch.iter_mut() {
+        for packet in packet_batch.iter_mut() {
             if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
                 continue;
             }
@@ -2020,7 +2020,7 @@ mod tests {
         },
         solana_net_utils::SocketAddrSpace,
         solana_perf::packet::{
-            Packet, PacketFlags, PacketRef, deserialize_slice_from_packet, packet_from_data,
+            Packet, PacketFlags, deserialize_slice_from_packet, packet_from_data,
         },
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
@@ -2035,7 +2035,7 @@ mod tests {
         requests: &mut Vec<BytesPacket>,
         stats: &mut ServeRepairStats,
     ) -> usize {
-        requests.retain(|request| is_well_formed_repair_request(&PacketRef::from(request), stats));
+        requests.retain(|request| is_well_formed_repair_request(request, stats));
         requests.len()
     }
 
@@ -2518,10 +2518,10 @@ mod tests {
 
         let rv: Vec<Shred> = rv
             .iter_mut()
-            .map(|mut packet| {
+            .map(|packet| {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
                 let (shred, repair_nonce) =
-                    shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
+                    shred::layout::get_shred_and_repair_nonce(packet).unwrap();
                 assert_eq!(repair_nonce.unwrap(), nonce);
                 Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
             })
@@ -2573,10 +2573,10 @@ mod tests {
         verify_responses(&request, rv.iter());
         let rv: Vec<Shred> = rv
             .iter_mut()
-            .map(|mut packet| {
+            .map(|packet| {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
                 let (shred, repair_nonce) =
-                    shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
+                    shred::layout::get_shred_and_repair_nonce(packet).unwrap();
                 assert_eq!(repair_nonce.unwrap(), nonce);
                 Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
             })
@@ -2807,7 +2807,7 @@ mod tests {
 
     #[test]
     fn test_run_ancestor_hashes() {
-        fn deserialize_ancestor_hashes_response(packet: PacketRef) -> AncestorHashesResponse {
+        fn deserialize_ancestor_hashes_response(packet: &BytesPacket) -> AncestorHashesResponse {
             wincode::deserialize(
                 packet
                     .data(..(packet.meta().size - SIZE_OF_NONCE))
@@ -3212,7 +3212,7 @@ mod tests {
 
     fn verify_responses<'a>(
         request: &ShredRepairType,
-        packets: impl Iterator<Item = PacketRef<'a>>,
+        packets: impl Iterator<Item = &'a BytesPacket>,
     ) {
         for packet in packets {
             let shred = shred::layout::get_shred(packet).unwrap();

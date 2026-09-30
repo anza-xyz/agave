@@ -14,7 +14,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_perf::packet::{PacketRef, PacketRefMut},
+    solana_perf::packet::BytesPacket,
     solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
     std::ops::Range,
@@ -34,11 +34,8 @@ fn get_shred_size(shred: &[u8]) -> Option<usize> {
 }
 
 #[inline]
-pub fn get_shred<'a, P>(packet: P) -> Option<&'a [u8]>
-where
-    P: Into<PacketRef<'a>>,
-{
-    let data = packet.into().data(..)?;
+pub fn get_shred(packet: &BytesPacket) -> Option<&[u8]> {
+    let data = packet.data(..)?;
     data.get(..get_shred_size(data)?)
 }
 
@@ -48,7 +45,7 @@ pub fn get_shred_mut(buffer: &mut [u8]) -> Option<&mut [u8]> {
 }
 
 #[inline]
-pub fn get_shred_and_repair_nonce(packet: PacketRef<'_>) -> Option<(&[u8], Option<Nonce>)> {
+pub fn get_shred_and_repair_nonce(packet: &BytesPacket) -> Option<(&[u8], Option<Nonce>)> {
     let data = packet.data(..)?;
     let shred = data.get(..get_shred_size(data)?)?;
     if !packet.meta().repair() {
@@ -281,8 +278,7 @@ pub fn set_retransmitter_signature(shred: &mut [u8], signature: &Signature) -> R
 /// Resigns the packet's Merkle root as the retransmitter node in the
 /// Turbine broadcast tree. This signature is in addition to leader's
 /// signature which is left intact.
-pub fn resign_packet(packet: &mut PacketRefMut, keypair: &Keypair) -> Result<(), Error> {
-    let PacketRefMut::Bytes(packet) = packet;
+pub fn resign_packet(packet: &mut BytesPacket, keypair: &Keypair) -> Result<(), Error> {
     // `Bytes` are immutable. Therefore, to resign the shred from
     // `BytesPacket`, we need to copy the packet's buffer, then modify that
     // copy and assign it to the packet.
@@ -334,16 +330,16 @@ pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
 #[allow(clippy::indexing_slicing)]
 pub(crate) fn corrupt_packet<R: Rng>(
     rng: &mut R,
-    packet: &mut PacketRefMut<'_>,
+    packet: &mut BytesPacket,
     keypairs: &HashMap<Slot, Keypair>,
 ) {
-    fn modify_packet<R: Rng>(rng: &mut R, packet: &mut PacketRefMut<'_>, offsets: Range<usize>) {
+    fn modify_packet<R: Rng>(rng: &mut R, packet: &mut BytesPacket, offsets: Range<usize>) {
         let mut buffer = packet.data(..).unwrap().to_vec();
         let byte = buffer[offsets].choose_mut(rng).unwrap();
         *byte = rng.random::<u8>().max(1u8).wrapping_add(*byte);
         packet.copy_from_slice(&buffer);
     }
-    let shred = get_shred(packet.as_ref()).unwrap();
+    let shred = get_shred(packet).unwrap();
     let (proof_size, resigned) = match get_shred_variant(shred).unwrap() {
         ShredVariant::MerkleCode {
             proof_size,
@@ -365,7 +361,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
         modify_packet(rng, packet, size - offset..size);
     }
     // Assert that the signature no longer verifies.
-    let shred = get_shred(packet.as_ref()).unwrap();
+    let shred = get_shred(packet).unwrap();
     let slot = get_slot(shred).unwrap();
     let signature = get_signature(shred).unwrap();
     if coin_flip {
@@ -448,7 +444,7 @@ mod tests {
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
-                resign_packet(&mut packet.as_mut(), &keypair).unwrap();
+                resign_packet(packet, &keypair).unwrap();
             } else {
                 assert_matches!(
                     shred.set_retransmitter_signature(&signature),
@@ -460,7 +456,7 @@ mod tests {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
                 assert_matches!(
-                    resign_packet(&mut packet.as_mut(), &keypair),
+                    resign_packet(packet, &keypair),
                     Err(Error::InvalidShredVariant)
                 );
             }
@@ -496,7 +492,7 @@ mod tests {
             if repaired {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
             }
-            let packet = PacketRef::from(&packet);
+            let packet = &packet;
             assert_eq!(
                 packet.data(..).map(get_shred_size).unwrap().unwrap(),
                 shred.payload().len()

@@ -60,10 +60,7 @@ use {
     },
     solana_perf::{
         data_budget::DataBudget,
-        packet::{
-            BytesPacket, BytesPacketBatch, PacketBatch, PacketRef,
-            bytes_packet_from_data_with_config,
-        },
+        packet::{BytesPacket, BytesPacketBatch, PacketBatch, bytes_packet_from_data_with_config},
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
@@ -2136,7 +2133,7 @@ impl ClusterInfo {
             .packets_received_count
             .add_relaxed(num_packets as u64);
         fn verify_packet(
-            packet: PacketRef,
+            packet: &BytesPacket,
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
             sigverify_cache: &SigVerifyCache,

@@ -7,7 +7,7 @@ use {
         self,
         filter::{ShredFilterContext, TurbineMode},
     },
-    solana_perf::packet::{PacketBatch, PacketFlags, PacketRef},
+    solana_perf::packet::{BytesPacket, PacketBatch, PacketFlags},
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -91,15 +91,11 @@ impl ShredFetchStage {
                 packet_batch
                     .iter_mut()
                     .filter(|packet| !packet.meta().discard())
-                    .for_each(|mut packet| {
+                    .for_each(|packet| {
                         // Have to set repair flag here so that the nonce is
                         // taken off the shred's payload.
                         packet.meta_mut().flags |= PacketFlags::REPAIR;
-                        if !verify_repair_nonce(
-                            packet.as_ref(),
-                            now,
-                            &mut outstanding_repair_requests,
-                        ) {
+                        if !verify_repair_nonce(packet, now, &mut outstanding_repair_requests) {
                             packet.meta_mut().set_discard(true);
                         }
                     });
@@ -107,8 +103,8 @@ impl ShredFetchStage {
 
             // Filter out shreds that are way too far in the future to avoid the
             // overhead of having to hold onto them.
-            for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
-                if shred_filter_ctx.should_discard_packet(packet.as_ref()) {
+            for packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
+                if shred_filter_ctx.should_discard_packet(packet) {
                     packet.meta_mut().set_discard(true);
                 } else {
                     packet.meta_mut().flags.insert(flags);
@@ -249,7 +245,7 @@ impl ShredFetchStage {
 // Returns false if repair nonce is invalid and packet should be discarded.
 #[must_use]
 fn verify_repair_nonce(
-    packet: PacketRef,
+    packet: &BytesPacket,
     now: u64, // solana_time_utils::timestamp()
     outstanding_repair_requests: &mut OutstandingShredRepairs,
 ) -> bool {
