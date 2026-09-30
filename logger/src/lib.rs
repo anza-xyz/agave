@@ -1,5 +1,10 @@
 #![cfg(feature = "agave-unstable-api")]
 //! The `logger` module configures `env_logger`
+//!
+//! Records are filtered and formatted on the calling thread, then written to the log by a
+//! background thread. See [`writer`] for why, and for the guarantees that buys.
+mod writer;
+
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, RwLock},
@@ -21,7 +26,13 @@ impl log::Log for LoggerShim {
         LOGGER.read().unwrap().log(record);
     }
 
-    fn flush(&self) {}
+    /// Never weaken this back to a no-op. Records are written by a background thread, so this is
+    /// the only barrier callers have; without it every `process::exit` silently truncates the log
+    /// at whatever was still queued. No test catches its removal: the writer normally drains
+    /// faster than a test can reach its assertions, so a stubbed-out flush still looks green.
+    fn flush(&self) {
+        writer::flush();
+    }
 }
 
 fn replace_logger(logger: env_logger::Logger) {
@@ -37,6 +48,7 @@ pub fn setup_with(filter: &str) {
     let logger =
         env_logger::Builder::from_env(env_logger::Env::new().filter_or("_RUST_LOG", filter))
             .format_timestamp_nanos()
+            .target(writer::target())
             .build();
     replace_logger(logger);
 }
@@ -45,6 +57,7 @@ pub fn setup_with(filter: &str) {
 pub fn setup_with_default(filter: &str) {
     let logger = env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(filter))
         .format_timestamp_nanos()
+        .target(writer::target())
         .build();
     replace_logger(logger);
 }
@@ -59,25 +72,8 @@ pub fn setup() {
     setup_with_default("error");
 }
 
-// Configures file logging with a default filter if RUST_LOG is not set
-#[cfg(not(unix))]
-fn setup_file_with_default_filter(logfile: &Path) {
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(logfile)
-        .unwrap();
-
-    let logger =
-        env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(DEFAULT_FILTER))
-            .format_timestamp_nanos()
-            .target(env_logger::Target::Pipe(Box::new(file)))
-            .build();
-    replace_logger(logger);
-}
-
 #[cfg(unix)]
-pub fn redirect_stderr(filename: &Path) {
+fn redirect_stderr(filename: &Path) {
     use std::{fs::OpenOptions, os::unix::io::AsRawFd};
     match OpenOptions::new().create(true).append(true).open(filename) {
         Ok(file) => unsafe {
@@ -88,18 +84,25 @@ pub fn redirect_stderr(filename: &Path) {
 }
 
 pub fn initialize_logging(logfile: Option<PathBuf>) {
+    setup_with_default_filter();
     let Some(logfile) = logfile else {
-        setup_with_default_filter();
         return;
     };
+    point_at_logfile(&logfile);
+}
 
+/// Reopens the log file, for logrotate.
+pub fn reopen(logfile: &Path) {
+    // Drain records queued for the old file before either handle moves off it.
+    writer::flush();
+    point_at_logfile(logfile);
+}
+
+fn point_at_logfile(logfile: &Path) {
+    // Point fd 2 at the log file too, so output from code that writes to stderr directly (C
+    // libraries, the runtime's own abort messages) is captured alongside log records. Both
+    // handles are opened `O_APPEND`, so their writes interleave without tearing.
     #[cfg(unix)]
-    {
-        setup_with_default_filter();
-        redirect_stderr(&logfile);
-    }
-    #[cfg(not(unix))]
-    {
-        setup_file_with_default_filter(&logfile);
-    }
+    redirect_stderr(logfile);
+    writer::reopen(logfile);
 }
