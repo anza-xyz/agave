@@ -161,7 +161,7 @@ fn test_generate_index_duplicates_within_slot() {
     assert!(!db.accounts_index.contains(&pubkey));
     let storage = db.get_storage_for_slot(slot0).unwrap();
     let mut reader = crate::append_vec::new_scan_accounts_reader();
-    let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
+    let mut accum = IndexGenerationAccumulator::new();
     db.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
 }
 
@@ -5387,7 +5387,7 @@ fn test_calculate_storage_count_and_alive_bytes() {
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let mut reader = crate::append_vec::new_scan_accounts_reader();
-    let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
+    let mut accum = IndexGenerationAccumulator::new();
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 1);
     let expected_stored_size = storage.accounts.calculate_stored_size(account.data().len());
@@ -5404,7 +5404,7 @@ fn test_calculate_storage_count_and_alive_bytes_0_accounts() {
     // empty store
     let storage = accounts.create_store(0, 1);
     let mut reader = crate::append_vec::new_scan_accounts_reader();
-    let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
+    let mut accum = IndexGenerationAccumulator::new();
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 0);
     assert_eq!(storage.num_alive_bytes.load(Ordering::Relaxed), 0);
@@ -5441,7 +5441,7 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
         .unwrap();
 
     let mut reader = crate::append_vec::new_scan_accounts_reader();
-    let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
+    let mut accum = IndexGenerationAccumulator::new();
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 2);
     let expected_stored_size = storage
@@ -5506,7 +5506,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         .mark_accounts_obsolete(accounts_to_mark_obsolete.iter().cloned(), slot0 + 1);
 
     let mut reader = crate::append_vec::new_scan_accounts_reader();
-    let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
+    let mut accum = IndexGenerationAccumulator::new();
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(
         accum.num_obsolete_accounts_skipped,

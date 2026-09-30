@@ -321,7 +321,7 @@ struct IndexGenerationAccumulator {
     slot_arena: IndexGenerationSlotArena,
 }
 impl IndexGenerationAccumulator {
-    fn with_slots_capacity(num_slots: usize) -> Self {
+    fn new() -> Self {
         Self {
             insert_time_us: 0,
             num_accounts: 0,
@@ -409,15 +409,6 @@ struct GenerateIndexTimings {
     pub num_obsolete_accounts_skipped: u64,
     pub num_zero_lamport_pubkeys: u64,
 }
-
-#[derive(Default, Debug, PartialEq, Eq)]
-struct StorageSizeAndCount {
-    /// total size stored, including both alive and dead bytes
-    pub stored_size: usize,
-    /// number of accounts in the storage including both alive and dead accounts
-    pub count: usize,
-}
-type StorageSizeAndCountList = Vec<(AccountsFileId, StorageSizeAndCount)>;
 
 impl GenerateIndexTimings {
     pub fn report(&self, startup_stats: &StartupStats) {
@@ -4994,7 +4985,7 @@ impl AccountsDb {
 
         self.accounts_index.set_startup(Startup::Startup);
 
-        let mut total_accum = IndexGenerationAccumulator::with_slots_capacity(num_storages);
+        let mut total_accum = IndexGenerationAccumulator::new();
         let storages_orderer =
             AccountStoragesOrderer::with_random_order(&storages).into_concurrent_consumer();
         let exit_logger = AtomicBool::new(false);
@@ -5007,9 +4998,7 @@ impl AccountsDb {
                     thread::Builder::new()
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
-                            let mut thread_accum = IndexGenerationAccumulator::with_slots_capacity(
-                                num_storages.div_ceil(num_threads),
-                            );
+                            let mut thread_accum = IndexGenerationAccumulator::new();
                             let mut reader = append_vec::new_scan_accounts_reader();
                             for next_item in storages_orderer.iter() {
                                 let storage = next_item.storage;
