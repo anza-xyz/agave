@@ -5389,14 +5389,12 @@ fn test_calculate_storage_count_and_alive_bytes() {
     let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
-    assert_eq!(accum.storage_info.len(), 1);
-    for (slot, value) in accum.storage_info {
-        let expected_stored_size = 144;
-        assert_eq!(
-            (slot, value.count, value.stored_size),
-            (0, 1, expected_stored_size)
-        );
-    }
+    assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 1);
+    let expected_stored_size = storage.accounts.calculate_stored_size(account.data().len());
+    assert_eq!(
+        storage.num_alive_bytes.load(Ordering::Relaxed),
+        expected_stored_size,
+    );
     accounts.accounts_index.set_startup(Startup::Normal);
 }
 
@@ -5408,7 +5406,8 @@ fn test_calculate_storage_count_and_alive_bytes_0_accounts() {
     let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
-    assert!(accum.storage_info.is_empty());
+    assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 0);
+    assert_eq!(storage.num_alive_bytes.load(Ordering::Relaxed), 0);
 }
 
 #[test]
@@ -5432,26 +5431,29 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
                     .bin_calculator
                     .bin_from_pubkey(&keys[1]))
     );
-    let account = AccountSharedData::new(1, 1, &Pubkey::default());
-    let account_big = AccountSharedData::new(1, 1000, &Pubkey::default());
+    let account1 = AccountSharedData::new(1, 1, &Pubkey::default());
+    let account2 = AccountSharedData::new(1, 1000, &Pubkey::default());
     let slot0 = 0;
     let storage = accounts.create_store(slot0, 4_000);
     storage
         .accounts
-        .write_accounts(&(slot0, &[(&keys[0], &account), (&keys[1], &account_big)][..]))
+        .write_accounts(&(slot0, &[(&keys[0], &account1), (&keys[1], &account2)][..]))
         .unwrap();
 
     let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
-    assert_eq!(accum.storage_info.len(), 1);
-    for (slot, value) in accum.storage_info {
-        let expected_stored_size = 1280;
-        assert_eq!(
-            (slot, value.count, value.stored_size),
-            (0, 2, expected_stored_size)
-        );
-    }
+    assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 2);
+    let expected_stored_size = storage
+        .accounts
+        .calculate_stored_size(account1.data().len())
+        + storage
+            .accounts
+            .calculate_stored_size(account2.data().len());
+    assert_eq!(
+        storage.num_alive_bytes.load(Ordering::Relaxed),
+        expected_stored_size,
+    );
     accounts.accounts_index.set_startup(Startup::Normal);
 }
 
@@ -5510,70 +5512,20 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         accum.num_obsolete_accounts_skipped,
         num_accounts_to_mark_obsolete as u64
     );
+    // Sum up the stored size of all non obsolete accounts
+    let expected_stored_size: usize = accounts_to_keep
+        .iter()
+        .map(|(_, data_len)| storage.accounts.calculate_stored_size(*data_len))
+        .sum();
     assert_eq!(
-        accum.storage_info.len(),
-        if num_accounts_to_mark_obsolete < account_sizes.len() {
-            1
-        } else {
-            0
-        }
+        storage.num_alive_accounts.load(Ordering::Relaxed),
+        accounts_to_keep.len()
     );
-
-    for (slot, value) in accum.storage_info {
-        // Sum up the stored size of all non obsolete accounts
-        let expected_stored_size: usize = accounts_to_keep
-            .iter()
-            .map(|(_, data_len)| storage.accounts.calculate_stored_size(*data_len))
-            .sum();
-
-        assert_eq!(
-            (slot, value.count, value.stored_size),
-            (0, accounts_to_keep.len(), expected_stored_size)
-        );
-    }
+    assert_eq!(
+        storage.num_alive_bytes.load(Ordering::Relaxed),
+        expected_stored_size,
+    );
     accounts.accounts_index.set_startup(Startup::Normal);
-}
-
-#[test]
-fn test_set_storage_count_and_alive_bytes() {
-    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    // make sure we have storage 0
-    let shared_key = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, 1, &Pubkey::default());
-    let slot0 = 0;
-    accounts.store_for_tests((slot0, [(&shared_key, &account)].as_slice()));
-    accounts.add_root_and_flush_write_cache(slot0);
-
-    // fake out the store count to avoid the assert
-    for (_, store) in accounts.storage.iter() {
-        store.num_alive_bytes.store(0, Ordering::Release);
-        store.num_alive_accounts.store(0, Ordering::Release);
-    }
-
-    // count needs to be <= approx stored count in store.
-    // approx stored count is 1 in store since we added a single account.
-    let count = 1;
-
-    // populate based on made up data
-    let storage_info = vec![(
-        0,
-        StorageSizeAndCount {
-            stored_size: 2,
-            count,
-        },
-    )];
-
-    for (_, store) in accounts.storage.iter() {
-        assert_eq!(store.count(), 0);
-        assert_eq!(store.alive_bytes(), 0);
-    }
-    accounts.set_storage_count_and_alive_bytes(storage_info, &mut GenerateIndexTimings::default());
-    assert_eq!(accounts.storage.len(), 1);
-    for (_, store) in accounts.storage.iter() {
-        assert_eq!(store.id(), 0);
-        assert_eq!(store.count(), count);
-        assert_eq!(store.alive_bytes(), 2);
-    }
 }
 
 #[test]
