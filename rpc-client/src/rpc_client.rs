@@ -1874,6 +1874,20 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
     }
 
+    /// Returns the Alpenglow validator rank map for the epoch containing `slot`.
+    pub fn get_alpenglow_rank_map(&self, slot: Slot) -> RpcResult<Option<RpcAlpenglowRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_alpenglow_rank_map(slot))
+    }
+
+    /// Returns the Alpenglow validator rank map using the provided RPC context configuration.
+    pub fn get_alpenglow_rank_map_with_config(
+        &self,
+        slot: Slot,
+        config: RpcContextConfig,
+    ) -> RpcResult<Option<RpcAlpenglowRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_alpenglow_rank_map_with_config(slot, config))
+    }
+
     /// Get block production for the current epoch.
     ///
     /// # RPC Reference
@@ -4658,6 +4672,27 @@ mod tests {
             })
             .unwrap();
         assert_eq!(leader_with_config, expected_leader);
+    }
+
+    #[test]
+    fn test_get_alpenglow_rank_map_variants() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+
+        let response = rpc_client.get_alpenglow_rank_map(0).unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert!(response.value.is_none());
+
+        let response = rpc_client
+            .get_alpenglow_rank_map_with_config(
+                0,
+                RpcContextConfig {
+                    commitment: Some(CommitmentConfig::confirmed()),
+                    min_context_slot: Some(1),
+                },
+            )
+            .unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert!(response.value.is_none());
     }
 
     #[test]

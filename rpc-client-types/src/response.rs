@@ -389,6 +389,32 @@ pub struct RpcVote {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RpcAlpenglowRankMap {
+    /// Epoch in which this rank map is effective.
+    pub epoch: Epoch,
+    /// Total stake represented by the validators in this rank map, in lamports.
+    pub total_stake: u64,
+    /// Validators ordered by their Alpenglow rank.
+    pub validators: Vec<RpcAlpenglowRankMapEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcAlpenglowRankMapEntry {
+    /// Zero-based index used in Alpenglow certificate bitmaps.
+    pub rank: u16,
+    /// Vote account address, as a base-58 encoded string.
+    pub vote_pubkey: String,
+    /// Validator identity, as a base-58 encoded string.
+    pub node_pubkey: String,
+    /// Compressed BLS public key, as a base-58 encoded string.
+    pub bls_pubkey_compressed: String,
+    /// Stake assigned to this rank, in lamports.
+    pub stake: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RpcVoteAccountStatus {
     pub current: Vec<RpcVoteAccountInfo>,
     pub delinquent: Vec<RpcVoteAccountInfo>,

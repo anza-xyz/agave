@@ -941,6 +941,47 @@ impl JsonRpcRequestProcessor {
             })
     }
 
+    pub fn get_alpenglow_rank_map(
+        &self,
+        slot: Slot,
+        config: RpcContextConfig,
+    ) -> Result<RpcResponse<Option<RpcAlpenglowRankMap>>> {
+        let bank = self.get_bank_with_config(config)?;
+        let epoch = bank.epoch_schedule().get_epoch(slot);
+        let rank_map = bank.epoch_stakes(epoch).and_then(|epoch_stakes| {
+            let vote_accounts = epoch_stakes.stakes().vote_accounts();
+            if vote_accounts.is_empty() {
+                return None;
+            }
+
+            let rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+            let validators = (0..rank_map.len())
+                .map(|rank| {
+                    let entry = rank_map
+                        .get_pubkey_stake_entry(rank)
+                        .expect("rank map entries must be contiguous");
+                    let bls_pubkey_compressed = vote_accounts
+                        .get(&entry.vote_account_pubkey)
+                        .and_then(|account| account.vote_state_view().bls_pubkey_compressed())
+                        .expect("ranked vote accounts must have a BLS pubkey");
+                    RpcAlpenglowRankMapEntry {
+                        rank: u16::try_from(rank).expect("validator rank must fit in u16"),
+                        vote_pubkey: entry.vote_account_pubkey.to_string(),
+                        node_pubkey: entry.node_pubkey.to_string(),
+                        bls_pubkey_compressed: bs58::encode(bls_pubkey_compressed).into_string(),
+                        stake: entry.stake.get(),
+                    }
+                })
+                .collect();
+            Some(RpcAlpenglowRankMap {
+                epoch,
+                total_stake: rank_map.total_stake().get(),
+                validators,
+            })
+        });
+        Ok(new_response(&bank, rank_map))
+    }
+
     pub fn get_balance(
         &self,
         pubkey: &Pubkey,
@@ -3127,6 +3168,14 @@ pub mod rpc_bank {
         fn get_ag_genesis_cert(&self, meta: Self::Metadata)
         -> Result<Option<WireBlockCertMessage>>;
 
+        #[rpc(meta, name = "getAlpenglowRankMap")]
+        fn get_alpenglow_rank_map(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+            config: Option<RpcContextConfig>,
+        ) -> Result<RpcResponse<Option<RpcAlpenglowRankMap>>>;
+
         #[rpc(meta, name = "getBlockProduction")]
         fn get_block_production(
             &self,
@@ -3208,6 +3257,16 @@ pub mod rpc_bank {
         ) -> Result<Option<WireBlockCertMessage>> {
             debug!("get_ag_genesis_cert rpc request received");
             Ok(meta.get_ag_genesis_cert())
+        }
+
+        fn get_alpenglow_rank_map(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+            config: Option<RpcContextConfig>,
+        ) -> Result<RpcResponse<Option<RpcAlpenglowRankMap>>> {
+            debug!("get_alpenglow_rank_map rpc request received: {slot}");
+            meta.get_alpenglow_rank_map(slot, config.unwrap_or_default())
         }
 
         fn get_block_production(
@@ -5344,6 +5403,37 @@ pub mod tests {
             },
         });
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_alpenglow_rank_map() {
+        let rpc = RpcHandler::start();
+        let request = create_test_request("getAlpenglowRankMap", Some(json!([0])));
+        let response: RpcResponse<Option<RpcAlpenglowRankMap>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let rank_map = response.value.unwrap();
+
+        assert_eq!(response.context.slot, 0);
+        assert_eq!(rank_map.epoch, 0);
+        assert_eq!(rank_map.validators.len(), 1);
+        let validator = &rank_map.validators[0];
+        assert_eq!(validator.rank, 0);
+        assert_eq!(validator.vote_pubkey, rpc.leader_vote_pubkey().to_string());
+        assert_eq!(validator.node_pubkey, rpc.leader_pubkey().to_string());
+        assert!(!validator.bls_pubkey_compressed.is_empty());
+        assert_eq!(rank_map.total_stake, validator.stake);
+
+        let request =
+            create_test_request("getAlpenglowRankMap", Some(json!([TEST_SLOTS_PER_EPOCH])));
+        let response: RpcResponse<Option<RpcAlpenglowRankMap>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(response.value.unwrap().epoch, 1);
+
+        let unavailable_slot = TEST_SLOTS_PER_EPOCH * 2;
+        let request = create_test_request("getAlpenglowRankMap", Some(json!([unavailable_slot])));
+        let response: RpcResponse<Option<RpcAlpenglowRankMap>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(response.value.is_none());
     }
 
     #[test]
