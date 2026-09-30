@@ -303,7 +303,7 @@ mod tests {
         let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false);
         let account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
         let pubkey = Pubkey::new_unique();
-        let bank_id = BankId(9);
+        let bank_id = BankId::new(9);
 
         notifier.notify_account_update(42, bank_id, &account, &None, &pubkey, 7);
 

@@ -401,36 +401,36 @@ mod tests {
 
         // Initially shutdown.
         assert!(matches!(
-            sender.try_send(test_record(BankId(0), 1)),
+            sender.try_send(test_record(BankId::new(0), 1)),
             Err(RecordSenderError::Shutdown)
         ));
 
         // Restart for bank_id 1.
-        receiver.restart(BankId(1));
+        receiver.restart(BankId::new(1));
 
         // Record for bank_id 0 fails.
         assert!(matches!(
-            sender.try_send(test_record(BankId(0), 1)),
+            sender.try_send(test_record(BankId::new(0), 1)),
             Err(RecordSenderError::InactiveBankId)
         ));
 
         // Record for bank_id 1 succeeds.
         assert!(matches!(
-            sender.try_send(test_record(BankId(1), 1)),
+            sender.try_send(test_record(BankId::new(1), 1)),
             Ok(None)
         ));
 
         // Fill the rest of the channel.
         for _ in 1..BankIdAllowedInsertions::MAX_ALLOWED_INSERTIONS {
             assert!(matches!(
-                sender.try_send(test_record(BankId(1), 1)),
+                sender.try_send(test_record(BankId::new(1), 1)),
                 Ok(None)
             ));
         }
 
         // Another record for bank_id 1 fails because the channel is full.
         assert!(matches!(
-            sender.try_send(test_record(BankId(1), 1)),
+            sender.try_send(test_record(BankId::new(1), 1)),
             Err(RecordSenderError::Full)
         ));
 
@@ -447,28 +447,28 @@ mod tests {
 
         // Initially shutdown.
         assert!(matches!(
-            sender.try_send(test_record(BankId(0), 1)),
+            sender.try_send(test_record(BankId::new(0), 1)),
             Err(RecordSenderError::Shutdown)
         ));
 
         // Restart for bank_id 1.
-        receiver.restart(BankId(1));
+        receiver.restart(BankId::new(1));
 
         // Record for bank_id 0 fails.
         assert!(matches!(
-            sender.try_send(test_record(BankId(0), 1)),
+            sender.try_send(test_record(BankId::new(0), 1)),
             Err(RecordSenderError::InactiveBankId)
         ));
 
         // Record for bank_id 1 with 1 transaction succeeds.
         assert!(matches!(
-            sender.try_send(test_record(BankId(1), 1)),
+            sender.try_send(test_record(BankId::new(1), 1)),
             Ok(Some(0))
         ));
 
         // Record for bank_id 1 with 3 transactions succeeds.
         assert!(matches!(
-            sender.try_send(test_record(BankId(1), 3)),
+            sender.try_send(test_record(BankId::new(1), 3)),
             Ok(Some(1))
         ));
 
@@ -491,7 +491,7 @@ mod shuttle_tests {
 
                 shuttle::thread::spawn(move || {
                     let mut successful_sends = 0;
-                    let mut bank_id = BankId(0);
+                    let mut bank_id = BankId::new(0);
                     let mut had_successful_send = false;
                     while successful_sends < ITERATIONS_PER_RUN {
                         if sender.try_send(test_record(bank_id, 1)).is_ok() {
@@ -508,7 +508,7 @@ mod shuttle_tests {
                 // the receiver can receive a record after shutdown is called.
                 // This can cause PoH to panic because it may receive a record
                 // for a bank_id that has already been completed.
-                let mut current_bank_id = BankId(0);
+                let mut current_bank_id = BankId::new(0);
                 receiver.restart(current_bank_id);
                 let mut receives = 0;
                 while receives < ITERATIONS_PER_RUN {
@@ -534,12 +534,12 @@ mod shuttle_tests {
         shuttle::check_random(
             || {
                 let (sender, mut receiver) = record_channels(false);
-                receiver.restart(BankId(0));
+                receiver.restart(BankId::new(0));
 
                 {
                     let sender = sender.clone();
                     shuttle::thread::spawn(move || {
-                        let _ = sender.try_send(test_record(BankId(0), 1));
+                        let _ = sender.try_send(test_record(BankId::new(0), 1));
                     });
                 }
 
@@ -562,7 +562,7 @@ mod shuttle_tests {
         shuttle::check_random(
             || {
                 let (sender, mut receiver) = record_channels(false);
-                receiver.restart(BankId(0));
+                receiver.restart(BankId::new(0));
 
                 // Model a sender that reserved capacity before shutdown but
                 // has not yet enqueued its record on the inner channel.
@@ -570,14 +570,14 @@ mod shuttle_tests {
                 let active_senders = sender.active_senders.clone();
                 let inner_sender = sender.sender.clone();
                 shuttle::thread::spawn(move || {
-                    inner_sender.try_send(test_record(BankId(0), 1)).unwrap();
+                    inner_sender.try_send(test_record(BankId::new(0), 1)).unwrap();
                     active_senders.fetch_sub(1, Ordering::AcqRel);
                 });
 
                 receiver.shutdown();
                 let records: Vec<_> = receiver.drain_after_shutdown().collect();
                 assert_eq!(records.len(), 1);
-                assert_eq!(records[0].bank_id, BankId(0));
+                assert_eq!(records[0].bank_id, BankId::new(0));
                 assert!(receiver.is_safe_to_restart());
             },
             NUM_TEST_RUNS,

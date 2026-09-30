@@ -398,14 +398,14 @@ mod tests {
             });
         let parent_block_id = Hash::new_unique();
 
-        notifier.notify_entry(42, BankId(9), 3, &entry, 7);
+        notifier.notify_entry(42, BankId::new(9), 3, &entry, 7);
         notifier.notify_entry_update_parent(&EntryUpdateParentInfo {
             slot: 42,
-            cleared_bank_id: BankId(9),
+            cleared_bank_id: BankId::new(9),
             parent_slot: 40,
             parent_block_id,
         });
-        notifier.notify_block_footer(42, BankId(9), &block_footer);
+        notifier.notify_block_footer(42, BankId::new(9), &block_footer);
 
         assert_eq!(
             *entry_plugin_entry_updates.lock().unwrap(),

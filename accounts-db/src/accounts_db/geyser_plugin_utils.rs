@@ -190,7 +190,7 @@ mod tests {
         let account1_lamports1: u64 = 1;
         let account1 = AccountSharedData::new(account1_lamports1, 1, &Pubkey::default());
         let slot0 = 0;
-        let bank_id0 = BankId(100);
+        let bank_id0 = BankId::new(100);
         let mut ancestors = Ancestors::from(vec![slot0]);
         accounts.store_accounts(
             (slot0, &[(&key1, &account1)][..]),
@@ -211,7 +211,7 @@ mod tests {
 
         let account1_lamports2 = 2;
         let slot1 = 1;
-        let bank_id1 = BankId(101);
+        let bank_id1 = BankId::new(101);
         ancestors.insert(slot1);
         let account1 = AccountSharedData::new(account1_lamports2, 1, account1.owner());
         accounts.store_accounts(
@@ -283,13 +283,13 @@ mod tests {
         let slot_close = slot_open + 1;
         accounts.store_accounts(
             (slot_open, [(&address, &account_open)].as_slice()),
-            BankId(106),
+            BankId::new(106),
             None,
             &Ancestors::from(vec![slot_open]),
         );
         accounts.store_accounts(
             (slot_close, [(&address, &account_close)].as_slice()),
-            BankId(107),
+            BankId::new(107),
             None,
             &Ancestors::from(vec![slot_open, slot_close]),
         );

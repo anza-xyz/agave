@@ -1309,7 +1309,7 @@ mod tests {
         let all_pubkeys: HashSet<_> = vec![pubkey0, pubkey1, pubkey2].into_iter().collect();
 
         // num == 0 should always return empty set
-        let bank_id = BankId(0);
+        let bank_id = BankId::new(0);
         assert_eq!(
             accounts
                 .load_largest_accounts(

@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
         assert!(tracker.min_ongoing_scan_root().is_none());
 
-        let guard = ScanGuard::try_new(&tracker, BankId(0), || 42).unwrap();
+        let guard = ScanGuard::try_new(&tracker, BankId::new(0), || 42).unwrap();
         assert_eq!(guard.max_root(), 42);
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 1);
         assert_eq!(tracker.min_ongoing_scan_root(), Some(42));
@@ -337,8 +337,8 @@ mod tests {
     fn test_scan_guard_refcounts_same_root() {
         let tracker = ScanTracker::default();
 
-        let guard1 = ScanGuard::try_new(&tracker, BankId(0), || 10).unwrap();
-        let guard2 = ScanGuard::try_new(&tracker, BankId(0), || 10).unwrap();
+        let guard1 = ScanGuard::try_new(&tracker, BankId::new(0), || 10).unwrap();
+        let guard2 = ScanGuard::try_new(&tracker, BankId::new(0), || 10).unwrap();
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 2);
         assert_eq!(
             *tracker.ongoing_scan_roots.read().unwrap().get(&10).unwrap(),
@@ -357,8 +357,8 @@ mod tests {
     fn test_scan_guard_multiple_different_roots() {
         let tracker = ScanTracker::default();
 
-        let guard1 = ScanGuard::try_new(&tracker, BankId(0), || 5).unwrap();
-        let guard2 = ScanGuard::try_new(&tracker, BankId(0), || 15).unwrap();
+        let guard1 = ScanGuard::try_new(&tracker, BankId::new(0), || 5).unwrap();
+        let guard2 = ScanGuard::try_new(&tracker, BankId::new(0), || 15).unwrap();
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 2);
         assert_eq!(tracker.min_ongoing_scan_root(), Some(5));
 
@@ -372,9 +372,9 @@ mod tests {
     #[test]
     fn test_scan_guard_rejected_for_removed_bank() {
         let tracker = ScanTracker::default();
-        tracker.removed_bank_ids.lock().unwrap().insert(BankId(7));
+        tracker.removed_bank_ids.lock().unwrap().insert(BankId::new(7));
 
-        let result = ScanGuard::try_new(&tracker, BankId(7), || 100);
+        let result = ScanGuard::try_new(&tracker, BankId::new(7), || 100);
         assert!(result.is_none());
         // should not have incremented active_scans
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
@@ -383,10 +383,10 @@ mod tests {
     #[test]
     fn test_scan_guard_corrupted_when_bank_removed_during_scan() {
         let tracker = ScanTracker::default();
-        let guard = ScanGuard::try_new(&tracker, BankId(5), || 50).unwrap();
+        let guard = ScanGuard::try_new(&tracker, BankId::new(5), || 50).unwrap();
 
         // simulate bank removal mid-scan
-        tracker.removed_bank_ids.lock().unwrap().insert(BankId(5));
+        tracker.removed_bank_ids.lock().unwrap().insert(BankId::new(5));
 
         assert!(guard.was_scan_corrupted());
         // guard should still have cleaned up
@@ -397,12 +397,12 @@ mod tests {
     #[test]
     fn test_is_bank_removed_only_for_removed_bank() {
         let tracker = ScanTracker::default();
-        let mut guard_on_removed_bank = ScanGuard::try_new(&tracker, BankId(1), || 10).unwrap();
-        let mut guard_on_other_bank = ScanGuard::try_new(&tracker, BankId(2), || 10).unwrap();
+        let mut guard_on_removed_bank = ScanGuard::try_new(&tracker, BankId::new(1), || 10).unwrap();
+        let mut guard_on_other_bank = ScanGuard::try_new(&tracker, BankId::new(2), || 10).unwrap();
         assert!(!guard_on_removed_bank.is_bank_removed());
         assert!(!guard_on_other_bank.is_bank_removed());
 
-        tracker.mark_banks_removed([BankId(1)]);
+        tracker.mark_banks_removed([BankId::new(1)]);
 
         assert!(guard_on_removed_bank.is_bank_removed());
         assert!(!guard_on_other_bank.is_bank_removed());
@@ -414,7 +414,7 @@ mod tests {
         let mut ancestors = Ancestors::default();
         ancestors.insert(42);
 
-        let guard = ScanGuard::try_new(&tracker, BankId(0), || 42).unwrap();
+        let guard = ScanGuard::try_new(&tracker, BankId::new(0), || 42).unwrap();
         assert!(guard.should_use_ancestors(&ancestors));
     }
 
@@ -425,7 +425,7 @@ mod tests {
         ancestors.insert(10);
 
         // max_root_inclusive = 42, which is NOT in ancestors
-        let guard = ScanGuard::try_new(&tracker, BankId(0), || 42).unwrap();
+        let guard = ScanGuard::try_new(&tracker, BankId::new(0), || 42).unwrap();
         assert!(!guard.should_use_ancestors(&ancestors));
     }
 }

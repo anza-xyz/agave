@@ -36,7 +36,7 @@ use {
 #[test]
 fn test_load_after_remove_unrooted_and_restore_to_same_slot() {
     let slot = 402240429;
-    let bank_id = BankId(1);
+    let bank_id = BankId::new(1);
     let pubkey = Pubkey::new_unique();
     let account = AccountSharedData::new(42, 0, &Pubkey::default());
 

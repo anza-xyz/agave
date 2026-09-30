@@ -227,7 +227,7 @@ mod serde_snapshot_tests {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
             accounts.store_accounts(
                 (slot, [(pubkey, &account)].as_slice()),
-                BankId(0),
+                BankId::new(0),
                 None,
                 &ancestors,
             );
@@ -270,7 +270,7 @@ mod serde_snapshot_tests {
     fn test_remove_unrooted_slot_snapshot() {
         agave_logger::setup();
         let unrooted_slot = 9;
-        let unrooted_bank_id = BankId(9);
+        let unrooted_bank_id = BankId::new(9);
         let db = AccountsDb::default_for_tests();
         let key = solana_pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &key);

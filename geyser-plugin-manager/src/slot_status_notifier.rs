@@ -168,8 +168,8 @@ mod tests {
         let updates = Arc::new(Mutex::new(Vec::new()));
         let notifier = create_notifier(updates.clone());
 
-        notifier.notify_created_bank(42, 41, BankId(9));
-        notifier.notify_slot_processed(42, Some(41), BankId(9));
+        notifier.notify_created_bank(42, 41, BankId::new(9));
+        notifier.notify_slot_processed(42, Some(41), BankId::new(9));
 
         assert_eq!(
             *updates.lock().unwrap(),

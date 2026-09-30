@@ -1837,7 +1837,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_gates_unverified_votes() {
-        let replay_bank_id = BankId(1);
+        let replay_bank_id = BankId::new(1);
         let replay_slot = 42;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();
@@ -1873,7 +1873,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_gates_unexecuted_votes() {
-        let replay_bank_id = BankId(3);
+        let replay_bank_id = BankId::new(3);
         let replay_slot = 77;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();
@@ -1909,7 +1909,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_same_signature_different_tx() {
-        let replay_bank_id = BankId(4);
+        let replay_bank_id = BankId::new(4);
         let replay_slot = 88;
         let valid_vote = sample_parsed_vote(replay_slot);
         let spoofed_vote = sample_parsed_vote(replay_slot + 1);
@@ -1955,7 +1955,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_invalid_bank_drops_late_messages() {
-        let replay_bank_id = BankId(2);
+        let replay_bank_id = BankId::new(2);
         let replay_slot = 100;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();
@@ -2013,7 +2013,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_bank_complete_clears_pending_state() {
-        let replay_bank_id = BankId(5);
+        let replay_bank_id = BankId::new(5);
         let replay_slot = 123;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();
@@ -2048,7 +2048,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_processes_verified_message_hash() {
-        let replay_bank_id = BankId(6);
+        let replay_bank_id = BankId::new(6);
         let replay_slot = 124;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();

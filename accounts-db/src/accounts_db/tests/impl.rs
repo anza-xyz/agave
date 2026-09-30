@@ -203,7 +203,7 @@ fn test_accountsdb_latest_ancestor() {
     let mut accounts = Vec::new();
     db.scan_accounts(
         &ancestors,
-        BankId(0),
+        BankId::new(0),
         |scan_result| {
             if let Some((_, account, _)) = scan_result {
                 accounts.push(account);
@@ -575,7 +575,7 @@ fn test_purge_unrooted_slot_writes_through_surviving_entry() {
     // Purge the unrooted slot 1 from the cache. `purge_slot_cache` removes only the slot-1
     // entry, leaving the slot-0 entry as a single-ref dirty entry; the pubkey leaves the cache
     // entirely, so its write-through is deferred to clean; nothing is written yet.
-    db.remove_unrooted_slots(&[(1, BankId(1))]);
+    db.remove_unrooted_slots(&[(1, BankId::new(1))]);
     assert!(
         is_dirty_in_mem(&pubkey),
         "still dirty until clean writes it through"
@@ -593,7 +593,7 @@ fn test_purge_unrooted_slot_writes_through_surviving_entry() {
 fn test_remove_unrooted_slot_cached() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let unrooted_slot = 9;
-    let unrooted_bank_id = BankId(9);
+    let unrooted_bank_id = BankId::new(9);
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
     let ancestors = Ancestors::from(vec![unrooted_slot]);
@@ -631,7 +631,7 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
     let owner = Pubkey::new_unique();
     let pubkey = Pubkey::new_unique();
     let slot = 1;
-    let bank_id = BankId(0);
+    let bank_id = BankId::new(0);
     let account = AccountSharedData::new(1, 0, &owner);
 
     // Write only to the cache at an unrooted slot: this populates the secondary index keyed by
@@ -659,8 +659,8 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
 /// A scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
 /// instead of scanning to completion.
 /// Removing some *other* bank must not abort the scan.
-#[test_case(BankId(1), Err(ScanError::SlotRemoved { slot: 1, bank_id: BankId(1) }), 1; "abort_bank_aborts_scan")]
-#[test_case(BankId(2), Ok(()), 10; "abort_other_bank_no_effect")]
+#[test_case(BankId::new(1), Err(ScanError::SlotRemoved { slot: 1, bank_id: BankId::new(1) }), 1; "abort_bank_aborts_scan")]
+#[test_case(BankId::new(2), Ok(()), 10; "abort_other_bank_no_effect")]
 fn test_remove_unrooted_slots_aborts_ongoing_scan(
     removed_bank_id: BankId,
     expected_result: Result<(), ScanError>,
@@ -668,7 +668,7 @@ fn test_remove_unrooted_slots_aborts_ongoing_scan(
 ) {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 1;
-    let bank_id = BankId(1);
+    let bank_id = BankId::new(1);
     let num_accounts = 10;
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
     let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
@@ -703,7 +703,7 @@ fn test_index_scan_accounts_aborts_when_bank_removed() {
         ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
     };
     let slot = 1;
-    let bank_id = BankId(1);
+    let bank_id = BankId::new(1);
     let num_accounts = 10;
     let owner = Pubkey::new_unique();
     let account = AccountSharedData::new(1, 0, &owner);
@@ -756,7 +756,7 @@ fn test_purged_pubkey_restored_before_clean_keeps_secondary_index() {
     // Store the pubkey in an unrooted slot, then purge that slot. The pubkey is deferred to
     // clean, and has no primary index entry at all.
     db.store_for_tests((1, &[(&pubkey, &account)][..]));
-    db.remove_unrooted_slots(&[(1, BankId(1))]);
+    db.remove_unrooted_slots(&[(1, BankId::new(1))]);
     assert!(!db.accounts_index.contains(&pubkey));
 
     // Store the pubkey again and flush it to storage, which creates an entry in the accounts index
@@ -1801,7 +1801,7 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     // Secondary index should still find both pubkeys
     let mut found_accounts = HashSet::new();
     let index_key = IndexKey::SplTokenMint(mint_key);
-    let bank_id = BankId(0);
+    let bank_id = BankId::new(0);
     accounts
         .index_scan_accounts(
             &Ancestors::default(),
@@ -2137,7 +2137,7 @@ fn test_accountsdb_scan_accounts() {
     let mut accounts = Vec::new();
     db.scan_accounts(
         &ancestors,
-        BankId(0),
+        BankId::new(0),
         |scan_result| {
             if let Some((_, account, _)) = scan_result {
                 accounts.push(account);
@@ -2152,7 +2152,7 @@ fn test_accountsdb_scan_accounts() {
     let mut accounts = Vec::new();
     db.scan_accounts(
         &ancestors,
-        BankId(0),
+        BankId::new(0),
         |scan_result| {
             if let Some((_, account, _)) = scan_result {
                 accounts.push(account);
@@ -4060,7 +4060,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
     let max_scan_root = 0;
     db.add_root(max_scan_root);
     let scan_ancestors: Arc<Ancestors> = Arc::new(Ancestors::from(vec![0, 1]));
-    let bank_id = BankId(0);
+    let bank_id = BankId::new(0);
     let scan_tracker = setup_scan(db.clone(), scan_ancestors.clone(), bank_id, account_key2);
 
     // Add a new root 2
@@ -4105,7 +4105,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
     assert_eq!(account.lamports(), slot1_account.lamports());
 
     // Simulate dropping the bank, which finally removes the slot from the cache
-    let bank_id = BankId(1);
+    let bank_id = BankId::new(1);
     db.purge_slot(1, bank_id, false);
     assert!(db.get_account_at_slot(&account_key, 1).is_none());
 }
@@ -4312,7 +4312,7 @@ fn setup_accounts_db_cache_clean(
         accounts_db.add_root(*slot as Slot);
         if Some(*slot) == scan_slot {
             let ancestors = Arc::new(Ancestors::from(vec![stall_slot, *slot]));
-            let bank_id = BankId(0);
+            let bank_id = BankId::new(0);
             scan_tracker = Some(setup_scan(
                 accounts_db.clone(),
                 ancestors,
@@ -5518,7 +5518,7 @@ fn test_purge_alive_unrooted_slots_after_clean() {
     assert_eq!(accounts.accounts_index.slot_list_len(&shared_key), 0);
 
     // Simulate purge_slot() all from AccountsBackgroundService
-    accounts.purge_slot(slot1, BankId(0), true);
+    accounts.purge_slot(slot1, BankId::new(0), true);
 
     // Now the key and slot are purged from the database
     assert!(!accounts.contains(&shared_key));
@@ -6800,7 +6800,7 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
 
     db.index_scan_accounts(
         &ancestors,
-        BankId(0),
+        BankId::new(0),
         IndexKey::SplTokenMint(mint_key),
         |maybe_account| {
             if let Some((pubkey, _, _)) = maybe_account {

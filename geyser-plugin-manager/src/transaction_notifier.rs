@@ -451,7 +451,7 @@ mod tests {
 
         notifier.notify_transaction(
             42,
-            BankId(9),
+            BankId::new(9),
             3,
             &Signature::default(),
             &Hash::default(),
@@ -540,7 +540,7 @@ mod tests {
         };
         notifier.notify_transaction(
             43,
-            BankId(9),
+            BankId::new(9),
             0,
             &Signature::default(),
             &Hash::default(),

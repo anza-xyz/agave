@@ -4,12 +4,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// slot (e.g. a dumped bank and its replacement) have different ids. It is also local to the
 /// process, so it is not agreed across the cluster and not stable across restarts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BankId(pub u64);
+pub struct BankId(u64);
+
+impl BankId {
+    pub const fn new(bank_id: u64) -> Self {
+        Self(bank_id)
+    }
+}
 
 #[cfg(feature = "dev-context-only-utils")]
 impl BankId {
     pub fn next_bank_id(&self) -> BankId {
-        BankId(self.0 + 1)
+        Self::new(self.0 + 1)
     }
 }
 
@@ -26,6 +32,6 @@ pub struct BankIdGenerator(AtomicU64);
 
 impl BankIdGenerator {
     pub fn next(&self) -> BankId {
-        BankId(self.0.fetch_add(1, Ordering::Relaxed))
+        BankId::new(self.0.fetch_add(1, Ordering::Relaxed))
     }
 }
