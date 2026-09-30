@@ -198,6 +198,8 @@ one week in order to be eligible for a bounty
   * In the stable and beta branches, vulnerabilities are eligible for bounty
   upon merge
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible
+  * The proof-of-concept must be included inline; no attachments or external
+  links are accepted
 * Only reports describing a [single finding](#reporting) will be considered eligible
 * The participant submitting the bug report shall follow the process outlined within this document
 * Valid exploits can be eligible even if they are not successfully executed on a public cluster
