@@ -866,12 +866,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Enables external processes to connect and manage block production"),
         )
         .arg(
-            Arg::with_name("alpenglow")
-                .long("alpenglow")
-                .takes_value(false)
-                .help("Activate Alpenglow at genesis"),
-        )
-        .arg(
             Arg::with_name("deactivate_feature")
                 .long("deactivate-feature")
                 .takes_value(true)

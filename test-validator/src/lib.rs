@@ -1,7 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8},
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
@@ -64,8 +64,7 @@ use {
         client_error::Error as RpcClientError, request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_runtime::{
-        bank_forks::BankForks,
-        genesis_utils::{activate_alpenglow_at_genesis, create_genesis_config_with_leader_ex},
+        bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         runtime_config::RuntimeConfig,
     },
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
@@ -173,8 +172,6 @@ pub struct TestValidatorGenesis {
 
 impl Default for TestValidatorGenesis {
     fn default() -> Self {
-        // Default to Tower consensus to ensure proper converage pre-Alpenglow.
-        let deactivate_feature_set = [alpenglow::id()].into_iter().collect();
         Self {
             fee_rate_governor: FeeRateGovernor::default(),
             ledger_path: Option::<PathBuf>::default(),
@@ -198,7 +195,7 @@ impl Default for TestValidatorGenesis {
             max_genesis_archive_unpacked_size: Option::<u64>::default(),
             geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
             enable_scheduler_bindings: false,
-            deactivate_feature_set,
+            deactivate_feature_set: HashSet::default(),
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
@@ -272,11 +269,6 @@ impl TestValidatorGenesis {
     /// it will be silently ignored
     pub fn deactivate_features(&mut self, deactivate_list: &[Pubkey]) -> &mut Self {
         self.deactivate_feature_set.extend(deactivate_list);
-        self
-    }
-
-    pub fn activate_alpenglow(&mut self) -> &mut Self {
-        self.deactivate_feature_set.remove(&alpenglow::id());
         self
     }
 
@@ -918,8 +910,6 @@ impl TestValidator {
                 warn!("Feature {feature:?} set for deactivation is not a known Feature public key",)
             }
         }
-        let is_alpenglow_active = feature_set.is_active(&alpenglow::id());
-
         let runtime_features = feature_set.runtime_features();
         let program_runtime_environment = create_program_runtime_environment(
             &runtime_features,
@@ -1008,9 +998,6 @@ impl TestValidator {
             &feature_set,
             accounts.into_iter().collect(),
         );
-        if is_alpenglow_active {
-            activate_alpenglow_at_genesis(&mut genesis_config);
-        }
         genesis_config.epoch_schedule = config
             .epoch_schedule
             .as_ref()
@@ -1450,34 +1437,6 @@ mod test {
         }
     }
 
-    async fn wait_for_alpenglow_enabled(test_validator: &TestValidator) {
-        for _ in 0..240 {
-            let migration_status = test_validator
-                .bank_forks()
-                .read()
-                .unwrap()
-                .migration_status();
-            if migration_status.is_alpenglow_enabled() {
-                return;
-            }
-            sleep(Duration::from_millis(250)).await;
-        }
-        let bank_forks = test_validator.bank_forks();
-        let bank_forks = bank_forks.read().unwrap();
-        let root_bank = bank_forks.root_bank();
-        let migration_status = bank_forks.migration_status();
-        panic!(
-            "Timed out waiting for Alpenglow migration: migration_status={migration_status:?}, \
-             root_slot={}, working_slot={}, feature_activation_slot={:?}, \
-             eligible_genesis_block={:?}, genesis_certificate={:?}",
-            root_bank.slot(),
-            bank_forks.working_bank().slot(),
-            root_bank.feature_set.activated_slot(&alpenglow::id()),
-            migration_status.eligible_genesis_block(),
-            migration_status.genesis_certificate(),
-        );
-    }
-
     #[test]
     fn get_health() {
         let (test_validator, _payer) = TestValidatorGenesis::default_for_tests().start();
@@ -1495,32 +1454,8 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_all_features_active_except_alpenglow_by_default() {
+    async fn test_all_features_active_by_default() {
         let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
-            .start_async()
-            .await;
-        let rpc_client = test_validator.get_async_rpc_client();
-
-        let active_features = FEATURE_NAMES
-            .keys()
-            .copied()
-            .filter(|feature| *feature != alpenglow::id())
-            .collect::<Vec<_>>();
-        assert_feature_accounts(&rpc_client, &active_features, &[alpenglow::id()]).await;
-        assert!(
-            test_validator
-                .bank_forks()
-                .read()
-                .unwrap()
-                .migration_status()
-                .is_pre_feature_activation()
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_all_features_active_with_alpenglow_at_genesis() {
-        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
-            .activate_alpenglow()
             .start_async()
             .await;
         let rpc_client = test_validator.get_async_rpc_client();
@@ -1536,7 +1471,6 @@ mod test {
                 .get_alpenglow_genesis_certificate()
                 .is_some()
         );
-        wait_for_alpenglow_enabled(&test_validator).await;
     }
 
     #[test]
@@ -1609,7 +1543,7 @@ mod test {
         [
             agave_feature_set::deprecate_rewards_sysvar::id(),
             agave_feature_set::disable_fees_sysvar::id(),
-            alpenglow::id(),
+            agave_feature_set::alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
             agave_feature_set::vote_account_initialize_v2::id(),
         ]
