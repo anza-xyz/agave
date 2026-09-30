@@ -20,7 +20,9 @@ exclude_features=(
 
 export RUSTFLAGS="-D warnings"
 
-cargo hack check \
+cargo hack clippy \
+	--features agave-unstable-api \
+	--ignore-unknown-features \
 	--each-feature \
 	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
 	--exclude-all-features \
