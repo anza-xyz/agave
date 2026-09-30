@@ -1156,20 +1156,32 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         session_ending && state_machine.has_no_active_task()
     }
 
+    /// Dispatches the tasks unblocked by `executed_task` before checking its cost, so the check
+    /// overlaps with their execution.
+    fn dispatch_unblocked_then_check_block_cost_limits(
+        state_machine: &mut SchedulingStateMachine,
+        runnable_task_sender: &chained_channel::ChainedChannelSender<Task, SchedulingContext>,
+        executed_task: &ExecutedTask,
+        bank: &Bank,
+    ) -> Result<()> {
+        let tracked_cost = executed_task.result.clone()?;
+        while let Some(task) = state_machine.schedule_next_unblocked_task() {
+            runnable_task_sender.send_payload(task).unwrap();
+        }
+        check_block_cost_limits(
+            &mut bank.write_cost_tracker().unwrap(),
+            executed_task.task.transaction(),
+            tracked_cost,
+        )
+    }
+
     /// Returns `true` if the caller should abort.
     #[must_use]
     fn abort_or_accumulate_result_with_timings(
         (result, timings): &mut ResultWithTimings,
         executed_task: Box<ExecutedTask>,
-        bank: &Bank,
+        task_result: Result<()>,
     ) -> bool {
-        let task_result = executed_task.result.clone().and_then(|tracked_cost| {
-            check_block_cost_limits(
-                &mut bank.write_cost_tracker().unwrap(),
-                executed_task.task.transaction(),
-                tracked_cost,
-            )
-        });
         sleepless_testing::at(CheckPoint::TaskAccumulated(
             executed_task.task.task_id(),
             &task_result,
@@ -1416,11 +1428,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
+                                let task_result =
+                                    Self::dispatch_unblocked_then_check_block_cost_limits(
+                                        &mut state_machine,
+                                        &runnable_task_sender,
+                                        &executed_task,
+                                        &session_bank,
+                                    );
 
                                 if Self::abort_or_accumulate_result_with_timings(
                                     &mut result_with_timings,
                                     executed_task,
-                                    &session_bank,
+                                    task_result,
                                 ) {
                                     break 'nonaborted_main_loop;
                                 }
@@ -1471,11 +1490,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
+                                let task_result =
+                                    Self::dispatch_unblocked_then_check_block_cost_limits(
+                                        &mut state_machine,
+                                        &runnable_task_sender,
+                                        &executed_task,
+                                        &session_bank,
+                                    );
 
                                 if Self::abort_or_accumulate_result_with_timings(
                                     &mut result_with_timings,
                                     executed_task,
-                                    &session_bank,
+                                    task_result,
                                 ) {
                                     break 'nonaborted_main_loop;
                                 }
