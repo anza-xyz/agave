@@ -2673,7 +2673,7 @@ impl Blockstore {
         Ok(())
     }
 
-    // Bypasses erasure recovery becuase it is called from broadcast stage
+    // Bypasses erasure recovery because it is called from broadcast stage
     // when inserting own shreds during leader slots. Stores all shreds in the original column.
     pub fn insert_cow_shreds<'a, 'db>(
         &'db self,
