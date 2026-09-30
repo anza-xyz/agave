@@ -25,12 +25,13 @@ use {
         config::RpcBlockProductionConfig,
         request::RpcRequest,
         response::{
-            Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockProduction,
-            RpcBlockProductionRange, RpcBlockhash, RpcConfirmedTransactionStatusWithSignature,
-            RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
-            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee,
-            RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
-            RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
+            Response, RpcAccountBalance, RpcAlpenglowRankMap, RpcBlockCommitment,
+            RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
+            RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcIdentity,
+            RpcInflationGovernor, RpcInflationRate, RpcInflationReward, RpcKeyedAccount,
+            RpcPerfSample, RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
+            RpcSnapshotSlotInfo, RpcSupply, RpcVersionInfo, RpcVoteAccountInfo,
+            RpcVoteAccountStatus,
         },
     },
     solana_signature::Signature,
@@ -187,6 +188,15 @@ impl RpcSender for MockSender {
                 };
                 serde_json::to_value(Some(cert))?
             }
+            "getAlpenglowRankMap" => serde_json::to_value(Response::<
+                Option<RpcAlpenglowRankMap>,
+            > {
+                context: RpcResponseContext {
+                    slot: 1,
+                    api_version: None,
+                },
+                value: None,
+            })?,
             "getSignatureStatuses" => {
                 let status: TransactionResult<()> = if self.url == "account_in_use" {
                     Err(TransactionError::AccountInUse)

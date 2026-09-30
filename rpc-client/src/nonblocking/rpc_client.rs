@@ -2141,6 +2141,31 @@ impl RpcClient {
         self.send(RpcRequest::GetAgGenesisCert, Value::Null).await
     }
 
+    /// Returns the Alpenglow validator rank map for the epoch containing `slot`.
+    pub async fn get_alpenglow_rank_map(
+        &self,
+        slot: Slot,
+    ) -> RpcResult<Option<RpcAlpenglowRankMap>> {
+        self.get_alpenglow_rank_map_with_config(
+            slot,
+            RpcContextConfig {
+                commitment: Some(self.commitment()),
+                ..RpcContextConfig::default()
+            },
+        )
+        .await
+    }
+
+    /// Returns the Alpenglow validator rank map using the provided RPC context configuration.
+    pub async fn get_alpenglow_rank_map_with_config(
+        &self,
+        slot: Slot,
+        config: RpcContextConfig,
+    ) -> RpcResult<Option<RpcAlpenglowRankMap>> {
+        self.send(RpcRequest::GetAlpenglowRankMap, json!([slot, config]))
+            .await
+    }
+
     /// Get block production for the current epoch.
     ///
     /// # RPC Reference
