@@ -11358,6 +11358,7 @@ dependencies = [
  "solana-instruction-error 3.1.0",
  "solana-instructions-sysvar 5.0.0",
  "solana-program-entrypoint",
+ "solana-program-runtime",
  "solana-pubkey 4.4.0",
  "solana-rent",
  "solana-sbpf",

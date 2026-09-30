@@ -744,7 +744,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPanic {
         column: u64,
         _: u64,
     ) -> Result<u64, Error> {
-        invoke_context.compute_meter.consume_checked(len)?;
+        invoke_context.consume_checked(len)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         translate_string_and_do(
@@ -838,7 +838,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCreateProgramAd
         let cost = invoke_context
             .get_execution_cost()
             .create_program_address_units;
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -878,7 +878,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallTryFindProgramA
         let cost = invoke_context
             .get_execution_cost()
             .create_program_address_units;
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -911,7 +911,11 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallTryFindProgramA
                 }
             }
             bump_seed[0] = bump_seed[0].saturating_sub(1);
-            invoke_context.compute_meter.consume_checked(cost)?;
+            invoke_context
+                .transaction_context
+                .accounts()
+                .compute_meter
+                .consume_checked(cost)?;
         }
         Ok(1)
     }
@@ -930,7 +934,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSecp256k1Recove
         _: u64,
     ) -> Result<u64, Error> {
         let cost = invoke_context.get_execution_cost().secp256k1_recover_cost;
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -1025,7 +1029,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
                 let cost = invoke_context
                     .get_execution_cost()
                     .curve25519_edwards_validate_point_cost;
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let point = translate_type::<edwards::PodEdwardsPoint>(
                     memory_mapping,
@@ -1043,7 +1047,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
                 let cost = invoke_context
                     .get_execution_cost()
                     .curve25519_ristretto_validate_point_cost;
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let point = translate_type::<ristretto::PodRistrettoPoint>(
                     memory_mapping,
@@ -1061,7 +1065,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
                 let cost = invoke_context
                     .get_execution_cost()
                     .bls12_381_g1_validate_cost;
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let point = translate_type::<solana_bls12_381_syscall::PodG1Point>(
                     memory_mapping,
@@ -1089,7 +1093,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
                 let cost = invoke_context
                     .get_execution_cost()
                     .bls12_381_g2_validate_cost;
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let point = translate_type::<solana_bls12_381_syscall::PodG2Point>(
                     memory_mapping,
@@ -1153,7 +1157,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress
                 let cost = invoke_context
                     .get_execution_cost()
                     .bls12_381_g1_decompress_cost;
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                 let compressed_point = translate_type::<PodBLSG1Compressed>(
@@ -1188,7 +1192,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress
                 let cost = invoke_context
                     .get_execution_cost()
                     .bls12_381_g2_decompress_cost;
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                 let compressed_point = translate_type::<PodBLSG2Compressed>(
@@ -1268,7 +1272,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_add_cost;
-                    invoke_context.compute_meter.consume_checked(cost)?;
+                    invoke_context.consume_checked(cost)?;
 
                     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                     let left_point = translate_type::<PodEdwardsPoint>(
@@ -1298,7 +1302,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_subtract_cost;
-                    invoke_context.compute_meter.consume_checked(cost)?;
+                    invoke_context.consume_checked(cost)?;
 
                     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                     let left_point = translate_type::<PodEdwardsPoint>(
@@ -1328,7 +1332,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_multiply_cost;
-                    invoke_context.compute_meter.consume_checked(cost)?;
+                    invoke_context.consume_checked(cost)?;
 
                     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                     let scalar = translate_type::<scalar::PodScalar>(
@@ -1368,7 +1372,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_add_cost;
-                    invoke_context.compute_meter.consume_checked(cost)?;
+                    invoke_context.consume_checked(cost)?;
 
                     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                     let left_point = translate_type::<PodRistrettoPoint>(
@@ -1398,7 +1402,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_subtract_cost;
-                    invoke_context.compute_meter.consume_checked(cost)?;
+                    invoke_context.consume_checked(cost)?;
 
                     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                     let left_point = translate_type::<PodRistrettoPoint>(
@@ -1430,7 +1434,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_multiply_cost;
-                    invoke_context.compute_meter.consume_checked(cost)?;
+                    invoke_context.consume_checked(cost)?;
 
                     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                     let scalar = translate_type::<scalar::PodScalar>(
@@ -1475,7 +1479,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                 match group_op {
                     GROUP_OP_ADD => {
                         let cost = invoke_context.get_execution_cost().bls12_381_g1_add_cost;
-                        invoke_context.compute_meter.consume_checked(cost)?;
+                        invoke_context.consume_checked(cost)?;
 
                         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                         let left_point = translate_type::<PodBLSG1Point>(
@@ -1512,7 +1516,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g1_subtract_cost;
-                        invoke_context.compute_meter.consume_checked(cost)?;
+                        invoke_context.consume_checked(cost)?;
 
                         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                         let left_point = translate_type::<PodBLSG1Point>(
@@ -1549,7 +1553,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g1_multiply_cost;
-                        invoke_context.compute_meter.consume_checked(cost)?;
+                        invoke_context.consume_checked(cost)?;
 
                         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                         let scalar = translate_type::<PodBLSScalar>(
@@ -1597,7 +1601,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                 match group_op {
                     GROUP_OP_ADD => {
                         let cost = invoke_context.get_execution_cost().bls12_381_g2_add_cost;
-                        invoke_context.compute_meter.consume_checked(cost)?;
+                        invoke_context.consume_checked(cost)?;
 
                         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                         let left_point = translate_type::<PodBLSG2Point>(
@@ -1634,7 +1638,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g2_subtract_cost;
-                        invoke_context.compute_meter.consume_checked(cost)?;
+                        invoke_context.consume_checked(cost)?;
 
                         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                         let left_point = translate_type::<PodBLSG2Point>(
@@ -1671,7 +1675,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g2_multiply_cost;
-                        invoke_context.compute_meter.consume_checked(cost)?;
+                        invoke_context.consume_checked(cost)?;
 
                         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                         let scalar = translate_type::<PodBLSScalar>(
@@ -1759,7 +1763,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscala
                             .curve25519_edwards_msm_incremental_cost
                             .saturating_mul(points_len.saturating_sub(1)),
                     );
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                 let scalars = translate_slice::<scalar::PodScalar>(
@@ -1799,7 +1803,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscala
                             .curve25519_ristretto_msm_incremental_cost
                             .saturating_mul(points_len.saturating_sub(1)),
                     );
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                 let scalars = translate_slice::<scalar::PodScalar>(
@@ -1874,7 +1878,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePairingMap
                         .bls12_381_additional_pair_cost
                         .saturating_mul(num_pairs.saturating_sub(1)),
                 );
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context.consume_checked(cost)?;
 
                 let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
                 let g1_points = translate_slice::<PodBLSG1Point>(
@@ -1937,7 +1941,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSetReturnData {
             .checked_div(execution_cost.cpi_bytes_per_unit)
             .unwrap_or(u64::MAX)
             .saturating_add(execution_cost.syscall_base_cost);
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         if len > MAX_RETURN_DATA as u64 {
             return Err(SyscallError::ReturnDataTooLarge(len, MAX_RETURN_DATA as u64).into());
@@ -1975,9 +1979,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context
-            .compute_meter
-            .consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context.consume_checked(execution_cost.syscall_base_cost)?;
 
         let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
         let length = length.min(return_data.len() as u64);
@@ -1986,7 +1988,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
                 .saturating_add(size_of::<Pubkey>() as u64)
                 .checked_div(execution_cost.cpi_bytes_per_unit)
                 .unwrap_or(u64::MAX);
-            invoke_context.compute_meter.consume_checked(cost)?;
+            invoke_context.consume_checked(cost)?;
             let check_aligned = invoke_context.get_check_aligned();
             let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
             translate_mut!(
@@ -2025,9 +2027,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSib
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context
-            .compute_meter
-            .consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context.consume_checked(execution_cost.syscall_base_cost)?;
 
         let stack_height = invoke_context.get_stack_height();
         let mut reverse_index_at_stack_height = 0;
@@ -2137,9 +2137,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetStackHeight 
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context
-            .compute_meter
-            .consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context.consume_checked(execution_cost.syscall_base_cost)?;
 
         Ok(invoke_context.get_stack_height() as u64)
     }
@@ -2232,7 +2230,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
             }
         };
 
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -2397,7 +2395,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallBigModExp {
         let execution_cost = invoke_context.get_execution_cost();
         let base_cost = execution_cost.big_modular_exponentiation_base_cost;
         let cost_divisor = execution_cost.big_modular_exponentiation_cost_divisor;
-        invoke_context.compute_meter.consume_checked(base_cost)?;
+        invoke_context.consume_checked(base_cost)?;
 
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let params =
@@ -2422,10 +2420,10 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallBigModExp {
         let Some(cost) = big_mod_exp_operation_cost(cost_divisor, &params, exponent) else {
             // The operation cost cannot be represented as a `u64`, so it can
             // never be paid for; drain the remaining budget and fail.
-            invoke_context.compute_meter.consume_checked(u64::MAX)?;
+            invoke_context.consume_checked(u64::MAX)?;
             return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
         };
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let base =
             translate_slice::<u8>(memory_mapping, params.base, params.base_len, check_aligned)?;
@@ -2484,9 +2482,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPoseidon {
             );
             return Err(SyscallError::ArithmeticOverflow.into());
         };
-        invoke_context
-            .compute_meter
-            .consume_checked(cost.to_owned())?;
+        invoke_context.consume_checked(cost.to_owned())?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -2536,9 +2532,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallRemainingComput
         _arg5: u64,
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
-        invoke_context
-            .compute_meter
-            .consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context.consume_checked(execution_cost.syscall_base_cost)?;
 
         use solana_sbpf::vm::ContextObject;
         Ok(invoke_context.get_remaining())
@@ -2607,7 +2601,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
             }
         };
 
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -2747,9 +2741,7 @@ impl<H: HasherImpl> BuiltinFunctionDefinition<InvokeContext<'_, '_>> for Syscall
             return Err(SyscallError::TooManySlices.into());
         }
 
-        invoke_context
-            .compute_meter
-            .consume_checked(hash_base_cost)?;
+        invoke_context.consume_checked(hash_base_cost)?;
         let check_aligned = invoke_context.get_check_aligned();
         let mem_op_base_cost = compute_cost.mem_op_base_cost;
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
@@ -2773,7 +2765,11 @@ impl<H: HasherImpl> BuiltinFunctionDefinition<InvokeContext<'_, '_>> for Syscall
                     .max(hash_byte_cost.saturating_mul(
                         val.len().checked_div(2).expect("div by non-zero literal"),
                     ));
-                invoke_context.compute_meter.consume_checked(cost)?;
+                invoke_context
+                    .transaction_context
+                    .accounts()
+                    .compute_meter
+                    .consume_checked(cost)?;
                 hasher.hash(bytes);
             }
         }
@@ -2811,9 +2807,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochStake {
             // syscall_base
             // ```
             let compute_units = compute_cost.syscall_base_cost;
-            invoke_context
-                .compute_meter
-                .consume_checked(compute_units)?;
+            invoke_context.consume_checked(compute_units)?;
             //
             // Control flow:
             //
@@ -2838,9 +2832,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochStake {
                         .unwrap_or(u64::MAX),
                 )
                 .saturating_add(compute_cost.mem_op_base_cost);
-            invoke_context
-                .compute_meter
-                .consume_checked(compute_units)?;
+            invoke_context.consume_checked(compute_units)?;
             //
             // Control flow:
             //
@@ -3238,9 +3230,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(string.len() as u64 - 1);
+        invoke_context.mock_set_remaining(string.len() as u64 - 1);
         let result = SyscallPanic::rust(
             &mut invoke_context,
             0x100000000,
@@ -3254,9 +3244,7 @@ mod tests {
             Result::Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ComputationalBudgetExceeded
         );
 
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(string.len() as u64);
+        invoke_context.mock_set_remaining(string.len() as u64);
         let result = SyscallPanic::rust(
             &mut invoke_context,
             0x100000000,
@@ -3288,7 +3276,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(400 - 1);
+        invoke_context.mock_set_remaining(400 - 1);
         let result = SyscallLog::rust(
             &mut invoke_context,
             0x100000001, // AccessViolation
@@ -3345,7 +3333,7 @@ mod tests {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let cost = invoke_context.get_execution_cost().log_64_units;
 
-        invoke_context.compute_meter.mock_set_remaining(cost);
+        invoke_context.mock_set_remaining(cost);
         let config = Config::default();
         let memory_mapping =
             unsafe { MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap() };
@@ -3394,14 +3382,14 @@ mod tests {
         );
         assert_access_violation!(result, 0x100000001, 32);
 
-        invoke_context.compute_meter.mock_set_remaining(1);
+        invoke_context.mock_set_remaining(1);
         let result = SyscallLogPubkey::rust(&mut invoke_context, 100, 32, 0, 0, 0);
         assert_matches!(
             result,
             Result::Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ComputationalBudgetExceeded
         );
 
-        invoke_context.compute_meter.mock_set_remaining(cost);
+        invoke_context.mock_set_remaining(cost);
         let result = SyscallLogPubkey::rust(&mut invoke_context, 0x100000000, 0, 0, 0, 0);
         result.unwrap();
 
@@ -3555,7 +3543,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(
+        invoke_context.mock_set_remaining(
             (invoke_context.get_execution_cost().sha256_base_cost
                 + invoke_context.get_execution_cost().mem_op_base_cost.max(
                     invoke_context
@@ -3641,7 +3629,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(
+        invoke_context.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
                 .curve25519_edwards_validate_point_cost)
@@ -3716,7 +3704,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(
+        invoke_context.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
                 .curve25519_ristretto_validate_point_cost)
@@ -3805,7 +3793,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(
+        invoke_context.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
                 .curve25519_edwards_add_cost
@@ -3958,7 +3946,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(
+        invoke_context.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
                 .curve25519_ristretto_add_cost
@@ -4126,7 +4114,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(
+        invoke_context.mock_set_remaining(
             invoke_context
                 .get_execution_cost()
                 .curve25519_edwards_msm_base_cost
@@ -4223,7 +4211,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(500_000);
+        invoke_context.mock_set_remaining(500_000);
         let result = SyscallCurveMultiscalarMultiplication::rust(
             &mut invoke_context,
             CURVE25519_EDWARDS,
@@ -4240,7 +4228,7 @@ mod tests {
         ];
         assert_eq!(expected_product, result_point);
 
-        invoke_context.compute_meter.mock_set_remaining(500_000);
+        invoke_context.mock_set_remaining(500_000);
         let result = SyscallCurveMultiscalarMultiplication::rust(
             &mut invoke_context,
             CURVE25519_EDWARDS,
@@ -4256,7 +4244,7 @@ mod tests {
         assert_eq!(*result, SyscallError::InvalidLength);
 
         // test Ristretto
-        invoke_context.compute_meter.mock_set_remaining(500_000);
+        invoke_context.mock_set_remaining(500_000);
         let result = SyscallCurveMultiscalarMultiplication::rust(
             &mut invoke_context,
             CURVE25519_RISTRETTO,
@@ -4273,7 +4261,7 @@ mod tests {
         ];
         assert_eq!(expected_product, result_point);
 
-        invoke_context.compute_meter.mock_set_remaining(500_000);
+        invoke_context.mock_set_remaining(500_000);
         let result = SyscallCurveMultiscalarMultiplication::rust(
             &mut invoke_context,
             CURVE25519_RISTRETTO,
@@ -5281,9 +5269,7 @@ mod tests {
         processed_sibling_instruction.accounts_len = 1;
 
         let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             0,
@@ -5334,9 +5320,7 @@ mod tests {
         }
 
         let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             1,
@@ -5388,9 +5372,7 @@ mod tests {
         }
 
         let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             2,
@@ -5402,9 +5384,7 @@ mod tests {
 
         assert_eq!(result.unwrap(), 0);
 
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             0,
@@ -5559,9 +5539,7 @@ mod tests {
         invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the syscall from B5 should return false
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             0,
@@ -5598,9 +5576,7 @@ mod tests {
         invoke_context.transaction_context.pop().unwrap();
 
         // Invoking the syscall from B6 with index zero should return ix B5
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             0,
@@ -5652,9 +5628,7 @@ mod tests {
         }
 
         // Invoking the syscall from B6 with index one should return false
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             1,
@@ -5680,9 +5654,7 @@ mod tests {
         invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the syscall from B8 with index zero should return ix B6
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             0,
@@ -5734,9 +5706,7 @@ mod tests {
         }
 
         // Invoking the syscall from B6 with index one should return ix B5
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             1,
@@ -5788,9 +5758,7 @@ mod tests {
         }
 
         // Invoking the syscall from B8 with index two should return false
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             2,
@@ -5812,9 +5780,7 @@ mod tests {
         invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the syscall from B with index zero should return ix C
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         processed_sibling_instruction.data_len = 1;
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
@@ -5878,9 +5844,7 @@ mod tests {
         invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the CPI from C1 with index zero should return false.
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             0,
@@ -5905,9 +5869,7 @@ mod tests {
         invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the syscall from C2 with index zero should return ix C1
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         processed_sibling_instruction.data_len = 2;
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
@@ -5960,9 +5922,7 @@ mod tests {
         }
 
         // Invoking the CPI from C2 with index one should return false.
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(syscall_base_cost);
+        invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
             1,
@@ -6070,7 +6030,7 @@ mod tests {
                 .unwrap(),
             create_program_address(&mut invoke_context, &[b"Talking"], &address).unwrap(),
         );
-        invoke_context.compute_meter.mock_set_remaining(0);
+        invoke_context.mock_set_remaining(0);
         assert_matches!(
             create_program_address(&mut invoke_context, &[b"", &[1]], &address),
             Result::Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ComputationalBudgetExceeded
@@ -6088,9 +6048,7 @@ mod tests {
 
         for _ in 0..1_000 {
             let address = Pubkey::new_unique();
-            invoke_context
-                .compute_meter
-                .mock_set_remaining(cost * max_tries);
+            invoke_context.mock_set_remaining(cost * max_tries);
             let (found_address, bump_seed) =
                 try_find_program_address(&mut invoke_context, &[b"Lil'", b"Bits"], &address)
                     .unwrap();
@@ -6106,27 +6064,19 @@ mod tests {
         }
 
         let seeds: &[&[u8]] = &[b""];
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(cost * max_tries);
+        invoke_context.mock_set_remaining(cost * max_tries);
         let (_, bump_seed) =
             try_find_program_address(&mut invoke_context, seeds, &address).unwrap();
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(cost * (max_tries - bump_seed as u64));
+        invoke_context.mock_set_remaining(cost * (max_tries - bump_seed as u64));
         try_find_program_address(&mut invoke_context, seeds, &address).unwrap();
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(cost * (max_tries - bump_seed as u64 - 1));
+        invoke_context.mock_set_remaining(cost * (max_tries - bump_seed as u64 - 1));
         assert_matches!(
             try_find_program_address(&mut invoke_context, seeds, &address),
             Result::Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ComputationalBudgetExceeded
         );
 
         let exceeded_seed = &[127; MAX_SEED_LEN + 1];
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(cost * (max_tries - 1));
+        invoke_context.mock_set_remaining(cost * (max_tries - 1));
         assert_matches!(
             try_find_program_address(&mut invoke_context, &[exceeded_seed], &address),
             Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded)
@@ -6150,9 +6100,7 @@ mod tests {
             &[16],
             &[17],
         ];
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(cost * (max_tries - 1));
+        invoke_context.mock_set_remaining(cost * (max_tries - 1));
         assert_matches!(
             try_find_program_address(&mut invoke_context, exceeded_seeds, &address),
             Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded)
@@ -6233,7 +6181,7 @@ mod tests {
                 &exponent,
             )
             .unwrap();
-        invoke_context.compute_meter.mock_set_remaining(cost);
+        invoke_context.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
 
@@ -6290,7 +6238,7 @@ mod tests {
                 &exponent,
             )
             .unwrap();
-        invoke_context.compute_meter.mock_set_remaining(cost);
+        invoke_context.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
 
@@ -6347,7 +6295,7 @@ mod tests {
                 &exponent,
             )
             .unwrap();
-        invoke_context.compute_meter.mock_set_remaining(cost);
+        invoke_context.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_BASE, 0, 0, 0);
 
@@ -6434,9 +6382,7 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(compute_budget.compute_unit_limit);
+        invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);
 
         let null_pointer_var = std::ptr::null::<Pubkey>() as u64;
 
@@ -6526,9 +6472,7 @@ mod tests {
             assert_access_violation!(result, vote_address_var, 32);
         }
 
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(compute_budget.compute_unit_limit);
+        invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);
         {
             // Otherwise, the syscall returns a `u64` integer representing the
             // total active stake delegated to the vote account at the provided
@@ -6557,9 +6501,7 @@ mod tests {
             assert_eq!(result, EXPECTED_EPOCH_STAKE);
         }
 
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(compute_budget.compute_unit_limit);
+        invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);
         {
             // If the provided vote address corresponds to an account that is
             // not a vote account or does not exist, the syscall will write
@@ -6900,9 +6842,7 @@ mod tests {
             .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g1_add_cost = invoke_context.get_execution_cost().bls12_381_g1_add_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g1_add_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g1_add_cost);
 
         let result = SyscallCurveGroupOps::rust(
             &mut invoke_context,
@@ -7023,9 +6963,7 @@ mod tests {
         let bls12_381_g1_subtract_cost = invoke_context
             .get_execution_cost()
             .bls12_381_g1_subtract_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g1_subtract_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g1_subtract_cost);
 
         let result = SyscallCurveGroupOps::rust(
             &mut invoke_context,
@@ -7139,9 +7077,7 @@ mod tests {
         let bls12_381_g1_multiply_cost = invoke_context
             .get_execution_cost()
             .bls12_381_g1_multiply_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g1_multiply_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g1_multiply_cost);
 
         let result = SyscallCurveGroupOps::rust(
             &mut invoke_context,
@@ -7291,9 +7227,7 @@ mod tests {
             .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g2_add_cost = invoke_context.get_execution_cost().bls12_381_g2_add_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g2_add_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g2_add_cost);
 
         let result = SyscallCurveGroupOps::rust(
             &mut invoke_context,
@@ -7446,9 +7380,7 @@ mod tests {
         let bls12_381_g2_subtract_cost = invoke_context
             .get_execution_cost()
             .bls12_381_g2_subtract_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g2_subtract_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g2_subtract_cost);
 
         let result = SyscallCurveGroupOps::rust(
             &mut invoke_context,
@@ -7583,9 +7515,7 @@ mod tests {
         let bls12_381_g2_multiply_cost = invoke_context
             .get_execution_cost()
             .bls12_381_g2_multiply_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g2_multiply_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g2_multiply_cost);
 
         let result = SyscallCurveGroupOps::rust(
             &mut invoke_context,
@@ -7702,9 +7632,7 @@ mod tests {
             .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_one_pair_cost = invoke_context.get_execution_cost().bls12_381_one_pair_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(bls12_381_one_pair_cost);
+        invoke_context.mock_set_remaining(bls12_381_one_pair_cost);
 
         let result = SyscallCurvePairingMap::rust(
             &mut invoke_context,
@@ -7809,9 +7737,7 @@ mod tests {
             .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_one_pair_cost = invoke_context.get_execution_cost().bls12_381_one_pair_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(bls12_381_one_pair_cost);
+        invoke_context.mock_set_remaining(bls12_381_one_pair_cost);
 
         let result = SyscallCurvePairingMap::rust(
             &mut invoke_context,
@@ -7893,9 +7819,7 @@ mod tests {
         let bls12_381_g2_decompress_cost = invoke_context
             .get_execution_cost()
             .bls12_381_g2_decompress_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g2_decompress_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g2_decompress_cost);
 
         let result = SyscallCurveDecompress::rust(
             &mut invoke_context,
@@ -8005,9 +7929,7 @@ mod tests {
         let bls12_381_g2_decompress_cost = invoke_context
             .get_execution_cost()
             .bls12_381_g2_decompress_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g2_decompress_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g2_decompress_cost);
 
         let result = SyscallCurveDecompress::rust(
             &mut invoke_context,
@@ -8084,9 +8006,7 @@ mod tests {
         let bls12_381_g1_validate_cost = invoke_context
             .get_execution_cost()
             .bls12_381_g1_validate_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g1_validate_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g1_validate_cost);
 
         let result = SyscallCurvePointValidation::rust(
             &mut invoke_context,
@@ -8173,9 +8093,7 @@ mod tests {
         let bls12_381_g2_validate_cost = invoke_context
             .get_execution_cost()
             .bls12_381_g2_validate_cost;
-        invoke_context
-            .compute_meter
-            .mock_set_remaining(2 * bls12_381_g2_validate_cost);
+        invoke_context.mock_set_remaining(2 * bls12_381_g2_validate_cost);
 
         let result = SyscallCurvePointValidation::rust(
             &mut invoke_context,
@@ -8309,7 +8227,7 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        invoke_context.compute_meter.mock_set_remaining(
+        invoke_context.mock_set_remaining(
             (invoke_context.get_execution_cost().sha256_base_cost
                 + invoke_context.get_execution_cost().mem_op_base_cost.max(
                     invoke_context

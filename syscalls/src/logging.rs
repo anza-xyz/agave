@@ -18,7 +18,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLog {
             .get_execution_cost()
             .syscall_base_cost
             .max(len);
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
@@ -49,7 +49,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogU64 {
         arg5: u64,
     ) -> Result<u64, Error> {
         let cost = invoke_context.get_execution_cost().log_64_units;
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         stable_log::program_log(
             &invoke_context.get_log_collector(),
@@ -72,7 +72,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogBpfComputeUn
         _arg5: u64,
     ) -> Result<u64, Error> {
         let cost = invoke_context.get_execution_cost().syscall_base_cost;
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         ic_logger_msg!(
             invoke_context.get_log_collector(),
@@ -96,7 +96,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogPubkey {
         _arg5: u64,
     ) -> Result<u64, Error> {
         let cost = invoke_context.get_execution_cost().log_pubkey_units;
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
@@ -120,9 +120,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogData {
     ) -> Result<u64, Error> {
         let execution_cost = invoke_context.get_execution_cost();
 
-        invoke_context
-            .compute_meter
-            .consume_checked(execution_cost.syscall_base_cost)?;
+        invoke_context.consume_checked(execution_cost.syscall_base_cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
@@ -132,11 +130,11 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogData {
         let cost = execution_cost
             .syscall_base_cost
             .saturating_mul(untranslated_fields.len() as u64);
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
         let cost = untranslated_fields
             .iter()
             .fold(0u64, |total, e| total.saturating_add(e.len()));
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         let mut fields = Vec::with_capacity(untranslated_fields.len());
 

@@ -590,9 +590,7 @@ pub fn translate_instruction_rust(
     total_cu_translation_cost =
         total_cu_translation_cost.saturating_add(account_meta_translation_cost);
 
-    invoke_context
-        .compute_meter
-        .consume_checked(total_cu_translation_cost)?;
+    invoke_context.consume_checked(total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(account_metas.len());
     for account_meta in account_metas {
@@ -726,9 +724,7 @@ pub fn translate_instruction_c(
     total_cu_translation_cost =
         total_cu_translation_cost.saturating_add(account_meta_translation_cost);
 
-    invoke_context
-        .compute_meter
-        .consume_checked(total_cu_translation_cost)?;
+    invoke_context.consume_checked(total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
     for account_meta in account_metas {
@@ -803,7 +799,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // Translate the inputs to the syscall and synchronize the caller's account
     // changes so the callee can see them.
     let amount = invoke_context.get_execution_cost().invoke_units;
-    invoke_context.compute_meter.consume_checked(amount)?;
+    invoke_context.consume_checked(amount)?;
     let virtual_address_space_adjustments = invoke_context
         .get_feature_set()
         .virtual_address_space_adjustments;
@@ -943,7 +939,7 @@ fn translate_account_infos<T, R>(
     let amount = (account_infos_bytes as u64)
         .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
         .unwrap_or(u64::MAX);
-    invoke_context.compute_meter.consume_checked(amount)?;
+    invoke_context.consume_checked(amount)?;
 
     let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
     #[expect(clippy::needless_range_loop)]
@@ -1016,7 +1012,7 @@ where
             let amount = (callee_account.get_data().len() as u64)
                 .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                 .unwrap_or(u64::MAX);
-            invoke_context.compute_meter.consume_checked(amount)?;
+            invoke_context.consume_checked(amount)?;
         } else if let Some(caller_account_index) =
             account_info_keys.iter().position(|key| *key == account_key)
         {
@@ -1052,7 +1048,7 @@ where
             let amount = (*caller_account.ref_to_len_in_vm)
                 .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                 .unwrap_or(u64::MAX);
-            invoke_context.compute_meter.consume_checked(amount)?;
+            invoke_context.consume_checked(amount)?;
 
             accounts.push(TranslatedAccount {
                 index_in_caller,

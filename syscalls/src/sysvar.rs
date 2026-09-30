@@ -13,7 +13,7 @@ fn get_sysvar<T: SysvarId + Clone>(
         .get_execution_cost()
         .sysvar_base_cost
         .saturating_add(size_of::<T>() as u64);
-    invoke_context.compute_meter.consume_checked(amount)?;
+    invoke_context.consume_checked(amount)?;
 
     // If a test case contains a program that is owned by the deprecated
     // bpf loader but also contains get_sysvar syscalls, the store into the
@@ -209,7 +209,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetSysvar {
         let cost = sysvar_base_cost
             .saturating_add(sysvar_id_cost)
             .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost));
-        invoke_context.compute_meter.consume_checked(cost)?;
+        invoke_context.consume_checked(cost)?;
 
         // If a test case contains a program that is owned by the deprecated
         // bpf loader but also contains get_sysvar syscalls, the store into the

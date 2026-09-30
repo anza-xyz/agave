@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT;
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
@@ -21,6 +23,46 @@ use {
     crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
     solana_pubkey::Pubkey,
 };
+
+#[derive(Debug)]
+pub struct ComputeMeter(Cell<u64>);
+
+impl ComputeMeter {
+    /// Consume compute units
+    pub fn consume_unchecked(&self, amount: u64) {
+        let compute_meter = self.0.get();
+        self.0.set(compute_meter.saturating_sub(amount));
+    }
+
+    /// Consume compute units and check for ComputationalBudgetExceeded
+    pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn std::error::Error>> {
+        let compute_meter = self.0.get();
+        let exceeded = compute_meter < amount;
+        self.0.set(compute_meter.saturating_sub(amount));
+        if exceeded {
+            return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
+        }
+        Ok(())
+    }
+
+    /// Set compute units
+    ///
+    /// Only use for tests and benchmarks
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn mock_set_remaining(&self, remaining: u64) {
+        self.0.set(remaining);
+    }
+
+    /// Returns the remaining compute units
+    pub fn get_remaining(&self) -> u64 {
+        self.0.get()
+    }
+
+    /// Construct from compute units
+    pub fn new(remaining: u64) -> Self {
+        Self(Cell::new(remaining))
+    }
+}
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
 pub type InstructionTrace<'ix_data> = (
@@ -107,6 +149,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
         number_of_top_level_instructions: usize,
+        compute_meter: ComputeMeter,
         drop_on_bail_out: DropOnBailOut,
     ) -> Self {
         let transaction_frame = TransactionFrame {
@@ -141,6 +184,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Self {
             accounts: Rc::new(TransactionAccounts::new_with_feature_flags(
                 transaction_accounts,
+                compute_meter,
                 drop_on_bail_out,
             )),
             instruction_stack_capacity,
@@ -172,6 +216,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_stack_capacity,
             instruction_trace_capacity,
             number_of_top_level_instructions,
+            ComputeMeter::new(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64),
             DropOnBailOut::Disabled,
         )
     }

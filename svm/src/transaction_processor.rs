@@ -61,7 +61,7 @@ use {
     solana_svm_type_overrides::sync::{Arc, RwLock, RwLockReadGuard},
     solana_transaction_context::{
         DropOnBailOut,
-        transaction::{ExecutionRecord, TransactionContext},
+        transaction::{ComputeMeter, ExecutionRecord, TransactionContext},
     },
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{
@@ -1131,6 +1131,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             tx.num_instructions(),
+            ComputeMeter::new(compute_budget.compute_unit_limit),
             if config.drop_bail_out_transactions {
                 DropOnBailOut::Enabled
             } else {

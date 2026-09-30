@@ -1,9 +1,10 @@
 #[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
+use {crate::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, qualifier_attr::qualifiers};
 use {
     crate::{
         DropOnBailOut, IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
         MAX_ACCOUNT_DATA_LEN,
+        transaction::ComputeMeter,
         vm_addresses::{GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_REGION_SIZE},
         vm_slice::VmSlice,
     },
@@ -239,6 +240,9 @@ pub struct TransactionAccounts {
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
     lamports_delta: Cell<i128>,
+    /// Instruction compute meter, for tracking compute units consumed against
+    /// the designated compute budget during program execution.
+    pub compute_meter: ComputeMeter,
     _drop_on_bail_out: DropOnBailOut,
 }
 
@@ -246,6 +250,7 @@ pub struct TransactionAccounts {
 impl TransactionAccounts {
     pub(crate) fn new_with_feature_flags(
         accounts: Vec<KeyedAccountSharedData>,
+        compute_meter: ComputeMeter,
         drop_on_bail_out: DropOnBailOut,
     ) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
@@ -284,13 +289,18 @@ impl TransactionAccounts {
             touched_flags,
             resize_delta: Cell::new(0),
             lamports_delta: Cell::new(0),
+            compute_meter,
             _drop_on_bail_out: drop_on_bail_out,
         }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new(accounts: Vec<KeyedAccountSharedData>) -> TransactionAccounts {
-        TransactionAccounts::new_with_feature_flags(accounts, DropOnBailOut::Disabled)
+        TransactionAccounts::new_with_feature_flags(
+            accounts,
+            ComputeMeter::new(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64),
+            DropOnBailOut::Disabled,
+        )
     }
 
     pub(crate) fn len(&self) -> usize {
