@@ -570,7 +570,9 @@ mod shuttle_tests {
                 let active_senders = sender.active_senders.clone();
                 let inner_sender = sender.sender.clone();
                 shuttle::thread::spawn(move || {
-                    inner_sender.try_send(test_record(BankId::new(0), 1)).unwrap();
+                    inner_sender
+                        .try_send(test_record(BankId::new(0), 1))
+                        .unwrap();
                     active_senders.fetch_sub(1, Ordering::AcqRel);
                 });
 

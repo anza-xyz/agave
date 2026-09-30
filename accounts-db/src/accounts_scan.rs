@@ -372,7 +372,11 @@ mod tests {
     #[test]
     fn test_scan_guard_rejected_for_removed_bank() {
         let tracker = ScanTracker::default();
-        tracker.removed_bank_ids.lock().unwrap().insert(BankId::new(7));
+        tracker
+            .removed_bank_ids
+            .lock()
+            .unwrap()
+            .insert(BankId::new(7));
 
         let result = ScanGuard::try_new(&tracker, BankId::new(7), || 100);
         assert!(result.is_none());
@@ -386,7 +390,11 @@ mod tests {
         let guard = ScanGuard::try_new(&tracker, BankId::new(5), || 50).unwrap();
 
         // simulate bank removal mid-scan
-        tracker.removed_bank_ids.lock().unwrap().insert(BankId::new(5));
+        tracker
+            .removed_bank_ids
+            .lock()
+            .unwrap()
+            .insert(BankId::new(5));
 
         assert!(guard.was_scan_corrupted());
         // guard should still have cleaned up
@@ -397,7 +405,8 @@ mod tests {
     #[test]
     fn test_is_bank_removed_only_for_removed_bank() {
         let tracker = ScanTracker::default();
-        let mut guard_on_removed_bank = ScanGuard::try_new(&tracker, BankId::new(1), || 10).unwrap();
+        let mut guard_on_removed_bank =
+            ScanGuard::try_new(&tracker, BankId::new(1), || 10).unwrap();
         let mut guard_on_other_bank = ScanGuard::try_new(&tracker, BankId::new(2), || 10).unwrap();
         assert!(!guard_on_removed_bank.is_bank_removed());
         assert!(!guard_on_other_bank.is_bank_removed());
