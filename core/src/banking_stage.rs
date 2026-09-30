@@ -549,7 +549,12 @@ impl BankingStage {
             bounded(num_workers.saturating_mul(CHANNEL_CAPACITY));
 
         // Spawn the worker threads
-        let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
+        let migration_status = self.bank_forks.read().unwrap().migration_status();
+        let decision_maker = DecisionMaker::new(
+            self.poh_recorder.read().unwrap().shared_leader_state(),
+            migration_status,
+            self.alpenglow_slot_clock.clone(),
+        );
         let mut worker_metrics = Vec::with_capacity(num_workers);
         for (index, work_receiver) in work_receivers.into_iter().enumerate() {
             let id = index as u32;
@@ -636,7 +641,12 @@ impl BankingStage {
             self.transaction_recorder.clone(),
             self.log_messages_bytes_limit,
         );
-        let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
+        let migration_status = self.bank_forks.read().unwrap().migration_status();
+        let decision_maker = DecisionMaker::new(
+            self.poh_recorder.read().unwrap().shared_leader_state(),
+            migration_status,
+            self.alpenglow_slot_clock.clone(),
+        );
 
         let worker_exit_signal = self.worker_exit_signal.clone();
         let shutdown_signal = self.banking_shutdown_signal.clone();
