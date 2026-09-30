@@ -1003,10 +1003,19 @@ impl ConfirmationProgress {
     }
 }
 
-struct AsyncVerificationResult {
-    poh_verify_elapsed: u64,
-    transaction_verify_elapsed: u64,
-    error: Option<BlockstoreProcessorError>,
+// return entries and signatures to the replay thread for deallocation to avoid creating unnecessary
+// arena contention from the pool workers
+enum AsyncVerificationResult {
+    Poh {
+        entries: Arc<VerificationBatch<Vec<entry::EntryVerificationData>>>,
+        elapsed_us: u64,
+        error: Option<BlockstoreProcessorError>,
+    },
+    Signatures {
+        signatures: Arc<VerificationBatch<UnverifiedSignatures<Bytes>>>,
+        elapsed_us: u64,
+        error: Option<BlockstoreProcessorError>,
+    },
 }
 
 // Wrapper used to track wall clock time for work that is split into multiple jobs and executed in
@@ -1058,9 +1067,9 @@ impl PohVerificationJob {
             warn!("Ledger proof of history failed at slot: {slot}");
             BlockstoreProcessorError::InvalidBlock(BlockError::InvalidEntryHash)
         });
-        let _ = result_sender.send(AsyncVerificationResult {
-            poh_verify_elapsed: elapsed_us,
-            transaction_verify_elapsed: 0,
+        let _ = result_sender.send(AsyncVerificationResult::Poh {
+            entries,
+            elapsed_us,
             error,
         });
     }
@@ -1112,9 +1121,9 @@ impl SignaturesVerificationJob {
                 });
             }
         }
-        let _ = result_sender.send(AsyncVerificationResult {
-            poh_verify_elapsed: 0,
-            transaction_verify_elapsed: elapsed_us,
+        let _ = result_sender.send(AsyncVerificationResult::Signatures {
+            signatures,
+            elapsed_us,
             error,
         });
     }
@@ -1328,22 +1337,34 @@ impl AsyncVerificationProgress {
         Ok(())
     }
 
-    fn apply_result(
-        &mut self,
-        AsyncVerificationResult {
-            poh_verify_elapsed,
-            transaction_verify_elapsed,
-            error,
-        }: AsyncVerificationResult,
-    ) {
+    fn apply_result(&mut self, result: AsyncVerificationResult) {
         self.pending_jobs = self
             .pending_jobs
             .checked_sub(1)
             .expect("verification result without a pending job");
-        self.poh_verify_elapsed = self.poh_verify_elapsed.saturating_add(poh_verify_elapsed);
-        self.transaction_verify_elapsed = self
-            .transaction_verify_elapsed
-            .saturating_add(transaction_verify_elapsed);
+
+        let error = match result {
+            AsyncVerificationResult::Poh {
+                entries,
+                elapsed_us,
+                error,
+            } => {
+                self.poh_verify_elapsed = self.poh_verify_elapsed.saturating_add(elapsed_us);
+                drop(entries);
+                error
+            }
+            AsyncVerificationResult::Signatures {
+                signatures,
+                elapsed_us,
+                error,
+            } => {
+                self.transaction_verify_elapsed =
+                    self.transaction_verify_elapsed.saturating_add(elapsed_us);
+                drop(signatures);
+                error
+            }
+        };
+
         if self.first_error.is_none() {
             self.first_error = error;
         }
