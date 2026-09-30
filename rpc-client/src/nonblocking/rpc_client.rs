@@ -2142,25 +2142,30 @@ impl RpcClient {
     }
 
     /// Returns the Alpenglow validator rank map for the epoch containing `slot`.
+    ///
+    /// Returns `None` if the epoch is unavailable or has no eligible BLS validators.
     pub async fn get_alpenglow_rank_map(
         &self,
         slot: Slot,
     ) -> RpcResult<Option<RpcAlpenglowRankMap>> {
         self.get_alpenglow_rank_map_with_config(
             slot,
-            RpcContextConfig {
+            RpcAlpenglowRankMapConfig {
                 commitment: Some(self.commitment()),
-                ..RpcContextConfig::default()
+                ..RpcAlpenglowRankMapConfig::default()
             },
         )
         .await
     }
 
-    /// Returns the Alpenglow validator rank map using the provided RPC context configuration.
+    /// Returns the Alpenglow validator rank map with an optional identity filter.
+    ///
+    /// The filter preserves the validator's rank and the full map's total stake.
+    /// An unknown identity returns an empty validator list when the map is available.
     pub async fn get_alpenglow_rank_map_with_config(
         &self,
         slot: Slot,
-        config: RpcContextConfig,
+        config: RpcAlpenglowRankMapConfig,
     ) -> RpcResult<Option<RpcAlpenglowRankMap>> {
         self.send(RpcRequest::GetAlpenglowRankMap, json!([slot, config]))
             .await
