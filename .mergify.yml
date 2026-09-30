@@ -31,36 +31,6 @@ pull_request_rules:
       request_reviews:
         teams:
           - "@anza-xyz/community-pr-subscribers"
-  - name: automatic merge (squash) on CI success
-    conditions:
-      - and:
-        - status-success=buildkite/agave
-        - status-success=ci-gate
-        - label=automerge
-        - label!=no-automerge
-        - or:
-          - -files~=(\.rs|Cargo\.toml|Cargo\.lock|\.github/scripts/cargo-clippy-before-script\.sh|\.github/workflows/cargo\.yml)$
-          - or:
-            - check-success=clippy-nightly (macos-latest)
-            - check-success=clippy-nightly (macos-latest-large)
-        - or:
-          - -files~=(Cargo\.toml|.github/workflows/crate-check\.yml|ci/check-crates\.sh)$
-          - check-success=crate check
-    actions:
-      merge:
-        method: squash
-  - name: remove automerge label on CI failure
-    conditions:
-      - and:
-        - label=automerge
-        - "#status-failure!=0"
-        - -merged
-    actions:
-      label:
-        remove:
-          - automerge
-      comment:
-        message: automerge label removed due to a CI failure
   - name: v4.2 backport
     conditions:
       - label=v4.2
