@@ -393,7 +393,6 @@ struct GenerateIndexTimings {
     pub total_time_us: u64,
     pub index_time: u64,
     pub insertion_time_us: u64,
-    pub storage_size_storages_us: u64,
     pub index_flush_us: u64,
     pub total_including_duplicates: u64,
     pub visit_duplicate_accounts_time_us: u64,
@@ -418,11 +417,6 @@ impl GenerateIndexTimings {
             ("index_time_us", self.index_time, i64),
             // we cannot accurately measure index insertion time because of many threads and lock contention
             ("insertion_time_us", self.insertion_time_us, i64),
-            (
-                "storage_size_storages_us",
-                self.storage_size_storages_us,
-                i64
-            ),
             ("index_flush_us", self.index_flush_us, i64),
             (
                 "total_items_including_duplicates",
