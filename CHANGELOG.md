@@ -32,8 +32,11 @@ Release channels have their own copy of this changelog:
 #### Breaking
 
 * Prebuilt Windows releases are no longer provided.
+* `solana-genesis` no longer accepts the `--alpenglow` option.
 
 #### Changes
+
+* `solana-genesis` now activates Alpenglow consensus at genesis by default.
 
 ## 4.4.0
 
