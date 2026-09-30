@@ -180,7 +180,7 @@ impl AccountsUpdateNotifierImpl {
             match plugin.update_account_for_bank(
                 ReplicaAccountInfoVersions::V0_0_3(&account),
                 slot,
-                bank_id.0,
+                bank_id.into(),
             ) {
                 Err(err) => {
                     error!(
@@ -309,7 +309,7 @@ mod tests {
 
         assert_eq!(enabled_count.load(Ordering::Relaxed), 1);
         assert_eq!(disabled_count.load(Ordering::Relaxed), 0);
-        assert_eq!(*enabled_bank_ids.lock().unwrap(), vec![bank_id.0]);
+        assert_eq!(*enabled_bank_ids.lock().unwrap(), vec![u64::from(bank_id)]);
         assert!(disabled_bank_ids.lock().unwrap().is_empty());
     }
 

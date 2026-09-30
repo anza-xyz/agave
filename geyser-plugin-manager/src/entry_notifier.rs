@@ -113,9 +113,10 @@ impl EntryNotifier for EntryNotifierImpl {
             if !plugin.entry_notifications_enabled() {
                 continue;
             }
-            match plugin
-                .notify_entry_for_bank(ReplicaEntryInfoVersions::V0_0_2(&entry_info), bank_id.0)
-            {
+            match plugin.notify_entry_for_bank(
+                ReplicaEntryInfoVersions::V0_0_2(&entry_info),
+                bank_id.into(),
+            ) {
                 Err(err) => {
                     error!(
                         "Failed to notify entry, error: ({}) to plugin {}",
@@ -152,7 +153,7 @@ impl EntryNotifier for EntryNotifierImpl {
             }
             match plugin.notify_block_footer(
                 ReplicaBlockFooterInfoVersions::V0_0_2(&block_footer_info),
-                bank_id.0,
+                bank_id.into(),
             ) {
                 Err(err) => error!(
                     "Failed to notify block footer, error: ({}) to plugin {}",
@@ -171,7 +172,7 @@ impl EntryNotifier for EntryNotifierImpl {
         let plugin_manager = self.plugin_manager.load();
         let update_parent_info = ReplicaEntryUpdateParentInfo {
             slot: update_parent.slot,
-            cleared_bank_id: update_parent.cleared_bank_id.0,
+            cleared_bank_id: update_parent.cleared_bank_id.into(),
             parent_slot: update_parent.parent_slot,
             parent_block_id: &update_parent.parent_block_id,
         };

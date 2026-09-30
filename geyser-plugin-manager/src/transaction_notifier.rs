@@ -171,7 +171,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             match plugin.notify_transaction_for_bank(
                 ReplicaTransactionInfoVersions::V0_0_4(&transaction_log_info),
                 slot,
-                bank_id.0,
+                bank_id.into(),
             ) {
                 Err(err) => {
                     error!(

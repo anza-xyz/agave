@@ -922,10 +922,7 @@ mod tests {
             transaction_recorder::RecordTransactionsSummary,
         },
         solana_pubkey::Pubkey,
-        solana_runtime::{
-            bank::{Bank, BankId},
-            genesis_utils::bootstrap_validator_stake_lamports,
-        },
+        solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
@@ -1281,7 +1278,7 @@ mod tests {
 
         // Once bank is set to a new bank (setting bank id + 1 in record_transactions),
         // record_transactions should throw MaxHeightReached
-        let next_bank_id = BankId(bank.bank_id().0 + 1);
+        let next_bank_id = bank.bank_id().next_bank_id();
         let RecordTransactionsSummary { result, .. } =
             recorder.record_transactions(next_bank_id, txs);
         assert_matches!(result, Err(PohRecorderError::MaxHeightReached));

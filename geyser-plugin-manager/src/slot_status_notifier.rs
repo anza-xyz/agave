@@ -84,7 +84,7 @@ impl SlotStatusNotifierImpl {
         }
 
         for plugin in plugin_manager.plugins.iter() {
-            match plugin.update_bank_status(slot, parent, &slot_status, bank_id.0) {
+            match plugin.update_bank_status(slot, parent, &slot_status, bank_id.into()) {
                 Err(err) => {
                     error!(
                         "Failed to update bank status at slot {}, error: {} to plugin {}",

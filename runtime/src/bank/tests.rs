@@ -8265,8 +8265,8 @@ fn setup_banks_on_fork_to_remove(
     assert!(step_size >= 2);
     let pubkeys_to_modify: Vec<Pubkey> = pubkeys_to_modify.iter().cloned().collect();
     let pubkeys_to_modify_per_slot = (pubkeys_to_modify.len() / step_size).max(1);
-    for _ in (0..num_banks_on_fork).step_by(step_size) {
-        let mut lamports_this_round = 0;
+    for round_start in (0..num_banks_on_fork).step_by(step_size) {
+        let lamports_this_round = round_start as u64 + starting_lamports + 1;
         for i in 0..step_size {
             let slot = bank_at_fork_tip.slot() + 1;
             bank_at_fork_tip = Arc::new(Bank::new_from_parent(
@@ -8274,9 +8274,6 @@ fn setup_banks_on_fork_to_remove(
                 SlotLeader::new_unique(),
                 slot,
             ));
-            if lamports_this_round == 0 {
-                lamports_this_round = bank_at_fork_tip.bank_id().0 + starting_lamports + 1;
-            }
             let pubkey_to_modify_starting_index = i * pubkeys_to_modify_per_slot;
             let account = AccountSharedData::new(lamports_this_round, 0, program_id);
             for pubkey_index_to_modify in pubkey_to_modify_starting_index
