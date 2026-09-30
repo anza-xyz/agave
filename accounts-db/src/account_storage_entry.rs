@@ -5,6 +5,7 @@ use {
         accounts_db::AccountsFileId,
         accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider},
         obsolete_accounts::ObsoleteAccounts,
+        storable_accounts::StorableAccounts,
     },
     agave_fs::buffered_reader::RequiredLenBufFileRead,
     solana_clock::Slot,
@@ -248,6 +249,18 @@ impl AccountStorageEntry {
         offsets
     }
 
+    /// Writes `accounts` to this storage.
+    ///
+    /// Returns the starting offset of each written account.
+    pub(crate) fn write_accounts<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+    ) -> Result<Vec<Offset>, AccountsFileError> {
+        let info = self.accounts.write_accounts(accounts)?;
+        self.add_accounts(info.offsets.len(), info.size);
+        Ok(info.offsets)
+    }
+
     /// Iterate over the alive accounts in this storage, excluding tombstones
     /// and obsolete accounts marked as of `obsolete_slot`.
     ///
@@ -335,11 +348,7 @@ mod tests {
         })
         .take(5)
         .collect();
-        let offsets = storage
-            .accounts
-            .write_accounts(&(slot, &accounts[..]))
-            .unwrap()
-            .offsets;
+        let offsets = storage.write_accounts(&(slot, &accounts[..])).unwrap();
 
         // Mark account 1 obsolete and record account 3 as a tombstone.
         let obsolete_offset = offsets[1];

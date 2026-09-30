@@ -155,7 +155,7 @@ fn test_generate_index_duplicates_within_slot() {
     let storable_accounts = (slot0, &data[..]);
 
     // construct store with account to generate an index from
-    store.accounts.write_accounts(&storable_accounts).unwrap();
+    store.write_accounts(&storable_accounts).unwrap();
     db.storage.insert(Arc::new(store));
 
     assert!(!db.accounts_index.contains(&pubkey));
@@ -175,10 +175,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
 
     let data = [(&pubkey, &account)];
     let storable_accounts = (slot0, &data[..]);
-    append_vec
-        .accounts
-        .write_accounts(&storable_accounts)
-        .unwrap();
+    append_vec.write_accounts(&storable_accounts).unwrap();
     let append_vec = Arc::new(append_vec);
     db.storage.insert(Arc::clone(&append_vec));
     assert!(!db.accounts_index.contains(&pubkey));
@@ -1387,7 +1384,6 @@ fn test_clean_converts_zero_lamport_single_ref_account_to_tombstone_after_shrink
         (&alive_pubkey, &open_account),
     ];
     storage1
-        .accounts
         .write_accounts(&(slot1, accounts_to_write.as_slice()))
         .unwrap();
     accounts_db.storage.insert(Arc::clone(&storage1));
@@ -2760,7 +2756,6 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         db.accounts_file_provider,
     ));
     store1
-        .accounts
         .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
         .unwrap();
     db.storage.insert(Arc::clone(&store1));
@@ -2776,7 +2771,6 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         db.accounts_file_provider,
     ));
     store2
-        .accounts
         .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
         .unwrap();
     db.storage.insert(Arc::clone(&store2));
@@ -2794,7 +2788,6 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         db.accounts_file_provider,
     ));
     store3
-        .accounts
         .write_accounts(&(store3_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
         .unwrap();
     db.storage.insert(Arc::clone(&store3));
@@ -2836,7 +2829,6 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         db.accounts_file_provider,
     ));
     store1
-        .accounts
         .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
         .unwrap();
     db.storage.insert(Arc::clone(&store1));
@@ -2852,7 +2844,6 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         db.accounts_file_provider,
     ));
     store2
-        .accounts
         .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
         .unwrap();
     db.storage.insert(Arc::clone(&store2));
@@ -2870,7 +2861,6 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         db.accounts_file_provider,
     ));
     store3
-        .accounts
         .write_accounts(&(store3_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
         .unwrap();
     db.storage.insert(Arc::clone(&store3));
@@ -2909,7 +2899,6 @@ fn test_select_candidates_by_total_usage_all_clean() {
         db.accounts_file_provider,
     ));
     store1
-        .accounts
         .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
         .unwrap();
     db.storage.insert(Arc::clone(&store1));
@@ -2927,7 +2916,6 @@ fn test_select_candidates_by_total_usage_all_clean() {
         db.accounts_file_provider,
     ));
     store2
-        .accounts
         .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()))
         .unwrap();
     db.storage.insert(Arc::clone(&store2));
@@ -2969,11 +2957,10 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         file_size,
         accounts_db.accounts_file_provider,
     ));
-    let stored_accounts_info = store_with_tombstones
-        .accounts
+    let stored_accounts_offsets = store_with_tombstones
         .write_accounts(&(slot_with_tombstones, accounts_to_store.as_slice()))
         .unwrap();
-    store_with_tombstones.batch_insert_tombstone_offsets(stored_accounts_info.offsets);
+    store_with_tombstones.batch_insert_tombstone_offsets(stored_accounts_offsets);
     store_with_tombstones.num_alive_bytes.store(
         store_with_tombstones.written_bytes() as usize,
         Ordering::Release,
@@ -2992,7 +2979,6 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         accounts_db.accounts_file_provider,
     ));
     store_no_tombstones
-        .accounts
         .write_accounts(&(slot_with_tombstones, accounts_to_store.as_slice()))
         .unwrap();
     store_no_tombstones.num_alive_bytes.store(
@@ -3844,13 +3830,11 @@ fn test_load_filter_with_closed_accounts() {
     let slot = 1;
     db.set_latest_full_snapshot_slot(slot - 1);
     let storage = db.create_store(slot, DEFAULT_FILE_SIZE);
-    let stored_accounts_info = storage
-        .accounts
+    let stored_accounts_offsets = storage
         .write_accounts(&(slot, [(stored_key, zero_lamport_account)].as_slice()))
         .unwrap();
-    storage.add_accounts(1, stored_accounts_info.size);
     let account_info = AccountInfo::new(
-        StorageLocation::AccountsFile(storage.id(), stored_accounts_info.offsets[0]),
+        StorageLocation::AccountsFile(storage.id(), stored_accounts_offsets[0]),
         true,
     );
     db.accounts_index.upsert(
@@ -5325,7 +5309,6 @@ fn test_is_candidate_for_shrink() {
         accounts.accounts_file_provider,
     ));
     entry
-        .accounts
         .write_accounts(&(
             slot,
             [(
@@ -5380,7 +5363,6 @@ fn test_calculate_storage_count_and_alive_bytes() {
 
     let storage = accounts.create_store(slot0, 4_000);
     storage
-        .accounts
         .write_accounts(&(slot0, &[(&shared_key, &account)][..]))
         .unwrap();
     accounts.storage.insert(Arc::new(storage));
@@ -5436,7 +5418,6 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
     let slot0 = 0;
     let storage = accounts.create_store(slot0, 4_000);
     storage
-        .accounts
         .write_accounts(&(slot0, &[(&keys[0], &account1), (&keys[1], &account2)][..]))
         .unwrap();
 
@@ -5484,9 +5465,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
 
     let slot0 = 0;
     let storage = accounts.create_store(slot0, 10_000);
-    let offsets = storage.accounts.write_accounts(&(slot0, &account_list[..]));
-
-    let offsets = offsets.unwrap().offsets;
+    let offsets = storage.write_accounts(&(slot0, &account_list[..])).unwrap();
     let data_lens = storage
         .accounts
         .get_account_data_lens(offsets.iter().copied());

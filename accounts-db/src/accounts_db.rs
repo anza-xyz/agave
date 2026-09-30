@@ -4630,8 +4630,7 @@ impl AccountsDb {
         }
 
         let store_id = storage.id();
-        let stored_accounts_info = storage
-            .accounts
+        let stored_account_offsets = storage
             .write_accounts(accounts_and_meta_to_store)
             .unwrap_or_else(|err| {
                 panic!(
@@ -4642,25 +4641,20 @@ impl AccountsDb {
             });
 
         assert_eq!(
-            stored_accounts_info.offsets.len(),
+            stored_account_offsets.len(),
             num_accounts,
             "failed to write all accounts to storage! {slot}, id: {store_id}, len: {} bytes, num \
              accounts written: {}, num accounts total: {num_accounts}",
             storage.accounts.len(),
-            stored_accounts_info.offsets.len(),
+            stored_account_offsets.len(),
         );
 
-        for (i, offset) in stored_accounts_info.offsets.iter().enumerate() {
+        for (i, offset) in stored_account_offsets.iter().enumerate() {
             infos.push(AccountInfo::new(
                 StorageLocation::AccountsFile(store_id, *offset),
                 accounts_and_meta_to_store.is_zero_lamport(i),
             ));
         }
-        storage.add_accounts(
-            stored_accounts_info.offsets.len(),
-            stored_accounts_info.size,
-        );
-
         infos
     }
 
