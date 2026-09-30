@@ -314,10 +314,14 @@ mod tests {
     use {
         super::*,
         crate::consensus_pool::tests::TestContext,
+        agave_bls_sigverify::sig_verified_messages::VoteAggregate,
         agave_votor_messages::{
-            consensus_message::BLS_KEYPAIR_DERIVE_SEED, wire::get_vote_payload_to_sign,
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Block},
+            wire::{VotePayloadToSign, get_vote_payload_to_sign},
         },
-        solana_bls_signatures::{keypair::Keypair as BLSKeypair, signature::SignatureAffine},
+        solana_bls_signatures::{
+            SignatureProjective, keypair::Keypair as BLSKeypair, signature::SignatureAffine,
+        },
     };
 
     fn add_vote(
@@ -547,5 +551,70 @@ mod tests {
             }),
         );
         assert!(pools.pools.iter().all(Option::is_none));
+    }
+
+    /// Ensures that when a vote aggregate gets added to the pool which brings
+    /// the voted stake on a block from below 60% to above 80%, that both
+    /// `Notarize` and `FinalizeFast` certificates are emitted.
+    #[test]
+    fn test_notar_vote_crossing_fast_finalize_threshold_produces_notar_cert() {
+        let ctx = TestContext::new();
+        let mut pools = VotePools::new(0);
+        let total_stake = ctx
+            .bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .get_rank_map(0)
+            .unwrap()
+            .total_stake();
+        let max_validators = ctx.validators.len();
+        let block = Block::new_unique(1);
+        let vote = Vote::new_notarization_vote(block);
+
+        // 50% of the stake votes to notarize: below the 60% notarize threshold.
+        for rank in 0..5 {
+            let msg = PoolVote::Own(ctx.new_vote_msg(rank, vote));
+            let (_, certs) = pools
+                .add_pool_vote(max_validators, total_stake, &msg, &BTreeMap::new())
+                .unwrap();
+            assert!(certs.into_iter().next().is_none());
+        }
+
+        // A single aggregate brings the stake to 90%, crossing both the notarize and the fast
+        // finalize thresholds at once.
+        let msgs = (5..9)
+            .map(|rank| ctx.new_vote_msg(rank, vote))
+            .collect::<Vec<_>>();
+        let mut signature = SignatureProjective::identity();
+        signature
+            .aggregate_with(msgs.iter().map(|msg| &msg.signature))
+            .unwrap();
+        let aggregate = VoteAggregate::new_from_verified_votes(
+            max_validators,
+            VotePayloadToSign::new_from_vote(vote, ctx.pool.cluster_info.my_shred_version()),
+            msgs.iter().map(|msg| (msg.rank, msg.stake)),
+            signature,
+        );
+        let (_, certs) = pools
+            .add_pool_vote(
+                max_validators,
+                total_stake,
+                &PoolVote::External(aggregate),
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        let mut cert_types = certs
+            .into_iter()
+            .map(|cert| cert.cert_type)
+            .collect::<Vec<_>>();
+        cert_types.sort();
+        assert_eq!(
+            cert_types,
+            [
+                CertificateType::FinalizeFast(block),
+                CertificateType::Notarize(block),
+            ],
+        );
     }
 }
