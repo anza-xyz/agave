@@ -121,13 +121,15 @@ impl ConsensusPool {
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
         msg: &PoolVote,
-    ) -> Result<(u64, Option<Certificate>), AddVoteError> {
+        produced_certs: &mut Vec<Certificate>,
+    ) -> Result<u64, AddVoteError> {
         self.vote_pools
             .add_pool_vote(
                 rank_map.len(),
                 rank_map.total_stake(),
                 msg,
                 &self.completed_certificates,
+                produced_certs,
             )
             .map_err(AddVoteError::VotePoolAddVote)
     }
@@ -262,18 +264,11 @@ impl ConsensusPool {
                 let mut new_certs = vec![];
                 for msg in msgs {
                     let vote = *msg.vote();
-                    match self.add_pool_vote(root_bank, msg, events) {
-                        Err(e) => {
-                            trace!(
-                                "{}: add_aggregate(vote={vote:?}) failed with {e:?}",
-                                self.cluster_info.id()
-                            );
-                        }
-                        Ok(cert) => {
-                            if let Some(c) = cert {
-                                new_certs.push(c);
-                            }
-                        }
+                    if let Err(e) = self.add_pool_vote(root_bank, msg, events, &mut new_certs) {
+                        trace!(
+                            "{}: add_aggregate(vote={vote:?}) failed with {e:?}",
+                            self.cluster_info.id()
+                        );
                     }
                 }
                 new_certs
@@ -297,7 +292,8 @@ impl ConsensusPool {
         root_bank: &Bank,
         msg: PoolVote,
         events: &mut Vec<VotorEvent>,
-    ) -> Result<Option<Arc<Certificate>>, AddVoteError> {
+        new_certs: &mut Vec<Arc<Certificate>>,
+    ) -> Result<(), AddVoteError> {
         let vote = msg.vote();
         let vote_slot = vote.slot();
         let rank_map = get_rank_map(root_bank, vote_slot)?;
@@ -311,7 +307,8 @@ impl ConsensusPool {
                 root_slot: root_bank.slot(),
             });
         }
-        let (entry_stake, new_cert) = self.update_vote_pool(rank_map, &msg)?;
+        let mut produced_certs = vec![];
+        let entry_stake = self.update_vote_pool(rank_map, &msg, &mut produced_certs)?;
         let fallback_vote_counters = self
             .slot_stake_counters_map
             .entry(vote_slot)
@@ -325,15 +322,16 @@ impl ConsensusPool {
             &mut self.pending_safe_to_notar,
             &mut self.stats,
         );
-        let new_cert = new_cert.map(|cert| {
+        new_certs.extend(produced_certs.into_iter().map(|cert| {
             let cert = Arc::new(cert);
             self.insert_certificate(root_bank, cert.clone(), events);
             self.generated_cert_types.insert_cert(cert.cert_type);
             self.stats.incr_generated_cert(&cert.cert_type);
             cert
-        });
+        }));
         self.stats.incr_ingested_vote(vote);
-        Ok(new_cert)
+
+        Ok(())
     }
 
     fn add_certs(
@@ -668,7 +666,7 @@ mod tests {
                 );
                 let pool_vote = PoolVote::External(aggregate);
                 self.pool
-                    .add_pool_vote(&bank, pool_vote, &mut vec![])
+                    .add_pool_vote(&bank, pool_vote, &mut vec![], &mut vec![])
                     .unwrap();
             }
             match vote {
@@ -700,13 +698,9 @@ mod tests {
                     let mut events = vec![];
                     for aggregate in aggregates {
                         let pool_vote = PoolVote::External(aggregate);
-                        let cert = self
-                            .pool
-                            .add_pool_vote(&bank, pool_vote, &mut events)
+                        self.pool
+                            .add_pool_vote(&bank, pool_vote, &mut events, &mut new_certs)
                             .unwrap();
-                        if let Some(c) = cert {
-                            new_certs.push(c);
-                        }
                     }
                     (new_certs, events)
                 }
@@ -851,7 +845,7 @@ mod tests {
                 rank,
             );
             let pool_vote = PoolVote::External(aggregate);
-            pool.add_pool_vote(root_bank, pool_vote, &mut vec![])
+            pool.add_pool_vote(root_bank, pool_vote, &mut vec![], &mut vec![])
                 .unwrap();
         }
     }
@@ -1152,7 +1146,7 @@ mod tests {
         );
         let pool_vote = PoolVote::External(aggregate);
         ctx.pool
-            .add_pool_vote(&bank, pool_vote, &mut vec![])
+            .add_pool_vote(&bank, pool_vote, &mut vec![], &mut vec![])
             .unwrap();
         let slot = vote.slot();
         assert!(highest_slot_fn(&ctx.pool) < slot);
@@ -1166,7 +1160,7 @@ mod tests {
             );
             let pool_vote = PoolVote::External(aggregate);
             ctx.pool
-                .add_pool_vote(&bank, pool_vote, &mut vec![])
+                .add_pool_vote(&bank, pool_vote, &mut vec![], &mut vec![])
                 .unwrap();
         }
         assert!(highest_slot_fn(&ctx.pool) < slot);
@@ -1510,7 +1504,7 @@ mod tests {
         );
         let pool_vote = PoolVote::External(aggregate);
         ctx.pool
-            .add_pool_vote(&bank, pool_vote, &mut vec![])
+            .add_pool_vote(&bank, pool_vote, &mut vec![], &mut vec![])
             .unwrap();
     }
 
@@ -1780,7 +1774,7 @@ mod tests {
         );
         let pool_vote = PoolVote::External(aggregate);
         ctx.pool
-            .add_pool_vote(&new_bank, pool_vote, &mut vec![])
+            .add_pool_vote(&new_bank, pool_vote, &mut vec![], &mut vec![])
             .unwrap_err();
 
         // Send a cert on slot 2, it should be rejected

@@ -44,34 +44,43 @@ impl VotePool {
         vote: Vote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
         acc: &AggregateAccumulator,
-    ) -> Result<Option<Certificate>, AggregateAccumulatorError> {
+        produced_certs: &mut Vec<Certificate>,
+    ) -> Result<(), AggregateAccumulatorError> {
         match vote {
             Vote::Notarize(notar) => {
-                for cert_type in [
+                // A single vote can bring the stake over both the notarize and the fast finalize
+                // thresholds, in which case both certificates are produced.
+                let fast_finalized = try_produce_base2_cert(
                     CertificateType::FinalizeFast(notar.block),
+                    total_stake,
+                    completed_certs,
+                    acc,
+                    produced_certs,
+                )?;
+                let notarized = try_produce_base2_cert(
                     CertificateType::Notarize(notar.block),
-                ] {
-                    if completed_certs.contains_key(&cert_type) {
-                        return Ok(None);
-                    }
-                    if let Some(c) = acc.try_build_base2_cert(cert_type, total_stake)? {
-                        return Ok(Some(c));
-                    }
+                    total_stake,
+                    completed_certs,
+                    acc,
+                    produced_certs,
+                )?;
+                if fast_finalized || notarized {
+                    return Ok(());
                 }
                 let nf_cert_type = CertificateType::NotarizeFallback(notar.block);
                 if completed_certs.contains_key(&nf_cert_type) {
-                    return Ok(None);
+                    return Ok(());
                 }
                 let nf_vote = Vote::new_notarization_fallback_vote(notar.block);
                 let Some(fallback_acc) = self.accumulators.get(&nf_vote) else {
-                    return Ok(None);
+                    return Ok(());
                 };
-                Ok(AggregateAccumulator::try_build_base3_cert(
+                produced_certs.extend(AggregateAccumulator::try_build_base3_cert(
                     nf_cert_type,
                     total_stake,
                     Some(acc),
                     fallback_acc,
-                )?)
+                )?);
             }
 
             Vote::NotarizeFallback(nf) => {
@@ -82,76 +91,84 @@ impl VotePool {
                     nf_cert_type,
                 ] {
                     if completed_certs.contains_key(&cert_type) {
-                        return Ok(None);
+                        return Ok(());
                     }
                 }
                 let notar_vote = Vote::new_notarization_vote(nf.block);
                 let primary_acc = self.accumulators.get(&notar_vote);
-                Ok(AggregateAccumulator::try_build_base3_cert(
+                produced_certs.extend(AggregateAccumulator::try_build_base3_cert(
                     nf_cert_type,
                     total_stake,
                     primary_acc,
                     acc,
-                )?)
+                )?);
             }
 
             Vote::Finalize(_) => {
-                let cert_type = CertificateType::Finalize(vote.slot());
-                if completed_certs.contains_key(&cert_type) {
-                    return Ok(None);
-                }
-                Ok(acc.try_build_base2_cert(cert_type, total_stake)?)
+                try_produce_base2_cert(
+                    CertificateType::Finalize(vote.slot()),
+                    total_stake,
+                    completed_certs,
+                    acc,
+                    produced_certs,
+                )?;
             }
 
             Vote::Skip(_) => {
                 let cert_type = CertificateType::Skip(vote.slot());
                 if completed_certs.contains_key(&cert_type) {
-                    return Ok(None);
+                    return Ok(());
                 }
                 let sf_vote = Vote::new_skip_fallback_vote(vote.slot());
-                match self.accumulators.get(&sf_vote) {
-                    None => Ok(acc.try_build_base2_cert(cert_type, total_stake)?),
-                    Some(fallback) => Ok(AggregateAccumulator::try_build_base3_cert(
+                let cert = match self.accumulators.get(&sf_vote) {
+                    None => acc.try_build_base2_cert(cert_type, total_stake)?,
+                    Some(fallback) => AggregateAccumulator::try_build_base3_cert(
                         cert_type,
                         total_stake,
                         Some(acc),
                         fallback,
-                    )?),
-                }
+                    )?,
+                };
+                produced_certs.extend(cert);
             }
 
             Vote::SkipFallback(_) => {
                 let cert_type = CertificateType::Skip(vote.slot());
                 if completed_certs.contains_key(&cert_type) {
-                    return Ok(None);
+                    return Ok(());
                 }
                 let skip_vote = Vote::new_skip_vote(vote.slot());
                 let primary = self.accumulators.get(&skip_vote);
-                Ok(AggregateAccumulator::try_build_base3_cert(
+                produced_certs.extend(AggregateAccumulator::try_build_base3_cert(
                     cert_type,
                     total_stake,
                     primary,
                     acc,
-                )?)
+                )?);
             }
             Vote::Genesis(genesis) => {
-                let cert_type = CertificateType::Genesis(genesis.block);
-                if completed_certs.contains_key(&cert_type) {
-                    return Ok(None);
-                }
-                Ok(acc.try_build_base2_cert(cert_type, total_stake)?)
+                try_produce_base2_cert(
+                    CertificateType::Genesis(genesis.block),
+                    total_stake,
+                    completed_certs,
+                    acc,
+                    produced_certs,
+                )?;
             }
         }
+        Ok(())
     }
 
-    /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
+    /// Adds votes and if some certs can be produced and they are not already included in the
+    /// completed certs, produces them into `produced_certs`.
     fn add_pool_vote(
         &mut self,
         freelist: &mut AccumulatorsFreeList,
         total_stake: NonZero<u64>,
         msg: &PoolVote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<(u64, Option<Certificate>), AggregateAccumulatorError> {
+        produced_certs: &mut Vec<Certificate>,
+    ) -> Result<u64, AggregateAccumulatorError> {
         let vote = *msg.vote();
         let acc = self
             .accumulators
@@ -165,8 +182,32 @@ impl VotePool {
             .accumulators
             .get(&vote)
             .expect("the accumulator was created above");
-        let cert = self.try_produce_cert(total_stake, vote, completed_certs, acc)?;
-        Ok((stake, cert))
+        self.try_produce_cert(total_stake, vote, completed_certs, acc, produced_certs)?;
+        Ok(stake)
+    }
+}
+
+/// Builds a base2 certificate of type `cert_type` from `acc` into `produced_certs` if it is not
+/// already in `completed_certs` and its threshold is met.
+///
+/// Returns whether the certificate is now available, i.e. it was either already completed or
+/// has just been produced.
+fn try_produce_base2_cert(
+    cert_type: CertificateType,
+    total_stake: NonZero<u64>,
+    completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    acc: &AggregateAccumulator,
+    produced_certs: &mut Vec<Certificate>,
+) -> Result<bool, AggregateAccumulatorError> {
+    if completed_certs.contains_key(&cert_type) {
+        return Ok(true);
+    }
+    match acc.try_build_base2_cert(cert_type, total_stake)? {
+        Some(cert) => {
+            produced_certs.push(cert);
+            Ok(true)
+        }
+        None => Ok(false),
     }
 }
 
@@ -214,7 +255,8 @@ impl VotePools {
         total_stake: NonZero<u64>,
         msg: &PoolVote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<(u64, Option<Certificate>), VotePoolError> {
+        produced_certs: &mut Vec<Certificate>,
+    ) -> Result<u64, VotePoolError> {
         let vote_slot = msg.vote().slot();
         if vote_slot < self.root_slot {
             return Err(VotePoolError::OldVoteReceived {
@@ -234,13 +276,25 @@ impl VotePools {
             None => {
                 let mut pool = VotePool::new(max_validators);
                 let res = pool
-                    .add_pool_vote(&mut self.freelist, total_stake, msg, completed_certs)
+                    .add_pool_vote(
+                        &mut self.freelist,
+                        total_stake,
+                        msg,
+                        completed_certs,
+                        produced_certs,
+                    )
                     .map_err(VotePoolError::AddVote)?;
                 self.pools[ind] = Some(pool);
                 Ok(res)
             }
             Some(pool) => pool
-                .add_pool_vote(&mut self.freelist, total_stake, msg, completed_certs)
+                .add_pool_vote(
+                    &mut self.freelist,
+                    total_stake,
+                    msg,
+                    completed_certs,
+                    produced_certs,
+                )
                 .map_err(VotePoolError::AddVote),
         }
     }
@@ -346,11 +400,12 @@ mod tests {
             ctx.pool.cluster_info.my_shred_version(),
         )));
         let stake = msg.stake.get();
-        let (accumulated, _) = pools.add_pool_vote(
+        let accumulated = pools.add_pool_vote(
             ctx.validators.len(),
             total_stake,
             &PoolVote::Own(msg),
             &BTreeMap::new(),
+            &mut vec![],
         )?;
         Ok((accumulated, stake))
     }
@@ -403,7 +458,13 @@ mod tests {
         for vote in [Vote::new_skip_vote(10), Vote::new_skip_fallback_vote(10)] {
             let msg = PoolVote::Own(ctx.new_vote_msg(0, vote));
             pools
-                .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
+                .add_pool_vote(
+                    ctx.validators.len(),
+                    total_stake,
+                    &msg,
+                    &BTreeMap::new(),
+                    &mut vec![],
+                )
                 .unwrap();
         }
         assert_eq!(pools.pools.iter().filter(|pool| pool.is_some()).count(), 1);
@@ -415,8 +476,14 @@ mod tests {
             let vote_msg = ctx.new_vote_msg(0, vote);
             let stake = vote_msg.stake.get();
             let msg = PoolVote::Own(vote_msg);
-            let (accumulated, _) = pools
-                .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
+            let accumulated = pools
+                .add_pool_vote(
+                    ctx.validators.len(),
+                    total_stake,
+                    &msg,
+                    &BTreeMap::new(),
+                    &mut vec![],
+                )
                 .unwrap();
             assert_eq!(accumulated, stake);
         }
@@ -573,13 +640,20 @@ mod tests {
         let vote = Vote::new_notarization_vote(block);
 
         // 50% of the stake votes to notarize: below the 60% notarize threshold.
+        let mut certs = vec![];
         for rank in 0..5 {
             let msg = PoolVote::Own(ctx.new_vote_msg(rank, vote));
-            let (_, certs) = pools
-                .add_pool_vote(max_validators, total_stake, &msg, &BTreeMap::new())
+            pools
+                .add_pool_vote(
+                    max_validators,
+                    total_stake,
+                    &msg,
+                    &BTreeMap::new(),
+                    &mut certs,
+                )
                 .unwrap();
-            assert!(certs.into_iter().next().is_none());
         }
+        assert!(certs.is_empty());
 
         // A single aggregate brings the stake to 90%, crossing both the notarize and the fast
         // finalize thresholds at once.
@@ -596,12 +670,13 @@ mod tests {
             msgs.iter().map(|msg| (msg.rank, msg.stake)),
             signature,
         );
-        let (_, certs) = pools
+        pools
             .add_pool_vote(
                 max_validators,
                 total_stake,
                 &PoolVote::External(aggregate),
                 &BTreeMap::new(),
+                &mut certs,
             )
             .unwrap();
         let mut cert_types = certs
