@@ -48,6 +48,8 @@ Release channels have their own copy of this changelog:
 
 * `airdrop` now prints a link to <https://faucet.solana.com>, pre-populated with the recipient address,
   when the request fails on devnet or testnet.
+* `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
+  no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
 
 ## 4.4.0
 

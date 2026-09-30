@@ -1418,6 +1418,7 @@ fn main() {
 pub mod test {
     use {
         super::*,
+        serial_test::serial,
         solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
         solana_core::validator::ValidatorConfig,
         solana_faucet::faucet::run_local_faucet_for_tests,
@@ -1451,6 +1452,7 @@ pub mod test {
     const TEST_CLUSTER_MINT_LAMPORTS: u64 = 200 * LAMPORTS_PER_SOL;
 
     #[test]
+    #[serial]
     fn test_accounts_cluster_bench() {
         agave_logger::setup();
         let mut validator_config = ValidatorConfig::default_for_test();
@@ -1500,6 +1502,7 @@ pub mod test {
     }
 
     #[test]
+    #[serial]
     fn test_halt_accounts_creation_at_max() {
         agave_logger::setup();
         let mut validator_config = ValidatorConfig::default_for_test();
@@ -1549,6 +1552,7 @@ pub mod test {
     }
 
     #[test]
+    #[serial]
     fn test_create_then_reclaim_spl_token_accounts() {
         agave_logger::setup();
         let mint_keypair = Keypair::new();

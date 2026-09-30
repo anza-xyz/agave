@@ -236,6 +236,12 @@ test-case = { workspace = true }
 [profile.dev]
 debug = "line-tables-only"
 
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.dev.package.solana-ed25519]
+opt-level = 3
+
 [profile.full-dev]
 inherits = "dev"
 debug = "full"

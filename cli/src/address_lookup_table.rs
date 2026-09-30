@@ -20,6 +20,7 @@ use {
     solana_rpc_client_api::config::RpcSendTransactionConfig,
     solana_sdk_ids::sysvar,
     solana_signer::Signer,
+    solana_slot_hashes::SlotHashes,
     solana_transaction::Transaction,
     std::{rc::Rc, sync::Arc},
 };
@@ -560,9 +561,32 @@ async fn process_create_lookup_table(
     let clock: Clock = wincode::deserialize(&clock_account.data)
         .map_err(|_| CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string()))?;
 
+    let get_slot_hashes_result = rpc_client
+        .get_account_with_commitment(&sysvar::slot_hashes::id(), config.commitment)
+        .await?;
+    let slot_hashes_account = get_slot_hashes_result.value.ok_or_else(|| {
+        CliError::RpcRequestError("Slot hashes sysvar account doesn't exist".to_string())
+    })?;
+    let slot_hashes: SlotHashes =
+        wincode::deserialize(&slot_hashes_account.data).map_err(|_| {
+            CliError::RpcRequestError("Failed to deserialize slot hashes sysvar".to_string())
+        })?;
+
+    // The clock slot is finalized, but not added to SlotHashes until a child bank is created.
+    // As finalization under alpenglow is lower than slot times, this means we must use an older slot.
+    let recent_slot = slot_hashes
+        .iter()
+        .find(|slot_hash| slot_hash.slot <= clock.slot)
+        .ok_or_else(|| {
+            CliError::RpcRequestError(
+                "No recent finalized slot found in slot hashes sysvar".to_string(),
+            )
+        })?
+        .slot;
+
     let payer_address = payer_signer.pubkey();
     let (create_lookup_table_ix, lookup_table_address) =
-        create_lookup_table(authority_address, payer_address, clock.slot);
+        create_lookup_table(authority_address, payer_address, recent_slot);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let mut tx = Transaction::new_unsigned(Message::new(

@@ -75,6 +75,7 @@ tokio = { workspace = true, features = ["full"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
+serial_test = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-test-validator = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 

@@ -386,13 +386,11 @@ fn main() {
     });
 
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
-    if matches.is_present("alpenglow")
-        && features_to_deactivate
-            .iter()
-            .any(|feature| *feature == agave_feature_set::alpenglow::id())
-    {
-        println!("Error: --alpenglow requires the alpenglow feature to be active");
-        exit(1);
+    if matches.is_present("alpenglow") {
+        println!(
+            "Warning: --alpenglow is deprecated to be removed in a future release, \
+             solana-test-validator will always run alpenglow"
+        );
     }
 
     if TestValidatorGenesis::ledger_exists(&ledger_path) {
@@ -405,7 +403,6 @@ fn main() {
             ("slots_per_epoch", "--slots-per-epoch"),
             ("inflation_fixed", "--inflation-fixed"),
             ("faucet_sol", "--faucet-sol"),
-            ("alpenglow", "--alpenglow"),
             ("deactivate_feature", "--deactivate-feature"),
         ] {
             if matches.is_present(name) {
@@ -584,10 +581,6 @@ fn main() {
     {
         println!("Error: clone_feature_set failed: {e}");
         exit(1);
-    }
-
-    if matches.is_present("alpenglow") {
-        genesis.activate_alpenglow();
     }
 
     genesis.deactivate_features(&features_to_deactivate);
