@@ -19,7 +19,7 @@ use {
         consensus_message::Block,
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
     },
-    crossbeam_channel::{Receiver, RecvError, Sender, select_biased},
+    crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
     solana_entry::block_component::{
         BlockFooterV1, GenesisCertBlockMarker, UpdateParentV1, VersionedBlockMarker,
@@ -206,7 +206,7 @@ pub struct ReplayHighestFrozen {
 
 #[derive(Debug, Error)]
 enum StartLeaderError {
-    /// A queued leader window can belong to a previous identity after set-identity.
+    /// The cached identity can differ from the scheduled leader after set-identity.
     #[error("Identity {identity} is not the scheduled leader {leader} for slot {slot}")]
     LeaderIdentityMismatch {
         slot: Slot,
@@ -347,18 +347,58 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
     reset_poh_recorder(&ctx.bank_forks.read().unwrap().working_bank(), &ctx);
 
     while !ctx.exit.load(Ordering::Relaxed) {
+        // Check if set-identity was called at each leader window start
+        if my_pubkey != cluster_info.id() {
+            let my_old_pubkey = my_pubkey;
+            my_pubkey = cluster_info.id();
+            ctx.my_pubkey = my_pubkey;
+
+            warn!(
+                "Identity changed from {my_old_pubkey} to {my_pubkey} during block creation loop"
+            );
+        }
+
+        // Wait for the first window notification, then drain both sources and pick the newest
+        // leader window. This avoids revisiting stale optimistic windows after replay has already
+        // advanced to a later parent.
+        let window_source = if let Some(info) = ctx.pending_parent_ready.take() {
+            Some(ParentSource::ParentReady(info))
+        } else {
+            select_biased! {
+                recv(ctx.leader_window_info_receiver) -> msg => {
+                    msg.ok().map(ParentSource::ParentReady)
+                },
+                recv(optimistic_parent_receiver) -> msg => {
+                    msg.ok().map(ParentSource::OptimisticParent)
+                },
+                default(Duration::from_secs(1)) => continue,
+            }
+        };
+
+        let (mut latest_parent_ready, mut latest_optimistic_parent) = match window_source {
+            Some(ParentSource::ParentReady(first)) => (Some(first), None),
+            Some(ParentSource::OptimisticParent(first)) => (None, Some(first)),
+            None => {
+                info!("{my_pubkey}: channel disconnected");
+                return;
+            }
+        };
+
+        latest_parent_ready = freshest_window_from_iter(
+            latest_parent_ready,
+            ctx.leader_window_info_receiver.try_iter(),
+        );
+        latest_optimistic_parent = freshest_window_from_iter(
+            latest_optimistic_parent,
+            optimistic_parent_receiver.try_iter(),
+        );
+
         let (info, fast_leader_handover) =
-            match receive_window_and_refresh_identity(&mut ctx, &optimistic_parent_receiver, || {
-                cluster_info.id()
-            }) {
-                Ok(Some(window)) => window,
-                Ok(None) => continue,
-                Err(_) => {
-                    info!("{my_pubkey}: channel disconnected");
-                    return;
-                }
-            };
-        my_pubkey = ctx.my_pubkey;
+            select_freshest_window(latest_parent_ready, latest_optimistic_parent);
+        let Some(info) = info else {
+            info!("{my_pubkey}: both leader window channels drained");
+            continue;
+        };
 
         let LeaderWindowInfo {
             start_slot,
@@ -401,58 +441,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
     }
 
     info!("{my_pubkey}: Block creation loop shutting down");
-}
-
-/// Wait for a window, coalesce queued notifications, then snapshot the identity
-/// used for that entire window.
-fn receive_window_and_refresh_identity(
-    ctx: &mut LeaderContext,
-    optimistic_parent_receiver: &Receiver<LeaderWindowInfo>,
-    read_identity: impl FnOnce() -> Pubkey,
-) -> Result<Option<(LeaderWindowInfo, bool)>, RecvError> {
-    // Avoid revisiting stale optimistic windows after replay advances to a later parent.
-    let window_source = if let Some(info) = ctx.pending_parent_ready.take() {
-        ParentSource::ParentReady(info)
-    } else {
-        select_biased! {
-            recv(ctx.leader_window_info_receiver) -> msg => {
-                ParentSource::ParentReady(msg?)
-            },
-            recv(optimistic_parent_receiver) -> msg => {
-                ParentSource::OptimisticParent(msg?)
-            },
-            default(Duration::from_secs(1)) => return Ok(None),
-        }
-    };
-
-    let (latest_parent_ready, latest_optimistic_parent) = match window_source {
-        ParentSource::ParentReady(first) => (Some(first), None),
-        ParentSource::OptimisticParent(first) => (None, Some(first)),
-    };
-    let latest_parent_ready = freshest_window_from_iter(
-        latest_parent_ready,
-        ctx.leader_window_info_receiver.try_iter(),
-    );
-    let latest_optimistic_parent = freshest_window_from_iter(
-        latest_optimistic_parent,
-        optimistic_parent_receiver.try_iter(),
-    );
-    let (info, fast_leader_handover) =
-        select_freshest_window(latest_parent_ready, latest_optimistic_parent);
-    let Some(info) = info else {
-        info!("{}: both leader window channels drained", ctx.my_pubkey);
-        return Ok(None);
-    };
-
-    let new_pubkey = read_identity();
-    if ctx.my_pubkey != new_pubkey {
-        warn!(
-            "Identity changed from {} to {new_pubkey} during block creation loop",
-            ctx.my_pubkey
-        );
-        ctx.my_pubkey = new_pubkey;
-    }
-    Ok(Some((info, fast_leader_handover)))
 }
 
 /// Resets poh recorder
@@ -1644,10 +1632,12 @@ mod tests {
         let new_identity = Pubkey::new_unique();
         let genesis = create_genesis_config_with_leader(10_000, &old_identity, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
+        let parent_block_id = Hash::new_unique();
+        root_bank.set_block_id(Some(parent_block_id));
         root_bank.freeze();
         let bank_forks = BankForks::new_rw_arc(root_bank);
         let root_bank = bank_forks.read().unwrap().root_bank();
-        let leader_schedule_cache = fixed_leader_schedule(old_identity, &root_bank);
+        let leader_schedule_cache = fixed_leader_schedule(new_identity, &root_bank);
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
@@ -1666,7 +1656,7 @@ mod tests {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (_record_sender, record_receiver) = record_channels(false);
-        let (leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
@@ -1696,54 +1686,59 @@ mod tests {
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
-        leader_window_info_sender
-            .send(leader_window_info(0, 0))
-            .unwrap();
-        leader_window_info_sender
-            .send(leader_window_info(1, 0))
-            .unwrap();
-        let ready_probe = ctx.leader_window_info_receiver.clone();
-        let (optimistic_sender, optimistic_receiver) = bounded::<LeaderWindowInfo>(1);
-        optimistic_sender.send(leader_window_info(0, 0)).unwrap();
-
-        // The identity read must follow the first receive and both channel drains.
-        let (window, fast_leader_handover) =
-            receive_window_and_refresh_identity(&mut ctx, &optimistic_receiver, || {
-                assert!(ready_probe.is_empty());
-                assert!(optimistic_receiver.is_empty());
-                new_identity
-            })
-            .unwrap()
-            .unwrap();
-        assert_eq!(window.start_slot, 1);
-        assert!(!fast_leader_handover);
-        assert_eq!(ctx.my_pubkey, new_identity);
-        let mut slot_metrics = SlotMetrics::new(window.start_slot, fast_leader_handover);
-        let err = start_leader_wait_for_parent_replay(
+        // A window for the new identity can arrive before the loop refreshes its cached identity.
+        let mut slot_metrics = SlotMetrics::new(1, false);
+        let err = produce_window(
+            false,
+            1,
+            3,
+            Block {
+                slot: 0,
+                block_id: BlockId::from(parent_block_id),
+            },
+            Instant::now(),
             &mut ctx,
             &mut slot_metrics,
-            window.start_slot,
-            0,
-            None,
-            Instant::now(),
         )
         .unwrap_err();
         assert!(matches!(
             err,
             StartLeaderError::LeaderIdentityMismatch { slot: 1, identity, leader }
-                if identity == new_identity && leader == old_identity
+                if identity == old_identity && leader == new_identity
         ));
         assert_eq!(slot_metrics.attempt_start_leader_count, 1);
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            root_bank.bank_id()
+        );
         assert!(ctx.bank_forks.read().unwrap().get(1).is_none());
         assert!(entry_receiver.is_empty());
         assert!(ctx.record_receiver.is_shutdown());
+        assert!(ctx.record_receiver.is_safe_to_restart());
+        assert!(!ctx.exit.load(Ordering::Relaxed));
 
-        // A later window for the scheduled identity can still start a bank.
-        ctx.my_pubkey = old_identity;
-        create_and_insert_leader_bank(4, root_bank, 0, &mut ctx).unwrap();
-        let bank = ctx.poh_recorder.read().unwrap().bank().unwrap();
-        assert_eq!(bank.leader_id(), &old_identity);
+        // After refreshing the identity, a later window can still start a bank.
+        ctx.my_pubkey = new_identity;
+        let bank = start_leader_wait_for_parent_replay(
+            &mut ctx,
+            &mut SlotMetrics::new(4, false),
+            4,
+            0,
+            Some(parent_block_id),
+            Instant::now(),
+        )
+        .unwrap();
+        assert_eq!(bank.slot(), 4);
+        assert_eq!(bank.leader_id(), &new_identity);
+        assert_eq!(
+            ctx.bank_forks.read().unwrap().get(4).unwrap().bank_id(),
+            bank.bank_id()
+        );
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id(),
+            bank.bank_id()
+        );
         assert!(!ctx.record_receiver.is_shutdown());
         let (announced_bank, (message, _)) = entry_receiver.try_recv().unwrap();
         assert_eq!(announced_bank.bank_id(), bank.bank_id());
