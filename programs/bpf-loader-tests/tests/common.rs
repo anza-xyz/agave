@@ -2,7 +2,7 @@
 
 use {
     agave_feature_set::loader_v3_minimum_extend_program_size,
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
@@ -79,13 +79,13 @@ pub async fn add_upgradeable_loader_account(
     account_callback: impl Fn(&mut AccountSharedData),
 ) {
     let rent = context.banks_client.get_rent().await.unwrap();
-    let mut account = AccountSharedData::new(
+    let mut account = AccountSharedData::new_data_with_space(
         rent.minimum_balance(account_data_len),
+        account_state,
         account_data_len,
         &id(),
-    );
-    wincode::serialize_into(account.data_as_mut_slice(), account_state)
-        .expect("state failed to serialize into account data");
+    )
+    .expect("state failed to serialize into account data");
     account_callback(&mut account);
     context.set_account(account_address, &account);
 }

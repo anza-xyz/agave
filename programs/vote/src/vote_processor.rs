@@ -449,6 +449,7 @@ mod tests {
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
     where
         T: wincode::Serialize<Src = T> + SysvarId,
+        AccountSharedData: solana_account::state_traits::StateMutWincode<T>,
     {
         let serialized_len = wincode::serialized_size(value).unwrap() as usize;
         let canonical_data_len = match T::id() {
@@ -459,9 +460,7 @@ mod tests {
             id => panic!("unsupported sysvar: {id}"),
         };
         let required_data_len = canonical_data_len.max(serialized_len);
-        let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
+        AccountSharedData::new_data_with_space(1, value, required_data_len, &sysvar::id()).unwrap()
     }
 
     fn vote_state_size_of() -> usize {

@@ -1,7 +1,7 @@
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
-    solana_account::{Account, AccountSharedData, WritableAccount},
+    solana_account::{Account, AccountSharedData, state_traits::StateMutWincode as _},
     solana_clock::{Clock, Slot},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
@@ -27,6 +27,7 @@ use {
 fn create_sysvar_account<T>(value: &T) -> AccountSharedData
 where
     T: wincode::Serialize<Src = T> + SysvarId,
+    AccountSharedData: solana_account::state_traits::StateMutWincode<T>,
 {
     let serialized_len = wincode::serialized_size(value).unwrap() as usize;
     let canonical_data_len = match T::id() {
@@ -35,9 +36,7 @@ where
         id => panic!("unsupported sysvar: {id}"),
     };
     let required_data_len = canonical_data_len.max(serialized_len);
-    let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-    wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-    account
+    AccountSharedData::new_data_with_space(1, value, required_data_len, &sysvar::id()).unwrap()
 }
 
 fn create_accounts() -> (

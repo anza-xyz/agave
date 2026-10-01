@@ -11,8 +11,7 @@ use {
     crossbeam_channel::Receiver,
     log::*,
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, WritableAccount,
-        state_traits::StateMutWincode as _,
+        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
     },
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -248,14 +247,14 @@ fn try_transform_program_data(
         {
             // Serialize new programdata metadata into the resulting account,
             // to overwrite the deployment slot to `0`.
-            wincode::serialize_into(
-                account.data_as_mut_slice(),
-                &UpgradeableLoaderState::ProgramData {
+            account
+                .set_state(&UpgradeableLoaderState::ProgramData {
                     slot: 0,
                     upgrade_authority_address,
-                },
-            )
-            .map_err(|_| format!("Failed to write to upgradeable programdata account {address}"))
+                })
+                .map_err(|_| {
+                    format!("Failed to write to upgradeable programdata account {address}")
+                })
         } else {
             Err(format!(
                 "Failed to read upgradeable programdata account {address}"

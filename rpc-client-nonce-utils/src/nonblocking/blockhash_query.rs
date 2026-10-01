@@ -121,7 +121,7 @@ mod tests {
         super::*,
         crate::nonblocking::blockhash_query,
         serde_json::{self, json},
-        solana_account::Account,
+        solana_account::{Account, state_traits::StateMutWincode as _},
         solana_account_decoder::{UiAccountEncoding, encode_ui_account},
         solana_fee_calculator::FeeCalculator,
         solana_nonce::{self as nonce, state::DurableNonce},
@@ -371,14 +371,11 @@ mod tests {
             durable_nonce,
             fee_calculator: nonce_fee_calc,
         };
-        let mut nonce_account = Account::new(
+        let nonce_account = Account::new_data_with_space(
             42,
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(data)),
             nonce::state::State::size(),
             &solana_sdk_ids::system_program::id(),
-        );
-        wincode::serialize_into(
-            &mut nonce_account.data[..],
-            &nonce::versions::Versions::new(nonce::state::State::Initialized(data)),
         )
         .unwrap();
         let nonce_pubkey = Pubkey::from([4u8; 32]);

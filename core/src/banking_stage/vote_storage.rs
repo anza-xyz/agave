@@ -4,7 +4,7 @@ use {
     ahash::HashMap,
     itertools::Itertools,
     rand::{Rng, rng},
-    solana_account::ReadableAccount as _,
+    solana_account::state_traits::StateMutWincode as _,
     solana_clock::Epoch,
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
@@ -138,9 +138,9 @@ impl VoteStorage {
     }
 
     pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<Bytes>> {
-        let slot_hashes = bank
+        let slot_hashes: Option<SlotHashes> = bank
             .get_account(&sysvar::slot_hashes::id())
-            .and_then(|account| wincode::deserialize::<SlotHashes>(account.data()).ok());
+            .and_then(|account| account.state().ok());
         if slot_hashes.is_none() {
             error!(
                 "Slot hashes sysvar doesn't exist on bank {}. Including all votes without \

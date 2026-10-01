@@ -4,7 +4,7 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     serde_json::Result,
-    solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
@@ -469,11 +469,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
         AccountSharedData::new(0, 0, &loader_id),
     ));
-    let mut epoch_schedule_account =
-        AccountSharedData::new(1, solana_epoch_schedule::SIZE, &sysvar::id());
-    wincode::serialize_into(
-        epoch_schedule_account.data_as_mut_slice(),
+    let epoch_schedule_account = AccountSharedData::new_data_with_space(
+        1,
         bank.epoch_schedule(),
+        solana_epoch_schedule::SIZE,
+        &sysvar::id(),
     )
     .unwrap();
     transaction_accounts.push((sysvar::epoch_schedule::id(), epoch_schedule_account));
