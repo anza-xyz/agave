@@ -13,16 +13,16 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError},
     lru::LruCache,
     rand::Rng,
-    solana_address::Address,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{self, ShredFlags, ShredId, ShredType},
+        shred::{self, Payload, ShredFlags, ShredId, ShredType},
     },
     solana_measure::measure::Measure,
     solana_net_utils::SocketAddrSpace,
     solana_perf::deduper::Deduper,
+    solana_pubkey::Pubkey,
     solana_rpc::{
         max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions,
         slot_status_notifier::SlotStatusNotifier,
@@ -37,11 +37,8 @@ use {
     std::{
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
-        ops::{AddAssign, Range},
-        sync::{
-            Arc, RwLock,
-            atomic::{AtomicU64, AtomicUsize, Ordering},
-        },
+        ops::AddAssign,
+        sync::{Arc, RwLock, atomic::Ordering},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
@@ -53,9 +50,6 @@ const MAX_DUPLICATE_COUNT: usize = 2;
 const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 const DEDUPER_NUM_BITS: u64 = 637_534_199; // 76MB
 const DEDUPER_RESET_CYCLE: Duration = Duration::from_secs(5 * 60);
-// Minimum number of shreds to distribute across retransmit workers.
-const PAR_ITER_MIN_NUM_SHREDS: usize = 2;
-const MAX_SHREDS_PER_RETRANSMIT_JOB: usize = 64;
 
 const _: () = const {
     // From https://github.com/anza-xyz/agave/pull/1735#discussion_r1644899183:
@@ -96,19 +90,19 @@ pub(crate) struct RetransmitSlotStats {
 
 struct RetransmitStats {
     since: Instant,
-    num_nodes: AtomicUsize,
-    num_addrs_failed: AtomicUsize,
-    num_shreds_dropped_xdp_full: AtomicUsize,
-    num_loopback_errs: AtomicUsize,
+    num_nodes: usize,
+    num_addrs_failed: usize,
+    num_shreds_dropped_xdp_full: usize,
+    num_loopback_errs: usize,
     num_shreds: usize,
-    num_shreds_skipped: AtomicUsize,
+    num_shreds_skipped: usize,
     num_small_batches: usize,
     total_batches: usize,
     total_time: u64,
     epoch_fetch: u64,
     epoch_cache_update: u64,
-    retransmit_total: AtomicU64,
-    compute_turbine_peers_total: AtomicU64,
+    retransmit_total: u64,
+    compute_turbine_peers_total: u64,
     slot_stats: LruCache<Slot, RetransmitSlotStats>,
     unknown_shred_slot_leader: usize,
 }
@@ -116,7 +110,6 @@ struct RetransmitStats {
 struct RetransmitState {
     stats: RetransmitStats,
     shred_buf: Vec<Vec<shred::Payload>>,
-    shreds: Arc<Vec<shred::Payload>>,
     pending_first_shred_event: Option<VotorEvent>,
 }
 
@@ -145,8 +138,7 @@ impl RetransmitState {
     fn new(now: Instant) -> Self {
         Self {
             stats: RetransmitStats::new(now),
-            shred_buf: Vec::with_capacity(RETRANSMIT_BATCH_SIZE),
-            shreds: Arc::new(Vec::with_capacity(RETRANSMIT_BATCH_SIZE)),
+            shred_buf: Vec::new(),
             pending_first_shred_event: None,
         }
     }
@@ -176,24 +168,20 @@ impl RetransmitStats {
             ("epoch_cache_update", self.epoch_cache_update, i64),
             ("total_batches", self.total_batches, i64),
             ("num_small_batches", self.num_small_batches, i64),
-            ("num_nodes", *self.num_nodes.get_mut(), i64),
-            ("num_addrs_failed", *self.num_addrs_failed.get_mut(), i64),
+            ("num_nodes", self.num_nodes, i64),
+            ("num_addrs_failed", self.num_addrs_failed, i64),
             (
                 "num_shreds_dropped_xdp_full",
-                *self.num_shreds_dropped_xdp_full.get_mut(),
+                self.num_shreds_dropped_xdp_full,
                 i64
             ),
-            ("num_loopback_errs", *self.num_loopback_errs.get_mut(), i64),
+            ("num_loopback_errs", self.num_loopback_errs, i64),
             ("num_shreds", self.num_shreds, i64),
-            (
-                "num_shreds_skipped",
-                *self.num_shreds_skipped.get_mut(),
-                i64
-            ),
-            ("retransmit_total", *self.retransmit_total.get_mut(), i64),
+            ("num_shreds_skipped", self.num_shreds_skipped, i64),
+            ("retransmit_total", self.retransmit_total, i64),
             (
                 "compute_turbine",
-                *self.compute_turbine_peers_total.get_mut(),
+                self.compute_turbine_peers_total,
                 i64
             ),
             (
@@ -248,16 +236,14 @@ impl<const K: usize> ShredDeduper<K> {
     }
 }
 
-type RetransmitAddrCache = HashMap<Slot, (Address, Arc<ClusterNodes<RetransmitStage>>)>;
+type RetransmitAddrCache = HashMap<Slot, (Pubkey, Arc<ClusterNodes<RetransmitStage>>)>;
 
 struct RetransmitJob {
-    context: JobContext,
-    range: Range<usize>,
+    context: Arc<JobContext>,
+    batch: Vec<Payload>,
 }
 
-#[derive(Clone)]
 struct JobContext {
-    shreds: Arc<Vec<shred::Payload>>,
     retransmit_sockets: Arc<Vec<UdpSocket>>,
     xdp_sender: Option<XdpSender>,
     cluster_info: Arc<ClusterInfo>,
@@ -296,10 +282,10 @@ impl JobStats {
 
 impl WorkerJob for RetransmitJob {
     fn run(self, worker_index: usize) {
-        let RetransmitJob { context, range } = self;
+        let RetransmitJob { context, mut batch } = self;
         let mut stats = JobStats::default();
         let socket_addr_space = context.cluster_info.socket_addr_space();
-        for shred in context.shreds[range].iter() {
+        for shred in batch.drain(..) {
             let socket = RetransmitSocket::new(
                 worker_index,
                 &context.retransmit_sockets,
@@ -307,7 +293,7 @@ impl WorkerJob for RetransmitJob {
                 &context.cluster_info,
             );
             let shred_stats = retransmit_shred(
-                shred.clone(),
+                shred,
                 &context.root_bank,
                 &context.shred_deduper,
                 &context.cache,
@@ -325,22 +311,8 @@ impl WorkerJob for RetransmitJob {
     }
 }
 
-struct RetransmitWorkerPool {
-    inner: WorkerPool,
-}
-
+type RetransmitWorkerPool = WorkerPool;
 type RetransmitSender = PoolSender<RetransmitJob>;
-
-impl RetransmitWorkerPool {
-    fn build(num_workers: usize) -> (RetransmitSender, Self) {
-        let (sender, inner) = WorkerPool::build("solRetransmit", num_workers, num_workers);
-        (sender, Self { inner })
-    }
-
-    fn join(self) -> thread::Result<()> {
-        self.inner.join()
-    }
-}
 
 enum RetransmitSocket<'a> {
     Socket(&'a UdpSocket),
@@ -399,9 +371,6 @@ impl<'a> RetransmitSocket<'a> {
     }
 }
 
-/// The number of shreds to pull from the retransmit_receiver at a time.
-const RETRANSMIT_BATCH_SIZE: usize = 4096;
-
 // pull the shreds from the shreds_receiver until empty, then retransmit them.
 // uses a thread_pool to parallelize work if there are enough shreds to justify that
 fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Result<(), ()> {
@@ -418,7 +387,6 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
     let RetransmitState {
         stats,
         shred_buf,
-        shreds,
         pending_first_shred_event,
     } = state;
 
@@ -441,21 +409,21 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
             shred_buf.push(retransmit_receiver.recv().map_err(|_| ())?);
         }
     };
-    // now the batch has started
+    let num_workers = retransmit_sockets.len();
+
     let mut timer_start = Measure::start("retransmit");
     let mut num_shreds = shred_buf[0].len();
-    // Create a RETRANSMIT_BATCH_SIZE sized batch from the channel
     for shreds in retransmit_receiver
         .try_iter()
         // We already pulled 1 batch
-        .take(RETRANSMIT_BATCH_SIZE - 1)
+        .take(num_workers - 1)
     {
         num_shreds += shreds.len();
         shred_buf.push(shreds);
     }
 
     stats.num_shreds += num_shreds;
-    stats.total_batches += 1;
+    stats.total_batches += shred_buf.len();
 
     let mut epoch_fetch = Measure::start("retransmit_epoch_fetch");
     let (working_bank, root_bank) = {
@@ -474,13 +442,9 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
     epoch_cache_update.stop();
     stats.epoch_cache_update += epoch_cache_update.as_us();
     // Lookup slot leader and cluster nodes for each slot.
-    {
-        let shreds = Arc::get_mut(shreds).expect("retransmit shreds still shared by worker jobs");
-        shreds.clear();
-        shreds.extend(shred_buf.drain(..).flatten());
-    }
-    let cache: RetransmitAddrCache = shreds
+    let cache: RetransmitAddrCache = shred_buf
         .iter()
+        .flatten()
         .filter_map(|shred| shred::layout::get_slot(shred))
         .collect::<HashSet<Slot>>()
         .into_iter()
@@ -503,57 +467,44 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         .collect();
     let cache = Arc::new(cache);
 
-    let num_workers = retransmit_sockets.len();
-    let job_count = if num_shreds < PAR_ITER_MIN_NUM_SHREDS {
+    if num_shreds == 1 {
         stats.num_small_batches += 1;
-        1
-    } else {
-        let jobs_for_parallelism = num_workers.min(num_shreds);
-        let jobs_for_size_limit = num_shreds.div_ceil(MAX_SHREDS_PER_RETRANSMIT_JOB);
-        jobs_for_parallelism.max(jobs_for_size_limit)
-    };
+    }
 
-    let (result_sender, result_receiver) = crossbeam_channel::bounded(job_count);
+    let (result_sender, result_receiver) = crossbeam_channel::bounded(shred_buf.len());
 
-    let batch_size = num_shreds / job_count;
-    let remainder = num_shreds % job_count;
-
-    let mut start = 0;
     let is_xdp = xdp_sender.is_some();
-    let job_context = JobContext {
-        shreds: shreds.clone(),
+    let job_context = Arc::new(JobContext {
         retransmit_sockets,
         xdp_sender,
         cluster_info: cluster_info.clone(),
 
         root_bank: root_bank.clone(),
         shred_deduper: shred_deduper.clone(),
-        cache: cache.clone(),
+        cache,
         result_sender,
-    };
-    for worker_index in 0..job_count {
-        let len = batch_size + usize::from(worker_index < remainder);
-        let end = start + len;
+    });
 
+    for batch in shred_buf.drain(..) {
         let job = RetransmitJob {
             context: job_context.clone(),
-            range: start..end,
+            batch,
         };
         retransmit_sender.send(job);
-
-        start = end;
     }
 
     drop(job_context);
 
     for job_stats in result_receiver.iter() {
-        stats.upsert_job_stats(
-            job_stats,
+        stats.accumulate_job_counters(&job_stats);
+        stats.insert_slot_stats(
+            job_stats.slot_stats,
             root_bank.slot(),
             &context.notifiers,
             pending_first_shred_event,
         );
     }
+    stats.submit_slot_stats();
 
     timer_start.stop();
     stats.total_time += timer_start.as_us();
@@ -687,8 +638,11 @@ impl RetransmitStage {
         let shred_deduper = Arc::new(ShredDeduper::new(&mut rng, DEDUPER_NUM_BITS));
 
         // Match workers to retransmit sockets to preserve socket affinity.
-        let (retransmit_sender, thread_pool) =
-            RetransmitWorkerPool::build(retransmit_sockets.len());
+        let (retransmit_sender, thread_pool) = RetransmitWorkerPool::build(
+            "solRetransmit",
+            retransmit_sockets.len(),
+            retransmit_sockets.len(),
+        );
 
         let retransmit_context = RetransmitContext {
             retransmit_sender,
@@ -772,42 +726,26 @@ impl RetransmitStats {
     fn new(now: Instant) -> Self {
         Self {
             since: now,
-            num_nodes: AtomicUsize::default(),
-            num_addrs_failed: AtomicUsize::default(),
-            num_shreds_dropped_xdp_full: AtomicUsize::default(),
-            num_loopback_errs: AtomicUsize::default(),
+            num_nodes: 0usize,
+            num_addrs_failed: 0usize,
+            num_shreds_dropped_xdp_full: 0usize,
+            num_loopback_errs: 0usize,
             num_shreds: 0usize,
-            num_shreds_skipped: AtomicUsize::default(),
+            num_shreds_skipped: 0usize,
             total_batches: 0usize,
             num_small_batches: 0usize,
             total_time: 0u64,
             epoch_fetch: 0u64,
             epoch_cache_update: 0u64,
-            retransmit_total: AtomicU64::default(),
-            compute_turbine_peers_total: AtomicU64::default(),
+            retransmit_total: 0u64,
+            compute_turbine_peers_total: 0u64,
             // Cache capacity is manually enforced by `SLOT_STATS_CACHE_CAPACITY`
             slot_stats: LruCache::<Slot, RetransmitSlotStats>::unbounded(),
             unknown_shred_slot_leader: 0usize,
         }
     }
 
-    fn upsert_job_stats(
-        &mut self,
-        job_stats: JobStats,
-        root: Slot,
-        notifiers: &RetransmitNotifiers,
-        pending_first_shred_event: &mut Option<VotorEvent>,
-    ) {
-        self.accumulate_job_stats(&job_stats);
-        self.upsert_slot_stats(
-            job_stats.slot_stats,
-            root,
-            notifiers,
-            pending_first_shred_event,
-        );
-    }
-
-    fn upsert_slot_stats(
+    fn insert_slot_stats(
         &mut self,
         feed: impl IntoIterator<Item = (Slot, RetransmitSlotStats)>,
         root: Slot,
@@ -832,6 +770,9 @@ impl RetransmitStats {
                 }
             }
         }
+    }
+
+    fn submit_slot_stats(&mut self) {
         while self.slot_stats.len() > Self::SLOT_STATS_CACHE_CAPACITY {
             // Pop and submit metrics for the slot which was updated least
             // recently. At this point the node most likely will not receive
@@ -843,21 +784,14 @@ impl RetransmitStats {
         }
     }
 
-    fn accumulate_job_stats(&self, job_stats: &JobStats) {
-        self.num_nodes
-            .fetch_add(job_stats.num_nodes, Ordering::Relaxed);
-        self.num_addrs_failed
-            .fetch_add(job_stats.num_addrs_failed, Ordering::Relaxed);
-        self.num_shreds_dropped_xdp_full
-            .fetch_add(job_stats.num_shreds_dropped_xdp_full, Ordering::Relaxed);
-        self.num_loopback_errs
-            .fetch_add(job_stats.num_loopback_errs, Ordering::Relaxed);
-        self.num_shreds_skipped
-            .fetch_add(job_stats.num_shreds_skipped, Ordering::Relaxed);
-        self.retransmit_total
-            .fetch_add(job_stats.retransmit_total, Ordering::Relaxed);
-        self.compute_turbine_peers_total
-            .fetch_add(job_stats.compute_turbine_peers_total, Ordering::Relaxed);
+    fn accumulate_job_counters(&mut self, job_stats: &JobStats) {
+        self.num_nodes += job_stats.num_nodes;
+        self.num_addrs_failed += job_stats.num_addrs_failed;
+        self.num_shreds_dropped_xdp_full += job_stats.num_shreds_dropped_xdp_full;
+        self.num_loopback_errs += job_stats.num_loopback_errs;
+        self.num_shreds_skipped += job_stats.num_shreds_skipped;
+        self.retransmit_total += job_stats.retransmit_total;
+        self.compute_turbine_peers_total += job_stats.compute_turbine_peers_total;
     }
 }
 
