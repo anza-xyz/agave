@@ -425,15 +425,9 @@ fn build_latest_stake_delegations(
             .iter()
             .filter(|(_, account)| account.lamports() > 0)
             .filter_map(|(pubkey, account)| {
-                if let Ok(stake_account) =
-                    stake_account::StakeAccount::<Delegation>::try_from(account.clone())
-                {
-                    // Skip zero-stake delegations
-                    if stake_account.delegation().stake > 0 {
-                        return Some((*pubkey, *stake_account.delegation()));
-                    }
-                }
-                None
+                stake_account::StakeAccount::<Delegation>::try_from(account.clone())
+                    .ok()
+                    .map(|stake_account| (*pubkey, *stake_account.delegation()))
             })
             .collect(),
         unused: 0,
