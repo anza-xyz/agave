@@ -532,7 +532,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            fee_payer_post_balance: 0,
+            fee_payer_post_balance: Some(0),
         });
 
         let balances = TransactionBalancesSet {
@@ -666,7 +666,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            fee_payer_post_balance: 0,
+            fee_payer_post_balance: Some(0),
         });
 
         let balances = TransactionBalancesSet {

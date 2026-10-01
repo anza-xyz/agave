@@ -4720,7 +4720,7 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
-                            fee_payer_post_balance,
+                            fee_payer_post_balance: Some(fee_payer_post_balance),
                         })
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
@@ -4734,11 +4734,9 @@ impl Bank {
                             loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
                             loaded_accounts_data_size,
                         },
-                        fee_payer_post_balance: fees_only_tx
-                            .rollback_accounts
-                            .fee_payer()
-                            .1
-                            .lamports(),
+                        fee_payer_post_balance: Some(
+                            fees_only_tx.rollback_accounts.fee_payer().1.lamports(),
+                        ),
                     }),
                     ProcessedTransaction::NoOp(no_op_tx) => Ok(CommittedTransaction {
                         status: Err(no_op_tx.validation_error),
@@ -4751,7 +4749,7 @@ impl Bank {
                             loaded_accounts_count: 0,
                             loaded_accounts_data_size,
                         },
-                        fee_payer_post_balance: no_op_tx.fee_payer_balance.unwrap_or(0),
+                        fee_payer_post_balance: no_op_tx.fee_payer_balance,
                     }),
                 }
             })

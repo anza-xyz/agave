@@ -1941,7 +1941,7 @@ fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_sema
                 loaded_accounts_count: 2,
                 loaded_accounts_data_size,
             },
-            fee_payer_post_balance: fee_payer_initial_balance - 5000,
+            fee_payer_post_balance: Some(fee_payer_initial_balance - 5000),
         })]
     );
 }
@@ -2015,7 +2015,7 @@ fn test_load_and_execute_commit_transactions_failure() {
                 loaded_accounts_count: 3,
                 loaded_accounts_data_size: 149, // size of system account (initially recipient does not exist)
             },
-            fee_payer_post_balance: starting_balance - 5000,
+            fee_payer_post_balance: Some(starting_balance - 5000),
         })]
     );
 }
@@ -2082,7 +2082,7 @@ fn test_load_and_execute_commit_transactions_success() {
                 loaded_accounts_count: 3,
                 loaded_accounts_data_size: 149, // size of system account (initially recipient does not exist)
             },
-            fee_payer_post_balance: starting_balance - 5000 - transfer_amount,
+            fee_payer_post_balance: Some(starting_balance - 5000 - transfer_amount),
         })]
     );
 }

@@ -384,7 +384,7 @@ mod tests {
                     loaded_accounts_data_size: loaded_accounts_data_size
                         + loaded_accounts_data_size_adjustment,
                     result: Ok(()),
-                    fee_payer_post_balance: 0,
+                    fee_payer_post_balance: Some(0),
                 })
                 .collect();
             let final_txs_cost = total_txs_cost
@@ -515,7 +515,7 @@ mod tests {
                             loaded_accounts_data_size: loaded_accounts_data_size
                                 + loaded_accounts_data_size_adjustment,
                             result: Ok(()),
-                            fee_payer_post_balance: 1,
+                            fee_payer_post_balance: Some(1),
                         }
                     }
                 })
@@ -617,7 +617,7 @@ mod tests {
                     compute_units: tx_cost.as_ref().unwrap().programs_execution_cost(),
                     loaded_accounts_data_size: 0,
                     result: Ok(()),
-                    fee_payer_post_balance: 0,
+                    fee_payer_post_balance: Some(0),
                 })
                 .collect();
             QosService::remove_or_update_costs(
@@ -670,7 +670,7 @@ mod tests {
                     compute_units: tx_cost.as_ref().unwrap().programs_execution_cost(),
                     loaded_accounts_data_size: 1,
                     result: Ok(()),
-                    fee_payer_post_balance: 0,
+                    fee_payer_post_balance: Some(0),
                 })
                 .collect();
             QosService::remove_or_update_costs(
