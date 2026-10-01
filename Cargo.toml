@@ -147,6 +147,44 @@ license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.98.1"
 
+# Agave binary and package names, grouped by intended audience.
+# Read by scripts/agave-build-lists.sh, which build/install scripts source.
+[workspace.metadata.agave-build-lists]
+dev = [
+    "solana-test-validator",
+]
+end-user = [
+    "agave-install",
+    "solana",
+    "solana-keygen",
+]
+val-op = [
+    "agave-validator",
+    "agave-watchtower",
+    "solana-gossip",
+    "solana-genesis",
+    "solana-faucet",
+]
+dcou = [
+    "agave-ledger-tool",
+]
+# These bins are deprecated and will be removed in a future release
+deprecated = [
+    "solana-stake-accounts",
+    "solana-tokens",
+    "agave-install-init",
+]
+dcou-tainted-packages = [
+    "agave-conformance",
+    "agave-ledger-tool",
+    "agave-store-histogram",
+    "agave-store-tool",
+    "solana-accounts-cluster-bench",
+    "solana-banking-bench",
+    "solana-local-cluster",
+    "solana-svm-conformance",
+]
+
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
