@@ -5,16 +5,18 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use wincode::{ReadError, ReadResult, SchemaRead, config::DefaultConfig};
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
+    bitflags::bitflags,
     bytes::Bytes,
     rayon::{
         iter::{IndexedParallelIterator, ParallelIterator},
         prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     },
     serde::{Deserialize, Serialize},
+    solana_pubkey::Pubkey,
     std::{
         borrow::Borrow,
         io::Cursor,
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         ops::{Deref, DerefMut, Index, IndexMut},
         slice::{Iter, SliceIndex},
     },
@@ -25,8 +27,48 @@ use {
 };
 pub use {
     bytes,
-    solana_packet::{self, Meta, PACKET_DATA_SIZE, Packet, PacketFlags},
+    solana_packet::{self, Meta, PACKET_DATA_SIZE, Packet, PacketFlags as LegacyPacketFlags},
 };
+
+bitflags! {
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct PacketFlags: u8 {
+        const DISCARD          = 0b0000_0001;
+        const FORWARDED        = 0b0000_0010;
+        const REPAIR           = 0b0000_0100;
+        const SIMPLE_VOTE_TX   = 0b0000_1000;
+        const UNUSED_0         = 0b0001_0000;
+        const UNUSED_1         = 0b0010_0000;
+        const PERF_TRACK_PACKET = 0b0100_0000;
+        const FROM_STAKED_NODE = 0b1000_0000;
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl ::solana_frozen_abi::abi_example::AbiExample for PacketFlags {
+    fn example() -> Self {
+        Self::empty()
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl ::solana_frozen_abi::abi_example::TransparentAsHelper for PacketFlags {}
+
+#[cfg(feature = "frozen-abi")]
+impl ::solana_frozen_abi::abi_example::EvenAsOpaque for PacketFlags {
+    const TYPE_NAME_MATCHER: &'static str = "::_::InternalBitFlags";
+}
+
+#[cfg(feature = "frozen-abi")]
+impl ::solana_frozen_abi::stable_abi::StableAbi for PacketFlags {
+    fn random_with_context(
+        rng: &mut (impl ::solana_frozen_abi::rand::RngCore + ?Sized),
+        _ctx: (),
+    ) -> Self {
+        Self::from_bits_truncate(::solana_frozen_abi::rand::Rng::random(rng))
+    }
+}
 
 pub const NUM_PACKETS: usize = 1024 * 8;
 
@@ -104,15 +146,11 @@ where
     let mut wr = Cursor::new(buffer.as_mut_slice());
     wincode::config::serialize_into(&mut wr, &data, config)?;
     let size = wr.position() as usize;
-    let mut meta = Meta::default();
-    meta.size = size;
-    if let Some(dest) = dest {
-        meta.set_socket_addr(dest);
-    }
-    Ok(BytesPacket::new(
-        Bytes::copy_from_slice(&buffer[..size]),
-        meta,
-    ))
+    let buffer = Bytes::copy_from_slice(&buffer[..size]);
+    Ok(match dest {
+        Some(dest) => BytesPacket::new_with_addr_and_port(buffer, dest.ip(), dest.port()),
+        None => BytesPacket::new(buffer),
+    })
 }
 
 /// Representation of a packet used in TPU.
@@ -124,32 +162,50 @@ pub struct BytesPacket {
         stable_abi_sample(with = "solana_frozen_abi::stable_abi::sample_collection(rng)")
     )]
     buffer: Bytes,
-    meta: Meta,
+    size: usize,
+    addr: Option<IpAddr>,
+    port: Option<u16>,
+    flags: PacketFlags,
+    remote_pubkey: Option<Pubkey>,
 }
 
 impl BytesPacket {
-    pub fn new(buffer: Bytes, meta: Meta) -> Self {
-        Self { buffer, meta }
+    pub fn new(buffer: Bytes) -> Self {
+        let size = buffer.len();
+        Self {
+            buffer,
+            size,
+            addr: None,
+            port: None,
+            flags: PacketFlags::empty(),
+            remote_pubkey: None,
+        }
+    }
+
+    pub fn new_with_addr_and_port(buffer: Bytes, addr: IpAddr, port: u16) -> Self {
+        Self {
+            addr: Some(addr),
+            port: Some(port),
+            ..Self::new(buffer)
+        }
+    }
+
+    pub fn new_with_socket_addr(buffer: Bytes, socket_addr: &SocketAddr) -> Self {
+        Self::new_with_addr_and_port(buffer, socket_addr.ip(), socket_addr.port())
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn empty() -> Self {
-        Self {
-            buffer: Bytes::new(),
-            meta: Meta::default(),
-        }
+        Self::new(Bytes::new())
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn from_bytes(dest: Option<&SocketAddr>, buffer: impl Into<Bytes>) -> Self {
         let buffer = buffer.into();
-        let mut meta = Meta::default();
-        meta.size = buffer.len();
-        if let Some(dest) = dest {
-            meta.set_socket_addr(dest);
+        match dest {
+            Some(dest) => Self::new_with_socket_addr(buffer, dest),
+            None => Self::new(buffer),
         }
-
-        Self { buffer, meta }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -158,9 +214,7 @@ impl BytesPacket {
         T: SchemaWrite<DefaultConfig, Src = T>,
     {
         let buffer = Bytes::from(wincode::serialize(&data)?);
-        let mut meta = Meta::default();
-        meta.size = buffer.len();
-        Ok(Self { buffer, meta })
+        Ok(Self::new(buffer))
     }
 
     #[inline]
@@ -168,26 +222,115 @@ impl BytesPacket {
     where
         I: SliceIndex<[u8]>,
     {
-        if self.meta.discard() {
+        if self.discard() {
             None
         } else {
-            self.buffer.get(index)
+            self.buffer.get(..self.size)?.get(index)
         }
     }
 
     #[inline]
-    pub fn meta(&self) -> &Meta {
-        &self.meta
+    pub fn size(&self) -> usize {
+        self.size
     }
 
     #[inline]
-    pub fn meta_mut(&mut self) -> &mut Meta {
-        &mut self.meta
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_size(&mut self, size: usize) {
+        self.size = size;
+    }
+
+    #[inline]
+    pub fn addr(&self) -> Option<IpAddr> {
+        self.addr
+    }
+
+    #[inline]
+    pub fn port(&self) -> Option<u16> {
+        self.port
+    }
+
+    #[inline]
+    pub fn socket_addr(&self) -> Option<SocketAddr> {
+        Some(SocketAddr::new(self.addr?, self.port?))
+    }
+
+    #[inline]
+    pub fn set_socket_addr(&mut self, socket_addr: &SocketAddr) {
+        self.addr = Some(socket_addr.ip());
+        self.port = Some(socket_addr.port());
+    }
+
+    #[inline]
+    pub fn flags(&self) -> PacketFlags {
+        self.flags
+    }
+
+    #[inline]
+    pub fn set_flags(&mut self, flags: PacketFlags) {
+        self.flags = flags;
+    }
+
+    #[inline]
+    pub fn insert_flags(&mut self, flags: PacketFlags) {
+        self.flags.insert(flags);
+    }
+
+    #[inline]
+    pub fn remove_flags(&mut self, flags: PacketFlags) {
+        self.flags.remove(flags);
+    }
+
+    #[inline]
+    pub fn discard(&self) -> bool {
+        self.flags.contains(PacketFlags::DISCARD)
+    }
+
+    #[inline]
+    pub fn set_discard(&mut self, discard: bool) {
+        self.flags.set(PacketFlags::DISCARD, discard);
+    }
+
+    #[inline]
+    pub fn forwarded(&self) -> bool {
+        self.flags.contains(PacketFlags::FORWARDED)
+    }
+
+    #[inline]
+    pub fn repair(&self) -> bool {
+        self.flags.contains(PacketFlags::REPAIR)
+    }
+
+    #[inline]
+    pub fn is_simple_vote_tx(&self) -> bool {
+        self.flags.contains(PacketFlags::SIMPLE_VOTE_TX)
+    }
+
+    #[inline]
+    pub fn is_from_staked_node(&self) -> bool {
+        self.flags.contains(PacketFlags::FROM_STAKED_NODE)
+    }
+
+    #[inline]
+    pub fn set_from_staked_node(&mut self, from_staked_node: bool) {
+        self.flags
+            .set(PacketFlags::FROM_STAKED_NODE, from_staked_node);
+    }
+
+    #[inline]
+    pub fn remote_pubkey(&self) -> Option<Pubkey> {
+        self.remote_pubkey
+    }
+
+    #[inline]
+    pub fn set_remote_pubkey(&mut self, remote_pubkey: Option<Pubkey>) {
+        self.remote_pubkey = remote_pubkey;
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn copy_from_slice(&mut self, slice: &[u8]) {
         self.buffer = Bytes::from(slice.to_vec());
+        self.size = slice.len();
     }
 
     #[inline]
@@ -208,7 +351,7 @@ impl BytesPacket {
     #[inline]
     pub fn set_buffer(&mut self, buffer: impl Into<Bytes>) {
         let buffer = buffer.into();
-        self.meta.size = buffer.len();
+        self.size = buffer.len();
         self.buffer = buffer;
     }
 }
@@ -381,7 +524,12 @@ pub enum PacketRef<'a> {
 
 impl PartialEq for PacketRef<'_> {
     fn eq(&self, other: &PacketRef<'_>) -> bool {
-        self.meta().eq(other.meta()) && self.data(..).eq(&other.data(..))
+        self.size() == other.size()
+            && self.addr() == other.addr()
+            && self.port() == other.port()
+            && self.flags() == other.flags()
+            && self.remote_pubkey() == other.remote_pubkey()
+            && self.data(..).eq(&other.data(..))
     }
 }
 
@@ -420,11 +568,68 @@ impl<'a> PacketRef<'a> {
         }
     }
 
-    #[inline]
-    pub fn meta(&self) -> &Meta {
+    pub fn size(&self) -> usize {
         match self {
-            Self::Packet(packet) => packet.meta(),
-            Self::Bytes(packet) => packet.meta(),
+            Self::Packet(packet) => packet.meta().size,
+            Self::Bytes(packet) => packet.size(),
+        }
+    }
+
+    pub fn addr(&self) -> Option<IpAddr> {
+        match self {
+            Self::Packet(packet) => {
+                let addr = packet.meta().addr;
+                (!addr.is_unspecified()).then_some(addr)
+            }
+            Self::Bytes(packet) => packet.addr(),
+        }
+    }
+
+    pub fn port(&self) -> Option<u16> {
+        match self {
+            Self::Packet(packet) => {
+                let port = packet.meta().port;
+                (port != 0).then_some(port)
+            }
+            Self::Bytes(packet) => packet.port(),
+        }
+    }
+
+    pub fn socket_addr(&self) -> Option<SocketAddr> {
+        Some(SocketAddr::new(self.addr()?, self.port()?))
+    }
+
+    pub fn flags(&self) -> PacketFlags {
+        match self {
+            Self::Packet(packet) => PacketFlags::from_bits_retain(packet.meta().flags.bits()),
+            Self::Bytes(packet) => packet.flags(),
+        }
+    }
+
+    pub fn discard(&self) -> bool {
+        self.flags().contains(PacketFlags::DISCARD)
+    }
+
+    pub fn forwarded(&self) -> bool {
+        self.flags().contains(PacketFlags::FORWARDED)
+    }
+
+    pub fn repair(&self) -> bool {
+        self.flags().contains(PacketFlags::REPAIR)
+    }
+
+    pub fn is_simple_vote_tx(&self) -> bool {
+        self.flags().contains(PacketFlags::SIMPLE_VOTE_TX)
+    }
+
+    pub fn is_from_staked_node(&self) -> bool {
+        self.flags().contains(PacketFlags::FROM_STAKED_NODE)
+    }
+
+    pub fn remote_pubkey(&self) -> Option<Pubkey> {
+        match self {
+            Self::Packet(packet) => packet.meta().remote_pubkey(),
+            Self::Bytes(packet) => packet.remote_pubkey(),
         }
     }
 
@@ -437,7 +642,13 @@ impl<'a> PacketRef<'a> {
                     .data(..)
                     .map(|data| Bytes::from(data.to_vec()))
                     .unwrap_or_else(Bytes::new);
-                BytesPacket::new(buffer, self.meta().clone())
+                let mut bytes_packet = match self.socket_addr() {
+                    Some(socket_addr) => BytesPacket::new_with_socket_addr(buffer, &socket_addr),
+                    None => BytesPacket::new(buffer),
+                };
+                bytes_packet.set_flags(self.flags());
+                bytes_packet.set_remote_pubkey(self.remote_pubkey());
+                bytes_packet
             }
             // Cheap clone of `Bytes`.
             // We call `to_owned()` twice, because `packet` is `&&BytesPacket`
@@ -457,7 +668,7 @@ pub enum PacketRefMut<'a> {
 
 impl<'a> PartialEq for PacketRefMut<'a> {
     fn eq(&self, other: &PacketRefMut<'a>) -> bool {
-        self.data(..).eq(&other.data(..)) && self.meta().eq(other.meta())
+        self.as_ref().eq(&other.as_ref())
     }
 }
 
@@ -484,19 +695,102 @@ impl PacketRefMut<'_> {
         }
     }
 
-    #[inline]
-    pub fn meta(&self) -> &Meta {
+    pub fn size(&self) -> usize {
+        self.as_ref().size()
+    }
+
+    pub fn addr(&self) -> Option<IpAddr> {
+        self.as_ref().addr()
+    }
+
+    pub fn port(&self) -> Option<u16> {
+        self.as_ref().port()
+    }
+
+    pub fn socket_addr(&self) -> Option<SocketAddr> {
+        self.as_ref().socket_addr()
+    }
+
+    pub fn flags(&self) -> PacketFlags {
+        self.as_ref().flags()
+    }
+
+    pub fn discard(&self) -> bool {
+        self.as_ref().discard()
+    }
+
+    pub fn forwarded(&self) -> bool {
+        self.as_ref().forwarded()
+    }
+
+    pub fn repair(&self) -> bool {
+        self.as_ref().repair()
+    }
+
+    pub fn is_simple_vote_tx(&self) -> bool {
+        self.as_ref().is_simple_vote_tx()
+    }
+
+    pub fn is_from_staked_node(&self) -> bool {
+        self.as_ref().is_from_staked_node()
+    }
+
+    pub fn remote_pubkey(&self) -> Option<Pubkey> {
+        self.as_ref().remote_pubkey()
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_size(&mut self, size: usize) {
         match self {
-            Self::Packet(packet) => packet.meta(),
-            Self::Bytes(packet) => packet.meta(),
+            Self::Packet(packet) => packet.meta_mut().size = size,
+            Self::Bytes(packet) => packet.set_size(size),
         }
     }
 
-    #[inline]
-    pub fn meta_mut(&mut self) -> &mut Meta {
+    pub fn set_socket_addr(&mut self, socket_addr: &SocketAddr) {
         match self {
-            Self::Packet(packet) => packet.meta_mut(),
-            Self::Bytes(packet) => packet.meta_mut(),
+            Self::Packet(packet) => packet.meta_mut().set_socket_addr(socket_addr),
+            Self::Bytes(packet) => packet.set_socket_addr(socket_addr),
+        }
+    }
+
+    pub fn set_flags(&mut self, flags: PacketFlags) {
+        match self {
+            Self::Packet(packet) => {
+                packet.meta_mut().flags = solana_packet::PacketFlags::from_bits_retain(flags.bits())
+            }
+            Self::Bytes(packet) => packet.set_flags(flags),
+        }
+    }
+
+    pub fn insert_flags(&mut self, flags: PacketFlags) {
+        self.set_flags(self.flags() | flags);
+    }
+
+    pub fn remove_flags(&mut self, flags: PacketFlags) {
+        let mut packet_flags = self.flags();
+        packet_flags.remove(flags);
+        self.set_flags(packet_flags);
+    }
+
+    pub fn set_discard(&mut self, discard: bool) {
+        let mut flags = self.flags();
+        flags.set(PacketFlags::DISCARD, discard);
+        self.set_flags(flags);
+    }
+
+    pub fn set_from_staked_node(&mut self, from_staked_node: bool) {
+        let mut flags = self.flags();
+        flags.set(PacketFlags::FROM_STAKED_NODE, from_staked_node);
+        self.set_flags(flags);
+    }
+
+    pub fn set_remote_pubkey(&mut self, remote_pubkey: Option<Pubkey>) {
+        match self {
+            Self::Packet(packet) => packet
+                .meta_mut()
+                .set_remote_pubkey(remote_pubkey.unwrap_or_default()),
+            Self::Bytes(packet) => packet.set_remote_pubkey(remote_pubkey),
         }
     }
 
@@ -854,9 +1148,7 @@ pub fn to_packet_batches<T: wincode::Serialize<Src = T>>(
                 .iter()
                 .map(|item| {
                     let buffer = Bytes::from(wincode::serialize(item).expect("serialize request"));
-                    let mut meta = Meta::default();
-                    meta.size = buffer.len();
-                    BytesPacket::new(buffer, meta)
+                    BytesPacket::new(buffer)
                 })
                 .collect::<BytesPacketBatch>()
                 .into()
@@ -944,6 +1236,68 @@ mod tests {
         super::*, solana_hash::Hash, solana_keypair::Keypair, solana_signer::Signer,
         solana_system_transaction::transfer,
     };
+
+    #[test]
+    fn test_bytes_packet_constructors() {
+        let buffer = Bytes::from_static(b"packet");
+        let packet = BytesPacket::new(buffer.clone());
+        assert_eq!(packet.buffer(), &buffer);
+        assert_eq!(packet.size(), buffer.len());
+        assert_eq!(packet.data(..), Some(buffer.as_ref()));
+        assert_eq!(packet.addr(), None);
+        assert_eq!(packet.port(), None);
+        assert_eq!(packet.socket_addr(), None);
+        assert_eq!(packet.flags(), PacketFlags::empty());
+        assert_eq!(packet.remote_pubkey(), None);
+
+        let socket_addr = "127.0.0.1:1234".parse::<SocketAddr>().unwrap();
+        let packet = BytesPacket::new_with_socket_addr(buffer.clone(), &socket_addr);
+        assert_eq!(packet.size(), buffer.len());
+        assert_eq!(packet.addr(), Some(socket_addr.ip()));
+        assert_eq!(packet.port(), Some(socket_addr.port()));
+        assert_eq!(packet.socket_addr(), Some(socket_addr));
+    }
+
+    #[test]
+    fn test_bytes_packet_metadata() {
+        let socket_addr = "[::1]:4321".parse::<SocketAddr>().unwrap();
+        let remote_pubkey = Pubkey::new_unique();
+        let mut packet = BytesPacket::new(Bytes::from_static(b"packet"));
+        packet.set_socket_addr(&socket_addr);
+        packet.insert_flags(PacketFlags::REPAIR | PacketFlags::FROM_STAKED_NODE);
+        packet.set_remote_pubkey(Some(remote_pubkey));
+
+        assert_eq!(packet.socket_addr(), Some(socket_addr));
+        assert!(packet.repair());
+        assert!(packet.is_from_staked_node());
+        assert_eq!(packet.remote_pubkey(), Some(remote_pubkey));
+
+        packet.set_buffer(Bytes::from_static(b"new packet"));
+        assert_eq!(packet.size(), 10);
+        assert_eq!(packet.data(..), Some(&b"new packet"[..]));
+    }
+
+    #[test]
+    fn test_packet_ref_metadata_bridge() {
+        let socket_addr = "127.0.0.1:1234".parse::<SocketAddr>().unwrap();
+        let mut packet = Packet::default();
+        packet.meta_mut().set_socket_addr(&socket_addr);
+        packet.meta_mut().flags = LegacyPacketFlags::REPAIR;
+
+        let mut packet = PacketRefMut::from(&mut packet);
+        assert_eq!(packet.socket_addr(), Some(socket_addr));
+        assert_eq!(packet.flags(), PacketFlags::REPAIR);
+        packet.insert_flags(PacketFlags::DISCARD);
+        assert!(packet.discard());
+
+        let PacketRefMut::Packet(packet) = packet else {
+            unreachable!();
+        };
+        assert_eq!(
+            packet.meta().flags,
+            LegacyPacketFlags::REPAIR | LegacyPacketFlags::DISCARD
+        );
+    }
 
     #[test]
     fn test_to_packet_batches() {

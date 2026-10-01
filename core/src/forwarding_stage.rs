@@ -14,7 +14,6 @@ use {
     solana_keypair::Keypair,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
-    solana_packet as packet,
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -296,12 +295,11 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         let sanitize_config = sanitize_config();
         for packet in packet_batch
             .iter()
-            .filter(|p| initial_packet_meta_filter(p.meta()))
+            .filter(|packet| initial_packet_filter(*packet))
         {
             let Some(packet_data) = packet.data(..) else {
                 unreachable!(
-                    "packet.meta().discard() was already checked. If not discarded, packet MUST \
-                     have data"
+                    "packet.discard() was already checked. If not discarded, packet MUST have data"
                 );
             };
 
@@ -320,7 +318,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                         RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                             transaction,
                             MessageHash::Compute,
-                            Some(packet.meta().is_simple_vote_tx()),
+                            Some(packet.is_simple_vote_tx()),
                         )
                         .map_err(|_| ())
                     })
@@ -345,9 +343,9 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
                 let dropped_packet = self.packet_container.pop_min().expect("not empty");
                 self.metrics.votes_dropped_on_capacity +=
-                    usize::from(dropped_packet.meta().is_simple_vote_tx());
+                    usize::from(dropped_packet.is_simple_vote_tx());
                 self.metrics.non_votes_dropped_on_capacity +=
-                    usize::from(!dropped_packet.meta().is_simple_vote_tx());
+                    usize::from(!dropped_packet.is_simple_vote_tx());
             }
 
             self.packet_container
@@ -379,19 +377,19 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
             // If it exceeds our data-budget, drop.
             if self
                 .data_budget
-                .consume_tokens(packet.meta().size as u64)
+                .consume_tokens(packet.size() as u64)
                 .is_err()
             {
                 self.metrics.votes_dropped_on_data_budget +=
-                    usize::from(packet.meta().is_simple_vote_tx());
+                    usize::from(packet.is_simple_vote_tx());
                 self.metrics.non_votes_dropped_on_data_budget +=
-                    usize::from(!packet.meta().is_simple_vote_tx());
+                    usize::from(!packet.is_simple_vote_tx());
                 continue;
             }
 
             let packet_data_vec = packet.data(..).expect("packet has data").to_vec();
 
-            if packet.meta().is_simple_vote_tx() {
+            if packet.is_simple_vote_tx() {
                 vote_batch.push(packet_data_vec);
                 send_batch_if_full(
                     &mut vote_batch,
@@ -779,8 +777,8 @@ impl Default for ForwardingStageMetrics {
     }
 }
 
-fn initial_packet_meta_filter(meta: &packet::Meta) -> bool {
-    !meta.discard() && !meta.forwarded() && meta.is_from_staked_node()
+fn initial_packet_filter(packet: solana_perf::packet::PacketRef<'_>) -> bool {
+    !packet.discard() && !packet.forwarded() && packet.is_from_staked_node()
 }
 
 #[cfg(test)]
@@ -788,10 +786,9 @@ mod tests {
     use {
         super::*,
         crossbeam_channel::bounded,
-        packet::PacketFlags,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
+        solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PacketFlags},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
         solana_system_transaction as system_transaction,
@@ -825,41 +822,34 @@ mod tests {
         }
     }
 
-    fn meta_with_flags(packet_flags: PacketFlags) -> packet::Meta {
-        let mut meta = packet::Meta::default();
-        meta.flags = packet_flags;
-        meta
-    }
-
-    fn simple_transfer_with_flags(packet_flags: PacketFlags) -> Packet {
+    fn simple_transfer_with_flags(packet_flags: PacketFlags) -> BytesPacket {
         let transaction = system_transaction::transfer(
             &Keypair::new(),
             &Pubkey::new_unique(),
             1,
             Hash::default(),
         );
-        let mut packet = Packet::from_data(None, &transaction).unwrap();
-        packet.meta_mut().flags = packet_flags;
+        let mut packet = BytesPacket::from_data(&transaction).unwrap();
+        packet.set_flags(packet_flags);
         packet
+    }
+
+    fn initial_packet_filter_with_flags(packet_flags: PacketFlags) -> bool {
+        let packet = simple_transfer_with_flags(packet_flags);
+        initial_packet_filter((&packet).into())
     }
 
     #[test]
     fn test_initial_packet_meta_filter() {
-        assert!(!initial_packet_meta_filter(&meta_with_flags(
-            PacketFlags::empty()
-        )));
-        assert!(initial_packet_meta_filter(&meta_with_flags(
+        assert!(!initial_packet_filter_with_flags(PacketFlags::empty()));
+        assert!(initial_packet_filter_with_flags(
             PacketFlags::FROM_STAKED_NODE
-        )));
-        assert!(!initial_packet_meta_filter(&meta_with_flags(
-            PacketFlags::DISCARD
-        )));
-        assert!(!initial_packet_meta_filter(&meta_with_flags(
-            PacketFlags::FORWARDED
-        )));
-        assert!(!initial_packet_meta_filter(&meta_with_flags(
+        ));
+        assert!(!initial_packet_filter_with_flags(PacketFlags::DISCARD));
+        assert!(!initial_packet_filter_with_flags(PacketFlags::FORWARDED));
+        assert!(!initial_packet_filter_with_flags(
             PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD
-        )));
+        ));
     }
 
     #[test]
@@ -881,13 +871,13 @@ mod tests {
 
         // Send packet batches.
         let non_vote_packets =
-            BankingPacketBatch::new(PacketBatch::from(RecycledPacketBatch::new(vec![
+            BankingPacketBatch::new(PacketBatch::from(BytesPacketBatch::from(vec![
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
             ])));
         let vote_packets =
-            BankingPacketBatch::new(PacketBatch::from(RecycledPacketBatch::new(vec![
+            BankingPacketBatch::new(PacketBatch::from(BytesPacketBatch::from(vec![
                 simple_transfer_with_flags(
                     PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE,
                 ),

@@ -9404,6 +9404,7 @@ dependencies = [
  "assert_matches",
  "bencher",
  "bincode",
+ "bitflags 2.13.2",
  "bytes",
  "caps",
  "libc",

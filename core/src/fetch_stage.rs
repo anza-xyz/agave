@@ -4,8 +4,7 @@ use {
     crate::result::{Error, Result},
     crossbeam_channel::{RecvTimeoutError, TrySendError, unbounded},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
-    solana_packet::PacketFlags,
-    solana_perf::packet::{PacketBatch, PacketRefMut},
+    solana_perf::packet::{PacketBatch, PacketFlags, PacketRefMut},
     solana_poh::poh_recorder::PohRecorder,
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -124,7 +123,7 @@ impl FetchStage {
         stats: &mut ForwardingStats,
     ) -> Result<()> {
         let mark_forwarded = |mut packet: PacketRefMut| {
-            packet.meta_mut().flags |= PacketFlags::FORWARDED;
+            packet.insert_flags(PacketFlags::FORWARDED);
         };
 
         let mut packet_batch = recvr.recv()?;

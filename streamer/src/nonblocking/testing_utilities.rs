@@ -249,7 +249,7 @@ pub async fn check_multiple_streams(
     }
     for batch in all_packets {
         for p in batch.iter() {
-            assert_eq!(p.meta().size, 1);
+            assert_eq!(p.size(), 1);
         }
     }
     assert_eq!(total_packets, num_expected_packets);

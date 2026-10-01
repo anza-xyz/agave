@@ -242,7 +242,7 @@ async fn test_basic_transactions_sending() {
         for p in packets.iter() {
             let packet_id = p.data(0).expect("Data should not be lost by server.");
             received_data.push(*packet_id);
-            assert_eq!(p.meta().size, 1);
+            assert_eq!(p.size(), 1);
         }
     }
 
@@ -273,7 +273,7 @@ async fn count_received_packets_for(
         if let Ok(packets) = receiver.try_recv() {
             num_packets_received += packets.len();
             for p in packets.iter() {
-                assert_eq!(p.meta().size, expected_transaction_size);
+                assert_eq!(p.size(), expected_transaction_size);
             }
         } else {
             sleep(Duration::from_millis(100)).await;
@@ -982,7 +982,7 @@ async fn test_client_builder() {
 
         actual_num_packets += packets.len();
         for p in packets.iter() {
-            assert_eq!(p.meta().size, 1);
+            assert_eq!(p.size(), 1);
         }
     }
 

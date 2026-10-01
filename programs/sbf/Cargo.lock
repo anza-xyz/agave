@@ -7476,6 +7476,7 @@ dependencies = [
  "ahash 0.8.12",
  "arc-swap",
  "bincode",
+ "bitflags 2.13.2",
  "bytes",
  "caps",
  "libc",

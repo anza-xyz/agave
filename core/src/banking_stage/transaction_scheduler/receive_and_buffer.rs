@@ -556,8 +556,8 @@ mod tests {
             AccountMeta, AddressLookupTableAccount, Instruction, Message, VersionedMessage, v0,
         },
         solana_nonce::{self as nonce, state::DurableNonce},
-        solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{BytesPacket, Packet, PacketBatch, RecycledPacketBatch},
+        solana_packet::PACKET_DATA_SIZE,
+        solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_sdk_ids::system_program,
@@ -904,7 +904,6 @@ mod tests {
         Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
-            .meta_mut()
             .set_discard(true);
         sender.send(packet_batch).unwrap();
 
@@ -950,8 +949,8 @@ mod tests {
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
-        let packet_batch = Arc::new(PacketBatch::from(RecycledPacketBatch::new(vec![
-            Packet::new([1u8; PACKET_DATA_SIZE], Meta::default()),
+        let packet_batch = Arc::new(PacketBatch::from(BytesPacketBatch::from(vec![
+            BytesPacket::from_bytes(None, vec![1u8; PACKET_DATA_SIZE]),
         ])));
         sender.send(packet_batch).unwrap();
 
@@ -1205,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn test_receive_and_buffer_pinned_packet() {
+    fn test_receive_and_buffer_bytes_packet() {
         let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
@@ -1217,9 +1216,9 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet = Packet::from_data(None, transaction).unwrap();
+        let packet = BytesPacket::from_data(transaction).unwrap();
         sender
-            .send(Arc::new(PacketBatch::from(RecycledPacketBatch::new(vec![
+            .send(Arc::new(PacketBatch::from(BytesPacketBatch::from(vec![
                 packet,
             ]))))
             .unwrap();

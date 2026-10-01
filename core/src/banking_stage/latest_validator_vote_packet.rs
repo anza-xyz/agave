@@ -102,7 +102,7 @@ impl LatestValidatorVote {
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
-        if !packet.meta().is_simple_vote_tx() {
+        if !packet.is_simple_vote_tx() {
             return Err(DeserializedPacketError::VoteTransaction);
         }
 
@@ -160,8 +160,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_packet::PacketFlags,
-        solana_perf::packet::{BytesPacket, PacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch, PacketFlags},
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_signer::Signer,
         solana_system_transaction::transfer,
@@ -192,10 +191,7 @@ mod tests {
             None,
         ))
         .unwrap();
-        tower_sync
-            .meta_mut()
-            .flags
-            .set(PacketFlags::SIMPLE_VOTE_TX, true);
+        tower_sync.insert_flags(PacketFlags::SIMPLE_VOTE_TX);
         let mut tower_sync_switch = BytesPacket::from_data(new_tower_sync_transaction(
             TowerSync::from(vec![(0, 3), (1, 2), (3, 1)]),
             blockhash,
@@ -205,10 +201,7 @@ mod tests {
             Some(switch_proof),
         ))
         .unwrap();
-        tower_sync_switch
-            .meta_mut()
-            .flags
-            .set(PacketFlags::SIMPLE_VOTE_TX, true);
+        tower_sync_switch.insert_flags(PacketFlags::SIMPLE_VOTE_TX);
         let random_transaction = BytesPacket::from_data(transfer(
             &keypairs.node_keypair,
             &Pubkey::new_unique(),

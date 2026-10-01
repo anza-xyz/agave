@@ -5,7 +5,7 @@ use {
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_packet::{Meta, PACKET_DATA_SIZE},
+    solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::BytesPacket,
     std::net::SocketAddr,
 };
@@ -38,10 +38,7 @@ pub fn repair_response_packet_from_bytes(
     let mut buffer = BytesMut::with_capacity(size);
     buffer.put_slice(bytes);
     buffer.put_u32_le(nonce);
-    let mut meta = Meta::default();
-    meta.size = size;
-    meta.set_socket_addr(dest);
-    Some(BytesPacket::new(buffer.freeze(), meta))
+    Some(BytesPacket::new_with_socket_addr(buffer.freeze(), dest))
 }
 
 #[cfg(test)]
@@ -53,7 +50,7 @@ mod test {
             shred::Shredder,
             sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
         },
-        solana_packet::PacketFlags,
+        solana_perf::packet::PacketFlags,
         solana_signer::Signer,
         std::{
             collections::HashMap,
@@ -76,7 +73,7 @@ mod test {
             nonce,
         )
         .unwrap();
-        packet.meta_mut().flags |= PacketFlags::REPAIR;
+        packet.insert_flags(PacketFlags::REPAIR);
 
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
         assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));

@@ -116,7 +116,7 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
                 .recv()
                 .unwrap()
                 .iter()
-                .filter(|packet| !packet.meta().discard())
+                .filter(|packet| !packet.discard())
                 .count();
         }
         trace!("received: {verified}");
@@ -156,7 +156,7 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
         batch.iter_mut().for_each(|mut p| {
             let throw = die.sample(&mut rng);
             if throw < discard_factor {
-                p.meta_mut().set_discard(true);
+                p.set_discard(true);
                 c += 1;
             }
         })

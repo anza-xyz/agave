@@ -51,7 +51,7 @@ pub fn get_shred_mut(buffer: &mut [u8]) -> Option<&mut [u8]> {
 pub fn get_shred_and_repair_nonce(packet: PacketRef<'_>) -> Option<(&[u8], Option<Nonce>)> {
     let data = packet.data(..)?;
     let shred = data.get(..get_shred_size(data)?)?;
-    if !packet.meta().repair() {
+    if !packet.repair() {
         return Some((shred, None));
     }
     let offset = data.len().checked_sub(4)?;
@@ -397,6 +397,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         rand::Rng,
+        solana_packet::PacketFlags as LegacyPacketFlags,
         solana_perf::packet::PacketFlags,
         test_case::test_matrix,
     };
@@ -453,13 +454,13 @@ mod tests {
 
                 let packet = &mut shred.payload().to_packet(nonce);
                 if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
+                    packet.meta_mut().flags |= LegacyPacketFlags::REPAIR;
                 }
                 resign_packet(&mut packet.into(), &keypair).unwrap();
 
                 let packet = &mut shred.payload().to_bytes_packet(nonce);
                 if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
+                    packet.insert_flags(PacketFlags::REPAIR);
                 }
                 resign_packet(&mut packet.as_mut(), &keypair).unwrap();
             } else {
@@ -470,7 +471,7 @@ mod tests {
 
                 let packet = &mut shred.payload().to_packet(nonce);
                 if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
+                    packet.meta_mut().flags |= LegacyPacketFlags::REPAIR;
                 }
                 assert_matches!(
                     resign_packet(&mut packet.into(), &keypair),
@@ -479,7 +480,7 @@ mod tests {
 
                 let packet = &mut shred.payload().to_bytes_packet(nonce);
                 if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
+                    packet.insert_flags(PacketFlags::REPAIR);
                 }
                 assert_matches!(
                     resign_packet(&mut packet.as_mut(), &keypair),
@@ -516,7 +517,7 @@ mod tests {
             let nonce = repaired.then(|| rng.random::<Nonce>());
             let mut packet = shred.payload().to_packet(nonce);
             if repaired {
-                packet.meta_mut().flags |= PacketFlags::REPAIR;
+                packet.meta_mut().flags |= LegacyPacketFlags::REPAIR;
             }
             let packet = PacketRef::Packet(&packet);
             assert_eq!(

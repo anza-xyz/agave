@@ -19,7 +19,7 @@ pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 #[must_use]
 fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
     // If this packet was already marked as discard, drop it
-    if packet.meta().discard() {
+    if packet.discard() {
         return false;
     }
 
@@ -52,7 +52,7 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
     };
 
     if is_simple_vote_tx {
-        packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
+        packet.insert_flags(PacketFlags::SIMPLE_VOTE_TX);
     }
 
     verified
@@ -65,7 +65,7 @@ pub fn count_packets_in_batches(batches: &[PacketBatch]) -> usize {
 pub fn count_valid_packets<'a>(batches: impl IntoIterator<Item = &'a PacketBatch>) -> usize {
     batches
         .into_iter()
-        .map(|batch| batch.into_iter().filter(|p| !p.meta().discard()).count())
+        .map(|batch| batch.into_iter().filter(|p| !p.discard()).count())
         .sum()
 }
 
@@ -110,8 +110,8 @@ pub fn ed25519_verify(
     debug!("CPU ECDSA for {packet_count}");
     thread_pool.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
-            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
-                packet.meta_mut().set_discard(true);
+            if !packet.discard() && !verify_packet(&mut packet, reject_non_vote) {
+                packet.set_discard(true);
             }
         });
     });
@@ -119,8 +119,8 @@ pub fn ed25519_verify(
 
 pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool) {
     for mut packet in batch.iter_mut() {
-        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
-            packet.meta_mut().set_discard(true);
+        if !packet.discard() && !verify_packet(&mut packet, reject_non_vote) {
+            packet.set_discard(true);
         }
     }
 }
@@ -255,10 +255,10 @@ mod tests {
 
         assert!(!verify_packet(&mut packet.as_mut(), false));
 
-        packet.meta_mut().set_discard(false);
+        packet.set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
         ed25519_verify(&mut batches);
-        assert!(batches[0].get(0).unwrap().meta().discard());
+        assert!(batches[0].get(0).unwrap().discard());
     }
 
     #[test]
@@ -286,10 +286,10 @@ mod tests {
 
         assert!(!verify_packet(&mut packet.as_mut(), false));
 
-        packet.meta_mut().set_discard(false);
+        packet.set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
         ed25519_verify(&mut batches);
-        assert!(batches[0].get(0).unwrap().meta().discard());
+        assert!(batches[0].get(0).unwrap().discard());
     }
 
     #[test]
@@ -427,7 +427,7 @@ mod tests {
             batches
                 .iter()
                 .flat_map(|batch| batch.iter())
-                .all(|p| p.meta().discard() == should_discard)
+                .all(|p| p.discard() == should_discard)
         );
     }
 
@@ -452,7 +452,7 @@ mod tests {
             batches
                 .iter()
                 .flat_map(|batch| batch.iter())
-                .all(|p| p.meta().discard())
+                .all(|p| p.discard())
         );
     }
 
@@ -523,9 +523,9 @@ mod tests {
                 .zip(ref_vec.into_iter().flatten())
                 .all(|(p, discard)| {
                     if discard == 0 {
-                        p.meta().discard()
+                        p.discard()
                     } else {
-                        !p.meta().discard()
+                        !p.discard()
                     }
                 })
         );
@@ -578,7 +578,7 @@ mod tests {
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
-            assert!(!packet.meta().is_simple_vote_tx());
+            assert!(!packet.is_simple_vote_tx());
         }
 
         // multiple mixed tx is not

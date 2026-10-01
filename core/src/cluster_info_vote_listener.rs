@@ -616,7 +616,7 @@ impl ClusterInfoVoteListener {
             .zip(packet_batches)
             .filter(|(_, packet_batch)| {
                 assert_eq!(packet_batch.len(), 1);
-                !packet_batch.get(0).unwrap().meta().discard()
+                !packet_batch.get(0).unwrap().discard()
             })
             .filter_map(|(tx, packet_batch)| {
                 let (vote_account_key, vote, ..) = vote_parser::parse_vote_transaction(&tx)?;

@@ -130,15 +130,15 @@ pub fn dedup_packets_and_count_discards<const K: usize>(
         .iter_mut()
         .flat_map(|batch| batch.iter_mut())
         .map(|mut packet| {
-            if !packet.meta().discard()
+            if !packet.discard()
                 && packet
                     .data(..)
                     .map(|data| deduper.dedup(data))
                     .unwrap_or(true)
             {
-                packet.meta_mut().set_discard(true);
+                packet.set_discard(true);
             }
-            u64::from(packet.meta().discard())
+            u64::from(packet.discard())
         })
         .sum()
 }

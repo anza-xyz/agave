@@ -209,7 +209,7 @@ fn recv_loop<P: SocketProvider>(
                     }
                     packet_batch
                         .iter_mut()
-                        .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
+                        .for_each(|p| p.set_from_staked_node(is_staked_service));
                     let batch = PacketBatch::from(packet_batch);
                     match packet_batch_sender.try_send(batch) {
                         Ok(_) => {}
@@ -387,7 +387,10 @@ impl StreamerSendStats {
     }
 
     fn record(&mut self, pkt: PacketRef) {
-        let ent = self.host_map.entry(pkt.meta().addr).or_default();
+        let Some(addr) = pkt.addr() else {
+            return;
+        };
+        let ent = self.host_map.entry(addr).or_default();
         ent.count += 1;
         ent.bytes += pkt.data(..).map(<[u8]>::len).unwrap_or_default() as u64;
     }
@@ -434,7 +437,7 @@ pub fn filter_packets_by_socket_addr_space<'a>(
     socket_addr_space: &'a SocketAddrSpace,
 ) -> impl Iterator<Item = (&'a [u8], SocketAddr)> + 'a {
     packets.filter_map(move |pkt| {
-        let addr = pkt.meta().socket_addr();
+        let addr = pkt.socket_addr()?;
         let data = pkt.data(..)?;
         socket_addr_space.check(&addr).then_some((data, addr))
     })

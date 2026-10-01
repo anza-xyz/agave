@@ -370,7 +370,7 @@ mod tests {
 
             let packet = packet_batch.iter().next().unwrap();
             let (response, response_nonce): (BlockIdRepairResponse, Nonce) =
-                wincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
+                wincode::deserialize(packet.data(..packet.size()).unwrap()).unwrap();
 
             assert_eq!(response_nonce, nonce);
             match response {
@@ -430,7 +430,7 @@ mod tests {
 
         let packet = packet_batch.iter().next().unwrap();
         let (response, response_nonce): (BlockIdRepairResponse, Nonce) =
-            wincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
+            wincode::deserialize(packet.data(..packet.size()).unwrap()).unwrap();
 
         assert_eq!(response_nonce, nonce);
         match response {

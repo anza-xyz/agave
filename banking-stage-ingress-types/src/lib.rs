@@ -9,7 +9,7 @@ use {
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    solana_perf::packet::{BytesPacket, BytesPacketBatch, Meta, PACKET_DATA_SIZE, bytes::Bytes},
+    solana_perf::packet::{BytesPacket, BytesPacketBatch, PACKET_DATA_SIZE, bytes::Bytes},
     wincode::{SchemaWrite, config::DefaultConfig},
 };
 
@@ -23,9 +23,7 @@ where
 {
     let buffer = Bytes::from(wincode::serialize(item).expect("serialize request"));
     assert!(buffer.len() <= PACKET_DATA_SIZE);
-    let mut meta = Meta::default();
-    meta.size = buffer.len();
-    BytesPacket::new(buffer, meta)
+    BytesPacket::new(buffer)
 }
 
 #[cfg(feature = "dev-context-only-utils")]

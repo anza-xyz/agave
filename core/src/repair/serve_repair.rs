@@ -1095,7 +1095,9 @@ impl ServeRepair {
         let Ok(request) = deserialize_request::<RepairProtocol>(&remote_request) else {
             return Err(Error::from(RepairVerifyError::Malformed));
         };
-        let from_addr = remote_request.meta().socket_addr();
+        let Some(from_addr) = remote_request.socket_addr() else {
+            return Err(Error::from(RepairVerifyError::Malformed));
+        };
         if !ContactInfo::is_valid_address(&from_addr, socket_addr_space) {
             return Err(Error::from(RepairVerifyError::Malformed));
         }
@@ -1620,7 +1622,7 @@ impl ServeRepair {
                 continue;
             };
             let num_response_packets = rsp.len();
-            let num_response_bytes: usize = rsp.iter().map(|p| p.meta().size).sum();
+            let num_response_bytes: usize = rsp.iter().map(|p| p.size()).sum();
             // refund unused tokens if we can only serve the request partially
             let actually_used_cost = num_response_bytes * byte_cost_multiplier;
             debug_assert!(max_response_cost >= actually_used_cost);
@@ -1923,7 +1925,7 @@ impl ServeRepair {
     ) {
         let mut pending_pongs = Vec::default();
         for mut packet in packet_batch.iter_mut() {
-            if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
+            if packet.size() != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
                 continue;
             }
             if let Some(data) = packet.data(..)
@@ -1939,11 +1941,12 @@ impl ServeRepair {
                     stats.ping_err_verify_count += 1;
                     continue;
                 }
-                packet.meta_mut().set_discard(true);
+                packet.set_discard(true);
                 stats.ping_count += 1;
                 let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = wincode::serialize(&pong) {
-                    let from_addr = packet.meta().socket_addr();
+                if let Ok(pong) = wincode::serialize(&pong)
+                    && let Some(from_addr) = packet.socket_addr()
+                {
                     pending_pongs.push((pong, from_addr));
                 }
             }
@@ -2519,7 +2522,7 @@ mod tests {
         let rv: Vec<Shred> = rv
             .iter_mut()
             .map(|mut packet| {
-                packet.meta_mut().flags |= PacketFlags::REPAIR;
+                packet.insert_flags(PacketFlags::REPAIR);
                 let (shred, repair_nonce) =
                     shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
                 assert_eq!(repair_nonce.unwrap(), nonce);
@@ -2574,7 +2577,7 @@ mod tests {
         let rv: Vec<Shred> = rv
             .iter_mut()
             .map(|mut packet| {
-                packet.meta_mut().flags |= PacketFlags::REPAIR;
+                packet.insert_flags(PacketFlags::REPAIR);
                 let (shred, repair_nonce) =
                     shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
                 assert_eq!(repair_nonce.unwrap(), nonce);
@@ -2810,7 +2813,7 @@ mod tests {
         fn deserialize_ancestor_hashes_response(packet: PacketRef) -> AncestorHashesResponse {
             wincode::deserialize(
                 packet
-                    .data(..(packet.meta().size - SIZE_OF_NONCE))
+                    .data(..(packet.size() - SIZE_OF_NONCE))
                     .unwrap_or_default(),
             )
             .unwrap()

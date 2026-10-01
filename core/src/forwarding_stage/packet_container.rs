@@ -59,11 +59,11 @@ impl PacketContainerEntry {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_packet::PacketFlags};
+    use {super::*, solana_perf::packet::PacketFlags};
 
     fn simple_packet_with_flags(packet_flags: PacketFlags) -> BytesPacket {
         let mut packet = BytesPacket::empty();
-        packet.meta_mut().flags = packet_flags;
+        packet.set_flags(packet_flags);
         packet
     }
 
@@ -87,11 +87,11 @@ mod tests {
         container.insert(simple_packet_with_flags(PacketFlags::empty()), 1);
         container.insert(simple_packet_with_flags(PacketFlags::all()), 2);
         assert_eq!(
-            container.pop_min().expect("not empty").meta().flags,
+            container.pop_min().expect("not empty").flags(),
             PacketFlags::empty()
         );
         assert_eq!(
-            container.pop_min().expect("not empty").meta().flags,
+            container.pop_min().expect("not empty").flags(),
             PacketFlags::all()
         );
         assert!(container.pop_min().is_none());
@@ -104,11 +104,11 @@ mod tests {
         container.insert(simple_packet_with_flags(PacketFlags::empty()), 1);
         container.insert(simple_packet_with_flags(PacketFlags::all()), 2);
         assert_eq!(
-            container.pop_max().expect("not empty").meta().flags,
+            container.pop_max().expect("not empty").flags(),
             PacketFlags::all()
         );
         assert_eq!(
-            container.pop_max().expect("not empty").meta().flags,
+            container.pop_max().expect("not empty").flags(),
             PacketFlags::empty()
         );
         assert!(container.pop_max().is_none());

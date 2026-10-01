@@ -16,7 +16,6 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_net_utils::{quic_socket::QuicSocket, token_bucket::TokenBucket},
-    solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
     solana_tls_utils::get_remote_pubkey,
@@ -107,7 +106,10 @@ const MAX_EXPECTED_TRANSACTION_CHUNKS: usize = 8;
 // the Packet and then when copying the Packet into a PacketBatch)
 #[derive(Clone)]
 struct PacketAccumulator {
-    pub meta: Meta,
+    size: usize,
+    remote_address: Option<SocketAddr>,
+    from_staked_node: bool,
+    remote_pubkey: Option<Pubkey>,
     // The capacity here should match or exceed the capacity of the chunks array used
     // by handle_connection().
     pub chunks: SmallVec<[Bytes; MAX_EXPECTED_TRANSACTION_CHUNKS]>,
@@ -119,9 +121,16 @@ struct PacketAccumulator {
 }
 
 impl PacketAccumulator {
-    fn new(meta: Meta) -> Self {
+    fn new(
+        remote_address: Option<SocketAddr>,
+        from_staked_node: bool,
+        remote_pubkey: Option<Pubkey>,
+    ) -> Self {
         Self {
-            meta,
+            size: 0,
+            remote_address,
+            from_staked_node,
+            remote_pubkey,
             chunks: SmallVec::default(),
             coalesced: None,
             start_time: Instant::now(),
@@ -667,14 +676,11 @@ async fn handle_connection<Q, C>(
         stats.active_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 
-        let mut meta = Meta::default();
-        meta.set_socket_addr(&remote_address);
-        meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
-        if let Some(pubkey) = context.remote_pubkey() {
-            meta.set_remote_pubkey(pubkey);
-        }
-
-        let mut accum = PacketAccumulator::new(meta);
+        let mut accum = PacketAccumulator::new(
+            Some(remote_address),
+            matches!(peer_type, ConnectionPeerType::Staked(_)),
+            context.remote_pubkey(),
+        );
         // Bytes values are small, so overall the array takes 256 bytes, and the "cost" of
         // overallocating a few bytes is negligible compared to the cost of having to do multiple
         // read_chunks() calls.
@@ -782,12 +788,12 @@ fn handle_chunks(
 ) -> Result<StreamState, ()> {
     let n_chunks = chunks.len();
     for chunk in chunks {
-        accum.meta.size += chunk.len();
-        if accum.meta.size > max_stream_data_bytes as usize {
+        accum.size += chunk.len();
+        if accum.size > max_stream_data_bytes as usize {
             // A peer can send multiple chunks that together exceed the
             // configured maximum data bytes receivable over one stream; reject the stream in that case.
             stats.invalid_stream_size.fetch_add(1, Ordering::Relaxed);
-            debug!("invalid stream size {}", accum.meta.size);
+            debug!("invalid stream size {}", accum.size);
             return Err(());
         }
         accum.push(chunk, max_stream_data_bytes as usize);
@@ -830,7 +836,7 @@ fn handle_chunks(
     }
 
     // done receiving chunks
-    let bytes_sent = accum.meta.size;
+    let bytes_sent = accum.size;
 
     // 86% of transactions/packets come in one chunk. In that case,
     // we can just move the chunk to the `Packet` and no copy is
@@ -838,20 +844,23 @@ fn handle_chunks(
     // 14% of them come in multiple chunks. In that case, we copy
     // them into one `Bytes` buffer. We make a copy once, with
     // intention to not do it again.
-    let packet = if accum.chunks.len() == 1 {
-        BytesPacket::new(
-            accum.chunks.pop().expect("expected one chunk"),
-            accum.meta.clone(),
-        )
+    let buffer = if accum.chunks.len() == 1 {
+        accum.chunks.pop().expect("expected one chunk")
     } else {
         let mut buf = BytesMut::with_capacity(bytes_sent);
         for chunk in &accum.chunks {
             buf.put_slice(chunk);
         }
-        BytesPacket::new(buf.freeze(), accum.meta.clone())
+        buf.freeze()
     };
+    let mut packet = match accum.remote_address {
+        Some(remote_address) => BytesPacket::new_with_socket_addr(buffer, &remote_address),
+        None => BytesPacket::new(buffer),
+    };
+    packet.set_from_staked_node(accum.from_staked_node);
+    packet.set_remote_pubkey(accum.remote_pubkey);
 
-    let packet_size = packet.meta().size;
+    let packet_size = packet.size();
     let total_latency = accum.start_time.elapsed();
     if total_latency > rtt.mul_f32(LATE_REASSEMBLY_THRESHOLD) {
         debug!("Stream reassembly dealyed {}", total_latency.as_millis());
@@ -1323,7 +1332,7 @@ pub mod test {
         }
         for batch in all_packets {
             for p in batch.iter() {
-                assert_eq!(p.meta().size, num_bytes);
+                assert_eq!(p.size(), num_bytes);
             }
         }
         assert_eq!(total_packets, num_expected_packets);
@@ -2208,7 +2217,7 @@ pub mod test {
     fn test_packets_at_or_above_chunk_capacity_metric() {
         let (sender, receiver) = bounded(1);
         let stats = StreamerStats::default();
-        let mut accum = PacketAccumulator::new(Meta::default());
+        let mut accum = PacketAccumulator::new(None, false, None);
         let chunks = (0..MAX_EXPECTED_TRANSACTION_CHUNKS)
             .map(|byte| Bytes::from(vec![byte as u8]))
             .collect::<Vec<_>>();
@@ -2256,11 +2265,11 @@ pub mod test {
         // `origin` represents shared datagram memory retained by chunk slices.
         let total_chunks = MAX_EXPECTED_TRANSACTION_CHUNKS + 1;
         let origin = Bytes::from((0..total_chunks as u8).collect::<Vec<u8>>());
-        let mut accum = PacketAccumulator::new(Meta::default());
+        let mut accum = PacketAccumulator::new(None, false, None);
 
         // Retain slices inline up to the expected chunk count.
         for i in 0..MAX_EXPECTED_TRANSACTION_CHUNKS {
-            accum.meta.size += 1;
+            accum.size += 1;
             accum.push(origin.slice(i..i + 1), origin.len());
         }
         assert_eq!(accum.chunks.len(), MAX_EXPECTED_TRANSACTION_CHUNKS);
@@ -2269,7 +2278,7 @@ pub mod test {
 
         // The next chunk triggers coalescing before `chunks` spills to the heap.
         let last = MAX_EXPECTED_TRANSACTION_CHUNKS;
-        accum.meta.size += 1;
+        accum.size += 1;
         accum.push(origin.slice(last..last + 1), origin.len());
         assert!(accum.chunks.is_empty());
         assert!(!accum.chunks.spilled());
@@ -2340,7 +2349,7 @@ pub mod test {
         let rtt = Duration::from_millis(50);
         let (sender, receiver) = bounded(1);
         let stats = StreamerStats::default();
-        let mut accum = PacketAccumulator::new(Meta::default());
+        let mut accum = PacketAccumulator::new(None, false, None);
 
         // One shared buffer stands in for datagram memory; chunks are slices of it.
         let payload = Bytes::from((0..total).map(|i| i as u8).collect::<Vec<_>>());
@@ -2436,7 +2445,7 @@ pub mod test {
         else {
             panic!("{shape}: expected a single-packet batch");
         };
-        assert_eq!(packet.meta().size, total, "{shape}");
+        assert_eq!(packet.size(), total, "{shape}");
         assert_eq!(
             packet.data(..).expect("packet data"),
             &payload[..],

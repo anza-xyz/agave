@@ -452,7 +452,7 @@ mod tests {
         drop(packet_s);
         loop {
             if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_secs(30)) {
-                valid_received += verifieds.iter().filter(|p| !p.meta().discard()).count();
+                valid_received += verifieds.iter().filter(|p| !p.discard()).count();
             } else {
                 break;
             }
@@ -506,7 +506,7 @@ mod tests {
 
         let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(verified_batch.len(), 1);
-        assert!(!verified_batch.get(0).unwrap().meta().discard());
+        assert!(!verified_batch.get(0).unwrap().discard());
         assert_eq!(
             verified_batch.get(0).unwrap().data(..).unwrap(),
             tx_v1_bytes
@@ -514,7 +514,7 @@ mod tests {
         // Receiving the sentinel proves that the preceding v1 packet was processed.
         let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(verified_batch.len(), 1);
-        assert!(!verified_batch.get(0).unwrap().meta().discard());
+        assert!(!verified_batch.get(0).unwrap().discard());
         assert_eq!(
             verified_batch.get(0).unwrap().data(..).unwrap(),
             sentinel_bytes

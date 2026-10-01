@@ -466,10 +466,7 @@ pub(crate) mod tests {
             None,
         );
         let mut packet = BytesPacket::from_data(vote_tx).unwrap();
-        packet
-            .meta_mut()
-            .flags
-            .set(PacketFlags::SIMPLE_VOTE_TX, true);
+        packet.insert_flags(PacketFlags::SIMPLE_VOTE_TX);
 
         packet
     }
@@ -502,10 +499,7 @@ pub(crate) mod tests {
             None,
         );
         let mut packet = BytesPacket::from_data(vote_tx).unwrap();
-        packet
-            .meta_mut()
-            .flags
-            .set(PacketFlags::SIMPLE_VOTE_TX, true);
+        packet.insert_flags(PacketFlags::SIMPLE_VOTE_TX);
 
         packet
     }

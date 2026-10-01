@@ -1667,7 +1667,7 @@ impl ClusterInfo {
             }
             check
         };
-        // Because pull-responses are sent back to packet.meta().socket_addr() of
+        // Because pull-responses are sent back to packet.socket_addr() of
         // incoming pull-requests, pings are also sent to request.from_addr (as
         // opposed to caller.gossip address).
         move |request| {
@@ -1774,7 +1774,7 @@ impl ClusterInfo {
                 Some((packet, num_values))
             })
             .take_while(|(packet, _)| {
-                if self.outbound_budget.take(packet.meta().size) {
+                if self.outbound_budget.take(packet.size()) {
                     true
                 } else {
                     self.stats.gossip_pull_request_no_budget.add_relaxed(1);
@@ -1782,7 +1782,7 @@ impl ClusterInfo {
                 }
             })
             .map(|(packet, num_values)| {
-                let num_bytes = packet.meta().size;
+                let num_bytes = packet.size();
                 packet_batch.push(packet);
                 (num_bytes, num_values)
             })
@@ -2163,10 +2163,12 @@ impl ClusterInfo {
                     return None;
                 }
             }
-            protocol.verify(sigverify_cache).then(|| {
-                stats.packets_received_verified_count.add_relaxed(1);
-                (packet.meta().socket_addr(), protocol)
-            })
+            if !protocol.verify(sigverify_cache) {
+                return None;
+            }
+            let addr = packet.socket_addr()?;
+            stats.packets_received_verified_count.add_relaxed(1);
+            Some((addr, protocol))
         }
         let stakes = epoch_specs
             .map(|es| es.current_epoch_staked_nodes())
@@ -2869,7 +2871,7 @@ mod tests {
             remote_nodes.into_iter(),
             pongs.into_iter()
         ) {
-            assert_eq!(packet.meta().socket_addr(), socket);
+            assert_eq!(packet.socket_addr(), Some(socket));
             let bytes = wincode::serialize(&pong).unwrap();
             match deserialize_protocol(packet.data(..).unwrap_or_default()).unwrap() {
                 Protocol::PongMessage(pong) => {

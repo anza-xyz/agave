@@ -12,7 +12,7 @@ use {
     },
 };
 use {
-    crate::packet::{BytesPacketBatch, Meta, PACKET_DATA_SIZE},
+    crate::packet::{BytesPacketBatch, PACKET_DATA_SIZE},
     bytes::BytesMut,
     solana_perf::packet::{BytesPacket, PACKETS_PER_BATCH},
     std::{io, net::UdpSocket},
@@ -77,10 +77,7 @@ pub(crate) fn recv_mmsg(
                 }
                 let mut buffer = pool.0.pop().expect("the receive buffer is still pooled");
                 buffer.truncate(nrecv);
-                let mut meta = Meta::default();
-                meta.size = nrecv;
-                meta.set_socket_addr(&from);
-                packets.push(BytesPacket::new(buffer.freeze(), meta));
+                packets.push(BytesPacket::new_with_socket_addr(buffer.freeze(), &from));
             }
         }
         i += 1;
@@ -207,12 +204,12 @@ pub(crate) fn recv_mmsg(
         let msg_len = hdr_ref.msg_len as usize;
         // SAFETY: `recvmmsg` wrote `msg_len` initialized bytes into the buffer.
         unsafe { buffer.set_len(msg_len) };
-        let mut meta = Meta::default();
-        meta.size = msg_len;
-        if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
-            meta.set_socket_addr(&addr);
-        }
-        packets.push(BytesPacket::new(buffer.freeze(), meta));
+        let buffer = buffer.freeze();
+        let packet = match cast_socket_addr(addr_ref, hdr_ref) {
+            Some(addr) => BytesPacket::new_with_socket_addr(buffer, &addr),
+            None => BytesPacket::new(buffer),
+        };
+        packets.push(packet);
     }
 
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
@@ -285,8 +282,8 @@ mod tests {
             let recv = recv_mmsg(&reader, &mut packets, &mut PacketBufferPool::new()).unwrap();
             assert_eq!(sent, recv);
             for packet in packets.iter() {
-                assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-                assert_eq!(packet.meta().socket_addr(), saddr);
+                assert_eq!(packet.size(), PACKET_DATA_SIZE);
+                assert_eq!(packet.socket_addr(), Some(saddr));
             }
         };
 
@@ -314,16 +311,16 @@ mod tests {
             let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
             assert_eq!(PACKETS_PER_BATCH, recv);
             for packet in packets.iter() {
-                assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-                assert_eq!(packet.meta().socket_addr(), saddr);
+                assert_eq!(packet.size(), PACKET_DATA_SIZE);
+                assert_eq!(packet.socket_addr(), Some(saddr));
             }
 
             packets.clear();
             let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
             assert_eq!(sent - PACKETS_PER_BATCH, recv);
             for packet in packets.iter() {
-                assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-                assert_eq!(packet.meta().socket_addr(), saddr);
+                assert_eq!(packet.size(), PACKET_DATA_SIZE);
+                assert_eq!(packet.socket_addr(), Some(saddr));
             }
         };
 
@@ -353,8 +350,8 @@ mod tests {
         let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter() {
-            assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(packet.meta().socket_addr(), sender_addr);
+            assert_eq!(packet.size(), PACKET_DATA_SIZE);
+            assert_eq!(packet.socket_addr(), Some(sender_addr));
         }
         reader.set_nonblocking(true).unwrap();
 
@@ -400,20 +397,20 @@ mod tests {
         let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
         assert_eq!(PACKETS_PER_BATCH, recv);
         for packet in packets.iter().take(sent1) {
-            assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(packet.meta().socket_addr(), sender1_addr);
+            assert_eq!(packet.size(), PACKET_DATA_SIZE);
+            assert_eq!(packet.socket_addr(), Some(sender1_addr));
         }
         for packet in packets.iter().skip(sent1) {
-            assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(packet.meta().socket_addr(), sender_addr);
+            assert_eq!(packet.size(), PACKET_DATA_SIZE);
+            assert_eq!(packet.socket_addr(), Some(sender_addr));
         }
 
         packets.clear();
         let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
         assert_eq!(sent1 + sent2 - PACKETS_PER_BATCH, recv);
         for packet in packets.iter() {
-            assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(packet.meta().socket_addr(), sender_addr);
+            assert_eq!(packet.size(), PACKET_DATA_SIZE);
+            assert_eq!(packet.socket_addr(), Some(sender_addr));
         }
     }
 

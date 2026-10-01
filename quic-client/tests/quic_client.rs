@@ -45,7 +45,7 @@ mod tests {
         }
         for batch in all_packets {
             for p in &batch {
-                assert_eq!(p.meta().size, num_bytes);
+                assert_eq!(p.size(), num_bytes);
             }
         }
         assert!(total_packets > 0);
@@ -159,7 +159,7 @@ mod tests {
         }
         for batch in all_packets {
             for p in &batch {
-                assert_eq!(p.meta().size, num_bytes);
+                assert_eq!(p.size(), num_bytes);
             }
         }
         assert!(total_packets > 0);

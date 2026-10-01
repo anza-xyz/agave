@@ -260,7 +260,7 @@ impl ShredFilterContext {
         let packet = packet.into();
         if self
             .cached_turbine_mode
-            .should_discard_packet(packet.meta().repair())
+            .should_discard_packet(packet.repair())
         {
             return true;
         }
@@ -610,7 +610,8 @@ mod tests {
         assert_matches::assert_matches,
         itertools::Itertools,
         solana_leader_schedule::SlotLeader,
-        solana_perf::packet::{Packet, PacketFlags},
+        solana_packet::PacketFlags,
+        solana_perf::packet::Packet,
         solana_runtime::{
             bank::Bank,
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},

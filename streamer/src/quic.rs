@@ -1010,7 +1010,7 @@ mod test {
             stream.write_all(&[9u8]).await.unwrap();
             stream.finish().unwrap();
             let packet_batch = wait_for_packet().await.unwrap();
-            let remote_pubkey = packet_batch.get(0).unwrap().meta().remote_pubkey().unwrap();
+            let remote_pubkey = packet_batch.get(0).unwrap().remote_pubkey().unwrap();
 
             // Ban the pubkey and ensure new connections are rejected.
             banlist.ban(remote_pubkey, Duration::from_secs(30));
@@ -1155,10 +1155,10 @@ mod test {
                         PacketBatch::Single(packet) => {
                             if *packet.data(0).unwrap() == 0u8 {
                                 debug!("Packet from stream with client 1");
-                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_1);
+                                assert_eq!(packet.remote_pubkey(), expected_client_pubkey_1);
                             } else if *packet.data(0).unwrap() == 1u8 {
                                 debug!("Packet from stream with client 2");
-                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_2);
+                                assert_eq!(packet.remote_pubkey(), expected_client_pubkey_2);
                             } else {
                                 panic!("Unexpected data in packet: {:?}", packet.data(0));
                             }

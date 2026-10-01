@@ -134,7 +134,7 @@ fn bench_sigverify_uneven(b: &mut Bencher) {
             };
             let mut packet = BytesPacket::from_data(&tx).expect("serialize request");
             if rand::rng().random_ratio((num_packets - NUM) as u32, num_packets as u32) {
-                packet.meta_mut().set_discard(true);
+                packet.set_discard(true);
             } else {
                 num_valid += 1;
             }

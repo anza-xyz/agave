@@ -548,7 +548,10 @@ impl BlockIdRepairService {
         };
 
         if let BlockIdRepairResponse::Ping { ping } = &response {
-            let addr = packet.meta().socket_addr();
+            let Some(addr) = packet.socket_addr() else {
+                state.response_stats.invalid_packets += 1;
+                return;
+            };
             Self::process_block_id_repair_ping_response(
                 my_pubkey,
                 addr,

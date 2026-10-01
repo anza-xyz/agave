@@ -1,7 +1,7 @@
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {
     crate::shred::Nonce,
-    solana_perf::packet::{BytesPacket, Meta, Packet, bytes::BufMut},
+    solana_perf::packet::{BytesPacket, Packet, bytes::BufMut},
 };
 use {
     bytes::{Bytes, BytesMut},
@@ -95,9 +95,7 @@ impl Payload {
         if let Some(nonce) = nonce {
             buffer.put_u32_le(nonce);
         }
-        let mut meta = Meta::default();
-        meta.size = buffer.len();
-        BytesPacket::new(buffer.freeze(), meta)
+        BytesPacket::new(buffer.freeze())
     }
 }
 
@@ -285,9 +283,9 @@ mod test {
         // Create a BytesPacket with a trailing nonce and mark it as REPAIR.
         let nonce: super::Nonce = 0x0A0B_0C0D;
         let mut bytes_packet = shred.payload().to_bytes_packet(Some(nonce));
-        bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
+        bytes_packet.insert_flags(PacketFlags::REPAIR);
         assert_eq!(
-            bytes_packet.meta().size,
+            bytes_packet.size(),
             shred.payload().len() + std::mem::size_of::<super::Nonce>()
         );
 

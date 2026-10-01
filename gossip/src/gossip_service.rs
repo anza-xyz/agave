@@ -418,7 +418,7 @@ struct GossipXdpSender(XdpSender);
 impl ResponseSender for GossipXdpSender {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = batch.iter().filter_map(|pkt| {
-            let addr = pkt.meta().socket_addr();
+            let addr = pkt.socket_addr()?;
             let data = pkt.data(..)?;
 
             // For XDP, we don't support IPv6 and no private or loopback IPv4 addresses.

@@ -6,7 +6,7 @@ use {
     agave_scheduler_bindings::{SharableTransactionRegion, TpuToPackMessage, tpu_message_flags},
     agave_scheduler_handshake::AgaveTpuToPackSession,
     rts_alloc::Allocator,
-    solana_packet::PacketFlags,
+    solana_perf::packet::PacketFlags,
     std::{
         net::IpAddr,
         ptr::NonNull,
@@ -112,7 +112,8 @@ fn handle_packet_batch(
         let message = unsafe {
             copy_packet_and_populate_message(
                 packet_bytes,
-                packet.meta(),
+                packet.flags(),
+                packet.addr(),
                 allocated_ptr,
                 allocated_ptr_offset_in_allocator,
             )
@@ -133,7 +134,8 @@ fn handle_packet_batch(
 /// - `allocated_ptr` must be valid for `packet_bytes.len()` bytes.
 unsafe fn copy_packet_and_populate_message(
     packet_bytes: &[u8],
-    packet_meta: &solana_packet::Meta,
+    packet_flags: PacketFlags,
+    packet_addr: Option<IpAddr>,
     allocated_ptr: NonNull<u8>,
     allocated_ptr_offset_in_allocator: usize,
 ) -> TpuToPackMessage {
@@ -155,11 +157,11 @@ unsafe fn copy_packet_and_populate_message(
         length: packet_bytes.len() as u32,
     };
 
-    // Translate flags from meta.
-    let tpu_message_flags = flags_from_meta(packet_meta.flags);
+    // Translate packet flags.
+    let tpu_message_flags = map_packet_flags(packet_flags);
 
     // Get the source address of the packet - convert to expected format.
-    let src_addr = map_src_addr(packet_meta.addr);
+    let src_addr = map_src_addr(packet_addr);
 
     TpuToPackMessage {
         transaction,
@@ -168,7 +170,7 @@ unsafe fn copy_packet_and_populate_message(
     }
 }
 
-fn flags_from_meta(flags: PacketFlags) -> u8 {
+fn map_packet_flags(flags: PacketFlags) -> u8 {
     let mut tpu_message_flags = 0;
 
     if flags.contains(PacketFlags::SIMPLE_VOTE_TX) {
@@ -184,10 +186,11 @@ fn flags_from_meta(flags: PacketFlags) -> u8 {
     tpu_message_flags
 }
 
-fn map_src_addr(addr: IpAddr) -> [u8; 16] {
+fn map_src_addr(addr: Option<IpAddr>) -> [u8; 16] {
     match addr {
-        IpAddr::V4(ipv4) => ipv4.to_ipv6_mapped().octets(),
-        IpAddr::V6(ipv6) => ipv6.octets(),
+        Some(IpAddr::V4(ipv4)) => ipv4.to_ipv6_mapped().octets(),
+        Some(IpAddr::V6(ipv6)) => ipv6.octets(),
+        None => [0; 16],
     }
 }
 
@@ -199,11 +202,6 @@ mod tests {
     fn test_copy_packet_and_populate_message() {
         let packet_bytes = vec![1, 2, 3, 4, 5];
         let src_ip = Ipv4Addr::new(192, 168, 1, 1);
-        let mut packet_meta = solana_packet::Meta::default();
-        packet_meta.size = packet_bytes.len();
-        packet_meta.addr = IpAddr::V4(src_ip);
-        packet_meta.port = 1;
-        packet_meta.flags = PacketFlags::all();
 
         // Buffer to simulate allocated memory
         let mut buffer = [0u8; 256];
@@ -212,7 +210,8 @@ mod tests {
         let tpu_to_pack_message = unsafe {
             copy_packet_and_populate_message(
                 packet_bytes.as_slice(),
-                &packet_meta,
+                PacketFlags::all(),
+                Some(IpAddr::V4(src_ip)),
                 NonNull::new(buffer.as_mut_ptr()).unwrap(),
                 DUMMY_OFFSET,
             )
@@ -237,25 +236,25 @@ mod tests {
     }
 
     #[test]
-    fn test_flags_from_meta() {
+    fn test_map_packet_flags() {
         assert_eq!(
-            flags_from_meta(PacketFlags::empty()),
+            map_packet_flags(PacketFlags::empty()),
             tpu_message_flags::NONE
         );
         assert_eq!(
-            flags_from_meta(PacketFlags::SIMPLE_VOTE_TX),
+            map_packet_flags(PacketFlags::SIMPLE_VOTE_TX),
             tpu_message_flags::IS_SIMPLE_VOTE
         );
         assert_eq!(
-            flags_from_meta(PacketFlags::FORWARDED),
+            map_packet_flags(PacketFlags::FORWARDED),
             tpu_message_flags::FORWARDED
         );
         assert_eq!(
-            flags_from_meta(PacketFlags::FROM_STAKED_NODE),
+            map_packet_flags(PacketFlags::FROM_STAKED_NODE),
             tpu_message_flags::FROM_STAKED_NODE
         );
         assert_eq!(
-            flags_from_meta(
+            map_packet_flags(
                 PacketFlags::SIMPLE_VOTE_TX
                     | PacketFlags::FORWARDED
                     | PacketFlags::FROM_STAKED_NODE

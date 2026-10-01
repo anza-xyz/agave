@@ -416,7 +416,7 @@ fn apply_priority_floor_to_batch(
     let mut dropped: usize = 0;
     let mut any_kept = false;
     for mut packet in batch.iter_mut() {
-        if packet.meta().discard() {
+        if packet.discard() {
             continue;
         }
         let Some(data) = packet.data(..) else {
@@ -428,7 +428,7 @@ fn apply_priority_floor_to_batch(
         // Unparseable packets are kept and left for downstream rejection.
         match calculate_priority_from_bytes(bank, data) {
             Some(priority) if priority <= floor => {
-                packet.meta_mut().set_discard(true);
+                packet.set_discard(true);
                 dropped = dropped.saturating_add(1);
             }
             _ => any_kept = true,

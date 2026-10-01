@@ -33,7 +33,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_measure::measure::Measure,
-    solana_perf::packet::{BytesPacket, Meta, PacketBatch, bytes::Bytes},
+    solana_perf::packet::{BytesPacket, PacketBatch, bytes::Bytes},
     solana_poh::{
         poh_recorder::{GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS, PohRecorder, PohRecorderError},
         record_channels::RecordReceiver,
@@ -1064,9 +1064,7 @@ fn handle_parent_ready(
                 })
                 .ok()?;
             let buffer = Bytes::from(serialized);
-            let mut meta = Meta::default();
-            meta.size = buffer.len();
-            Some(BytesPacket::new(buffer, meta))
+            Some(BytesPacket::new(buffer))
         })
         .collect();
 
@@ -1616,10 +1614,8 @@ mod tests {
         packet_batch
             .iter()
             .map(|packet| {
-                wincode::deserialize::<VersionedTransaction>(
-                    packet.data(..packet.meta().size).unwrap(),
-                )
-                .unwrap()
+                wincode::deserialize::<VersionedTransaction>(packet.data(..packet.size()).unwrap())
+                    .unwrap()
             })
             .collect()
     }
