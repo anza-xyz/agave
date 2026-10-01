@@ -11477,7 +11477,6 @@ dependencies = [
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
- "solana-address 2.8.0",
  "solana-clock",
  "solana-cluster-type",
  "solana-cost-model",
