@@ -3077,7 +3077,7 @@ fn test_store_overhead() {
     accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
     let store = accounts.storage.get_slot_storage_entry(0).unwrap();
-    let total_len = store.accounts.len();
+    let total_len = store.written_bytes() as usize;
     assert_eq!(total_len, store.accounts.calculate_stored_size(0));
 }
 
@@ -5272,25 +5272,33 @@ fn test_is_shrinking_productive() {
         file_size,
         accounts.accounts_file_provider,
     ));
+    let account = AccountSharedData::new(1, account_size, &Pubkey::default());
+    let stored_size = store.accounts.calculate_stored_size(account.data().len());
     store
-        .accounts
         .write_accounts(&(
             slot,
-            [(
-                Pubkey::new_unique(),
-                AccountSharedData::new(1, account_size, &Pubkey::default()),
-            )]
+            [
+                (&Pubkey::new_unique(), &account),
+                (&Pubkey::new_unique(), &account),
+                (&Pubkey::new_unique(), &account),
+            ]
             .as_slice(),
         ))
         .unwrap();
 
-    store.add_accounts(5, store.written_bytes() as usize);
+    // shrinking initially is not productive
     assert!(!accounts.is_shrinking_productive(&store));
 
-    store.remove_accounts(account_size, 1);
+    // shrinking IS productive after alive bytes is decremented
+    store
+        .num_alive_bytes
+        .fetch_sub(stored_size, Ordering::Relaxed);
     assert!(accounts.is_shrinking_productive(&store));
 
-    store.add_accounts(1, account_size);
+    // shrinking is NOT productive after alive bytes is incremented again
+    store
+        .num_alive_bytes
+        .fetch_add(stored_size, Ordering::Relaxed);
     assert!(!accounts.is_shrinking_productive(&store));
 }
 
