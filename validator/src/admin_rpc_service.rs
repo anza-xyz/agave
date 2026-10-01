@@ -26,7 +26,10 @@ use {
         },
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
-    solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
+    solana_gossip::{
+        cluster_info::{IdentityTransitionConsensus, IdentityTransitionStatus},
+        contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
+    },
     solana_keypair::{Keypair, read_keypair_file},
     solana_metrics::{datapoint_info, datapoint_warn},
     solana_pubkey::Pubkey,
@@ -232,6 +235,10 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "removeAllAuthorizedVoters")]
     fn remove_all_authorized_voters(&self, meta: Self::Metadata) -> Result<()>;
+
+    /// Observe adoption of the most recent identity command by the voting loop.
+    #[rpc(meta, name = "identityTransitionStatus")]
+    fn identity_transition_status(&self, meta: Self::Metadata) -> Result<IdentityTransitionStatus>;
 
     #[rpc(meta, name = "setIdentity")]
     fn set_identity(
@@ -577,6 +584,15 @@ impl AdminRpc for AdminRpcImpl {
         debug!("remove_all_authorized_voters received");
         meta.authorized_voter_keypairs.write().unwrap().clear();
         Ok(())
+    }
+
+    fn identity_transition_status(&self, meta: Self::Metadata) -> Result<IdentityTransitionStatus> {
+        meta.with_post_init(|post_init| {
+            Ok(post_init
+                .cluster_info
+                .identity_transition()
+                .get(post_init.cluster_info.id()))
+        })
     }
 
     fn set_identity(
@@ -1007,51 +1023,70 @@ impl AdminRpcImpl {
                 }
             }
 
-            // Updaters block until the new key is in effect, so take a copy of the
-            // list instead of running them under the lock.
-            let notifiers = {
-                let notifies = post_init.notifies.read().unwrap();
-                notifies
-                    .into_iter()
-                    .map(|(key, notifier)| (key.clone(), Arc::clone(notifier)))
-                    .collect::<Vec<_>>()
+            let migration_status = post_init.bank_forks.read().unwrap().migration_status();
+            let consensus = if migration_status.is_alpenglow_enabled() {
+                IdentityTransitionConsensus::Alpenglow
+            } else {
+                IdentityTransitionConsensus::Tower
             };
-            // Bail out rather than switch identity on top of a network layer that
-            // may still be running under the old one. Updaters already run at this
-            // point keep the new key, so the operator must retry to converge.
-            for (key, notifier) in notifiers {
-                notifier.update_key(&identity_keypair).map_err(|err| {
-                    error!("Error updating network layer keypair: {err} on {key:?}");
-                    jsonrpc_core::error::Error {
-                        code: ErrorCode::InternalError,
-                        message: format!("Failed to apply new identity to {key:?}: {err}"),
-                        data: None,
-                    }
-                })?;
-            }
-
-            solana_metrics::set_host_id(new_identity.to_string());
-            // Emit the datapoint after updating metrics to emit the new pubkey
-            datapoint_info!(
-                "validator-set_identity",
-                ("old_id", old_identity.to_string(), String),
-                ("new_id", new_identity.to_string(), String),
-                ("version", solana_version::version!(), String),
+            let tracker = post_init.cluster_info.identity_transition();
+            let sequence = tracker.begin(
+                old_identity,
+                new_identity,
+                post_init.vote_account,
+                consensus,
+                migration_status.is_pre_feature_activation()
+                    || migration_status.is_full_alpenglow_epoch(),
             );
-            post_init
-                .cluster_info
-                .set_keypair(Arc::new(identity_keypair));
-            post_init
-                .votor_event_sender
-                .send(VotorEvent::SetIdentity)
-                .map_err(|err| jsonrpc_core::error::Error {
-                    code: ErrorCode::InternalError,
-                    message: format!("Failed to send SetIdentity event: {err}").to_string(),
-                    data: None,
-                })?;
+            let result = (|| {
+                // Updaters block until the new key is in effect, so take a copy of the
+                // list instead of running them under the lock.
+                let notifiers = {
+                    let notifies = post_init.notifies.read().unwrap();
+                    notifies
+                        .into_iter()
+                        .map(|(key, notifier)| (key.clone(), Arc::clone(notifier)))
+                        .collect::<Vec<_>>()
+                };
+                // Bail out rather than switch identity on top of a network layer that
+                // may still be running under the old one. Updaters already run at this
+                // point keep the new key, so the operator must retry to converge.
+                for (key, notifier) in notifiers {
+                    notifier.update_key(&identity_keypair).map_err(|err| {
+                        error!("Error updating network layer keypair: {err} on {key:?}");
+                        jsonrpc_core::error::Error {
+                            code: ErrorCode::InternalError,
+                            message: format!("Failed to apply new identity to {key:?}: {err}"),
+                            data: None,
+                        }
+                    })?;
+                }
 
-            warn!("Identity set to {new_identity}");
-            Ok(())
+                solana_metrics::set_host_id(new_identity.to_string());
+                // Emit the datapoint after updating metrics to emit the new pubkey
+                datapoint_info!(
+                    "validator-set_identity",
+                    ("old_id", old_identity.to_string(), String),
+                    ("new_id", new_identity.to_string(), String),
+                    ("version", solana_version::version!(), String),
+                );
+                post_init
+                    .cluster_info
+                    .set_keypair(Arc::new(identity_keypair));
+                post_init
+                    .votor_event_sender
+                    .send(VotorEvent::SetIdentity)
+                    .map_err(|err| jsonrpc_core::error::Error {
+                        code: ErrorCode::InternalError,
+                        message: format!("Failed to send SetIdentity event: {err}").to_string(),
+                        data: None,
+                    })?;
+
+                warn!("Identity set to {new_identity}");
+                Ok(())
+            })();
+            tracker.finish_command(sequence, result.as_ref().err().map(ToString::to_string));
+            result
         })
     }
 }
@@ -1193,7 +1228,7 @@ mod tests {
         },
         solana_core::{
             admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-            consensus::tower_storage::NullTowerStorage,
+            consensus::tower_storage::{FileTowerStorage, NullTowerStorage},
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -1320,6 +1355,31 @@ mod tests {
 
         let bank = Bank::new_with_paths_for_tests(&genesis_config, Some(config), vec![], None);
         (BankForks::new_rw_arc(bank), Arc::new(voting_keypair))
+    }
+
+    #[test]
+    fn test_identity_transition_status() {
+        let (sender, _receiver) = bounded(1024);
+        let rpc = RpcHandler::start_with_config(TestConfig {
+            account_indexes: AccountSecondaryIndexes::default(),
+            votor_event_sender: Some(sender),
+        });
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"identityTransitionStatus","params":[]}"#;
+        let response = rpc
+            .io
+            .handle_request_sync(request, rpc.meta.clone())
+            .unwrap();
+        let response: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["result"]["state"], "idle");
+        assert!(response["result"]["fromIdentityLastSubmittedVoteSlot"].is_null());
+        assert!(response["result"].get("lastVoteSlot").is_none());
+        let post_init = rpc.meta.post_init.read().unwrap();
+        let post_init = post_init.as_ref().unwrap();
+        let expected = post_init
+            .cluster_info
+            .identity_transition()
+            .get(post_init.cluster_info.id());
+        assert_eq!(response["result"], serde_json::to_value(expected).unwrap());
     }
 
     // This test checks that the rpc call to `set_identity` works a expected with
@@ -1463,20 +1523,32 @@ mod tests {
 
     impl TestValidatorWithAdminRpc {
         fn new() -> Self {
+            Self::new_with_leader(false)
+        }
+
+        fn new_with_leader(produce_blocks: bool) -> Self {
             let leader_keypair = Keypair::new();
             let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
 
             let validator_keypair = Keypair::new();
             let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
-            let genesis_config =
-                create_genesis_config_with_leader(10_000, &leader_keypair.pubkey(), 1000)
-                    .genesis_config;
+            let genesis_config = create_genesis_config_with_leader(
+                10_000,
+                &if produce_blocks {
+                    validator_keypair.pubkey()
+                } else {
+                    leader_keypair.pubkey()
+                },
+                1000,
+            )
+            .genesis_config;
             let (validator_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
 
             let voting_keypair = Arc::new(Keypair::new());
             let voting_pubkey = voting_keypair.pubkey();
             let authorized_voter_keypairs = Arc::new(RwLock::new(vec![voting_keypair]));
             let validator_config = ValidatorConfig {
+                tower_storage: Arc::new(FileTowerStorage::new(validator_ledger_path.clone())),
                 rpc_addrs: Some((
                     validator_node.info.rpc().unwrap(),
                     validator_node.info.rpc_pubsub().unwrap(),
@@ -1597,7 +1669,24 @@ mod tests {
     // This test checks that `set_identity` call works with working validator and client.
     #[test]
     fn test_set_identity_with_validator() {
-        let test_validator = TestValidatorWithAdminRpc::new();
+        check_set_identity_with_validator(false);
+    }
+
+    #[test]
+    fn test_identity_transition_with_validator() {
+        check_set_identity_with_validator(true);
+    }
+
+    fn check_set_identity_with_validator(produce_blocks: bool) {
+        let test_validator = if produce_blocks {
+            TestValidatorWithAdminRpc::new_with_leader(true)
+        } else {
+            TestValidatorWithAdminRpc::new()
+        };
+        let status_request =
+            r#"{"jsonrpc":"2.0","id":1,"method":"identityTransitionStatus","params":[]}"#;
+        let initial: Value =
+            serde_json::from_str(&test_validator.handle_request(status_request).unwrap()).unwrap();
         let expected_validator_id = Keypair::new();
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
@@ -1631,6 +1720,33 @@ mod tests {
             actual_validator_id,
             expected_validator_id.pubkey().to_string()
         );
+
+        // Query the real replay loop, rather than manually acknowledging the tracker.
+        let started = std::time::Instant::now();
+        loop {
+            let status: Value =
+                serde_json::from_str(&test_validator.handle_request(status_request).unwrap())
+                    .unwrap();
+            assert_ne!(status["result"]["state"], "failed", "{status}");
+            if !produce_blocks {
+                assert_eq!(status["result"]["state"], "transitioning");
+                break;
+            }
+            if status["result"]["state"] == "complete" {
+                assert_eq!(
+                    status["result"]["fromIdentity"],
+                    initial["result"]["currentIdentity"]
+                );
+                assert_eq!(
+                    status["result"]["toIdentity"],
+                    expected_validator_id.pubkey().to_string()
+                );
+                assert_eq!(status["result"]["consensus"], "tower");
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(10), "{status}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
 
         let contact_info_request =
             r#"{"jsonrpc":"2.0","id":1,"method":"exit","params":[]}"#.to_string();

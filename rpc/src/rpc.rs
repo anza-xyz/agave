@@ -13,7 +13,10 @@ use {
         rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
-    agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
+    agave_votor_messages::{
+        identity_transition::IdentityTransitionStatus,
+        wire::{WireBlockCertMessage, WireCertSignature},
+    },
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
@@ -2904,6 +2907,13 @@ pub mod rpc_minimal {
         #[rpc(meta, name = "getHealth")]
         fn get_health(&self, meta: Self::Metadata) -> Result<String>;
 
+        /// Validator-local adoption status; submissions are not finality evidence.
+        #[rpc(meta, name = "identityTransitionStatus")]
+        fn identity_transition_status(
+            &self,
+            meta: Self::Metadata,
+        ) -> Result<IdentityTransitionStatus>;
+
         #[rpc(meta, name = "getIdentity")]
         fn get_identity(&self, meta: Self::Metadata) -> Result<RpcIdentity>;
 
@@ -2992,6 +3002,16 @@ pub mod rpc_minimal {
                 }
                 .into()),
             }
+        }
+
+        fn identity_transition_status(
+            &self,
+            meta: Self::Metadata,
+        ) -> Result<IdentityTransitionStatus> {
+            Ok(meta
+                .cluster_info
+                .identity_transition()
+                .get(meta.cluster_info.id()))
         }
 
         fn get_identity(&self, meta: Self::Metadata) -> Result<RpcIdentity> {
@@ -5339,6 +5359,57 @@ pub mod tests {
         fn leader_vote_pubkey(&self) -> Pubkey {
             self.leader_vote_keypair.pubkey()
         }
+    }
+
+    #[test]
+    fn test_identity_transition_status() {
+        use agave_votor_messages::identity_transition::{
+            IdentityTransitionConsensus, IdentityTransitionState,
+        };
+        let genesis = create_genesis_config(20);
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
+        let mut io = MetaIoHandler::default();
+        io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"identityTransitionStatus","params":[]}"#;
+        let read = || -> serde_json::Value {
+            serde_json::from_str(&io.handle_request_sync(request, meta.clone()).unwrap()).unwrap()
+        };
+        let idle = read();
+        assert_eq!(idle["result"]["state"], "idle");
+        assert!(idle["result"]["fromIdentityLastSubmittedVoteSlot"].is_null());
+        assert!(idle["result"].get("lastVoteSlot").is_none());
+        let from = meta.cluster_info.id();
+        let to = Pubkey::new_unique();
+        let tracker = meta.cluster_info.identity_transition();
+        let seq = tracker.begin(
+            from,
+            to,
+            Pubkey::new_unique(),
+            IdentityTransitionConsensus::Tower,
+            true,
+        );
+        tracker.finish_command(seq, None);
+        assert_eq!(read()["result"]["state"], "transitioning");
+        tracker.acknowledge(
+            Some(seq),
+            from,
+            to,
+            IdentityTransitionConsensus::Tower,
+            Some(123),
+            Some(90),
+        );
+        let response = read();
+        assert_eq!(
+            response["result"],
+            serde_json::to_value(tracker.get(from)).unwrap()
+        );
+        assert_eq!(response["result"]["fromIdentityLastSubmittedVoteSlot"], 123);
+        assert_eq!(tracker.get(from).state, IdentityTransitionState::Complete);
+        assert_eq!(
+            response["result"]["processInstanceId"],
+            idle["result"]["processInstanceId"]
+        );
     }
 
     #[test]

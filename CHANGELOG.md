@@ -29,6 +29,7 @@ Release channels have their own copy of this changelog:
   for the epoch containing a requested slot, with an optional identity filter. Always queries
   finalized state; there is no commitment parameter.
 * Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Add observational `identityTransitionStatus` queries to HTTP and admin RPC.
 
 ### Validator
 

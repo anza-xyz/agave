@@ -116,6 +116,7 @@ pub(crate) struct VotingContext {
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) leader_schedule: Arc<LeaderScheduleCache>,
     pub(crate) vote_history: VoteHistory,
+    pub(crate) submitted_vote_slots: agave_votor_messages::identity_transition::SubmittedVoteSlots,
     pub(crate) vote_account_pubkey: Pubkey,
     pub(crate) identity_keypair: Arc<Keypair>,
     pub(crate) authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
@@ -443,6 +444,8 @@ mod tests {
         let consensus_metrics_sender = bounded(1024).0;
         let (own_reward_aggregates_sender, own_reward_aggregates_receiver) = bounded(1024);
         let voting_context = VotingContext {
+            submitted_vote_slots:
+                agave_votor_messages::identity_transition::SubmittedVoteSlots::default(),
             cluster_info,
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),

@@ -13,6 +13,9 @@
 //!
 //! Bank needs to provide an interface for us to query the stake weight
 
+pub use agave_votor_messages::identity_transition::{
+    IdentityTransitionConsensus, IdentityTransitionStatus,
+};
 use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
@@ -41,7 +44,9 @@ use {
         sigverify_cache::SigVerifyCache,
         weighted_shuffle::WeightedShuffle,
     },
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{
+        identity_transition::IdentityTransitionTracker, migration::MigrationStatus,
+    },
     arc_swap::ArcSwap,
     arrayvec::ArrayVec,
     crossbeam_channel::{Receiver, TrySendError},
@@ -193,6 +198,7 @@ pub struct ClusterInfo {
     pub gossip: CrdsGossip,
     /// set the keypair that will be used to sign crds values generated. It is unset only in tests.
     keypair: ArcSwap<Keypair>,
+    identity_transition: IdentityTransitionTracker,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
     /// Additional pubkeys to preserve during CRDS table trimming.
@@ -223,6 +229,7 @@ impl ClusterInfo {
         let me = Self {
             gossip: CrdsGossip::default(),
             keypair: ArcSwap::from(keypair),
+            identity_transition: IdentityTransitionTracker::default(),
             entrypoints: RwLock::default(),
             known_validators: OnceLock::new(),
             outbound_budget: DataBudget::default(),
@@ -253,6 +260,11 @@ impl ClusterInfo {
         };
         me.refresh_my_gossip_contact_info();
         me
+    }
+
+    /// Validator-local identity-adoption observations, independent of gossip.
+    pub fn identity_transition(&self) -> &IdentityTransitionTracker {
+        &self.identity_transition
     }
 
     /// Wires in the Alpenglow MigrationStatus.

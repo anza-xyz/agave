@@ -45,6 +45,7 @@ use {
     agave_votor_messages::{
         certificate::Certificate,
         consensus_message::{Block, BlockId, VoteMessage},
+        identity_transition::{IdentityTransitionConsensus, SubmittedVoteSlots},
         migration::{GENESIS_VOTE_REFRESH, MigrationStatus},
         vote::Vote,
     },
@@ -808,6 +809,7 @@ impl ReplayStage {
 
         // Start the replay stage loop
         let migration_status = bank_forks.read().unwrap().migration_status();
+        let startup_transition = cluster_info.identity_transition().pending_sequence();
         let mut identity_keypair = cluster_info.keypair().clone();
         let mut my_pubkey = identity_keypair.pubkey();
 
@@ -826,6 +828,7 @@ impl ReplayStage {
             }
             let _exit = Finalizer::new(exit.clone());
 
+            let mut submitted_vote_slots = SubmittedVoteSlots::default();
             if my_pubkey != tower.node_pubkey {
                 // set-identity was called during the startup procedure, ensure the tower is consistent
                 // before starting the loop. further calls to set-identity will reload the tower in the loop
@@ -844,10 +847,21 @@ impl ReplayStage {
                                  {my_old_pubkey} to {my_pubkey} on ReplayStage startup, Exiting: \
                                  {err}"
                             );
+                            cluster_info
+                                .identity_transition()
+                                .fail(startup_transition, err.to_string());
                             // drop(_exit) will set the exit flag, eventually tearing down the entire process
                             return;
                         }
                     };
+                    cluster_info.identity_transition().acknowledge(
+                        startup_transition,
+                        my_old_pubkey,
+                        my_pubkey,
+                        IdentityTransitionConsensus::Tower,
+                        None,
+                        None,
+                    );
                     warn!("Identity changed during startup from {my_old_pubkey} to {my_pubkey}");
                 }
                 migration_status.set_pubkey(my_pubkey);
@@ -1067,6 +1081,16 @@ impl ReplayStage {
                     for _ in duplicate_slots_receiver.try_iter() {}
 
                     if my_pubkey != cluster_info.id() {
+                        let transition_sequence =
+                            cluster_info.identity_transition().pending_sequence();
+                        if !migration_status.is_full_alpenglow_epoch() {
+                            cluster_info.identity_transition().fail(
+                                transition_sequence,
+                                "Replay identity crossed consensus migration; no authoritative \
+                                 watermark",
+                            );
+                        }
+                        submitted_vote_slots = SubmittedVoteSlots::default();
                         identity_keypair = cluster_info.keypair();
                         let my_old_pubkey = my_pubkey;
                         my_pubkey = identity_keypair.pubkey();
@@ -1331,6 +1355,7 @@ impl ReplayStage {
                             &mut last_vote_refresh_time,
                             &voting_sender,
                             wait_to_vote_slot,
+                            &mut submitted_vote_slots,
                         );
                     }
 
@@ -1387,6 +1412,7 @@ impl ReplayStage {
                             wait_to_vote_slot,
                             migration_status.as_ref(),
                             &mut tbft_structs,
+                            &mut submitted_vote_slots,
                         );
                     }
                     voting_time.stop();
@@ -1432,6 +1458,10 @@ impl ReplayStage {
                             );
 
                             if my_pubkey != cluster_info.id() {
+                                let transition_sequence =
+                                    cluster_info.identity_transition().pending_sequence();
+                                let old_submitted = submitted_vote_slots.highest();
+                                let old_root = tower.root();
                                 identity_keypair = cluster_info.keypair();
                                 let my_old_pubkey = my_pubkey;
                                 my_pubkey = identity_keypair.pubkey();
@@ -1451,10 +1481,29 @@ impl ReplayStage {
                                              identity from {my_old_pubkey} to {my_pubkey} on \
                                              set-identity, Exiting: {err}"
                                         );
+                                        cluster_info
+                                            .identity_transition()
+                                            .fail(transition_sequence, err.to_string());
                                         // drop(_exit) will set the exit flag, eventually tearing down the entire process
                                         return;
                                     }
                                 };
+                                if migration_status.is_pre_feature_activation() {
+                                    cluster_info.identity_transition().acknowledge(
+                                        transition_sequence,
+                                        my_old_pubkey,
+                                        my_pubkey,
+                                        IdentityTransitionConsensus::Tower,
+                                        old_submitted,
+                                        Some(old_root),
+                                    );
+                                } else {
+                                    cluster_info.identity_transition().fail(
+                                        transition_sequence,
+                                        "Identity transition crossed consensus migration",
+                                    );
+                                }
+                                submitted_vote_slots = SubmittedVoteSlots::default();
                                 // Ensure the validator can land votes with the new identity before
                                 // becoming leader
                                 has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
@@ -3100,6 +3149,7 @@ impl ReplayStage {
         wait_to_vote_slot: Option<Slot>,
         migration_status: &MigrationStatus,
         tbft_structs: &mut TowerBFTStructures,
+        submitted_vote_slots: &mut SubmittedVoteSlots,
     ) {
         assert!(!migration_status.is_alpenglow_enabled());
         if bank.is_empty() {
@@ -3193,6 +3243,7 @@ impl ReplayStage {
             replay_timing,
             voting_sender,
             wait_to_vote_slot,
+            submitted_vote_slots,
         );
     }
 
@@ -3353,6 +3404,7 @@ impl ReplayStage {
         last_vote_refresh_time: &mut LastVoteRefreshTime,
         voting_sender: &Sender<VoteOp>,
         wait_to_vote_slot: Option<Slot>,
+        submitted_vote_slots: &mut SubmittedVoteSlots,
     ) -> bool {
         let Some(heaviest_bank_on_same_fork) = heaviest_bank_on_same_fork.as_ref() else {
             // Only refresh if blocks have been built on our last vote
@@ -3447,6 +3499,7 @@ impl ReplayStage {
             last_vote_refresh_time,
             voting_sender,
             wait_to_vote_slot,
+            submitted_vote_slots,
         )
     }
 
@@ -3463,6 +3516,7 @@ impl ReplayStage {
         last_vote_refresh_time: &mut LastVoteRefreshTime,
         voting_sender: &Sender<VoteOp>,
         wait_to_vote_slot: Option<Slot>,
+        submitted_vote_slots: &mut SubmittedVoteSlots,
     ) -> bool {
         // Update timestamp for refreshed vote
         tower.refresh_last_vote_timestamp(heaviest_bank_on_same_fork.slot());
@@ -3491,12 +3545,13 @@ impl ReplayStage {
                 ("target_bank_slot", heaviest_bank_on_same_fork.slot(), i64),
                 ("target_bank_hash", hash_string, String),
             );
-            voting_sender
-                .send(VoteOp::RefreshVote {
-                    tx: vote_tx,
-                    last_voted_slot,
-                })
-                .unwrap_or_else(|err| warn!("Error: {err:?}"));
+            match voting_sender.send(VoteOp::RefreshVote {
+                tx: vote_tx,
+                last_voted_slot,
+            }) {
+                Ok(()) => submitted_vote_slots.record(last_voted_slot),
+                Err(err) => warn!("Error: {err:?}"),
+            }
             last_vote_refresh_time.last_refresh_time = Instant::now();
             true
         } else if vote_tx_result.is_non_voting() {
@@ -3523,6 +3578,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         voting_sender: &Sender<VoteOp>,
         wait_to_vote_slot: Option<Slot>,
+        submitted_vote_slots: &mut SubmittedVoteSlots,
     ) {
         let mut generate_time = Measure::start("generate_vote");
         let vote_tx_result = Self::generate_vote_tx(
@@ -3547,13 +3603,18 @@ impl ReplayStage {
             });
 
             let tower_slots = tower.tower_slots();
-            voting_sender
-                .send(VoteOp::PushVote {
-                    tx: vote_tx,
-                    tower_slots,
-                    saved_tower: SavedTowerVersions::from(saved_tower),
-                })
-                .unwrap_or_else(|err| warn!("Error: {err:?}"));
+            match voting_sender.send(VoteOp::PushVote {
+                tx: vote_tx,
+                tower_slots,
+                saved_tower: SavedTowerVersions::from(saved_tower),
+            }) {
+                Ok(()) => {
+                    if let Some(slot) = tower.last_voted_slot() {
+                        submitted_vote_slots.record(slot);
+                    }
+                }
+                Err(err) => warn!("Error: {err:?}"),
+            }
         } else if vote_tx_result.is_non_voting() {
             tower.mark_last_vote_tx_blockhash_non_voting();
         }

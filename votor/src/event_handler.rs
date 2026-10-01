@@ -23,10 +23,11 @@ use {
     agave_bls_sigverify::metric_types::ConsensusMetricsEvent,
     agave_votor_messages::{
         consensus_message::{Block, BlockId},
+        identity_transition::IdentityTransitionConsensus,
         migration::MigrationStatus,
         vote::Vote,
     },
-    crossbeam_channel::select,
+    crossbeam_channel::{TrySendError, select},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -153,7 +154,7 @@ impl EventHandler {
             );
 
             // Check for set identity
-            if let Err(e) = Self::handle_set_identity(&ctx, &mut vctx, &mut local_context) {
+            if let Err(e) = Self::observe_set_identity(&ctx, &mut vctx, &mut local_context) {
                 error!(
                     "Unable to load new vote history when attempting to change identity at \
                      startup from {} to {} on voting loop startup, Exiting: {}",
@@ -161,9 +162,8 @@ impl EventHandler {
                     ctx.cluster_info.id(),
                     e
                 );
-                return Err(EventLoopError::SetIdentityError(e));
+                return Err(e);
             }
-            Self::send_vote_history_to_consensus_pool(&local_context.my_pubkey, &mut vctx)?;
 
             while !exit.load(Ordering::Relaxed) {
                 let mut receive_event_time = Measure::start("receive_event");
@@ -205,13 +205,7 @@ impl EventHandler {
                 let mut send_votes_batch_time = Measure::start("send_votes_batch");
                 for vote in votes {
                     local_context.stats.incr_vote(&vote);
-                    nonblocking_send(
-                        &local_context.my_pubkey,
-                        &vctx.bls_sender,
-                        vote,
-                        "bls_sender",
-                    )
-                    .map_err(EventLoopError::ChannelDisconnected)?;
+                    Self::submit_votes(&local_context.my_pubkey, &mut vctx, vote)?;
                 }
                 send_votes_batch_time.stop();
                 local_context.stats.send_votes_batch_time_us = local_context
@@ -573,7 +567,7 @@ impl EventHandler {
             // Operator called set identity make sure that our keypair is updated for voting
             VotorEvent::SetIdentity => {
                 info!("{}: SetIdentity", local_context.my_pubkey);
-                if let Err(e) = Self::handle_set_identity(ctx, vctx, local_context) {
+                if let Err(e) = Self::observe_set_identity(ctx, vctx, local_context) {
                     error!(
                         "Unable to load new vote history when attempting to change identity from \
                          {} to {} in voting loop, Exiting: {}",
@@ -581,12 +575,40 @@ impl EventHandler {
                         ctx.cluster_info.id(),
                         e
                     );
-                    return Err(EventLoopError::SetIdentityError(e));
+                    return Err(e);
                 }
-                Self::send_vote_history_to_consensus_pool(&local_context.my_pubkey, vctx)?;
             }
         }
         Ok(votes)
+    }
+
+    fn submit_votes(
+        my_pubkey: &Pubkey,
+        vctx: &mut VotingContext,
+        op: crate::voting_service::BLSOp,
+    ) -> Result<(), EventLoopError> {
+        let slot = match &op {
+            crate::voting_service::BLSOp::PushVote { vote } => Some(vote.vote.slot()),
+            crate::voting_service::BLSOp::RefreshVotes { votes } => {
+                votes.iter().map(|vote| vote.vote.slot()).max()
+            }
+            _ => None,
+        };
+        match vctx.bls_sender.try_send(op) {
+            Ok(()) => {
+                if let Some(slot) = slot {
+                    vctx.submitted_vote_slots.record(slot);
+                }
+                Ok(())
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                Err(EventLoopError::ChannelDisconnected("bls_sender"))
+            }
+            Err(TrySendError::Full(_)) => {
+                warn!("{my_pubkey}: channel \"bls_sender\" is full, dropping msg");
+                Ok(())
+            }
+        }
     }
 
     fn record_window_start(
@@ -668,6 +690,37 @@ impl EventHandler {
             slot: parent_slot,
             block_id: BlockId::from(parent_block_id),
         })
+    }
+
+    fn observe_set_identity(
+        ctx: &SharedContext,
+        vctx: &mut VotingContext,
+        local_context: &mut LocalContext,
+    ) -> Result<(), EventLoopError> {
+        let tracker = ctx.cluster_info.identity_transition();
+        let sequence = tracker.pending_sequence();
+        let from_identity = vctx.identity_keypair.pubkey();
+        let old_submitted = vctx.submitted_vote_slots.highest();
+        let result: Result<(), EventLoopError> = (|| {
+            Self::handle_set_identity(ctx, vctx, local_context)?;
+            Self::send_vote_history_to_consensus_pool(&local_context.my_pubkey, vctx)?;
+            Ok(())
+        })();
+        if let Err(ref error) = result {
+            tracker.fail(sequence, error.to_string());
+        } else if from_identity != vctx.identity_keypair.pubkey() {
+            tracker.acknowledge(
+                sequence,
+                from_identity,
+                vctx.identity_keypair.pubkey(),
+                IdentityTransitionConsensus::Alpenglow,
+                old_submitted,
+                None,
+            );
+            vctx.submitted_vote_slots =
+                agave_votor_messages::identity_transition::SubmittedVoteSlots::default();
+        }
+        result
     }
 
     fn handle_set_identity(
@@ -1246,6 +1299,8 @@ mod tests {
         let mut vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
         vote_history.initialize_genesis(Block::default());
         let voting_context = VotingContext {
+            submitted_vote_slots:
+                agave_votor_messages::identity_transition::SubmittedVoteSlots::default(),
             cluster_info: cluster_info.clone(),
             identity_keypair: Arc::new(my_node_keypair.insecure_clone()),
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
@@ -1650,6 +1705,117 @@ mod tests {
             self.send_set_identity_event();
             self.vote_history_storage.filename(&new_identity.pubkey())
         }
+    }
+
+    #[test]
+    fn test_identity_transition_submission_accounting() {
+        let mut context = setup();
+        let from = context.local_context.my_pubkey;
+        let first = Arc::new(context.expected_vote_message(&Vote::new_skip_vote(1)));
+        let later = Arc::new(context.expected_vote_message(&Vote::new_skip_vote(2)));
+        let (sender, receiver) = bounded(1);
+        context.voting_context.bls_sender = sender;
+        assert_eq!(context.voting_context.submitted_vote_slots.highest(), None);
+        EventHandler::submit_votes(
+            &from,
+            &mut context.voting_context,
+            BLSOp::PushVote {
+                vote: first.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            context.voting_context.submitted_vote_slots.highest(),
+            Some(1)
+        );
+        EventHandler::submit_votes(
+            &from,
+            &mut context.voting_context,
+            BLSOp::PushVote {
+                vote: later.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            context.voting_context.submitted_vote_slots.highest(),
+            Some(1)
+        );
+        receiver.recv().unwrap();
+        EventHandler::submit_votes(
+            &from,
+            &mut context.voting_context,
+            BLSOp::RefreshVotes {
+                votes: vec![first, later.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            context.voting_context.submitted_vote_slots.highest(),
+            Some(2)
+        );
+        drop(receiver);
+        assert!(
+            EventHandler::submit_votes(
+                &from,
+                &mut context.voting_context,
+                BLSOp::PushVote { vote: later }
+            )
+            .is_err()
+        );
+        assert_eq!(
+            context.voting_context.submitted_vote_slots.highest(),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_identity_transition_freezes_from_context() {
+        use agave_votor_messages::identity_transition::IdentityTransitionState;
+        let mut context = setup();
+        let from = context.voting_context.identity_keypair.pubkey();
+        let old_vote = Arc::new(context.expected_vote_message(&Vote::new_skip_vote(1)));
+        EventHandler::submit_votes(
+            &from,
+            &mut context.voting_context,
+            BLSOp::PushVote { vote: old_vote },
+        )
+        .unwrap();
+        let to = Keypair::new();
+        let sequence = context.cluster_info.identity_transition().begin(
+            from,
+            to.pubkey(),
+            context.voting_context.vote_account_pubkey,
+            IdentityTransitionConsensus::Alpenglow,
+            true,
+        );
+        context
+            .cluster_info
+            .identity_transition()
+            .finish_command(sequence, None);
+        context.crate_vote_history_storage_and_switch_identity(&to);
+        let status = context.cluster_info.identity_transition().get(to.pubkey());
+        assert_eq!(status.state, IdentityTransitionState::Complete);
+        assert_eq!(status.from_identity_last_submitted_vote_slot, Some(1));
+        assert_eq!(context.voting_context.submitted_vote_slots.highest(), None);
+        let next = Keypair::new();
+        let sequence = context.cluster_info.identity_transition().begin(
+            to.pubkey(),
+            next.pubkey(),
+            context.voting_context.vote_account_pubkey,
+            IdentityTransitionConsensus::Alpenglow,
+            true,
+        );
+        context
+            .cluster_info
+            .identity_transition()
+            .finish_command(sequence, None);
+        context.crate_vote_history_storage_and_switch_identity(&next);
+        let status = context
+            .cluster_info
+            .identity_transition()
+            .get(next.pubkey());
+        assert_eq!(status.state, IdentityTransitionState::Complete);
+        assert_eq!(status.from_identity_last_submitted_vote_slot, None);
     }
 
     #[test]

@@ -233,6 +233,8 @@ impl Votor {
         };
 
         let voting_context = VotingContext {
+            submitted_vote_slots:
+                agave_votor_messages::identity_transition::SubmittedVoteSlots::default(),
             cluster_info: cluster_info.clone(),
             leader_schedule: leader_schedule_cache.clone(),
             vote_history,

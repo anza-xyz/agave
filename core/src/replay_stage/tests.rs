@@ -5030,6 +5030,7 @@ fn test_replay_stage_refresh_last_vote() {
         last_refresh_time: Instant::now(),
         last_print_time: Instant::now(),
     };
+    let mut submitted_vote_slots = SubmittedVoteSlots::default();
     let has_new_vote_been_rooted = false;
     let mut tracked_vote_transactions = vec![];
 
@@ -5087,7 +5088,9 @@ fn test_replay_stage_refresh_last_vote() {
         &mut ReplayLoopTiming::default(),
         &voting_sender,
         None,
+        &mut submitted_vote_slots,
     );
+    assert_eq!(submitted_vote_slots.highest(), Some(bank0.slot()));
     let vote_info = voting_receiver
         .recv_timeout(Duration::from_secs(1))
         .unwrap();
@@ -5164,6 +5167,7 @@ fn test_replay_stage_refresh_last_vote() {
             &mut last_vote_refresh_time,
             &voting_sender,
             None,
+            &mut submitted_vote_slots,
         ));
 
         // No new votes have been submitted to gossip
@@ -5192,6 +5196,7 @@ fn test_replay_stage_refresh_last_vote() {
         &mut ReplayLoopTiming::default(),
         &voting_sender,
         None,
+        &mut submitted_vote_slots,
     );
     let vote_info = voting_receiver
         .recv_timeout(Duration::from_secs(1))
@@ -5253,6 +5258,7 @@ fn test_replay_stage_refresh_last_vote() {
         &mut last_vote_refresh_time,
         &voting_sender,
         None,
+        &mut submitted_vote_slots,
     ));
 
     // No new votes have been submitted to gossip
@@ -5322,6 +5328,7 @@ fn test_replay_stage_refresh_last_vote() {
         &mut last_vote_refresh_time,
         &voting_sender,
         None,
+        &mut submitted_vote_slots,
     ));
     let vote_info = voting_receiver
         .recv_timeout(Duration::from_secs(1))
@@ -5416,6 +5423,7 @@ fn test_replay_stage_refresh_last_vote() {
         &mut last_vote_refresh_time,
         &voting_sender,
         None,
+        &mut submitted_vote_slots,
     );
 
     let votes = cluster_info.get_votes(&mut cursor);
@@ -5464,6 +5472,7 @@ fn send_vote_in_new_bank(
         &mut ReplayLoopTiming::default(),
         voting_sender,
         None,
+        &mut SubmittedVoteSlots::default(),
     );
     let vote_info = voting_receiver
         .recv_timeout(Duration::from_secs(1))
