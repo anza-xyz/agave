@@ -3,7 +3,10 @@
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
-    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, WritableAccount,
+        state_traits::StateMutWincode as _,
+    },
     solana_clock::{Clock, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_structure::{FeeDetails, FeeStructure},
@@ -129,8 +132,7 @@ impl MockBankCallback {
             unix_timestamp: WALLCLOCK_TIME as UnixTimestamp,
         };
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data_from_slice(&wincode::serialize(&clock).unwrap());
+        let account_data = AccountSharedData::new_data(0, &clock, &Pubkey::default()).unwrap();
         self.account_shared_data
             .write()
             .unwrap()
@@ -139,8 +141,7 @@ impl MockBankCallback {
         // default rent is fine
         let rent = Rent::default();
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data_from_slice(&wincode::serialize(&rent).unwrap());
+        let account_data = AccountSharedData::new_data(0, &rent, &Pubkey::default()).unwrap();
         self.account_shared_data
             .write()
             .unwrap()
@@ -152,8 +153,8 @@ impl MockBankCallback {
         #[allow(deprecated)]
         let recent_blockhashes = vec![BlockhashesEntry::default()];
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data_from_slice(&wincode::serialize(&recent_blockhashes).unwrap());
+        let account_data =
+            AccountSharedData::new_data(0, &recent_blockhashes, &Pubkey::default()).unwrap();
         #[allow(deprecated)]
         self.account_shared_data
             .write()
@@ -163,8 +164,8 @@ impl MockBankCallback {
         // EpochSchedule is required for non-mocked LoaderV3 deploy
         let epoch_schedule = EpochSchedule::without_warmup();
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data_from_slice(&wincode::serialize(&epoch_schedule).unwrap());
+        let account_data =
+            AccountSharedData::new_data(0, &epoch_schedule, &Pubkey::default()).unwrap();
         self.account_shared_data
             .write()
             .unwrap()
