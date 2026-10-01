@@ -387,9 +387,13 @@ pub fn stub_ban_channel_for_tests(capacity: usize) -> (BanSender, mpsc::Receiver
 mod tests {
     use {
         super::{BanSender, Datagram, QuicDatagramEndpoint},
-        crate::{METRICS_INTERVAL, PeerList, PeerListSender, transport::MAX_IDLE_TIMEOUT},
+        crate::{
+            METRICS_INTERVAL, PeerList, PeerListSender,
+            transport::{MAX_IDLE_TIMEOUT, new_client_config},
+        },
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
+        quinn,
         solana_keypair::{Keypair, Signer},
         solana_net_utils::{
             SocketAddrSpace,
@@ -400,7 +404,7 @@ mod tests {
             },
         },
         solana_pubkey::Pubkey,
-        solana_tls_utils::NotifyKeyUpdate,
+        solana_tls_utils::{NotifyKeyUpdate, socket_addr_to_quic_server_name},
         std::{
             collections::HashMap,
             iter::once,
@@ -1006,6 +1010,119 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         });
+    }
+
+    /// A flood of inbound attempts that never prove their source address must
+    /// not consume the global handshake budget: the budget is what the
+    /// validator set recovers with during mass-reconnect windows (coordinated
+    /// restarts, partition heal, epoch churn). An admitted peer that has to
+    /// reconnect while such a flood is live must still get through.
+    #[test]
+    fn test_unvalidated_handshakes_do_not_starve_admitted_peer() {
+        const PPS: usize = 20;
+        let rt = make_runtime_for_tests();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+        let server = Node::spawn_node(
+            &rt,
+            Keypair::new(),
+            peer_list_with_unknown_addr(client_pubkey),
+            PPS,
+        );
+        // Keep counters cumulative across reporting ticks.
+        server
+            .endpoint
+            .server_stats
+            .report_frozen
+            .store(true, Ordering::Relaxed);
+        let client = Node::spawn_node(
+            &rt,
+            client_keypair,
+            peer_list_of(server.pubkey(), server.addr),
+            PPS,
+        );
+
+        // Baseline: the admitted peer connects and delivers.
+        let probe = Bytes::from_static(b"probe");
+        send_until_received(&client, &probe, &server.ingress_receiver, |d| {
+            (d.message == probe).then_some(())
+        })
+        .expect("baseline datagram never arrived");
+        drain_backlog(&server.ingress_receiver);
+
+        // Evict the client so its live connection is closed. It is re-admitted
+        // below, once the flood is live, so the probe has to dial a fresh
+        // connection through the flood rather than reuse the baseline one.
+        server.set_peer_list(HashMap::new());
+        std::thread::sleep(Duration::from_millis(500));
+
+        // Attacker: each batch of connection attempts comes from a fresh
+        // endpoint that is dropped right after issuing them. Once the
+        // endpoint is dropped its socket is gone, so the batch's Initials can
+        // never answer address validation: the in-process equivalent of a
+        // spoofed Initial sent from a forged source address.
+        let attacker_config = new_client_config(&Keypair::new(), PPS);
+        let server_addr = server.addr;
+        let flood = rt.spawn(async move {
+            loop {
+                let mut endpoint =
+                    quinn::Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+                        .expect("attacker client endpoint");
+                endpoint.set_default_client_config(attacker_config.clone());
+                let server_name = socket_addr_to_quic_server_name(server_addr);
+                for _ in 0..10 {
+                    let _ = endpoint.connect(server_addr, &server_name);
+                }
+                // Give the per-connection drivers a beat to transmit their
+                // Initials, then destroy the endpoint so none of them can ever
+                // complete address validation.
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                drop(endpoint);
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+
+        // Give the flood a head start so the in-flight budget is saturated,
+        // re-admit the client, and require a fresh connection to deliver
+        // within a tight window.
+        std::thread::sleep(Duration::from_millis(2_500));
+        server.set_peer_list(peer_list_of(client_pubkey, server_addr));
+        let through = Bytes::from_static(b"through-flood");
+        let start = Instant::now();
+        loop {
+            client.send(&through);
+            if let Ok(d) = server
+                .ingress_receiver
+                .recv_timeout(Duration::from_millis(100))
+                && d.message == through
+            {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "admitted peer starved during unvalidated handshake flood"
+            );
+        }
+        drain_backlog(&server.ingress_receiver);
+        flood.abort();
+
+        // Let the handful of accepted attempts that slipped through the
+        // endpoint window time out, so the accept loop's join set is empty
+        // and the runtime below shuts down without racing a live task.
+        std::thread::sleep(Duration::from_secs(3));
+
+        // The flood could never answer address validation in time, so the
+        // accept loop must have answered it with retries instead of spending
+        // the handshake budget: the admitted peer's own reconnects are the
+        // only meaningful handshakes started.
+        let stats = &server.endpoint.server_stats;
+        let retried = stats.handshakes_retried.load(Ordering::Relaxed);
+        let started = stats.handshakes_started.load(Ordering::Relaxed);
+        assert!(retried > 0, "no retry issued for unvalidated attempts");
+        assert!(
+            started <= 50,
+            "handshake budget spent on unvalidated attempts: {started}"
+        );
     }
 
     /// Changing the client identity closes its outbound connections and

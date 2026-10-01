@@ -140,6 +140,31 @@ impl AcceptLoop {
                         info!("Accept loop exiting: endpoint closed.");
                         break;
                     };
+                    let remote_addr = incoming.remote_address();
+                    debug!("Incoming connection from {remote_addr}.");
+                    if is_invalid_remote_address(
+                        remote_addr,
+                        incoming.local_ip(),
+                        socket_addr_space,
+                    ) {
+                        incoming.ignore();
+                        continue;
+                    }
+                    // Require the peer to prove it can receive packets at the
+                    // claimed source address before the attempt is served: an
+                    // unvalidated Initial otherwise costs a rate token, a
+                    // first TLS flight signed with the identity key, and an
+                    // in-flight handshake slot for the full HANDSHAKE_TIMEOUT,
+                    // all of which a spoofed source gets for free.
+                    // `may_retry()` is guaranteed to hold while the address
+                    // is not validated, so the retry is always issued here;
+                    // on the impossible error path the attempt is dropped and
+                    // implicitly refused.
+                    if !incoming.remote_address_validated() {
+                        let _ = incoming.retry();
+                        stats.handshakes_retried.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
                     // We always serve the attempt we already pulled, but we close
                     // the accept gate if we do not have tokens to serve the next one.
                     rate_limited = match handshake_rate_limiter.consume_tokens(1) {
@@ -160,16 +185,6 @@ impl AcceptLoop {
                             .expect("accept-gate deadline should never overflow");
                         accept_gate.as_mut().reset(deadline);
                         stats.handshake_rate_limited.fetch_add(1, Ordering::Relaxed);
-                    }
-                    let remote_addr = incoming.remote_address();
-                    debug!("Incoming connection from {remote_addr}.");
-                    if is_invalid_remote_address(
-                        remote_addr,
-                        incoming.local_ip(),
-                        socket_addr_space,
-                    ) {
-                        incoming.ignore();
-                        continue;
                     }
                     // Run the server side of the handshake (CPU-bound crypto).
                     let connecting = match incoming.accept() {
@@ -791,21 +806,35 @@ mod tests {
         );
         let loop_handle = spawn(accept.run());
 
-        // One-way proxy: forward client->server, drop server->client.
+        // Proxy: relay client->server; forward only the server's first reply
+        // (the retry token the client needs to validate its address) and
+        // black-hole the TLS flight after it, so the validated handshake
+        // stalls and has to be reclaimed by the timeout.
         let proxy = bind_to_localhost_async().await.expect("bind proxy socket");
         let proxy_addr = proxy.local_addr().expect("proxy local addr");
         let proxy_task = spawn(async move {
             let mut buf = [0u8; 2048];
+            let mut client_addr: Option<SocketAddr> = None;
+            let mut forwarded_reply = false;
             while let Ok((n, from)) = proxy.recv_from(&mut buf).await {
-                // Black-hole the server's replies; relay everything else (the
-                // client's Initial and its retransmits) on to the server.
                 if from != server_addr {
+                    client_addr = Some(from);
                     let _ = proxy.send_to(&buf[..n], server_addr).await;
+                } else if !forwarded_reply {
+                    // Forward exactly one server->client packet (the retry
+                    // token) so the client can validate its address; the TLS
+                    // flight after it is black-holed even across the client's
+                    // retransmissions, so the validated handshake stalls.
+                    if let Some(addr) = client_addr.take() {
+                        let _ = proxy.send_to(&buf[..n], addr).await;
+                    }
+                    forwarded_reply = true;
                 }
             }
         });
 
-        // Client connects to the proxy, so it sends but never hears back.
+        // Client connects to the proxy: it validates its address through the
+        // proxy's single forwarded reply, then never hears the TLS flight.
         let client_kp = Keypair::new();
         let client_cfg = new_client_config(&client_kp, 50);
         let port = unique_port_range_for_tests(1).start;

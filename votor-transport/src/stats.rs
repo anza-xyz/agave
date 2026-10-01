@@ -57,6 +57,9 @@ pub struct ServerStats {
     /// Inbound attempts shed because the global handshake rate limit was
     /// exhausted (and the accept gate was closed until it refills).
     pub(crate) handshake_rate_limited: AtomicU64,
+    /// Inbound attempts answered with a retry token because the source
+    /// address was not yet validated.
+    pub(crate) handshakes_retried: AtomicU64,
     /// Handshakes that did not complete within `HANDSHAKE_TIMEOUT`.
     pub(crate) handshake_timed_out: AtomicU64,
     /// Connections closed because the peer is no longer
@@ -221,6 +224,7 @@ impl ServerStats {
         let handshake_rejected_unauthorized = swap(&self.handshake_rejected_unauthorized);
         let handshake_rejected_overload = swap(&self.handshake_rejected_overload);
         let handshake_rate_limited = swap(&self.handshake_rate_limited);
+        let handshakes_retried = swap(&self.handshakes_retried);
         let handshake_timed_out = swap(&self.handshake_timed_out);
         let connection_closed_not_in_peer_list = swap(&self.connection_closed_not_in_peer_list);
         let connection_closed_banned = swap(&self.connection_closed_banned);
@@ -250,6 +254,7 @@ impl ServerStats {
                 i64
             ),
             ("handshake_rate_limited", handshake_rate_limited, i64),
+            ("handshakes_retried", handshakes_retried, i64),
             ("handshake_timed_out", handshake_timed_out, i64),
             (
                 "connection_closed_not_in_peer_list",
