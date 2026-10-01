@@ -2,15 +2,24 @@
 mod serde_snapshot_tests {
     use {
         crate::{
-            bank::BankHashStats,
-            serde_snapshot::{
-                AccountsDbFields, SerializableAccountsDb, SnapshotAccountsDbFields,
-                deserialize_wincode_from, reconstruct_accountsdb_from_fields,
-                remap_append_vec_file, serialize_into,
+            bank::{Bank, BankHashStats, test_utils as bank_test_utils},
+            epoch_stakes::{
+                EpochAuthorizedVoters, EpochStakes, NodeIdToVoteAccounts, VersionedEpochStakes,
             },
-            snapshot_utils::StorageAndNextAccountsFileId,
+            genesis_utils::{
+                GenesisConfigInfo, activate_all_features, create_genesis_config_with_leader,
+            },
+            runtime_config::RuntimeConfig,
+            serde_snapshot::{
+                self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountsDb,
+                SnapshotAccountsDbFields, SnapshotStreams, deserialize_wincode_from,
+                reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
+            },
+            snapshot_bank_utils,
+            snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
+        agave_snapshots::snapshot_config::SnapshotConfig,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
@@ -30,13 +39,16 @@ mod serde_snapshot_tests {
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
+        solana_hash::Hash,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         std::{
             fs::File,
-            io::{self, BufReader, Cursor, Read, Write},
+            io::{self, BufReader, BufWriter, Cursor, Read, Write},
+            mem,
             ops::RangeFull,
             path::{Path, PathBuf},
-            sync::{Arc, atomic::Ordering},
+            sync::{Arc, OnceLock, atomic::Ordering},
         },
         tempfile::TempDir,
         test_case::test_case,
@@ -887,8 +899,6 @@ mod serde_snapshot_tests {
         bank2.squash();
         bank2.force_flush_accounts_cache();
 
-        let expected_accounts_lt_hash = bank2.accounts_lt_hash.lock().unwrap().clone();
-
         let mut buf = Vec::new();
         let cursor = Cursor::new(&mut buf);
         let mut writer = BufWriter::new(cursor);
@@ -946,17 +956,8 @@ mod serde_snapshot_tests {
         assert_eq!(dbank.get_balance(&key1), 0);
         assert_eq!(dbank.get_balance(&key2), deposit_amount);
         assert_eq!(dbank.get_balance(&key3), 0);
-        assert_eq!(
-            dbank.accounts_lt_hash.lock().unwrap().clone(),
-            expected_accounts_lt_hash,
-        );
         assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
         assert_eq!(&dbank, bank2.as_ref());
-    }
-
-    fn add_root_and_flush_write_cache(bank: &Bank) {
-        bank.rc.accounts.add_root(bank.slot());
-        bank.force_flush_accounts_cache();
     }
 
     #[test]
@@ -972,14 +973,15 @@ mod serde_snapshot_tests {
         let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
         bank.set_block_id(Some(Hash::default()));
         bank.freeze();
-        add_root_and_flush_write_cache(&bank0);
+        bank.rc.accounts.add_root(bank.slot());
+        bank.force_flush_accounts_cache();
 
         // Set extra fields
         bank.fee_rate_governor.lamports_per_signature = 7000;
         // Note that epoch_stakes already has two epoch stakes entries for epochs 0 and 1
         // which will also be serialized to the versioned epoch stakes extra field, so add a
         // third entry to exercise round-tripping the extra field.
-        bank.epoch_stakes.insert(
+        bank.set_epoch_stakes_for_test(
             42,
             VersionedEpochStakes::Current {
                 stakes: EpochStakes::default(),
@@ -989,7 +991,7 @@ mod serde_snapshot_tests {
                 bls_pubkey_to_rank_map: OnceLock::new(),
             },
         );
-        assert_eq!(bank.epoch_stakes.len(), 3);
+        assert_eq!(bank.epoch_stakes_map().len(), 3);
 
         // Serialize
         let mut buf = vec![];
@@ -1024,7 +1026,7 @@ mod serde_snapshot_tests {
         )
         .unwrap();
 
-        assert_eq!(bank.epoch_stakes, dbank.epoch_stakes);
+        assert_eq!(bank.epoch_stakes_map(), dbank.epoch_stakes_map());
         assert_eq!(
             bank.fee_rate_governor.lamports_per_signature,
             dbank.fee_rate_governor.lamports_per_signature
