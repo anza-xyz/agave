@@ -423,17 +423,19 @@ fn default_feature_check_step(parallel: u64) -> buildkite::Step {
             }));
     }
 
-    group
-        .steps
-        .push(buildkite::Step::Command(buildkite::CommandStep {
-            name: String::from("feature-check-dev-bins"),
-            command: String::from(
-                "ci/docker-run-default-image.sh ci/feature-check/test-feature-dev-bins.sh",
-            ),
-            agents: Some(queue_agents()),
-            timeout_in_minutes: Some(20),
-            ..Default::default()
-        }));
+    for workspace in ["dev-bins", "sbf", "xtask"] {
+        group
+            .steps
+            .push(buildkite::Step::Command(buildkite::CommandStep {
+                name: format!("feature-check-{workspace}"),
+                command: format!(
+                    "ci/docker-run-default-image.sh ci/feature-check/test-feature-{workspace}.sh"
+                ),
+                agents: Some(queue_agents()),
+                timeout_in_minutes: Some(20),
+                ..Default::default()
+            }));
+    }
 
     buildkite::Step::Group(group)
 }
