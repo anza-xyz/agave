@@ -33,6 +33,16 @@ jobs:
           REPO: ${{ github.repository }}
           USERNAME: ${{ github.event.sender.login }}
         run: |
+          TRUSTED_CI_USERS=(
+            "mergify[bot]"
+          )
+          for trusted_ci_user in "${TRUSTED_CI_USERS[@]}"; do
+            if [[ "$USERNAME" == "$trusted_ci_user" ]]; then
+              echo "should_trigger=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
           ROLE_NAME=$(curl -sS -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
