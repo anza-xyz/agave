@@ -128,11 +128,11 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
             excluded_accounts.extend(tombstone_offsets.iter().map(|offset| (*offset, 0)));
         }
 
-        let len_for_archive = storage.accounts.len_for_archive(
-            excluded_accounts
-                .iter()
-                .map(|(_offset, data_len)| *data_len),
-        );
+        let excluded_size: usize = excluded_accounts
+            .iter()
+            .map(|(_offset, data_len)| AppendVec::calculate_stored_size(*data_len))
+            .sum();
+        let len_for_archive = storage.num_stored_bytes() as usize - excluded_size;
 
         let mut excluded_offsets: Vec<_> = excluded_accounts
             .into_iter()

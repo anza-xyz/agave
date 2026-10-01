@@ -5346,6 +5346,7 @@ fn test_calculate_storage_count_and_alive_bytes() {
         storage.num_alive_bytes.load(Ordering::Relaxed),
         expected_stored_size,
     );
+    assert_eq!(storage.num_stored_bytes(), expected_stored_size as u64);
     accounts.accounts_index.set_startup(Startup::Normal);
 }
 
@@ -5359,6 +5360,7 @@ fn test_calculate_storage_count_and_alive_bytes_0_accounts() {
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 0);
     assert_eq!(storage.num_alive_bytes.load(Ordering::Relaxed), 0);
+    assert_eq!(storage.num_stored_bytes(), 0);
 }
 
 #[test]
@@ -5404,6 +5406,7 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
         storage.num_alive_bytes.load(Ordering::Relaxed),
         expected_stored_size,
     );
+    assert_eq!(storage.num_stored_bytes(), expected_stored_size as u64);
     accounts.accounts_index.set_startup(Startup::Normal);
 }
 
@@ -5460,19 +5463,25 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         accum.num_obsolete_accounts_skipped,
         num_accounts_to_mark_obsolete as u64
     );
-    // Sum up the stored size of all non obsolete accounts
-    let expected_stored_size: usize = accounts_to_keep
-        .iter()
-        .map(|(_, data_len)| storage.accounts.calculate_stored_size(*data_len))
-        .sum();
     assert_eq!(
         storage.num_alive_accounts.load(Ordering::Relaxed),
         accounts_to_keep.len()
     );
+    // Sum up the stored size of all non obsolete accounts
+    let expected_alive_bytes: usize = accounts_to_keep
+        .iter()
+        .map(|(_, data_len)| storage.accounts.calculate_stored_size(*data_len))
+        .sum();
     assert_eq!(
         storage.num_alive_bytes.load(Ordering::Relaxed),
-        expected_stored_size,
+        expected_alive_bytes,
     );
+    // Sum up the stored size of *all* accounts
+    let expected_stored_bytes: usize = account_sizes
+        .iter()
+        .map(|data_len| storage.accounts.calculate_stored_size(*data_len))
+        .sum();
+    assert_eq!(storage.num_stored_bytes(), expected_stored_bytes as u64);
     accounts.accounts_index.set_startup(Startup::Normal);
 }
 
