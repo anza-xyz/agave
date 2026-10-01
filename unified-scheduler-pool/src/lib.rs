@@ -22,6 +22,7 @@ use {
     crossbeam_channel::{
         self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
     },
+    crossbeam_utils::CachePadded,
     dashmap::DashMap,
     derive_where::derive_where,
     log::*,
@@ -691,8 +692,11 @@ impl TaskHandler for DefaultTaskHandler {
 struct ExecutedTask {
     task: Task,
     result: Result<TrackedCost>,
-    timings: ExecuteTimings,
 }
+
+/// Each handler accumulates its timings here, and the scheduler thread merges them at the end
+/// of each session.
+type HandlerTimings = Arc<[CachePadded<Mutex<ExecuteTimings>>]>;
 
 impl ExecutedTask {
     fn consumed_block_size(&self) -> BlockSize {
@@ -1090,7 +1094,7 @@ struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
 }
 
 struct HandlerPanicked;
-type HandlerResult = std::result::Result<Box<ExecutedTask>, HandlerPanicked>;
+type HandlerResult = std::result::Result<ExecutedTask, HandlerPanicked>;
 
 impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn new(pool: Arc<SchedulerPool<S, TH>>) -> Self {
@@ -1114,15 +1118,19 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         scheduling_context: &SchedulingContext,
         task: Task,
         handler_context: &HandlerContext,
-    ) -> Box<ExecutedTask> {
+        handler_timings: &Mutex<ExecuteTimings>,
+    ) -> ExecutedTask {
         debug!("handling task at {:?}", thread::current());
         let mut timings = ExecuteTimings::default();
         let result = TH::handle(&mut timings, scheduling_context, &task, handler_context);
-        Box::new(ExecutedTask {
-            task,
-            result,
-            timings,
-        })
+        handler_timings.lock().unwrap().accumulate(&timings);
+        ExecutedTask { task, result }
+    }
+
+    fn take_handler_timings(handler_timings: &HandlerTimings, timings: &mut ExecuteTimings) {
+        for handler_timings in handler_timings.iter() {
+            timings.accumulate(&mem::take(&mut *handler_timings.lock().unwrap()));
+        }
     }
 
     fn max_running_task_count() -> Option<usize> {
@@ -1177,16 +1185,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
     /// Returns `true` if the caller should abort.
     #[must_use]
-    fn abort_or_accumulate_result_with_timings(
-        (result, timings): &mut ResultWithTimings,
-        executed_task: Box<ExecutedTask>,
+    fn abort_or_accumulate_result(
+        result: &mut Result<()>,
+        executed_task: ExecutedTask,
         task_result: Result<()>,
     ) -> bool {
         sleepless_testing::at(CheckPoint::TaskAccumulated(
             executed_task.task.task_id(),
             &task_result,
         ));
-        timings.accumulate(&executed_task.timings);
 
         match task_result {
             Ok(()) => {
@@ -1314,6 +1321,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // prioritization further. Consequently, this also contributes to alleviate the known
         // heuristic's caveat for the first task of linearized runs, which is described above.
         let mut session_bank = context.bank().clone();
+        let handler_timings: HandlerTimings = (0..handler_context.thread_count)
+            .map(|_| CachePadded::default())
+            .collect();
         let (mut runnable_task_sender, runnable_task_receiver) =
             chained_channel::unbounded::<Task, SchedulingContext>(context);
         // Create two handler-to-scheduler channels to prioritize the finishing of blocked tasks,
@@ -1336,6 +1346,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
             let handler_context = handler_context.clone_for_scheduler_thread();
+            let handler_timings = handler_timings.clone();
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
             // this way, the replay stage will get .send() failures reliably, after this scheduler
@@ -1436,8 +1447,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         &session_bank,
                                     );
 
-                                if Self::abort_or_accumulate_result_with_timings(
-                                    &mut result_with_timings,
+                                if Self::abort_or_accumulate_result(
+                                    &mut result_with_timings.0,
                                     executed_task,
                                     task_result,
                                 ) {
@@ -1498,8 +1509,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         &session_bank,
                                     );
 
-                                if Self::abort_or_accumulate_result_with_timings(
-                                    &mut result_with_timings,
+                                if Self::abort_or_accumulate_result(
+                                    &mut result_with_timings.0,
                                     executed_task,
                                     task_result,
                                 ) {
@@ -1514,6 +1525,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                     sleepless_testing::at(CheckPoint::SessionFinished(current_slot));
                     // Finalize the current session after asserting it's explicitly requested so.
+                    Self::take_handler_timings(&handler_timings, &mut result_with_timings.1);
                     // Send result first because this is blocking the replay code-path.
                     session_result_sender
                         .send(result_with_timings)
@@ -1599,6 +1611,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // last result_with_timings into the channel without exception. Usually,
                 // result_with_timings will contain the Err variant at this point, indicating the
                 // occurrence of transaction error.
+                Self::take_handler_timings(&handler_timings, &mut result_with_timings.1);
                 session_result_sender
                     .send(result_with_timings)
                     .expect("always outlived receiver");
@@ -1615,6 +1628,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
         let handler_main_loop = |thread_index: usize, assigned_arena: Option<Arena>| {
             let handler_context = handler_context.clone();
+            let handler_timings = handler_timings.clone();
             let mut runnable_task_receiver = runnable_task_receiver.clone();
             let finished_blocked_task_sender = finished_blocked_task_sender.clone();
             let finished_idle_task_sender = finished_idle_task_sender.clone();
@@ -1695,6 +1709,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         runnable_task_receiver.context(),
                         task,
                         &handler_context,
+                        &handler_timings[thread_index],
                     );
                     if sender.send(Ok(executed_task)).is_err() {
                         warn!("handler_thread: scheduler thread aborted...");

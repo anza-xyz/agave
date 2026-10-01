@@ -24,6 +24,7 @@ agave-banking-stage-ingress-types = { workspace = true }
 agave-jemalloc = { workspace = true, features = ["metrics"] }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
+crossbeam-utils = { workspace = true }
 dashmap = { workspace = true }
 derive-where = { workspace = true }
 derive_more = { workspace = true }
