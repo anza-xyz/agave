@@ -5282,7 +5282,13 @@ impl ReplayStage {
                 let bank = {
                     let mut bank_forks = context.bank_forks.write().unwrap();
                     if bank_forks.get(bank.slot()).is_none()
-                        && bank_forks.get(bank.parent_slot()).is_some()
+                        && bank.parent().is_some_and(|expected_parent| {
+                            bank_forks
+                                .get(bank.parent_slot())
+                                .is_some_and(|current_parent| {
+                                    current_parent.bank_id() == expected_parent.bank_id()
+                                })
+                        })
                     {
                         Some(bank_forks.insert(*bank))
                     } else {
