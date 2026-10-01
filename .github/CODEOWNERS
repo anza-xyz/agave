@@ -24,6 +24,7 @@
 /programs/sbf/Cargo.toml
 /programs/system/ @anza-xyz/svm
 /runtime-transaction/ @anza-xyz/tx-metadata
+/streamer/ @anza-xyz/networking
 /svm-callback/ @anza-xyz/svm
 /svm-conformance/ @anza-xyz/svm
 /svm-feature-set/ @anza-xyz/svm
@@ -42,6 +43,7 @@
 /svm/tests/example-programs/write-to-account/Cargo.toml
 /syscalls/ @anza-xyz/svm
 /tls-utils/ @anza-xyz/networking
+/tpu-client-next/ @anza-xyz/networking
 /transaction-context/ @anza-xyz/svm
 /turbine/ @anza-xyz/networking
 /votor/ @anza-xyz/consensus
