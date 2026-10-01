@@ -19,7 +19,7 @@ use {
     },
     agave_votor_messages::wire::WireBlockCertMessage,
     serde_json::Value,
-    solana_account::{Account, ReadableAccount},
+    solana_account::{Account, state_traits::StateMutWincode as _},
     solana_account_decoder::UiAccount,
     solana_account_decoder_client_types::token::{UiTokenAccount, UiTokenAmount},
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -4418,7 +4418,7 @@ impl RpcClient {
                 maybe_feature_account
                     .value
                     .map(|feature_account| {
-                        wincode::deserialize(feature_account.data()).map_err(|_| {
+                        feature_account.state().map_err(|_| {
                             ClientError::from(ErrorKind::Custom(
                                 "Failed to deserialize feature account".to_string(),
                             ))

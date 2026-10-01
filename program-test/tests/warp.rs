@@ -6,6 +6,7 @@ mod shared;
 use {
     setup::{setup_stake, setup_vote},
     shared::from_account_info,
+    solana_account::state_traits::StateMutWincode as _,
     solana_account_info::{AccountInfo, next_account_info},
     solana_banks_client::BanksClient,
     solana_clock::Clock,
@@ -191,9 +192,9 @@ async fn stake_rewards_from_warp() {
         .expect("account exists")
         .unwrap();
 
-    let stake_state: StakeStateV2 = wincode::deserialize(&account.data).unwrap();
-    let stake_history: StakeHistory = wincode::deserialize(&stake_history_account.data).unwrap();
-    let clock: Clock = wincode::deserialize(&clock_account.data).unwrap();
+    let stake_state: StakeStateV2 = account.state().unwrap();
+    let stake_history: StakeHistory = stake_history_account.state().unwrap();
+    let clock: Clock = clock_account.state().unwrap();
     let stake = stake_state.stake().unwrap();
     let stake_activation_status =
         stake
@@ -215,7 +216,7 @@ async fn check_credits_observed(
         .await
         .unwrap()
         .unwrap();
-    let stake_state: StakeStateV2 = wincode::deserialize(&stake_account.data).unwrap();
+    let stake_state: StakeStateV2 = stake_account.state().unwrap();
     assert_eq!(
         stake_state.stake().unwrap().credits_observed,
         expected_credits
@@ -254,7 +255,7 @@ async fn stake_merge_immediately_after_activation() {
         .await
         .expect("account exists")
         .unwrap();
-    let clock: Clock = wincode::deserialize(&clock_account.data).unwrap();
+    let clock: Clock = clock_account.state().unwrap();
     context.warp_to_epoch(clock.epoch + 1).unwrap();
     current_slot += slots_per_epoch;
     context.warp_forward_force_reward_interval_end().unwrap();
@@ -279,7 +280,7 @@ async fn stake_merge_immediately_after_activation() {
         .await
         .unwrap()
         .unwrap();
-    let stake_state: StakeStateV2 = wincode::deserialize(&stake_account.data).unwrap();
+    let stake_state: StakeStateV2 = stake_account.state().unwrap();
     assert_eq!(stake_state.stake().unwrap().credits_observed, 300);
     assert!(stake_account.lamports > stake_lamports);
 
@@ -290,7 +291,7 @@ async fn stake_merge_immediately_after_activation() {
         .await
         .unwrap()
         .unwrap();
-    let stake_state: StakeStateV2 = wincode::deserialize(&stake_account.data).unwrap();
+    let stake_state: StakeStateV2 = stake_account.state().unwrap();
     assert_eq!(stake_state.stake().unwrap().credits_observed, 300);
     assert_eq!(stake_account.lamports, stake_lamports);
 
@@ -301,7 +302,7 @@ async fn stake_merge_immediately_after_activation() {
         .await
         .unwrap()
         .unwrap();
-    let clock: Clock = wincode::deserialize(&clock_account.data).unwrap();
+    let clock: Clock = clock_account.state().unwrap();
     assert_eq!(
         clock.epoch,
         stake_state.delegation().unwrap().activation_epoch + 1

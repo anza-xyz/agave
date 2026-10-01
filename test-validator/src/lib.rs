@@ -1434,7 +1434,7 @@ mod test {
             let active_feature_accounts = rpc_client.get_multiple_accounts(chunk).await.unwrap();
             for feature_account in active_feature_accounts {
                 let account = feature_account.unwrap();
-                let feature_state: Feature = wincode::deserialize(account.data()).unwrap();
+                let feature_state: Feature = account.state().unwrap();
                 assert!(feature_state.activated_at.is_some());
             }
         }
@@ -1643,7 +1643,7 @@ mod test {
             let active_feature_accounts = rpc_client.get_multiple_accounts(chunk).await.unwrap();
             for f in active_feature_accounts {
                 let account = f.unwrap(); // Should be `Some`.
-                let feature_state: Feature = wincode::deserialize(account.data()).unwrap();
+                let feature_state: Feature = account.state().unwrap();
                 assert!(feature_state.activated_at.is_some());
             }
         }
@@ -1683,7 +1683,7 @@ mod test {
         // The second one should be a feature account.
         let feature_account = our_accounts[1].as_ref().unwrap();
         assert_eq!(feature_account.owner, solana_sdk_ids::feature::id());
-        let feature_state: Feature = wincode::deserialize(feature_account.data()).unwrap();
+        let feature_state: Feature = feature_account.state().unwrap();
         assert!(feature_state.activated_at.is_some());
     }
 
