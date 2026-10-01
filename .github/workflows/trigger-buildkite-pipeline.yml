@@ -44,11 +44,12 @@ jobs:
             fi
           done
 
+          ENCODED_USERNAME=$(jq -rn --arg username "$USERNAME" '$username | @uri')
           ROLE_NAME=$(curl -sS -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
-            https://api.github.com/repos/$REPO/collaborators/$USERNAME/permission | jq -r ".role_name")
+            "https://api.github.com/repos/$REPO/collaborators/$ENCODED_USERNAME/permission" | jq -r ".role_name")
 
           case "$ROLE_NAME" in
             admin|maintain|write|triage)
