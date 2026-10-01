@@ -299,12 +299,10 @@ impl ClusterInfo {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn insert_info(&self, node: ContactInfo) {
         let entry = CrdsValue::new(CrdsData::ContactInfo(node), &self.keypair());
-        if let Err(err) = {
-            let mut gossip_crds = self.gossip.crds.write();
-            gossip_crds.insert(entry, timestamp(), GossipRoute::LocalMessage)
-        } {
-            error!("ClusterInfo.insert_info: {err:?}");
-        }
+        let mut gossip_crds = self.gossip.crds.write();
+        gossip_crds
+            .insert(entry, timestamp(), GossipRoute::LocalMessage)
+            .unwrap_or_else(|err| panic!("ClusterInfo::insert_info failed: {err:?}"));
     }
 
     pub fn set_entrypoint(&self, entrypoint: ContactInfo) {
