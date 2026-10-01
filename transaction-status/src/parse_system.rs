@@ -2,7 +2,6 @@ use {
     crate::parse_instruction::{
         ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
-    bincode::deserialize,
     serde_json::json,
     solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
     solana_system_interface::instruction::SystemInstruction,
@@ -12,7 +11,7 @@ pub fn parse_system(
     instruction: &CompiledInstruction,
     account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
-    let system_instruction: SystemInstruction = deserialize(&instruction.data)
+    let system_instruction: SystemInstruction = wincode::deserialize(&instruction.data)
         .map_err(|_| ParseInstructionError::InstructionNotParsable(ParsableProgram::System))?;
     match instruction.accounts.iter().max() {
         Some(index) if (*index as usize) < account_keys.len() => {}

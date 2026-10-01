@@ -2,7 +2,6 @@ use {
     crate::parse_instruction::{
         ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
-    bincode::deserialize,
     serde_json::json,
     solana_address_lookup_table_interface::instruction::ProgramInstruction,
     solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
@@ -12,8 +11,8 @@ pub fn parse_address_lookup_table(
     instruction: &CompiledInstruction,
     account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
-    let address_lookup_table_instruction: ProgramInstruction = deserialize(&instruction.data)
-        .map_err(|_| {
+    let address_lookup_table_instruction: ProgramInstruction =
+        wincode::deserialize(&instruction.data).map_err(|_| {
             ParseInstructionError::InstructionNotParsable(ParsableProgram::AddressLookupTable)
         })?;
     match instruction.accounts.iter().max() {

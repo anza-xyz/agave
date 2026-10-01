@@ -6924,7 +6924,6 @@ dependencies = [
  "Inflector",
  "assert_matches",
  "base64 0.23.1",
- "bincode",
  "bs58",
  "bv",
  "serde",
@@ -7150,10 +7149,7 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29c09d0da218d985406ed11c1c84169fc9e02e61a5a0012398026b329b9af608"
 dependencies = [
- "bincode",
  "bytemuck",
- "serde",
- "serde_derive",
  "solana-clock",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
@@ -9088,12 +9084,10 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88abae245ad0aedbbb1498836c1ee4ac79903d7d632c2492d5a376554ac6fe74"
 dependencies = [
- "serde",
- "serde_bytes",
- "serde_derive",
  "solana-instruction 4.0.0",
  "solana-pubkey 4.4.0",
  "solana-sdk-ids",
+ "wincode",
 ]
 
 [[package]]
@@ -11392,7 +11386,6 @@ dependencies = [
  "agave-reserved-account-keys",
  "base64 0.23.1",
  "bencher",
- "bincode",
  "borsh",
  "bs58",
  "bytemuck",

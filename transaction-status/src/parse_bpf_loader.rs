@@ -3,7 +3,6 @@ use {
         ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
     base64::{Engine, prelude::BASE64_STANDARD},
-    bincode::deserialize,
     serde_json::json,
     solana_loader_v2_interface::LoaderInstruction,
     solana_loader_v3_interface::instruction::UpgradeableLoaderInstruction,
@@ -14,7 +13,7 @@ pub fn parse_bpf_loader(
     instruction: &CompiledInstruction,
     account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
-    let bpf_loader_instruction: LoaderInstruction = deserialize(&instruction.data)
+    let bpf_loader_instruction: LoaderInstruction = wincode::deserialize(&instruction.data)
         .map_err(|_| ParseInstructionError::InstructionNotParsable(ParsableProgram::BpfLoader))?;
     if instruction.accounts.is_empty() || instruction.accounts[0] as usize >= account_keys.len() {
         return Err(ParseInstructionError::InstructionKeyMismatch(
@@ -50,7 +49,7 @@ pub fn parse_bpf_upgradeable_loader(
     account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
     let bpf_upgradeable_loader_instruction: UpgradeableLoaderInstruction =
-        deserialize(&instruction.data).map_err(|_| {
+        wincode::deserialize(&instruction.data).map_err(|_| {
             ParseInstructionError::InstructionNotParsable(ParsableProgram::BpfUpgradeableLoader)
         })?;
     match instruction.accounts.iter().max() {

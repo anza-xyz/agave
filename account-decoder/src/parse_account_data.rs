@@ -192,7 +192,7 @@ mod test {
         assert_eq!(parsed.space, VoteStateV4::size_of() as u64);
 
         let nonce_data = Versions::new(State::Initialized(Data::default()));
-        let nonce_account_data = bincode::serialize(&nonce_data).unwrap();
+        let nonce_account_data = wincode::serialize(&nonce_data).unwrap();
         let parsed = parse_account_data_v3(
             &account_pubkey,
             &system_program::id(),
