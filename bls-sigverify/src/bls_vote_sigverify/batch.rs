@@ -3,7 +3,7 @@ use {
         bls_sigverifier::SigVerifierChannels,
         errors::SigVerifyVoteError,
         stats::{VoteSenderStats, VoteVerificationStats},
-        unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
+        unverified_votes_batch::{FailedVotes, UnverifiedBatch, UnverifiedVotePayload},
         verified_batch::VerifiedBatch,
     },
     agave_votor_messages::wire::VotePayloadToSign,
@@ -53,7 +53,7 @@ impl Batch {
         &mut self,
         ban_sender: &BanSender,
         thread_pool: &ThreadPool,
-    ) -> (usize, VoteVerificationStats) {
+    ) -> (usize, VoteVerificationStats, FailedVotes) {
         self.batch_state
             .verify(self.rank_map.len(), ban_sender, thread_pool)
     }
@@ -97,14 +97,14 @@ impl BatchState {
         max_validators: usize,
         ban_sender: &BanSender,
         thread_pool: &ThreadPool,
-    ) -> (usize, VoteVerificationStats) {
+    ) -> (usize, VoteVerificationStats, FailedVotes) {
         match self {
             Self::Unverified(unverified_batch) => {
                 let num_votes_to_sigverify = unverified_batch.len();
-                let (verified_batch, stats) =
+                let (verified_batch, stats, failed_votes) =
                     unverified_batch.verify(max_validators, ban_sender, thread_pool);
                 *self = Self::Verified(verified_batch);
-                (num_votes_to_sigverify, stats)
+                (num_votes_to_sigverify, stats, failed_votes)
             }
             Self::Verified(_) => unreachable!("Invalid state"),
         }

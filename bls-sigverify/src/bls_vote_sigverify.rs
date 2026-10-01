@@ -4,6 +4,7 @@ use {
         bls_vote_sigverify::batch::Batch,
         errors::SigVerifyVoteError,
         stats::{SigVerifyVoteStats, VoteSenderStats, VoteVerificationStats},
+        unverified_votes_batch::FailedVotes,
     },
     agave_votor_messages::wire::VotePayloadToSign,
     agave_votor_transport::endpoint::BanSender,
@@ -24,6 +25,8 @@ pub(crate) mod batch;
 /// to rewards container and repair.
 ///
 /// Any vote that fails fallback individual signature verification will have its sender banlisted.
+/// Failed votes are returned together with their rank so the caller can roll back the vote-pool
+/// entries they spent at ingestion.
 pub(super) fn verify_and_send_votes(
     unverified_votes: &mut HashMap<VotePayloadToSign, Batch>,
     root_bank: &Bank,
@@ -32,33 +35,37 @@ pub(super) fn verify_and_send_votes(
     ban_sender: &BanSender,
     thread_pool: &ThreadPool,
     channels: &SigVerifierChannels,
-) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
+) -> Result<(SigVerifyVoteStats, FailedVotes), SigVerifyVoteError> {
     let mut measure = Measure::start("verify_and_send_votes");
     let mut stats = SigVerifyVoteStats::default();
     if unverified_votes.is_empty() {
-        return Ok(stats);
+        return Ok((stats, Vec::new()));
     }
     stats
         .distinct_votes_stats
         .add_sample(unverified_votes.len() as u64);
 
-    let (votes_to_verify, vote_verification_stats) = thread_pool.install(|| {
+    let (votes_to_verify, vote_verification_stats, failed_votes) = thread_pool.install(|| {
         unverified_votes
             .par_iter_mut()
             .fold(
-                || (Saturating(0), VoteVerificationStats::default()),
-                |(mut total_votes_to_verify, mut vote_verification_stats), (_, batch)| {
-                    let (votes_to_verify, stats) = batch.verify(ban_sender, thread_pool);
+                || (Saturating(0), VoteVerificationStats::default(), Vec::new()),
+                |(mut total_votes_to_verify, mut vote_verification_stats, mut failed_votes),
+                 (_, batch)| {
+                    let (votes_to_verify, stats, batch_failed_votes) =
+                        batch.verify(ban_sender, thread_pool);
                     total_votes_to_verify += votes_to_verify;
                     vote_verification_stats.merge(stats);
-                    (total_votes_to_verify, vote_verification_stats)
+                    failed_votes.extend(batch_failed_votes);
+                    (total_votes_to_verify, vote_verification_stats, failed_votes)
                 },
             )
             .reduce(
-                || (Saturating(0), VoteVerificationStats::default()),
+                || (Saturating(0), VoteVerificationStats::default(), Vec::new()),
                 |mut left, right| {
                     left.0 += right.0;
                     left.1.merge(right.1);
+                    left.2.extend(right.2);
                     left
                 },
             )
@@ -81,5 +88,5 @@ pub(super) fn verify_and_send_votes(
     stats
         .fn_verify_and_send_votes_stats
         .add_sample(measure.as_us());
-    Ok(stats)
+    Ok((stats, failed_votes))
 }

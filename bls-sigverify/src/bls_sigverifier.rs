@@ -291,8 +291,18 @@ impl SigVerifier {
             },
         );
 
-        let vote_stats = votes_result?;
+        let (vote_stats, failed_votes) = votes_result?;
         let cert_stats = certs_result?;
+
+        // Votes are admitted to the vote pool before signature verification so
+        // that duplicates and conflicting votes can be rejected cheaply. A vote
+        // whose verification failed was never a valid vote, so release its pool
+        // entry: a later correctly-signed retransmission of the same vote, or
+        // a different vote for the same slot, must be processed fresh instead
+        // of being dropped as a duplicate or rejected as a conflict.
+        for (rank, vote) in failed_votes {
+            self.vote_pool.rollback_vote(&vote, rank);
+        }
 
         self.stats.vote_stats.merge(vote_stats);
         self.stats.cert_stats.merge(cert_stats);
@@ -2022,6 +2032,119 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_vote_pool_entry_not_spent_by_failed_verification() {
+        let mut ctx = TestContext::new();
+        let shred_version = ctx.verifier.cluster_info.my_shred_version();
+        let slot = 42;
+        let rank = 5;
+        let sender = ctx.validator_keypairs[rank].node_keypair.pubkey();
+        let vote = Vote::new_skip_vote(slot);
+
+        // A correctly-shaped vote whose signature was produced over the wrong
+        // payload, e.g. the sender is transiently misconfigured during a BLS
+        // key rotation. Its vote pool entry is admitted before verification.
+        let wrong_payload =
+            get_vote_payload_to_sign(Vote::new_skip_vote(slot + 1_000), shred_version);
+        let bad_msg = ConsensusMessage::Vote(VoteMessage {
+            vote,
+            signature: ctx.validator_keypairs[rank]
+                .bls_keypair
+                .sign(&wrong_payload)
+                .into(),
+            rank: rank as u16,
+            stake: NonZero::new(123).unwrap(),
+        });
+        ctx.verifier
+            .verify_and_send_datagrams(messages_to_datagrams(&[(bad_msg, sender)], shred_version))
+            .unwrap();
+        // The bad signature bans the sender and nothing reaches the pool.
+        assert!(ctx.banned_pubkeys().contains(&sender));
+        expect_no_receive(&ctx.pool_receiver);
+
+        // The same vote, retransmitted correctly signed once the sender is fixed.
+        let root_bank = ctx.bank_forks.read().unwrap().root_bank();
+        let good_msg = ConsensusMessage::Vote(create_signed_vote_message(
+            &root_bank,
+            &ctx.validator_keypairs,
+            shred_version,
+            vote,
+            rank,
+        ));
+        ctx.verifier
+            .verify_and_send_datagrams(messages_to_datagrams(&[(good_msg, sender)], shred_version))
+            .unwrap();
+
+        // The failed attempt never counted, so the retransmission must be
+        // verified and delivered instead of being dropped as a duplicate.
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        match &batches[..] {
+            [SigVerifiedBatch::Votes(aggregates)] => {
+                assert_eq!(aggregates.len(), 1);
+                assert_eq!(aggregates[0].ranks().count_ones(), 1);
+                assert!(aggregates[0].ranks()[rank]);
+            }
+            rest => panic!("expected the retransmitted vote, got {rest:?}"),
+        }
+        // The retransmission was valid, so it must not ban the sender again.
+        assert!(ctx.banned_pubkeys().is_empty());
+    }
+
+    #[test]
+    fn test_conflicting_vote_after_failed_verification_is_processed_fresh() {
+        let mut ctx = TestContext::new();
+        let shred_version = ctx.verifier.cluster_info.my_shred_version();
+        let slot = 43;
+        let rank = 6;
+        let sender = ctx.validator_keypairs[rank].node_keypair.pubkey();
+
+        // A notarize vote whose signature was produced over the wrong payload:
+        // its pool entry is admitted, then verification fails and bans sender.
+        let wrong_payload =
+            get_vote_payload_to_sign(Vote::new_skip_vote(slot + 1_000), shred_version);
+        let bad_msg = ConsensusMessage::Vote(VoteMessage {
+            vote: Vote::new_notarization_vote(Block::new_unique(slot)),
+            signature: ctx.validator_keypairs[rank]
+                .bls_keypair
+                .sign(&wrong_payload)
+                .into(),
+            rank: rank as u16,
+            stake: NonZero::new(123).unwrap(),
+        });
+        ctx.verifier
+            .verify_and_send_datagrams(messages_to_datagrams(&[(bad_msg, sender)], shred_version))
+            .unwrap();
+        assert!(ctx.banned_pubkeys().contains(&sender));
+        expect_no_receive(&ctx.pool_receiver);
+
+        // A different, correctly signed vote for the same slot. The failed
+        // notarize never counted, so this is not a conflicting vote: it must
+        // be admitted fresh instead of being rejected and re-banning sender.
+        let skip_vote = Vote::new_skip_vote(slot);
+        let root_bank = ctx.bank_forks.read().unwrap().root_bank();
+        let good_msg = ConsensusMessage::Vote(create_signed_vote_message(
+            &root_bank,
+            &ctx.validator_keypairs,
+            shred_version,
+            skip_vote,
+            rank,
+        ));
+        ctx.verifier
+            .verify_and_send_datagrams(messages_to_datagrams(&[(good_msg, sender)], shred_version))
+            .unwrap();
+
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        match &batches[..] {
+            [SigVerifiedBatch::Votes(aggregates)] => {
+                assert_eq!(aggregates.len(), 1);
+                assert!(aggregates[0].ranks()[rank]);
+            }
+            rest => panic!("expected the skip vote to be verified, got {rest:?}"),
+        }
+        // The skip vote was valid: no additional ban may be issued.
+        assert!(ctx.banned_pubkeys().is_empty());
     }
 
     #[test]

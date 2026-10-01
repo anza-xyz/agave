@@ -151,6 +151,50 @@ impl SlotEntry {
             }
         }
     }
+
+    /// Undoes the state transition of a successful [`SlotEntry::try_add_vote`].
+    ///
+    /// Votes are admitted to the pool at ingestion, before signature
+    /// verification runs, so that duplicates and conflicting votes can be
+    /// rejected cheaply. A vote whose verification subsequently failed was
+    /// never a valid vote, so its entry must be released: otherwise a later
+    /// correctly-signed retransmission of the same vote is dropped as a
+    /// duplicate, and a different vote for the same slot is rejected as a
+    /// conflict and gets the sender banned again.
+    ///
+    /// Only the state set by the admission of this exact vote is cleared.
+    /// Admission returned `Ok(())`, so no other vote's state can occupy the
+    /// same fields: a second vote for the same (slot, rank, type, block) was
+    /// rejected as a duplicate, and conflicting votes were rejected as
+    /// invalid without mutating state.
+    fn rollback_vote(&mut self, vote: &Vote, rank: usize) {
+        if rank >= self.notar.len() {
+            return;
+        }
+        match vote {
+            Vote::Skip(_) => self.skip.set(rank, false),
+            Vote::SkipFallback(_) => self.skip_fallback.set(rank, false),
+            Vote::Finalize(_) => self.finalize.set(rank, false),
+            Vote::Genesis(genesis) => {
+                if self.genesis[rank].as_ref() == Some(&genesis.block.block_id) {
+                    self.genesis[rank] = None;
+                }
+            }
+            Vote::Notarize(notar) => {
+                if self.notar[rank].as_ref() == Some(&notar.block.block_id) {
+                    self.notar[rank] = None;
+                }
+            }
+            Vote::NotarizeFallback(nf) => {
+                if let Some(position) = self.notar_fallback[rank]
+                    .iter()
+                    .position(|block_id| *block_id == nf.block.block_id)
+                {
+                    self.notar_fallback[rank].swap_remove(position);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -174,6 +218,16 @@ impl VotePool {
             .entry(msg.vote.slot())
             .or_insert_with(|| SlotEntry::new(max_validators));
         slot_entry.try_add_vote(msg, rank, max_validators)
+    }
+
+    /// Releases the pool entry spent by a vote that was admitted by
+    /// [`VotePool::try_add_vote`] but subsequently failed signature
+    /// verification. See [`SlotEntry::rollback_vote`].
+    pub(super) fn rollback_vote(&mut self, vote: &Vote, rank: usize) {
+        let Some(slot_entry) = self.entries.get_mut(&vote.slot()) else {
+            return;
+        };
+        slot_entry.rollback_vote(vote, rank);
     }
 
     pub(super) fn prune(&mut self, root_slot: Slot) {
