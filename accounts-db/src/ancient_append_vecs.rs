@@ -1227,7 +1227,7 @@ mod tests {
 
                 let account_template = storages
                     .first()
-                    .and_then(|storage| storage.accounts.get_account_shared_data(0))
+                    .and_then(|storage| storage.accounts.get_account_shared_data(0).ok())
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
                 let mut data_size = 450;

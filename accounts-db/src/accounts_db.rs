@@ -635,6 +635,15 @@ impl LoadedAccountAccessor {
                             .get_stored_account_callback(*offset, |account| {
                                 callback(LoadedAccount::Stored(account))
                             })
+                            .inspect_err(|err| {
+                                trace!(
+                                    "get_loaded_account() failed! storage slot: {}, id: {}, \
+                                     offset: {offset}, err: {err}",
+                                    storage_entry.slot(),
+                                    storage_entry.id(),
+                                );
+                            })
+                            .ok()
                     })
             }
         }
