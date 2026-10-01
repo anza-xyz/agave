@@ -5281,17 +5281,27 @@ impl ReplayStage {
                 // Check that the bank is still valid to be inserted
                 let bank = {
                     let mut bank_forks = context.bank_forks.write().unwrap();
-                    if bank_forks.get(bank.slot()).is_none()
-                        && bank.parent().is_some_and(|expected_parent| {
-                            bank_forks
-                                .get(bank.parent_slot())
-                                .is_some_and(|current_parent| {
-                                    current_parent.bank_id() == expected_parent.bank_id()
-                                })
-                        })
-                    {
+                    if bank_forks.get(bank.slot()).is_some() {
+                        // Bank already exists in the bank forks.
+                        None
+                    } else if bank.parent().is_some_and(|expected_parent| {
+                        bank_forks
+                            .get(bank.parent_slot())
+                            .is_some_and(|current_parent| {
+                                current_parent.bank_id() == expected_parent.bank_id()
+                            })
+                    }) {
+                        // The normal case where bank parent meta matches what's in bank forks.
                         Some(bank_forks.insert(*bank))
                     } else {
+                        // Purge these banks inline so we are not waiting on the lazy Accounts
+                        // Background Service for cleanup.
+                        drop(bank_forks);
+                        let slot = bank.slot();
+                        bank.remove_unrooted_slots(&[(slot, bank.bank_id())]);
+                        bank.clear_slot_signatures(slot);
+                        bank.prune_program_cache_by_deployment_slot(slot);
+                        drop(bank);
                         None
                     }
                 };
