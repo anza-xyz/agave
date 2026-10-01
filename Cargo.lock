@@ -11555,6 +11555,7 @@ dependencies = [
  "agave-logger",
  "assert_matches",
  "crossbeam-channel",
+ "crossbeam-utils",
  "dashmap",
  "derive-where",
  "derive_more 2.1.1",
