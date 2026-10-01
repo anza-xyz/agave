@@ -617,7 +617,9 @@ mod tests {
         },
         bitvec::prelude::*,
         rand::seq::IndexedRandom,
-        solana_account::{Account, ReadableAccount, WritableAccount},
+        solana_account::{
+            Account, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+        },
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
@@ -654,7 +656,7 @@ mod tests {
     }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
-        let versions = wincode::deserialize(account.data()).unwrap();
+        let versions = account.state().unwrap();
         VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
     }
 
@@ -1052,7 +1054,7 @@ mod tests {
         for validator in validators {
             let vote_pubkey = validator.vote_keypair.pubkey();
             let account = genesis_config.accounts.get_mut(&vote_pubkey).unwrap();
-            let vote_state_versions = wincode::deserialize(&account.data).unwrap();
+            let vote_state_versions = account.state().unwrap();
             let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
                 panic!();
             };

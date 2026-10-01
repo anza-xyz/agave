@@ -15,7 +15,7 @@ use {
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         prelude::ParallelSlice,
     },
-    solana_account::ReadableAccount,
+    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsDb, GetUniqueAccountsResult},
@@ -193,7 +193,7 @@ impl<'a> SnapshotMinimizer<'a> {
             .filter_map(|account| {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = wincode::deserialize(account.data())
+                }) = account.state()
                 {
                     Some(programdata_address)
                 } else {

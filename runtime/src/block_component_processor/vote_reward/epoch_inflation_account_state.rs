@@ -3,9 +3,7 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::bank::Bank,
     serde::{Deserialize, Serialize},
-    solana_account::{
-        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
-    },
+    solana_account::{Account, AccountSharedData, state_traits::StateMutWincode as _},
     solana_clock::Epoch,
     solana_genesis_config::GenesisConfig,
     solana_pubkey::Pubkey,
@@ -97,7 +95,7 @@ impl EpochInflationAccountState {
     /// the expected size.
     pub(crate) fn new_from_bank(bank: &Bank) -> Option<Self> {
         bank.get_account(&VOTE_REWARD_ACCOUNT_ADDR)
-            .and_then(|acct| wincode::deserialize(acct.data()).ok())
+            .and_then(|acct| acct.state().ok())
     }
 
     /// Returns the epoch-start inflation rewards recorded for `epoch`.

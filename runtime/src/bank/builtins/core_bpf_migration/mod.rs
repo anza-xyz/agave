@@ -706,8 +706,7 @@ pub(crate) mod tests {
 
             // Program account has the correct state, with a pointer to its program
             // data address.
-            let program_account_state: UpgradeableLoaderState =
-                wincode::deserialize(program_account.data()).unwrap();
+            let program_account_state: UpgradeableLoaderState = program_account.state().unwrap();
             assert_eq!(
                 program_account_state,
                 UpgradeableLoaderState::Program {
@@ -1124,7 +1123,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&builtin_id);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            wincode::deserialize(program_data_account.data()).unwrap();
+            program_data_account.state().unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -1299,7 +1298,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&program_address);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            wincode::deserialize(program_data_account.data()).unwrap();
+            program_data_account.state().unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -1894,11 +1893,10 @@ pub(crate) mod tests {
                 fetched_builtin_program_account.owner(),
                 &bpf_loader_upgradeable::id()
             );
+            let fetched_builtin_program_state: UpgradeableLoaderState =
+                fetched_builtin_program_account.state().unwrap();
             assert_eq!(
-                wincode::deserialize::<UpgradeableLoaderState>(
-                    fetched_builtin_program_account.data()
-                )
-                .unwrap(),
+                fetched_builtin_program_state,
                 UpgradeableLoaderState::Program {
                     programdata_address: builtin_program_data_address
                 }

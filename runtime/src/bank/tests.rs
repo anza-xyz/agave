@@ -6429,13 +6429,11 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
         );
-        wincode::serialize_into(
-            account.data_as_mut_slice(),
-            &UpgradeableLoaderState::Buffer {
+        account
+            .set_state(&UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
@@ -6547,7 +6545,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         post_program_account.data().len(),
         UpgradeableLoaderState::size_of_program()
     );
-    let state: UpgradeableLoaderState = wincode::deserialize(post_program_account.data()).unwrap();
+    let state: UpgradeableLoaderState = post_program_account.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Program {
@@ -6560,8 +6558,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         post_programdata_account.owner(),
         &bpf_loader_upgradeable::id()
     );
-    let state: UpgradeableLoaderState =
-        wincode::deserialize(post_programdata_account.data()).unwrap();
+    let state: UpgradeableLoaderState = post_programdata_account.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -12202,7 +12199,7 @@ fn test_genesis_deprecate_rent_exemption_enabled() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     let rent_account = bank.get_account(&Rent::id()).unwrap();
-    let accounts_db_rent = wincode::deserialize::<Rent>(rent_account.data()).unwrap();
+    let accounts_db_rent: Rent = rent_account.state().unwrap();
     let rent_collector_rent = bank.rent_collector.rent.clone();
     let tx_processor_rent = bank
         .transaction_processor
@@ -12222,7 +12219,7 @@ fn test_genesis_deprecate_rent_exemption_disabled() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     let rent_account = bank.get_account(&Rent::id()).unwrap();
-    let accounts_db_rent = wincode::deserialize::<Rent>(rent_account.data()).unwrap();
+    let accounts_db_rent: Rent = rent_account.state().unwrap();
     let rent_collector_rent = bank.rent_collector.rent.clone();
     let tx_processor_rent = bank
         .transaction_processor
@@ -12292,13 +12289,11 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
         );
-        wincode::serialize_into(
-            account.data_as_mut_slice(),
-            &UpgradeableLoaderState::Buffer {
+        account
+            .set_state(&UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
