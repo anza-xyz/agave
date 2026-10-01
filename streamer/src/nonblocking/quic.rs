@@ -1698,7 +1698,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_unstaked_connection_removal() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1726,7 +1726,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_unstaked_node_connect_failure() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
