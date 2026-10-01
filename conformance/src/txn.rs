@@ -751,7 +751,7 @@ mod tests {
         let processed =
             ProcessedTransaction::NoOp(Box::new(solana_svm::account_loader::NoOpTransaction {
                 validation_error: validation_error.clone(),
-                fee_payer_balance: Some(42),
+                fee_payer_balance: None,
                 compute_unit_limit: COMPUTE_UNIT_LIMIT,
                 loaded_accounts_bytes_limit: LOADED_ACCOUNTS_BYTES_LIMIT,
                 nonce_address: None,
