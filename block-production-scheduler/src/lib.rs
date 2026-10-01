@@ -2,7 +2,11 @@
 #![cfg(unix)]
 
 use {
-    crate::progress_tracker::SchedulerState,
+    crate::{
+        check_response::TransactionState, progress_tracker::SchedulerState,
+        transaction_container::TransactionContainer,
+    },
+    agave_reserved_account_keys::ReservedAccountKeys,
     agave_scheduler_bindings::{
         CheckWorkerToPackMessage, PackToCheckWorkerMessage, ProgressMessage, TpuToPackMessage,
     },
@@ -10,21 +14,24 @@ use {
         ClientCheckWorkerSession, ClientHandshakeError, ClientLogon, ClientSession,
         ClientWorkerSession, client,
     },
-    rts_alloc::Allocator,
-    std::{
-        path::PathBuf,
+    core::{
         sync::atomic::{AtomicBool, Ordering},
         time::Duration,
     },
+    rts_alloc::Allocator,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    std::{collections::HashSet, path::PathBuf},
 };
 
+mod check_response;
 mod progress_tracker;
+mod resolved_transaction;
 mod tpu_ingress;
 #[cfg_attr(
     not(test),
     expect(
         dead_code,
-        reason = "used by the upcoming check worker response handler"
+        reason = "additional container operations are used by upcoming execution handling"
     )
 )]
 mod transaction_container;
@@ -59,6 +66,8 @@ pub struct Config {
     pub pack_to_check_worker_capacity: usize,
     /// Minimum check-worker-to-scheduler queue capacity in messages.
     pub check_worker_to_pack_capacity: usize,
+    /// Maximum number of checked transactions retained for scheduling.
+    pub transaction_state_capacity: usize,
 }
 
 #[expect(
@@ -72,12 +81,17 @@ struct Scheduler {
     progress_receiver: shaq::spsc::Consumer<ProgressMessage>,
     check_sender: shaq::mpmc::Producer<PackToCheckWorkerMessage>,
     outstanding_check_packets: usize,
+    transactions: TransactionContainer<TransactionState>,
+    reserved_account_keys: HashSet<Pubkey, PubkeyHasherBuilder>,
     check_receiver: shaq::mpmc::Consumer<CheckWorkerToPackMessage>,
     workers: Vec<ClientWorkerSession>,
 }
 
 impl Scheduler {
-    fn new(session: ClientSession) -> Result<Self, ClientHandshakeError> {
+    fn new(
+        session: ClientSession,
+        transaction_state_capacity: usize,
+    ) -> Result<Self, ClientHandshakeError> {
         let ClientSession {
             allocator,
             tpu_to_pack,
@@ -98,6 +112,8 @@ impl Scheduler {
             progress_receiver: progress_tracker,
             check_sender: pack_to_check_worker,
             outstanding_check_packets: 0,
+            transactions: TransactionContainer::with_capacity(transaction_state_capacity),
+            reserved_account_keys: ReservedAccountKeys::default().active.into_iter().collect(),
             check_receiver: check_worker_to_pack,
             workers,
         })
@@ -105,8 +121,9 @@ impl Scheduler {
 
     fn run_iteration(&mut self) {
         self.handle_leader_progress();
+        self.handle_check_worker_responses();
         self.handle_tpu_ingress();
-        std::hint::spin_loop();
+        core::hint::spin_loop();
     }
 
     fn handle_leader_progress(&mut self) {
@@ -118,7 +135,7 @@ impl Scheduler {
 ///
 /// If exit is already set, returns without connecting. Otherwise, attempts the handshake once
 /// and returns any error to the caller. Shared resources remain alive until the loop exits.
-/// The loop receives leader progress updates and dispatches TPU packets to check workers.
+/// The loop receives leader progress, dispatches TPU packets, and retains checked transactions.
 ///
 /// The exit flag cannot interrupt an in-progress handshake. The timeout has the syscall-level
 /// semantics of [`client::connect`], rather than imposing a deadline on the entire handshake.
@@ -142,11 +159,10 @@ pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError
         pack_to_simulate_worker_capacity: 0,
         simulate_worker_to_pack_capacity: 0,
     };
-    let mut scheduler = Scheduler::new(client::connect(
-        config.ipc_path,
-        logon,
-        config.handshake_timeout,
-    )?)?;
+    let mut scheduler = Scheduler::new(
+        client::connect(config.ipc_path, logon, config.handshake_timeout)?,
+        config.transaction_state_capacity,
+    )?;
 
     while !exit.load(Ordering::Relaxed) {
         scheduler.run_iteration();

@@ -19,16 +19,25 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
+agave-reserved-account-keys = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-scheduler-handshake = { workspace = true }
 agave-scheduling-utils = { workspace = true }
+agave-transaction-view = { workspace = true }
 rts-alloc = { workspace = true }
 shaq = { workspace = true }
 slab = { workspace = true }
 solana-clock = { workspace = true }
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 
 [dev-dependencies]
+solana-hash = { workspace = true }
+solana-signature = { workspace = true }
+solana-svm-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 tempfile = { workspace = true }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,6 +1,7 @@
 use {
     super::*,
-    agave_scheduler_handshake::server::Server,
+    crate::tpu_ingress::{MAX_PACKETS_PER_CHECK_BATCH, MAX_TPU_PACKETS_PER_ITERATION},
+    agave_scheduler_handshake::{AgaveSession, server::Server, setup_local_session},
     std::{io::ErrorKind, path::Path, sync::Arc, thread},
 };
 
@@ -18,7 +19,34 @@ fn config(path: &Path) -> Config {
         worker_to_pack_capacity: 128,
         pack_to_check_worker_capacity: 256,
         check_worker_to_pack_capacity: 512,
+        transaction_state_capacity: 512,
     }
+}
+
+pub(super) fn setup(check_capacity: usize) -> (Scheduler, AgaveSession) {
+    let (agave, client) = setup_local_session(ClientLogon {
+        worker_count: 1,
+        check_worker_count: 1,
+        simulate_worker_count: 0,
+        allocator_size: 16 * 1024 * 1024,
+        allocator_handles: 1,
+        tpu_to_pack_capacity: MAX_TPU_PACKETS_PER_ITERATION
+            .get()
+            .saturating_add(MAX_PACKETS_PER_CHECK_BATCH)
+            .saturating_add(1)
+            .next_power_of_two(),
+        progress_tracker_capacity: 2,
+        pack_to_worker_capacity: 2,
+        worker_to_pack_capacity: 2,
+        pack_to_check_worker_capacity: check_capacity,
+        check_worker_to_pack_capacity: check_capacity,
+        pack_to_simulate_worker_capacity: 0,
+        simulate_worker_to_pack_capacity: 0,
+    })
+    .unwrap();
+    let mut scheduler = Scheduler::new(client, 512).unwrap();
+    scheduler.state = SchedulerState::LeaderReady { slot: 100 };
+    (scheduler, agave)
 }
 
 #[test]

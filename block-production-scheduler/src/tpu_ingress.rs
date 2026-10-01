@@ -7,8 +7,8 @@ use {
 };
 
 const TPU_READABLE_TIMEOUT: Duration = Duration::from_millis(10);
-const MAX_TPU_PACKETS_PER_ITERATION: NonZeroUsize = NonZeroUsize::new(256).unwrap();
-const MAX_PACKETS_PER_CHECK_BATCH: usize = 16;
+pub(super) const MAX_TPU_PACKETS_PER_ITERATION: NonZeroUsize = NonZeroUsize::new(256).unwrap();
+pub(super) const MAX_PACKETS_PER_CHECK_BATCH: usize = 16;
 const TPU_ACCEPTANCE_SLOT_WINDOW: u64 = 20;
 const CHECK_FLAGS: u16 = check_message_flags::AGE_NONCE_CHECKS
     | check_message_flags::LOAD_FEE_PAYER_BALANCE
@@ -17,15 +17,18 @@ const CHECK_FLAGS: u16 = check_message_flags::AGE_NONCE_CHECKS
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
-struct TpuTransactionMeta {
-    flags: u8,
-    src_addr: [u8; 16],
+pub(super) struct TpuTransactionMeta {
+    pub(super) flags: u8,
+    pub(super) src_addr: [u8; 16],
 }
+
+pub(super) type RawCheckBatch<'a> =
+    TransactionPtrBatch<'a, TpuTransactionMeta, MAX_PACKETS_PER_CHECK_BATCH>;
 
 impl Scheduler {
     pub(super) fn handle_tpu_ingress(&mut self) {
         let accept_packets = should_accept_packets(&self.state);
-        if !accept_packets && self.outstanding_check_packets == 0 {
+        if !accept_packets && self.outstanding_check_packets == 0 && self.transactions.len() == 0 {
             let _ = self
                 .tpu_receiver
                 .wait_readable_timeout(TPU_READABLE_TIMEOUT);
@@ -79,12 +82,12 @@ fn should_accept_packets(state: &SchedulerState) -> bool {
 
 /// Owns a batch container and its transactions, freeing both on drop unless sent to a queue.
 struct CheckBatch<'a> {
-    batch: ManuallyDrop<TransactionPtrBatch<'a, TpuTransactionMeta, MAX_PACKETS_PER_CHECK_BATCH>>,
+    batch: ManuallyDrop<RawCheckBatch<'a>>,
 }
 
 impl<'a> CheckBatch<'a> {
     fn allocate(allocator: &'a Allocator) -> Option<Self> {
-        TransactionPtrBatch::allocate(allocator).map(|batch| Self {
+        RawCheckBatch::allocate(allocator).map(|batch| Self {
             batch: ManuallyDrop::new(batch),
         })
     }
@@ -130,40 +133,10 @@ impl Drop for CheckBatch<'_> {
 mod tests {
     use {
         super::*,
+        crate::tests::setup,
         agave_scheduler_bindings::{SharableTransactionRegion, TpuToPackMessage},
-        agave_scheduler_handshake::{AgaveSession, ClientLogon, setup_local_session},
+        agave_scheduler_handshake::AgaveSession,
     };
-
-    type RawCheckBatch<'a> =
-        TransactionPtrBatch<'a, TpuTransactionMeta, MAX_PACKETS_PER_CHECK_BATCH>;
-
-    fn setup(check_capacity: usize) -> (Scheduler, AgaveSession) {
-        let (agave, client) = setup_local_session(ClientLogon {
-            worker_count: 1,
-            check_worker_count: 1,
-            simulate_worker_count: 0,
-            allocator_size: 16 * 1024 * 1024,
-            allocator_handles: 1,
-            tpu_to_pack_capacity: MAX_TPU_PACKETS_PER_ITERATION
-                .get()
-                .checked_add(MAX_PACKETS_PER_CHECK_BATCH)
-                .unwrap()
-                .checked_add(1)
-                .unwrap()
-                .max(512),
-            progress_tracker_capacity: 2,
-            pack_to_worker_capacity: 2,
-            worker_to_pack_capacity: 2,
-            pack_to_check_worker_capacity: check_capacity,
-            check_worker_to_pack_capacity: 2,
-            pack_to_simulate_worker_capacity: 0,
-            simulate_worker_to_pack_capacity: 0,
-        })
-        .unwrap();
-        let mut scheduler = Scheduler::new(client).unwrap();
-        scheduler.state = SchedulerState::LeaderReady { slot: 100 };
-        (scheduler, agave)
-    }
 
     fn enqueue(scheduler: &Scheduler, agave: &mut AgaveSession, count: usize) {
         for index in 0..count {
