@@ -2861,7 +2861,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         core::slice,
-        solana_account::{AccountSharedData, WritableAccount},
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
@@ -2906,13 +2906,13 @@ mod tests {
 
     fn create_account_shared_data_for_test<T>(value: &T, data_len: usize) -> AccountSharedData
     where
-        T: wincode::Serialize<Src = T>,
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>,
     {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+        let serialized_len = wincode::config::serialized_size(value, solana_account::WINCODE_CONFIG)
+            .unwrap() as usize;
         let data_len = data_len.max(serialized_len);
-        let mut account = AccountSharedData::new(1, data_len, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
+        AccountSharedData::new_data_with_space(1, value, data_len, &sysvar::id()).unwrap()
     }
 
     macro_rules! assert_access_violation {

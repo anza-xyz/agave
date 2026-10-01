@@ -39,7 +39,7 @@ itertools = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-info = { workspace = true }
 solana-clock = { workspace = true, features = ["sysvar", "wincode"] }
 solana-epoch-rewards = { workspace = true, features = ["wincode"] }

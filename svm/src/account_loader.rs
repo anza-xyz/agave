@@ -2466,13 +2466,11 @@ mod tests {
                     }
 
                     if has_programdata || rng.random() {
-                        wincode::serialize_into(
-                            account.data_as_mut_slice(),
-                            &UpgradeableLoaderState::Program {
+                        account
+                            .set_state(&UpgradeableLoaderState::Program {
                                 programdata_address,
-                            },
-                        )
-                        .unwrap();
+                            })
+                            .unwrap();
                     }
                 }
 
