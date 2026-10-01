@@ -322,13 +322,15 @@ impl AccountStorageEntry {
 mod tests {
     use {
         super::*, crate::append_vec::new_scan_accounts_reader, solana_account::AccountSharedData,
-        solana_pubkey::Pubkey, std::iter, tempfile::TempDir,
+        solana_pubkey::Pubkey, std::iter, tempfile::TempDir, test_case::test_case,
     };
 
     /// scan_accounts and scan_accounts_without_data each visit every account except those marked
     /// obsolete or recorded as a tombstone, and return the number of accounts excluded.
-    #[test]
-    fn test_scan_accounts_excludes_obsolete_and_tombstones() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_scan_accounts_excludes_obsolete_and_tombstones(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
         let storage = AccountStorageEntry::new(
@@ -336,7 +338,7 @@ mod tests {
             slot,
             0,
             1024 * 1024,
-            AccountsFileProvider::AppendVec,
+            accounts_file_provider,
         );
 
         // Write five accounts and capture their offsets.
