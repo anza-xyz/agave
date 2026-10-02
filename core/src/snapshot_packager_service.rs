@@ -282,6 +282,11 @@ impl SnapshotPackagerService {
         info!("Flushing account storages...");
         let start = Instant::now();
         for storage in &snapshot_storages {
+            // The storage file must exist in order for fastboot on restart to work.
+            // By default, storage files are deleted when their owning AccountStorageEntry
+            // is dropped, so we must disable that for all storages.
+            // And it must be done *before* calling flush().
+            storage.disable_remove_on_drop();
             let result = storage.flush();
             if let Err(err) = result {
                 warn!(
@@ -292,11 +297,6 @@ impl SnapshotPackagerService {
                 // the "storages flushed" file, so return early.
                 return;
             }
-            // Pin the storage file so it outlives the validator-exit Drop chain (which would
-            // otherwise remove it via AppendVec::drop) and is available for fastboot on restart.
-            // The next startup opens a fresh AppendVec over the file; that one defaults back to
-            // removing-on-drop, so normal runtime cleanup (shrink, clean) still applies later.
-            storage.disable_remove_on_drop();
         }
         info!("Flushing account storages... Done in {:?}", start.elapsed());
 
