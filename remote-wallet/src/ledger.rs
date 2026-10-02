@@ -69,6 +69,10 @@ const LEDGER_NANO_GEN5_PIDS: [u16; 33] = [
 ];
 const LEDGER_TRANSPORT_HEADER_LEN: usize = 5;
 
+/// Bytes of the app-configuration vector that are actually read: blind-signing
+/// flag, pubkey display mode, then major, minor and patch.
+const REQUIRED_APP_CONFIGURATION_LEN: usize = 5;
+
 const HID_PACKET_SIZE: usize = 64 + HID_PREFIX_ZERO;
 
 #[cfg(windows)]
@@ -86,9 +90,9 @@ mod commands {
     pub const SIGN_OFFCHAIN_MESSAGE: u8 = 0x07;
 }
 
-enum ConfigurationVersion {
-    Deprecated(Vec<u8>),
-    Current(Vec<u8>),
+struct Configuration {
+    settings: LedgerSettings,
+    firmware_version: FirmwareVersion,
 }
 
 #[derive(Debug)]
@@ -313,50 +317,49 @@ impl LedgerWallet {
     }
 
     fn get_firmware_version(&self) -> Result<FirmwareVersion, RemoteWalletError> {
-        self.get_configuration_vector().map(|config| match config {
-            ConfigurationVersion::Current(config) => {
-                FirmwareVersion::new(config[2].into(), config[3].into(), config[4].into())
-            }
-            ConfigurationVersion::Deprecated(config) => {
-                FirmwareVersion::new(config[1].into(), config[2].into(), config[3].into())
-            }
-        })
+        self.get_configuration()
+            .map(|config| config.firmware_version)
     }
 
     pub fn get_settings(&self) -> Result<LedgerSettings, RemoteWalletError> {
-        self.get_configuration_vector().map(|config| match config {
-            ConfigurationVersion::Current(config) => {
-                let enable_blind_signing = config[0] != 0;
-                let pubkey_display = if config[1] == 0 {
-                    PubkeyDisplayMode::Long
-                } else {
-                    PubkeyDisplayMode::Short
-                };
-                LedgerSettings {
-                    enable_blind_signing,
-                    pubkey_display,
-                }
-            }
-            ConfigurationVersion::Deprecated(_) => LedgerSettings {
-                enable_blind_signing: false,
-                pubkey_display: PubkeyDisplayMode::Short,
-            },
-        })
+        self.get_configuration().map(|config| config.settings)
     }
 
-    fn get_configuration_vector(&self) -> Result<ConfigurationVersion, RemoteWalletError> {
+    fn get_configuration(&self) -> Result<Configuration, RemoteWalletError> {
         if let Ok(config) = self._send_apdu(commands::GET_APP_CONFIGURATION, 0, 0, &[], false) {
-            if config.len() != 5 {
-                return Err(RemoteWalletError::Protocol("Version packet size mismatch"));
-            }
-            Ok(ConfigurationVersion::Current(config))
+            check_app_config_len(config.len())?;
+            Ok(Configuration {
+                settings: LedgerSettings {
+                    enable_blind_signing: config[0] != 0,
+                    pubkey_display: if config[1] == 0 {
+                        PubkeyDisplayMode::Long
+                    } else {
+                        PubkeyDisplayMode::Short
+                    },
+                },
+                firmware_version: FirmwareVersion::new(
+                    config[2].into(),
+                    config[3].into(),
+                    config[4].into(),
+                ),
+            })
         } else {
             let config =
                 self._send_apdu(commands::DEPRECATED_GET_APP_CONFIGURATION, 0, 0, &[], true)?;
             if config.len() != 4 {
                 return Err(RemoteWalletError::Protocol("Version packet size mismatch"));
             }
-            Ok(ConfigurationVersion::Deprecated(config))
+            Ok(Configuration {
+                settings: LedgerSettings {
+                    enable_blind_signing: false,
+                    pubkey_display: PubkeyDisplayMode::Short,
+                },
+                firmware_version: FirmwareVersion::new(
+                    config[1].into(),
+                    config[2].into(),
+                    config[3].into(),
+                ),
+            })
         }
     }
 
@@ -654,6 +657,19 @@ fn is_last_part(p2: u8) -> bool {
     p2 & P2_MORE == 0
 }
 
+/// Checks whether an app-configuration payload is long enough.
+///
+/// Only the first `REQUIRED_APP_CONFIGURATION_LEN` bytes are read, so any
+/// vector at least that long is usable. Devices return payloads that vary in
+/// length, depending on the Solana app version and device type.
+fn check_app_config_len(len: usize) -> Result<(), RemoteWalletError> {
+    if len < REQUIRED_APP_CONFIGURATION_LEN {
+        Err(RemoteWalletError::Protocol("Version packet size mismatch"))
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -680,6 +696,20 @@ mod tests {
         let p2 = P2_EXTEND | P2_MORE;
         assert!(!is_last_part(p2));
         assert!(is_last_part(p2 & !P2_MORE));
+    }
+
+    #[test]
+    fn test_check_app_config_len() {
+        // Exactly the fields that are read.
+        check_app_config_len(REQUIRED_APP_CONFIGURATION_LEN).unwrap();
+
+        // Devices with larger screens return 7 bytes
+        check_app_config_len(7).unwrap();
+        check_app_config_len(REQUIRED_APP_CONFIGURATION_LEN + 1).unwrap();
+
+        // Anything shorter cannot be indexed and must still be rejected.
+        check_app_config_len(REQUIRED_APP_CONFIGURATION_LEN - 1).unwrap_err();
+        check_app_config_len(0).unwrap_err();
     }
 
     #[test]
