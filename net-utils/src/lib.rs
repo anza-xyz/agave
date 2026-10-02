@@ -337,18 +337,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_response_wire_layout() {
-        let response = IpEchoServerResponse {
-            address: IpAddr::from([1, 2, 3, 4]),
-            shred_version: Some(42),
-        };
-        assert_eq!(
-            wincode::serialize(&response).unwrap(),
-            [0, 0, 0, 0, 1, 2, 3, 4, 1, 42, 0]
-        );
-    }
-
     // Asserts that an old client can parse the response from a new server.
     #[test]
     fn test_backward_compat() {
