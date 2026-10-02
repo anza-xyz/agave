@@ -90,6 +90,7 @@ pub(crate) struct RetransmitSlotStats {
 
 struct RetransmitStats {
     since: Instant,
+    num_iters: usize,
     num_nodes: usize,
     num_addrs_failed: usize,
     num_shreds_dropped_xdp_full: usize,
@@ -166,6 +167,7 @@ impl RetransmitStats {
             ("total_time", self.total_time, i64),
             ("epoch_fetch", self.epoch_fetch, i64),
             ("epoch_cache_update", self.epoch_cache_update, i64),
+            ("num_iters", self.num_iters, i64),
             ("total_batches", self.total_batches, i64),
             ("num_small_batches", self.num_small_batches, i64),
             ("num_nodes", self.num_nodes, i64),
@@ -423,6 +425,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
     }
 
     stats.num_shreds += num_shreds;
+    stats.num_iters += 1;
     stats.total_batches += shred_buf.len();
 
     let mut epoch_fetch = Measure::start("retransmit_epoch_fetch");
@@ -726,6 +729,7 @@ impl RetransmitStats {
     fn new(now: Instant) -> Self {
         Self {
             since: now,
+            num_iters: 0usize,
             num_nodes: 0usize,
             num_addrs_failed: 0usize,
             num_shreds_dropped_xdp_full: 0usize,
