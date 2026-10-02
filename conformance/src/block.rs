@@ -12,7 +12,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{accounts_hash::AccountsLtHash, ancestors::Ancestors},
-    solana_clock::{BankId, DEFAULT_TICKS_PER_SLOT, Epoch},
+    solana_clock::{DEFAULT_TICKS_PER_SLOT, Epoch},
     solana_cost_model::cost_model::CostModel,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface::{self as feature, Feature},
@@ -24,7 +24,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{
-            Bank, BankFieldsToDeserialize, BankRc,
+            Bank, BankFieldsToDeserialize, BankId, BankRc,
             bank_hash_details::{
                 AccountsDetails, BankHashComponents, BankHashDetails, SlotDetails,
             },

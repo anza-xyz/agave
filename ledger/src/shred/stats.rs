@@ -49,6 +49,12 @@ pub struct ShredFetchStats {
     pub(super) num_shreds_merkle_data_chained: usize,
     pub ping_count: usize,
     pub ping_err_verify_count: usize,
+    /// repair pings dropped because buffer is full
+    pub ping_overflow_count: usize,
+    /// repair pongs dropped because send() call failed
+    pub pong_send_error_count: usize,
+    /// repair packets no larger than a ping that failed to deserialize as one
+    pub ping_malformed_count: usize,
     pub(super) index_bad_deserialize: usize,
     pub(super) index_out_of_bounds: usize,
     pub(super) slot_bad_deserialize: usize,
@@ -169,6 +175,9 @@ impl ShredFetchStats {
             ),
             ("ping_count", self.ping_count, i64),
             ("ping_err_verify_count", self.ping_err_verify_count, i64),
+            ("ping_overflow_count", self.ping_overflow_count, i64),
+            ("pong_send_error_count", self.pong_send_error_count, i64),
+            ("ping_malformed_count", self.ping_malformed_count, i64),
             ("slot_bad_deserialize", self.slot_bad_deserialize, i64),
             ("index_bad_deserialize", self.index_bad_deserialize, i64),
             ("index_out_of_bounds", self.index_out_of_bounds, i64),

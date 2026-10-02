@@ -169,7 +169,7 @@ solana-test-validator = { path = "../../test-validator", version = "=4.5.0-alpha
 solana-vote = { path = "../../vote", version = "=4.5.0-alpha.0" }
 solana-vote-interface = "7.1.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.5.0-alpha.0" }
-test-case = "3.3.1"
+test-case = "3.4.0"
 thiserror = "2.0"
 wincode = { version = "0.6.2", default-features = false }
 

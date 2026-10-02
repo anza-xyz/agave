@@ -112,10 +112,12 @@ impl AccountsFile {
         &self,
         offset: Offset,
         callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
-    ) -> Option<Ret> {
-        match self {
-            Self::AppendVec(av) => av.get_stored_account_without_data_callback(offset, callback),
-        }
+    ) -> Result<Ret> {
+        Ok(match self {
+            Self::AppendVec(av) => av
+                .get_stored_account_without_data_callback(offset, callback)
+                .ok_or_else(|| io::Error::other("AppendVec did not load an account"))?,
+        })
     }
 
     /// Calls `callback` with the stored account at `offset`.
@@ -129,17 +131,21 @@ impl AccountsFile {
         &self,
         offset: Offset,
         callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
-    ) -> Option<Ret> {
-        match self {
-            Self::AppendVec(av) => av.get_stored_account_callback(offset, callback),
-        }
+    ) -> Result<Ret> {
+        Ok(match self {
+            Self::AppendVec(av) => av
+                .get_stored_account_callback(offset, callback)
+                .ok_or_else(|| io::Error::other("AppendVec did not load an account"))?,
+        })
     }
 
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
-    pub(crate) fn get_account_shared_data(&self, offset: Offset) -> Option<AccountSharedData> {
-        match self {
-            Self::AppendVec(av) => av.get_account_shared_data(offset),
-        }
+    pub(crate) fn get_account_shared_data(&self, offset: Offset) -> Result<AccountSharedData> {
+        Ok(match self {
+            Self::AppendVec(av) => av
+                .get_account_shared_data(offset)
+                .ok_or_else(|| io::Error::other("AppendVec did not load an account"))?,
+        })
     }
 
     /// Return the path of the underlying account file.
@@ -248,23 +254,6 @@ impl AccountsFile {
                 Self::AppendVec(av) => av.open_file_for_archive(),
             })
         }
-    }
-
-    /// Returns the number of bytes required to archive this AccountsFile,
-    /// after excluding `excluded_accounts`.
-    ///
-    /// Note that snapshot archives always use the AppendVec format, so
-    /// this is effectively computing the AppendVec stored size.
-    pub(crate) fn len_for_archive(
-        &self,
-        excluded_accounts: impl IntoIterator<Item = usize>,
-    ) -> usize {
-        let total_size = u64_align!(self.len());
-        let excluded_size: usize = excluded_accounts
-            .into_iter()
-            .map(AppendVec::calculate_stored_size)
-            .sum();
-        total_size - excluded_size
     }
 }
 

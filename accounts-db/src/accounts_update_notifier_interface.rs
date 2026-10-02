@@ -1,6 +1,7 @@
 use {
+    crate::bank_id::BankId,
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_clock::{BankId, Epoch, Slot},
+    solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
     std::sync::Arc,

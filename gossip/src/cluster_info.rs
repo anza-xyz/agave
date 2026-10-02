@@ -60,10 +60,7 @@ use {
     },
     solana_perf::{
         data_budget::DataBudget,
-        packet::{
-            BytesPacket, BytesPacketBatch, PacketBatch, PacketRef,
-            bytes_packet_from_data_with_config,
-        },
+        packet::{BytesPacket, BytesPacketBatch, PacketBatch, bytes_packet_from_data_with_config},
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
@@ -299,12 +296,10 @@ impl ClusterInfo {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn insert_info(&self, node: ContactInfo) {
         let entry = CrdsValue::new(CrdsData::ContactInfo(node), &self.keypair());
-        if let Err(err) = {
-            let mut gossip_crds = self.gossip.crds.write();
-            gossip_crds.insert(entry, timestamp(), GossipRoute::LocalMessage)
-        } {
-            error!("ClusterInfo.insert_info: {err:?}");
-        }
+        let mut gossip_crds = self.gossip.crds.write();
+        gossip_crds
+            .insert(entry, timestamp(), GossipRoute::LocalMessage)
+            .unwrap_or_else(|err| panic!("ClusterInfo::insert_info failed: {err:?}"));
     }
 
     pub fn set_entrypoint(&self, entrypoint: ContactInfo) {
@@ -2136,7 +2131,7 @@ impl ClusterInfo {
             .packets_received_count
             .add_relaxed(num_packets as u64);
         fn verify_packet(
-            packet: PacketRef,
+            packet: &BytesPacket,
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
             sigverify_cache: &SigVerifyCache,

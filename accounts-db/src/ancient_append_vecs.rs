@@ -996,15 +996,20 @@ mod tests {
         let accounts = [(pubkey, account)];
         let slice = &accounts[..];
         let storable_accounts = (slot, slice);
-        let stored_accounts_info = storage.accounts.write_accounts(&storable_accounts).unwrap();
-        if mark_alive {
-            // updates 'alive_bytes' on the storage
-            storage.add_accounts(1, stored_accounts_info.size);
+        let offsets = storage.write_accounts(&storable_accounts).unwrap();
+        if !mark_alive {
+            let data_len = if account.is_zero_lamport() {
+                0
+            } else {
+                account.data().len()
+            };
+            let stored_size = storage.accounts.calculate_stored_size(data_len);
+            storage.remove_accounts(stored_size, offsets.len());
         }
 
         if let Some(index) = add_to_index {
             let account_info = AccountInfo::new(
-                StorageLocation::AccountsFile(storage.id(), stored_accounts_info.offsets[0]),
+                StorageLocation::AccountsFile(storage.id(), offsets[0]),
                 account.lamports() == 0,
             );
             index.upsert(
@@ -1227,7 +1232,7 @@ mod tests {
 
                 let account_template = storages
                     .first()
-                    .and_then(|storage| storage.accounts.get_account_shared_data(0))
+                    .and_then(|storage| storage.accounts.get_account_shared_data(0).ok())
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
                 let mut data_size = 450;

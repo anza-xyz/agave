@@ -20,7 +20,7 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::ReadableAccount,
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
     solana_clock::UnixTimestamp,
@@ -31,42 +31,25 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction},
-    solana_instruction_error::InstructionError,
-    solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
     },
-    solana_message::{Message, SanitizedMessage, inner_instruction::InnerInstruction},
-    solana_pubkey::Pubkey,
-    solana_rent::Rent,
+    solana_message::SanitizedMessage,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
-        bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
-            create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
+            bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
+            create_genesis_config_with_leader_ex,
         },
-        loader_utils::{create_program, load_upgradeable_buffer},
+        loader_utils::load_upgradeable_buffer,
     },
-    solana_sbf_rust_invoke_dep::*,
     solana_sbf_rust_realloc_dep::*,
     solana_sbf_rust_realloc_invoke_dep::*,
-    solana_sdk_ids::sysvar::{self as sysvar, clock},
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
-    solana_signer::Signer,
-    solana_svm::{
-        transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
-        transaction_processor::ExecutionRecordingConfig,
-    },
-    solana_svm_feature_set::SVMFeatureSet,
-    solana_svm_timings::ExecuteTimings,
+    solana_sdk_ids::sysvar,
+    solana_svm::conformance::programs::keyed_account_for_system_program,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
-    solana_transaction::Transaction,
-    solana_transaction_error::TransactionError,
     std::{
         assert_eq,
         str::FromStr,
@@ -77,16 +60,40 @@ use {
 };
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 use {
-    solana_account::Account,
+    solana_account::{Account, AccountSharedData},
+    solana_instruction::{AccountMeta, Instruction},
+    solana_instruction_error::InstructionError,
+    solana_keypair::Keypair,
+    solana_message::{Message, inner_instruction::InnerInstruction},
     solana_program_runtime::sysvar_cache::SysvarCache,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_runtime::{
+        bank::{Bank, SlotLeader},
+        bank_client::BankClient,
+        genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        loader_utils::create_program,
+    },
+    solana_sbf_rust_invoke_dep::*,
+    solana_sdk_ids::sysvar::clock,
     solana_sdk_ids::sysvar::rent,
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
+    solana_signer::Signer,
     solana_svm::conformance::{
         instr::{context::InstrContext, harness::execute_instr},
         programs::{
             add_program_to_program_cache, keyed_account_for_bpf_loader_program,
-            keyed_account_for_system_program, new_program_cache_with_builtins,
+            new_program_cache_with_builtins,
         },
     },
+    solana_svm::{
+        transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
+        transaction_processor::ExecutionRecordingConfig,
+    },
+    solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_timings::ExecuteTimings,
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
     std::{fs::File, io::Read, path::PathBuf},
 };
 
@@ -103,7 +110,7 @@ fn load_program_elf(program_name: &str) -> Vec<u8> {
     data
 }
 
-#[cfg(feature = "sbf_rust")]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn default_program_cache() -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
     new_program_cache_with_builtins(/* slot */ 1)
 }
@@ -134,7 +141,7 @@ fn upgradeable_program_accounts(program_id: &Pubkey, program_elf: &[u8]) -> Vec<
     .into()
 }
 
-#[cfg(feature = "sbf_rust")]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn default_sysvar_cache() -> SysvarCache {
     let mut sysvar_cache = SysvarCache::default();
     sysvar_cache.fill_missing_entries(|pubkey, callback| {
@@ -151,7 +158,7 @@ fn default_sysvar_cache() -> SysvarCache {
     sysvar_cache
 }
 
-#[cfg(feature = "sbf_rust")]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn process_transaction_and_record_inner(
     bank: &Bank,
     tx: Transaction,
@@ -174,7 +181,7 @@ fn process_transaction_and_record_inner(
     (status, inner_instructions, log_messages, executed_units)
 }
 
-#[cfg(feature = "sbf_rust")]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> TransactionCommitResult {
     let txs = vec![tx];
     let tx_batch = bank.prepare_batch_for_tests(txs);
@@ -1810,6 +1817,7 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
     assert_eq!(input_data, effects.return_data);
 }
 
+#[cfg(feature = "sbf_rust")]
 fn get_stable_genesis_config() -> GenesisConfigInfo {
     let validator_pubkey =
         Pubkey::from_str("GLh546CXmtZdvpEzL8sxzqhhUf7KPvmGaRpFHB5W1sjV").unwrap();
@@ -4708,6 +4716,7 @@ fn test_deny_executable_write() {
 }
 
 #[test]
+#[cfg(feature = "sbf_rust")]
 fn test_update_callee_account() {
     // Test that fn update_callee_account() works and we are updating the callee account on CPI.
     agave_logger::setup();
@@ -4975,6 +4984,7 @@ fn test_update_callee_account() {
 }
 
 #[test]
+#[cfg(feature = "sbf_rust")]
 fn test_clone_account_data() {
     // Test cloning account data works as expect with
     agave_logger::setup();
@@ -5124,6 +5134,7 @@ fn test_clone_account_data() {
 }
 
 #[test]
+#[cfg(feature = "sbf_rust")]
 fn test_stack_heap_zeroed() {
     agave_logger::setup();
 
@@ -5189,6 +5200,7 @@ fn test_stack_heap_zeroed() {
 }
 
 #[test]
+#[cfg(feature = "sbf_rust")]
 fn test_function_call_args() {
     // This function tests edge compiler edge cases when calling functions with more than five
     // arguments and passing by value arguments with more than 16 bytes.

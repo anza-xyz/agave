@@ -27,7 +27,6 @@ stable-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 [dependencies]
 agave-xdp = { workspace = true }
 anyhow = { workspace = true, optional = true }
-bincode = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true, features = ["raw-api"] }
 hxdmp = { version = "0.2.1", optional = true }
@@ -37,16 +36,15 @@ nix = { workspace = true, features = ["net", "socket", "fs", "mman", "signal"] }
 pcap-file = { version = "2.0.0", optional = true }
 quinn = { workspace = true }
 rand = { workspace = true }
-serde = { workspace = true }
 shuttle = { workspace = true, optional = true }
 socket2 = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
-solana-serde = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { workspace = true }

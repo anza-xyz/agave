@@ -385,40 +385,67 @@ impl CrdsGossipPull {
         &self,
         crds: &RwLock<Crds>,
         timeouts: &CrdsTimeouts,
-        responses: Vec<CrdsValue>,
+        mut responses: Vec<CrdsValue>,
         now: u64,
         stats: &mut ProcessPullStats,
     ) -> (Vec<CrdsValue>, Vec<CrdsValue>, Vec<Hash>) {
-        let mut active_values = vec![];
-        let mut expired_values = vec![];
-        let crds = crds.read();
-        let upsert = |response: CrdsValue| {
-            let owner = response.label().pubkey();
+        // Number of responses checked per crds read lock.
+        const RESPONSES_PER_LOCK: usize = 16;
+        enum Outcome {
+            Active,
+            Expired,
+            Failed,
+        }
+        // Classify all responses before moving any of them, so that active
+        // responses stay in place and the other outputs are allocated once
+        // with their exact sizes.
+        let mut outcomes = Vec::with_capacity(responses.len());
+        let (mut num_expired, mut num_failed) = (0, 0);
+        for chunk in responses.chunks(RESPONSES_PER_LOCK) {
             // Check if the crds value is older than the msg_timeout
-            let timeout = timeouts[&owner];
-            // Before discarding this value, check if a ContactInfo for the
-            // owner exists in the table. If it doesn't, that implies that this
-            // value can be discarded
-            if !crds.upserts(&response) {
-                Some(response)
-            } else if now <= response.wallclock().saturating_add(timeout) {
-                active_values.push(response);
-                None
-            } else if crds.get::<&ContactInfo>(owner).is_some() {
-                // Silently insert this old value without bumping record
-                // timestamps
-                expired_values.push(response);
-                None
-            } else {
-                stats.failed_timeout += 1;
-                Some(response)
+            let mut is_expired = [false; RESPONSES_PER_LOCK];
+            for (expired, response) in is_expired.iter_mut().zip(chunk) {
+                let timeout = timeouts[&response.pubkey()];
+                *expired = now > response.wallclock().saturating_add(timeout);
             }
-        };
-        let failed_inserts = responses
-            .into_iter()
-            .filter_map(upsert)
-            .map(|resp| *resp.hash())
-            .collect();
+            let crds = crds.read();
+            for (response, &expired) in chunk.iter().zip(&is_expired) {
+                let outcome = if !crds.upserts(response) {
+                    num_failed += 1;
+                    Outcome::Failed
+                } else if !expired {
+                    Outcome::Active
+                } else if crds.get::<&ContactInfo>(response.pubkey()).is_some() {
+                    // Silently insert this old value without bumping
+                    // record timestamps
+                    num_expired += 1;
+                    Outcome::Expired
+                } else {
+                    // The owner has no ContactInfo in the table, so this
+                    // expired value can be discarded.
+                    stats.failed_timeout += 1;
+                    num_failed += 1;
+                    Outcome::Failed
+                };
+                outcomes.push(outcome);
+            }
+        }
+        let mut expired_values = Vec::with_capacity(num_expired);
+        let mut failed_inserts = Vec::with_capacity(num_failed);
+        let mut response_outcomes = outcomes.iter();
+        let extracted_responses = responses.extract_if(.., |_| {
+            !matches!(response_outcomes.next(), Some(Outcome::Active))
+        });
+        let extracted_outcomes = outcomes
+            .iter()
+            .filter(|outcome| !matches!(outcome, Outcome::Active));
+        for (response, outcome) in extracted_responses.zip(extracted_outcomes) {
+            match outcome {
+                Outcome::Expired => expired_values.push(response),
+                _ => failed_inserts.push(*response.hash()),
+            }
+        }
+        let active_values = responses;
         (active_values, expired_values, failed_inserts)
     }
 

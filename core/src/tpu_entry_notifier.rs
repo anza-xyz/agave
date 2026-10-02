@@ -1,6 +1,5 @@
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
-    solana_clock::BankId,
     solana_entry::{
         block_component::VersionedBlockMarker, entry::EntrySummary,
         recorder_message::RecorderMessage,
@@ -9,6 +8,7 @@ use {
         EntryNotification, EntryNotifierSender, send_entry_notification,
     },
     solana_poh::poh_recorder::WorkingBankMessage,
+    solana_runtime::bank::BankId,
     std::{
         sync::{
             Arc,

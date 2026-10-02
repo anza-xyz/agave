@@ -9,7 +9,7 @@ pub use pending_snapshot_packages::PendingSnapshotPackages;
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        bank::{Bank, BankSlotDelta, DropCallback},
+        bank::{Bank, BankId, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
         snapshot_controller::SnapshotController,
         snapshot_package::SnapshotPackage,
@@ -17,7 +17,7 @@ use {
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind, error::SnapshotError},
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_measure::{measure::Measure, measure_us},
     stats::StatsManager,
     std::{
@@ -41,8 +41,8 @@ use {
 const MIN_LOOP_INTERVAL: Duration = Duration::from_millis(100);
 // Set the clean interval duration to be approximately how long before the next incremental
 // snapshot request is received, plus some buffer.  The default incremental snapshot interval is
-// 100 slots, which ends up being 40 seconds plus buffer.
-const CLEAN_INTERVAL: Duration = Duration::from_secs(50);
+// 200 slots, which ends up being 50 seconds plus buffer.
+const CLEAN_INTERVAL: Duration = Duration::from_secs(60);
 const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type SnapshotRequestSender = Sender<SnapshotRequest>;
@@ -747,7 +747,7 @@ mod test {
             &AccountSharedData::new(264, 0, &Pubkey::default()),
         );
         assert!(bank0.get_account(&account_key).is_some());
-        pruned_banks_sender.send((0, 0)).unwrap();
+        pruned_banks_sender.send((0, BankId::new(0))).unwrap();
 
         assert!(!bank0.rc.accounts.scan_slot(0, |_| Some(())).is_empty());
 

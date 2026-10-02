@@ -23,7 +23,6 @@ name = "solana_banks_server"
 agave-unstable-api = []
 
 [dependencies]
-bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }
 solana-account = { workspace = true }
@@ -37,10 +36,11 @@ solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-signature = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
 tarpc = { workspace = true, features = ["full"] }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

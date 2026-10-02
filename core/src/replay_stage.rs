@@ -53,7 +53,7 @@ use {
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
     solana_accounts_db::contains::Contains,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -84,7 +84,7 @@ use {
         slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
-        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions, bank_hash_details},
+        bank::{Bank, BankId, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions, bank_hash_details},
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommand, BankForksCommandReceiver, SetRootCommand},
         block_component_processor::BlockComponentProcessorError,
@@ -2334,7 +2334,7 @@ impl ReplayStage {
         // `remove_unrooted_slots()` call.
         drop(removed_banks);
 
-        for (slot, slot_id) in slots_to_purge {
+        for (slot, bank_id) in slots_to_purge {
             // Clear the slot signatures from status cache for this slot.
             // TODO: What about RPC queries that had already cloned the Bank for this slot
             // and are looking up the signature for this slot?
@@ -2348,7 +2348,7 @@ impl ReplayStage {
                 // also be a duplicate. In this case we *need* to repair it, so we clear from
                 // blockstore.
                 warn!(
-                    "purging duplicate descendant: {slot} with slot_id {slot_id} and bank hash \
+                    "purging duplicate descendant: {slot} with bank_id {bank_id:?} and bank hash \
                      {bank_hash}, of slot {slot_to_purge}"
                 );
                 // Clear the slot-related data in blockstore. This will:
@@ -2357,7 +2357,7 @@ impl ReplayStage {
                 // this slot
                 blockstore.clear_unconfirmed_slot(slot);
             } else if slot == slot_to_purge {
-                warn!("purging duplicate slot: {slot} with slot_id {slot_id}");
+                warn!("purging duplicate slot: {slot} with bank_id {bank_id:?}");
                 blockstore.clear_unconfirmed_slot(slot);
             } else {
                 // If a descendant was unable to replay and chained from a duplicate, it is not

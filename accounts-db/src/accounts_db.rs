@@ -55,12 +55,12 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         append_vec::{self, AppendVec},
+        bank_id::BankId,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
-        u64_align,
         utils::{self, create_account_shared_data},
     },
     agave_fs::buffered_reader::RequiredLenBufFileRead,
@@ -72,7 +72,7 @@ use {
     rayon::{ThreadPool, prelude::*},
     seqlock::SeqLock,
     solana_account::{Account, AccountSharedData, ReadableAccount},
-    solana_clock::{BankId, Epoch, Slot},
+    solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::{
         batch,
@@ -635,6 +635,15 @@ impl LoadedAccountAccessor {
                             .get_stored_account_callback(*offset, |account| {
                                 callback(LoadedAccount::Stored(account))
                             })
+                            .inspect_err(|err| {
+                                trace!(
+                                    "get_loaded_account() failed! storage slot: {}, id: {}, \
+                                     offset: {offset}, err: {err}",
+                                    storage_entry.slot(),
+                                    storage_entry.id(),
+                                );
+                            })
+                            .ok()
                     })
             }
         }
@@ -4630,8 +4639,7 @@ impl AccountsDb {
         }
 
         let store_id = storage.id();
-        let stored_accounts_info = storage
-            .accounts
+        let stored_account_offsets = storage
             .write_accounts(accounts_and_meta_to_store)
             .unwrap_or_else(|err| {
                 panic!(
@@ -4642,25 +4650,20 @@ impl AccountsDb {
             });
 
         assert_eq!(
-            stored_accounts_info.offsets.len(),
+            stored_account_offsets.len(),
             num_accounts,
             "failed to write all accounts to storage! {slot}, id: {store_id}, len: {} bytes, num \
              accounts written: {}, num accounts total: {num_accounts}",
             storage.accounts.len(),
-            stored_accounts_info.offsets.len(),
+            stored_account_offsets.len(),
         );
 
-        for (i, offset) in stored_accounts_info.offsets.iter().enumerate() {
+        for (i, offset) in stored_account_offsets.iter().enumerate() {
             infos.push(AccountInfo::new(
                 StorageLocation::AccountsFile(store_id, *offset),
                 accounts_and_meta_to_store.is_zero_lamport(i),
             ));
         }
-        storage.add_accounts(
-            stored_accounts_info.offsets.len(),
-            stored_accounts_info.size,
-        );
-
         infos
     }
 
@@ -4918,14 +4921,9 @@ impl AccountsDb {
                 .insert_new_if_missing_into_primary_index(slot, keyed_account_infos)
         );
 
-        // sanity check that stored_size is not larger than the u64 aligned size of the accounts files.
-        // Note that the stored_size is aligned, so it can be larger than the size of the accounts file.
-        assert!(
-            stored_size_alive <= u64_align!(storage.accounts.len()),
-            "Stored size ({stored_size_alive}) is larger than the size of the accounts file ({}) \
-             for store_id: {store_id}",
-            storage.accounts.len(),
-        );
+        let stored_size_total = stored_size_alive
+            + storage.get_obsolete_bytes(None)
+            + storage.num_tombstones() * storage.accounts.calculate_stored_size(0);
 
         storage
             .num_alive_accounts
@@ -4933,6 +4931,9 @@ impl AccountsDb {
         storage
             .num_alive_bytes
             .store(stored_size_alive, Ordering::Release);
+        storage
+            .num_stored_bytes
+            .store(stored_size_total as u64, Ordering::Release);
 
         // Zero-lamport accounts stay alive in the index until clean removes them. Their storages
         // are not otherwise dirty, so add the pubkeys into `uncleaned_pubkeys` for the first

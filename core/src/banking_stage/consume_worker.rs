@@ -660,7 +660,7 @@ pub(crate) mod external {
                         &bank.feature_set,
                     )
                     .sum(),
-                    fee_payer_balance: *fee_payer_post_balance,
+                    fee_payer_balance: fee_payer_post_balance.unwrap_or(0),
                 },
                 CommitTransactionDetails::NotCommitted(transaction_error) => ExecutionResponse {
                     execution_slot: bank.slot(),
@@ -1004,7 +1004,7 @@ pub(crate) mod external {
                     CommitTransactionDetails::Committed {
                         compute_units: 6,
                         loaded_accounts_data_size: 1024,
-                        fee_payer_post_balance: 1_000_000,
+                        fee_payer_post_balance: Some(1_000_000),
                         result: Err(TransactionError::InstructionError(
                             0,
                             solana_transaction::InstructionError::Custom(0),
@@ -1013,7 +1013,7 @@ pub(crate) mod external {
                     CommitTransactionDetails::Committed {
                         compute_units: 10,
                         loaded_accounts_data_size: 2048,
-                        fee_payer_post_balance: 2_000_000,
+                        fee_payer_post_balance: Some(2_000_000),
                         result: Ok(()),
                     },
                     CommitTransactionDetails::NotCommitted(

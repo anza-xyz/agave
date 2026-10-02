@@ -3,8 +3,9 @@
 //! - try_add, checks the configured limits and records the transaction's cost when it fits.
 use {
     crate::{
-        block_cost_limits::*, cost_tracker_post_analysis::CostTrackerPostAnalysis,
-        transaction_cost::TransactionCost,
+        block_cost_limits::*,
+        cost_tracker_post_analysis::CostTrackerPostAnalysis,
+        transaction_cost::{TrackedCost, TransactionCost},
     },
     solana_pubkey::Pubkey,
     solana_transaction_error::TransactionError,
@@ -226,11 +227,7 @@ impl CostTracker {
         transaction_cost: &TransactionCost,
         writable_accounts: impl Iterator<Item = &'a Pubkey> + Clone,
     ) -> Result<UpdatedCosts, CostTrackerError> {
-        self.try_add_cost(
-            transaction_cost.sum(),
-            transaction_cost.allocated_accounts_data_size(),
-            writable_accounts,
-        )
+        self.try_add_cost(transaction_cost.tracked_cost(), writable_accounts)
     }
 
     /// Checks the limits and reserves total cost units and allocated account-data bytes.
@@ -238,8 +235,10 @@ impl CostTracker {
     /// A failed call leaves the tracker equivalent to the pre-call state.
     pub fn try_add_cost<'a>(
         &mut self,
-        cost: u64,
-        allocated_data_size: u64,
+        TrackedCost {
+            cost,
+            allocated_accounts_data_size: allocated_data_size,
+        }: TrackedCost,
         writable_accounts: impl Iterator<Item = &'a Pubkey> + Clone,
     ) -> Result<UpdatedCosts, CostTrackerError> {
         if self.block_cost().saturating_add(cost) > self.limits.block_cost {
@@ -346,18 +345,16 @@ impl CostTracker {
         transaction_cost: &TransactionCost,
         writable_accounts: impl Iterator<Item = &'a Pubkey>,
     ) {
-        self.remove_cost(
-            transaction_cost.sum(),
-            transaction_cost.allocated_accounts_data_size(),
-            writable_accounts,
-        );
+        self.remove_cost(transaction_cost.tracked_cost(), writable_accounts);
     }
 
     /// Removes a transaction's reserved cost units and allocated account-data bytes.
     pub fn remove_cost<'a>(
         &mut self,
-        cost: u64,
-        allocated_data_size: u64,
+        TrackedCost {
+            cost,
+            allocated_accounts_data_size: allocated_data_size,
+        }: TrackedCost,
         writable_accounts: impl Iterator<Item = &'a Pubkey>,
     ) {
         self.sub_cost(writable_accounts, cost);
@@ -556,7 +553,11 @@ mod tests {
     fn test_add_and_remove_aggregate_cost() {
         let mut tracker = CostTracker::default();
         let accounts = [Pubkey::new_unique(), Pubkey::new_unique()];
-        let updated = tracker.try_add_cost(10, 7, accounts.iter()).unwrap();
+        let cost = TrackedCost {
+            cost: 10,
+            allocated_accounts_data_size: 7,
+        };
+        let updated = tracker.try_add_cost(cost, accounts.iter()).unwrap();
         assert_eq!(updated.updated_block_cost, 10);
         assert_eq!(updated.updated_costliest_account_cost, 10);
         assert_eq!(tracker.block_cost(), 10);
@@ -565,7 +566,7 @@ mod tests {
         assert_eq!(tracker.cost_by_writable_accounts[&accounts[0]], 10);
         assert_eq!(tracker.cost_by_writable_accounts[&accounts[1]], 10);
 
-        tracker.remove_cost(10, 7, accounts.iter());
+        tracker.remove_cost(cost, accounts.iter());
         assert_eq!(tracker.block_cost(), 0);
         assert_eq!(tracker.allocated_accounts_data_size.load(), 0);
         assert_eq!(tracker.transaction_count(), 0);

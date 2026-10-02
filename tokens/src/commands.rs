@@ -1826,7 +1826,7 @@ mod tests {
             false,
         );
         let lockup_instruction =
-            bincode::deserialize(&instructions[SET_LOCKUP_INDEX].data).unwrap();
+            wincode::deserialize(&instructions[SET_LOCKUP_INDEX].data).unwrap();
         if let StakeInstruction::SetLockup(lockup_args) = lockup_instruction {
             assert_eq!(lockup_args.unix_timestamp, Some(lockup_date.timestamp()));
             assert_eq!(lockup_args.epoch, None); // Don't change the epoch

@@ -50,7 +50,7 @@ use {
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::{
-        BytesPacket, BytesPacketBatch, PacketBatch, PacketConfig, PacketRef, bytes_packet_from_data,
+        BytesPacket, BytesPacketBatch, PacketBatch, PacketConfig, bytes_packet_from_data,
     },
     solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
@@ -58,14 +58,11 @@ use {
     solana_sha256_hasher::hashv,
     solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
-    solana_streamer::{
-        sendmmsg::{SendPktsError, batch_send},
-        streamer::PacketBatchSender,
-    },
+    solana_streamer::streamer::PacketBatchSender,
     solana_time_utils::timestamp,
     std::{
         cmp::Reverse,
-        collections::{HashMap, HashSet},
+        collections::{HashMap, HashSet, VecDeque},
         net::{SocketAddr, UdpSocket},
         ops::Range,
         sync::{
@@ -612,7 +609,7 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
 const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + SIGNATURE_BYTES;
 const REPAIR_REQUEST_MIN_BYTES: usize = REPAIR_REQUEST_PONG_SERIALIZED_BYTES;
 
-fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStats) -> bool {
+fn is_well_formed_repair_request(packet: &BytesPacket, stats: &mut ServeRepairStats) -> bool {
     let well_formed = packet
         .data(..)
         .is_some_and(|data| data.len() >= REPAIR_REQUEST_MIN_BYTES);
@@ -634,6 +631,80 @@ fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStat
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub(crate) enum RepairResponse {
     Ping(Ping),
+}
+
+/// Repair response pings held until we have time to answer them.
+const MAX_PENDING_REPAIR_PINGS: usize = 256;
+
+/// `RepairResponse::Ping`s pulled off the repair response socket, waiting to be verified and
+/// answered. When full, the oldest ping is evicted.
+pub(crate) struct PendingRepairPingRingBuffer {
+    pings: VecDeque<(Ping, SocketAddr)>,
+}
+
+impl PendingRepairPingRingBuffer {
+    pub(crate) fn new() -> Self {
+        Self {
+            pings: VecDeque::with_capacity(MAX_PENDING_REPAIR_PINGS),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.pings.is_empty()
+    }
+
+    /// Buffers repair pings from `packet_batch` and discards every packet no larger than a ping.
+    pub(crate) fn take_pings_from_batch(
+        &mut self,
+        packet_batch: &mut PacketBatch,
+        stats: &mut ShredFetchStats,
+    ) {
+        for packet in packet_batch.iter_mut() {
+            // Large packets are probably shreds.
+            if packet.meta().size > REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
+                continue;
+            }
+            let Some(Ok(RepairResponse::Ping(ping))) = packet.data(..).map(wincode::deserialize)
+            else {
+                // Discard only after reading, `data()` returns None for discarded packets.
+                packet.meta_mut().set_discard(true);
+                stats.ping_malformed_count += 1;
+                continue;
+            };
+            packet.meta_mut().set_discard(true);
+            if self.pings.len() >= MAX_PENDING_REPAIR_PINGS {
+                self.pings.pop_front();
+                stats.ping_overflow_count += 1;
+            }
+            self.pings.push_back((ping, packet.meta().socket_addr()));
+        }
+    }
+
+    /// Verifies and answers the oldest pending ping, if any.
+    pub(crate) fn maybe_handle_oldest_ping(
+        &mut self,
+        repair_socket: &UdpSocket,
+        keypair: &Keypair,
+        stats: &mut ShredFetchStats,
+    ) {
+        let Some((ping, addr)) = self.pings.pop_front() else {
+            return;
+        };
+        if !ping.verify() {
+            stats.ping_err_verify_count += 1;
+            return;
+        }
+        stats.ping_count += 1;
+        let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
+        let Ok(bytes) = wincode::serialize(&pong) else {
+            debug_assert!(false, "Pong serialization should never fail");
+            return;
+        };
+        if let Err(err) = repair_socket.send_to(&bytes, addr) {
+            stats.pong_send_error_count += 1;
+            debug!("failed to send pong to {addr}: {err:?}");
+        }
+    }
 }
 
 impl RepairProtocol {
@@ -1221,15 +1292,15 @@ impl ServeRepair {
 
         let mut requests = Vec::<BytesPacket>::with_capacity(64);
         for packet in initial_batch.iter() {
-            if is_well_formed_repair_request(&packet, stats) {
-                requests.push(packet.to_bytes_packet());
+            if is_well_formed_repair_request(packet, stats) {
+                requests.push(packet.clone());
             }
         }
         while let Ok(batch) = requests_receiver.try_recv() {
             total_requests += batch.len();
             for packet in batch.into_iter() {
-                if is_well_formed_repair_request(&packet, stats) {
-                    requests.push(packet.to_bytes_packet());
+                if is_well_formed_repair_request(packet, stats) {
+                    requests.push(packet.clone());
                 }
             }
 
@@ -1913,50 +1984,6 @@ impl ServeRepair {
         Self::repair_proto_to_bytes(&request_proto, identity_keypair)
     }
 
-    /// Distinguish and process `RepairResponse` ping packets ignoring other
-    /// packets in the batch.
-    pub(crate) fn handle_repair_response_pings(
-        repair_socket: &UdpSocket,
-        keypair: &Keypair,
-        packet_batch: &mut PacketBatch,
-        stats: &mut ShredFetchStats,
-    ) {
-        let mut pending_pongs = Vec::default();
-        for mut packet in packet_batch.iter_mut() {
-            if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
-                continue;
-            }
-            if let Some(data) = packet.data(..)
-                && let Ok(RepairResponse::Ping(ping)) = wincode::deserialize(data)
-            {
-                if !ping.verify() {
-                    // Do _not_ set `discard` to allow shred processing to attempt to
-                    // handle the packet.
-                    // Ping error count may include false posities for shreds of size
-                    // `REPAIR_RESPONSE_SERIALIZED_PING_BYTES` whose first 4 bytes
-                    // match `RepairResponse` discriminator (these 4 bytes overlap
-                    // with the shred signature field).
-                    stats.ping_err_verify_count += 1;
-                    continue;
-                }
-                packet.meta_mut().set_discard(true);
-                stats.ping_count += 1;
-                let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = wincode::serialize(&pong) {
-                    let from_addr = packet.meta().socket_addr();
-                    pending_pongs.push((pong, from_addr));
-                }
-            }
-        }
-        if !pending_pongs.is_empty() {
-            let num_pkts = pending_pongs.len();
-            let pending_pongs = pending_pongs.iter().map(|(bytes, addr)| (bytes, addr));
-            if let Err(SendPktsError::IoError(err)) = batch_send(repair_socket, pending_pongs) {
-                warn!("batch_send failed to send a batch of {num_pkts} pongs: {err:?}");
-            }
-        }
-    }
-
     pub fn repair_proto_to_bytes(request: &RepairProtocol, keypair: &Keypair) -> Result<Vec<u8>> {
         debug_assert!(request.supports_signature());
         let mut payload = serialize(&request)?;
@@ -2018,9 +2045,9 @@ mod tests {
                 merkle_tree::hash_as_merkle_proof_entry,
             },
         },
-        solana_net_utils::SocketAddrSpace,
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_perf::packet::{
-            Packet, PacketFlags, PacketRef, deserialize_slice_from_packet, packet_from_data,
+            Packet, PacketFlags, deserialize_slice_from_packet, packet_from_data,
         },
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
@@ -2035,7 +2062,7 @@ mod tests {
         requests: &mut Vec<BytesPacket>,
         stats: &mut ServeRepairStats,
     ) -> usize {
-        requests.retain(|request| is_well_formed_repair_request(&PacketRef::from(request), stats));
+        requests.retain(|request| is_well_formed_repair_request(request, stats));
         requests.len()
     }
 
@@ -2061,6 +2088,81 @@ mod tests {
             assert!(!ping.verify());
         } else {
             assert!(res.is_err());
+        }
+    }
+
+    fn new_ping_packet(keypair: &Keypair, from: &SocketAddr) -> BytesPacket {
+        let ping = Ping::new(rand::rng().random(), keypair);
+        bytes_packet_from_data(Some(from), RepairResponse::Ping(ping)).unwrap()
+    }
+
+    #[test]
+    fn test_pending_repair_pings_take_from_batch() {
+        let keypair = Keypair::new();
+        let shred = Shredder::single_shred_for_tests(123, &keypair);
+        let shred_packet = BytesPacket::from_bytes(None, shred.payload().to_vec());
+        let addrs: Vec<_> = (1..=MAX_PENDING_REPAIR_PINGS as u16 + 2)
+            .map(|port| socketaddr!(Ipv4Addr::LOCALHOST, port))
+            .collect();
+        let mut packets: Vec<_> = addrs
+            .iter()
+            .map(|addr| new_ping_packet(&keypair, addr))
+            .collect();
+        packets.insert(2, shred_packet);
+        let mut packet_batch = PacketBatch::from(packets);
+
+        let mut pending_pings = PendingRepairPingRingBuffer::new();
+        let mut stats = ShredFetchStats::default();
+        pending_pings.take_pings_from_batch(&mut packet_batch, &mut stats);
+
+        let kept: Vec<_> = packet_batch
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.meta().discard())
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(kept, [2], "only the shred should be kept");
+        assert_eq!(stats.ping_overflow_count, 2);
+        let pending: Vec<_> = pending_pings.pings.iter().map(|(_, addr)| *addr).collect();
+        assert_eq!(pending, addrs[2..]);
+    }
+
+    #[test]
+    fn test_pending_repair_pings_respond() {
+        let keypair = Keypair::new();
+        let repair_socket = bind_to_localhost_unique().unwrap();
+        let peer_socket = bind_to_localhost_unique().unwrap();
+        peer_socket
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let peer_addr = peer_socket.local_addr().unwrap();
+
+        let mut bad_ping = new_ping_packet(&keypair, &peer_addr);
+        let mut payload = bad_ping.buffer().to_vec();
+        *payload.last_mut().unwrap() ^= 0xff;
+        bad_ping.set_buffer(payload);
+        let mut packets: Vec<_> = (0..4)
+            .map(|_| new_ping_packet(&keypair, &peer_addr))
+            .collect();
+        packets.insert(0, bad_ping);
+        let mut packet_batch = PacketBatch::from(packets);
+
+        let mut pending_pings = PendingRepairPingRingBuffer::new();
+        let mut stats = ShredFetchStats::default();
+        pending_pings.take_pings_from_batch(&mut packet_batch, &mut stats);
+
+        while !pending_pings.is_empty() {
+            pending_pings.maybe_handle_oldest_ping(&repair_socket, &keypair, &mut stats);
+        }
+        assert_eq!(stats.ping_err_verify_count, 1);
+        assert_eq!(stats.ping_count, 4);
+        assert!(pending_pings.is_empty());
+
+        let mut buf = [0u8; PACKET_DATA_SIZE];
+        for _ in 0..4 {
+            let (size, _) = peer_socket.recv_from(&mut buf).unwrap();
+            let pong: RepairProtocol = wincode::deserialize(&buf[..size]).unwrap();
+            assert_matches!(pong, RepairProtocol::Pong(pong) if pong.verify());
         }
     }
 
@@ -2124,7 +2226,7 @@ mod tests {
     }
 
     fn make_remote_request(packet: &Packet) -> BytesPacket {
-        PacketRef::from(packet).to_bytes_packet()
+        BytesPacket::from(packet)
     }
 
     #[test]
@@ -2518,10 +2620,10 @@ mod tests {
 
         let rv: Vec<Shred> = rv
             .iter_mut()
-            .map(|mut packet| {
+            .map(|packet| {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
                 let (shred, repair_nonce) =
-                    shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
+                    shred::layout::get_shred_and_repair_nonce(packet).unwrap();
                 assert_eq!(repair_nonce.unwrap(), nonce);
                 Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
             })
@@ -2573,10 +2675,10 @@ mod tests {
         verify_responses(&request, rv.iter());
         let rv: Vec<Shred> = rv
             .iter_mut()
-            .map(|mut packet| {
+            .map(|packet| {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
                 let (shred, repair_nonce) =
-                    shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
+                    shred::layout::get_shred_and_repair_nonce(packet).unwrap();
                 assert_eq!(repair_nonce.unwrap(), nonce);
                 Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
             })
@@ -2807,7 +2909,7 @@ mod tests {
 
     #[test]
     fn test_run_ancestor_hashes() {
-        fn deserialize_ancestor_hashes_response(packet: PacketRef) -> AncestorHashesResponse {
+        fn deserialize_ancestor_hashes_response(packet: &BytesPacket) -> AncestorHashesResponse {
             wincode::deserialize(
                 packet
                     .data(..(packet.meta().size - SIZE_OF_NONCE))
@@ -3212,7 +3314,7 @@ mod tests {
 
     fn verify_responses<'a>(
         request: &ShredRepairType,
-        packets: impl Iterator<Item = PacketRef<'a>>,
+        packets: impl Iterator<Item = &'a BytesPacket>,
     ) {
         for packet in packets {
             let shred = shred::layout::get_shred(packet).unwrap();

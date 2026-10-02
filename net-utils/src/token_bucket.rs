@@ -149,9 +149,7 @@ impl TokenBucket {
     /// Retrieves monotonic time since bucket creation.
     fn time_us(&self) -> u64 {
         cfg_select! {
-            feature = "shuttle-test" => {
-                self.time_us_override.load(Ordering::Relaxed)
-            }
+            feature = "shuttle-test" => self.time_us_override.load(Ordering::Relaxed),
             _ => {
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(self.base_time);

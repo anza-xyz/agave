@@ -1,7 +1,8 @@
 use {
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
     solana_hash::Hash,
+    solana_runtime::bank::BankId,
     std::sync::Arc,
 };
 

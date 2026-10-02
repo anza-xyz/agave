@@ -406,7 +406,7 @@ pub(crate) mod tests {
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
-        solana_clock::{BankId, Slot},
+        solana_clock::Slot,
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -415,7 +415,7 @@ pub(crate) mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_runtime::bank::{Bank, BankId, TransactionBalancesSet},
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -532,7 +532,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            fee_payer_post_balance: 0,
+            fee_payer_post_balance: Some(0),
         });
 
         let balances = TransactionBalancesSet {
@@ -666,7 +666,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            fee_payer_post_balance: 0,
+            fee_payer_post_balance: Some(0),
         });
 
         let balances = TransactionBalancesSet {

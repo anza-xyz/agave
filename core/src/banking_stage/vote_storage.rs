@@ -481,7 +481,7 @@ pub(crate) mod tests {
         timestamp: Option<UnixTimestamp>,
     ) -> LatestValidatorVote {
         let packet = packet_from_slots(slots, keypairs, timestamp);
-        LatestValidatorVote::new(packet.as_ref(), vote_source, true).unwrap()
+        LatestValidatorVote::new(&packet, vote_source, true).unwrap()
     }
 
     /// Create a vote packet with a custom authorized voter keypair

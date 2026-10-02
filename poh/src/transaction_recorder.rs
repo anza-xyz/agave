@@ -3,10 +3,10 @@ use {
         poh_recorder::{PohRecorderError, Record},
         record_channels::{RecordSender, RecordSenderError},
     },
-    solana_clock::BankId,
     solana_entry::entry::hash_transactions,
     solana_hash::Hash,
     solana_measure::measure_us,
+    solana_runtime::bank::BankId,
     solana_transaction::versioned::VersionedTransaction,
     std::num::Saturating,
 };

@@ -24,7 +24,7 @@ use {
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
-    solana_perf::packet::{PACKETS_PER_BATCH, PacketRef, bytes::Bytes},
+    solana_perf::packet::{BytesPacket, PACKETS_PER_BATCH, bytes::Bytes},
     solana_poh::{
         poh_controller::PohController, poh_recorder::PohRecorder,
         transaction_recorder::TransactionRecorder,
@@ -86,11 +86,9 @@ const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
-fn packet_bytes(packet: PacketRef<'_>, packet_data: &[u8]) -> Bytes {
-    match packet {
-        PacketRef::Bytes(packet) => packet.buffer().clone(),
-        PacketRef::Packet(_) => Bytes::copy_from_slice(packet_data),
-    }
+/// Returns the packet's payload, or None if the packet is discarded.
+fn packet_bytes(packet: &BytesPacket) -> Option<Bytes> {
+    (!packet.meta().discard()).then(|| packet.buffer().clone())
 }
 
 #[derive(Debug, Default)]
@@ -1278,9 +1276,9 @@ mod tests {
         );
         assert!(record_receiver.try_recv().is_err());
 
-        // Once bank is set to a new bank (setting bank id + 1 in record_transactions),
+        // Once bank is set to a new bank (next bank id in record_transactions),
         // record_transactions should throw MaxHeightReached
-        let next_bank_id = bank.bank_id() + 1;
+        let next_bank_id = bank.bank_id_generator().next();
         let RecordTransactionsSummary { result, .. } =
             recorder.record_transactions(next_bank_id, txs);
         assert_matches!(result, Err(PohRecorderError::MaxHeightReached));

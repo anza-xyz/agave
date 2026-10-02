@@ -1,9 +1,12 @@
 use {
-    crate::{bank::Bank, prioritization_fee::PrioritizationFee},
+    crate::{
+        bank::{Bank, BankId},
+        prioritization_fee::PrioritizationFee,
+    },
     crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
     log::*,
     solana_accounts_db::account_locks::validate_account_locks,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -341,13 +344,13 @@ impl PrioritizationFeeCache {
             if pre_purge_bank_count > 0 && post_purge_bank_count == 0 {
                 warn!(
                     "Finalized bank has empty prioritization fee cache. slot {slot} bank id \
-                     {bank_id}"
+                     {bank_id:?}"
                 );
             }
 
             if let Some(prioritization_fee) = &mut prioritization_fee {
                 if let Err(err) = prioritization_fee.mark_block_completed() {
-                    error!("Unsuccessful finalizing slot {slot}, bank ID {bank_id}: {err:?}");
+                    error!("Unsuccessful finalizing slot {slot}, bank ID {bank_id:?}: {err:?}");
                 }
                 prioritization_fee.report_metrics(slot);
             }

@@ -41,6 +41,29 @@ impl TransactionCost {
     pub fn write_lock_cost(&self) -> u64 {
         self.write_lock_cost
     }
+
+    /// Returns the part of the cost that [`CostTracker`] limits.
+    ///
+    /// The returned value sums all cost components into one compute-unit total and keeps the
+    /// allocated account data size. It leaves out the individual components, which are not needed
+    /// to check the block limits and each account's limit.
+    ///
+    /// [`CostTracker`]: crate::cost_tracker::CostTracker
+    pub fn tracked_cost(&self) -> TrackedCost {
+        TrackedCost {
+            cost: self.sum(),
+            allocated_accounts_data_size: self.allocated_accounts_data_size,
+        }
+    }
+}
+
+/// Total cost and allocated account data size, a subset of [`TransactionCost`] data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TrackedCost {
+    /// Sum of all cost components, in compute units.
+    pub cost: u64,
+    /// Allocated account data bytes.
+    pub allocated_accounts_data_size: u64,
 }
 
 #[cfg(test)]

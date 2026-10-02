@@ -1,5 +1,6 @@
 use {
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
+    solana_runtime::bank::BankId,
     std::sync::{Arc, RwLock},
 };
 
