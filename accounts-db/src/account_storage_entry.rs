@@ -32,6 +32,7 @@ pub struct AccountStorageEntry {
     /// The number of alive accounts in this storage
     pub(crate) num_alive_accounts: AtomicUsize,
 
+    /// AppendVec-equivalent size of all alive accounts, excluding dead accounts.
     pub(crate) num_alive_bytes: AtomicUsize,
 
     /// AppendVec-equivalent size of all stored accounts, including dead accounts.
@@ -118,10 +119,16 @@ impl AccountStorageEntry {
         self.num_alive_accounts.load(Ordering::Acquire)
     }
 
+    /// Returns the number of bytes requried to store all the *alive* accounts in this storage.
+    ///
+    /// Note, this is the size to store accounts into AppendVec format.
     pub fn num_alive_bytes(&self) -> usize {
         self.num_alive_bytes.load(Ordering::Acquire)
     }
 
+    /// Returns the number of bytes requried to store all the accounts in this storage.
+    ///
+    /// Note, this is the size to store accounts into AppendVec format.
     pub fn num_stored_bytes(&self) -> u64 {
         self.num_stored_bytes.load(Ordering::Acquire)
     }
