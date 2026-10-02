@@ -747,9 +747,7 @@ mod tests {
         solana_runtime::{
             bank::SlotLeader,
             bank_forks::BankForks,
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-            },
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         std::sync::Arc,
     };
@@ -782,11 +780,8 @@ mod tests {
                 .rev()
                 .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
                 .collect::<Vec<_>>();
-            let mut genesis = create_genesis_config_with_alpenglow_vote_accounts(
-                1_000_000_000,
-                &validator_keypairs,
-                stake,
-            );
+            let mut genesis =
+                create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stake);
             if let Some(epoch_schedule) = epoch_schedule {
                 genesis.genesis_config.epoch_schedule = epoch_schedule;
             }

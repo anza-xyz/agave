@@ -203,12 +203,12 @@ impl LocalCluster {
     }
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
-        Self::init(config, socket_addr_space, AlpenglowMode::Disabled)
-    }
-
-    pub fn new_alpenglow(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         config.poh_config.hashes_per_tick = None;
         Self::init(config, socket_addr_space, AlpenglowMode::Enabled)
+    }
+
+    pub fn new_tower(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        Self::init(config, socket_addr_space, AlpenglowMode::Disabled)
     }
 
     pub fn init(
@@ -282,7 +282,10 @@ impl LocalCluster {
         let leader_pubkey = leader_keypair.pubkey();
         let leader_node = Node::new_localhost_with_pubkey(&leader_pubkey);
 
-        let feature_set = FeatureSet::all_enabled();
+        let mut feature_set = FeatureSet::all_enabled();
+        if alpenglow_mode != AlpenglowMode::Enabled {
+            feature_set.deactivate(&agave_feature_set::alpenglow::id());
+        }
 
         let stakes_in_genesis_for_funding = stakes_in_genesis.clone();
         let GenesisConfigInfo {
@@ -294,8 +297,7 @@ impl LocalCluster {
             &keys_in_genesis,
             stakes_in_genesis,
             config.cluster_type,
-            &feature_set,
-            matches!(alpenglow_mode, AlpenglowMode::Enabled), /* is_alpenglow */
+            feature_set,
         );
 
         // In-genesis validators only receive the generic validator account funding from the
