@@ -11,6 +11,7 @@ use {
     agave_votor::event::VotorEvent,
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError},
+    itertools::Itertools,
     lru::LruCache,
     rand::Rng,
     solana_clock::Slot,
@@ -50,6 +51,8 @@ const MAX_DUPLICATE_COUNT: usize = 2;
 const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 const DEDUPER_NUM_BITS: u64 = 637_534_199; // 76MB
 const DEDUPER_RESET_CYCLE: Duration = Duration::from_secs(5 * 60);
+// Minimum number of shreds to use for parallel retransmit execution.
+const MIN_SHREDS_PER_RETRANSMIT_JOB: usize = 2;
 
 const _: () = const {
     // From https://github.com/anza-xyz/agave/pull/1735#discussion_r1644899183:
@@ -471,7 +474,11 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         stats.num_small_batches += 1;
     }
 
-    let (result_sender, result_receiver) = crossbeam_channel::bounded(shred_buf.len());
+    let chunk_size = num_shreds
+        .div_ceil(num_workers)
+        .max(MIN_SHREDS_PER_RETRANSMIT_JOB);
+    let num_jobs = num_shreds.div_ceil(chunk_size);
+    let (result_sender, result_receiver) = crossbeam_channel::bounded(num_jobs);
 
     let is_xdp = xdp_sender.is_some();
     let job_context = Arc::new(JobContext {
@@ -485,7 +492,8 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         result_sender,
     });
 
-    for batch in shred_buf.drain(..) {
+    for chunk in &shred_buf.drain(..).flatten().chunks(chunk_size) {
+        let batch = chunk.collect();
         let job = RetransmitJob {
             context: job_context.clone(),
             batch,
