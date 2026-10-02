@@ -6992,6 +6992,18 @@ impl fmt::Debug for Bank {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl Bank {
+    /// A bank at `slot` over an empty accounts db, with no parent. Store a chain's pre-state
+    /// through it, then build the bank under test on it. Leave it unfrozen: freezing writes
+    /// slot history into the pre-state.
+    pub fn new_at_slot_for_tests(slot: Slot, accounts_db_config: AccountsDbConfig) -> Self {
+        let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
+        let mut bank = Self::default_with_accounts(Accounts::new(Arc::new(accounts_db)));
+        bank.slot = slot;
+        bank.epoch = bank.epoch_schedule.get_epoch(slot);
+        bank.ancestors = Ancestors::from(vec![slot]);
+        bank
+    }
+
     /// Shared bank constructor used by `new_for_txn_tests` and
     /// `new_for_block_tests`. Builds only the `Bank` struct from deserialized
     /// fields with the supplied `leader`, `stakes_cache`, and

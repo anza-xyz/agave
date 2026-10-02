@@ -2,8 +2,8 @@
 
 use {
     crate::txn::{
-        deserialize_accounts, fee_rate_governor_from_proto, new_accounts_for_tests_single_threaded,
-        restore_blockhash_queue,
+        deserialize_accounts, fee_rate_governor_from_proto,
+        new_accounts_db_config_for_tests_single_threaded, restore_blockhash_queue,
     },
     agave_feature_set::FeatureSet,
     protosol::protos::{
@@ -11,7 +11,7 @@ use {
         PrevVoteAccount as ProtoPrevVoteAccount,
     },
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_accounts_db::{accounts_hash::AccountsLtHash, ancestors::Ancestors},
+    solana_accounts_db::{accounts::Accounts, accounts_hash::AccountsLtHash, ancestors::Ancestors},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, Epoch},
     solana_cost_model::cost_model::CostModel,
     solana_epoch_schedule::EpochSchedule,
@@ -51,6 +51,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
+        sync::Arc,
     },
 };
 // Imports used only by the FFI entry point, which is excluded from `test` builds.
@@ -83,9 +84,6 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
 
     let blockhash_queue = restore_blockhash_queue(&bank_ctx.blockhash_queue);
 
-    // Accounts DB config and initialization
-    let accounts = new_accounts_for_tests_single_threaded();
-
     // Create feature gate accounts for all feature gates that are present in the protobuf
     // feature set.
     //
@@ -99,19 +97,19 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         .chain(acct_states_from_proto.iter().cloned())
         .collect();
 
-    accounts.store_accounts(
-        (parent_slot, &accounts_to_store[..]),
-        BankId::default(),
-        None,
-        &Ancestors::default(),
+    let parent = Bank::new_at_slot_for_tests(
+        parent_slot,
+        new_accounts_db_config_for_tests_single_threaded(),
     );
-    accounts.store_accounts(
+    parent.store_accounts((parent_slot, &accounts_to_store[..]), None);
+    parent.rc.accounts.add_root(parent_slot);
+    let bank_rc = BankRc::new(Accounts::new(Arc::clone(&parent.rc.accounts.accounts_db)));
+    bank_rc.accounts.store_accounts(
         (current_slot, &accounts_to_store[..]),
         BankId::default(),
         None,
         &Ancestors::default(),
     );
-    accounts.accounts_db.add_root(parent_slot);
     let accounts_data_size_initial = accounts_to_store
         .iter()
         .map(|(_, account)| account.data().len() as u64)
@@ -212,7 +210,6 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         ..BankFieldsToDeserialize::default()
     };
 
-    let bank_rc = BankRc::new(accounts);
     let bank = Bank::new_for_block_tests(
         bank_rc,
         bank_fields,

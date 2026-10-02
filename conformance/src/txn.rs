@@ -20,8 +20,7 @@ use {
     solana_account::{Account, AccountSharedData},
     solana_accounts_db::{
         accounts::Accounts,
-        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
-        ancestors::Ancestors,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         blockhash_queue::BlockhashQueue,
     },
     solana_clock::{Clock, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_PROCESSING_AGE},
@@ -31,7 +30,7 @@ use {
     solana_message::SanitizedMessage,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, BankFieldsToDeserialize, BankId, BankRc},
+        bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
         stake_history::StakeHistory,
         stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
@@ -101,17 +100,14 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         sysvar_from_accounts(&accounts, &sysvar::epoch_schedule::id());
     let epoch = epoch_schedule.get_epoch(slot);
 
-    // Populate the accounts DB with the input accounts at the parent slot.
-    let bank_accounts = new_accounts_for_tests_single_threaded();
-    let ancestors = Ancestors::from(vec![parent_slot]);
-    bank_accounts.store_accounts(
-        (parent_slot, &accounts[..]),
-        BankId::default(),
-        None,
-        &ancestors,
+    // The parent bank holds the input accounts at the parent slot.
+    let parent = Bank::new_at_slot_for_tests(
+        parent_slot,
+        new_accounts_db_config_for_tests_single_threaded(),
     );
-    bank_accounts.accounts_db.add_root(parent_slot);
-    let bank_rc = BankRc::new(bank_accounts);
+    parent.store_accounts((parent_slot, &accounts[..]), None);
+    parent.rc.accounts.add_root(parent_slot);
+    let bank_rc = BankRc::new(Accounts::new(Arc::clone(&parent.rc.accounts.accounts_db)));
 
     // Dummy epoch stakes with the provided total stake at the current and next epoch.
     let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();
@@ -273,7 +269,7 @@ pub(crate) fn fee_rate_governor_from_proto(
     }
 }
 
-fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
+pub(crate) fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
     let single_thread = NonZeroUsize::new(1).unwrap();
     AccountsDbConfig {
         num_background_threads: Some(single_thread),
@@ -281,13 +277,6 @@ fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
         skip_initial_hash_calc: true,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING
     }
-}
-
-pub(crate) fn new_accounts_for_tests_single_threaded() -> Accounts {
-    Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
-        Vec::new(),
-        new_accounts_db_config_for_tests_single_threaded(),
-    )))
 }
 
 /// Rejected before processing. Precompile error codes are not conformant, so
