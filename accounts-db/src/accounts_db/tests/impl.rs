@@ -2737,7 +2737,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store2.written_bytes() as usize / 2, Ordering::Release);
+        .store(store2.num_stored_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     let store3_slot = 33;
@@ -2754,7 +2754,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     db.storage.insert(Arc::clone(&store3));
     store3
         .num_alive_bytes
-        .store(store3.written_bytes() as usize, Ordering::Release);
+        .store(store3.num_stored_bytes() as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
     // Set the target alive ratio to 0.6 so that we can just get rid of store1, the remaining two stores
@@ -2810,7 +2810,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store2.written_bytes() as usize / 2, Ordering::Release);
+        .store(store2.num_stored_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     let store3_slot = 33;
@@ -2827,7 +2827,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     db.storage.insert(Arc::clone(&store3));
     store3
         .num_alive_bytes
-        .store(store3.written_bytes() as usize, Ordering::Release);
+        .store(store3.num_stored_bytes() as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
     // Set the target ratio to default (0.8), both store1 and store2 must be selected and store3 is ignored.
@@ -2865,7 +2865,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
     db.storage.insert(Arc::clone(&store1));
     store1
         .num_alive_bytes
-        .store(store1.written_bytes() as usize / 4, Ordering::Release);
+        .store(store1.num_stored_bytes() as usize / 4, Ordering::Release);
     candidates.insert(store1_slot);
 
     let store2_slot = 22;
@@ -2882,7 +2882,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store2.written_bytes() as usize / 2, Ordering::Release);
+        .store(store2.num_stored_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     // Set the target ratio to default (0.8), both stores from the two different slots must be selected.
@@ -2923,7 +2923,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         .unwrap();
     store_with_tombstones.batch_insert_tombstone_offsets(stored_accounts_offsets);
     store_with_tombstones.num_alive_bytes.store(
-        store_with_tombstones.written_bytes() as usize,
+        store_with_tombstones.num_stored_bytes() as usize,
         Ordering::Release,
     );
     accounts_db
@@ -2943,7 +2943,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         .write_accounts(&(slot_with_tombstones, accounts_to_store.as_slice()))
         .unwrap();
     store_no_tombstones.num_alive_bytes.store(
-        store_no_tombstones.written_bytes() as usize,
+        store_no_tombstones.num_stored_bytes() as usize,
         Ordering::Release,
     );
     accounts_db.storage.insert(Arc::clone(&store_no_tombstones));
@@ -2993,7 +2993,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
             // Bytes from tombstones are alive, but would be dead after shrink.
             assert_eq!(
                 store_with_tombstones.alive_bytes() as u64,
-                store_with_tombstones.written_bytes(),
+                store_with_tombstones.num_stored_bytes(),
             );
             assert_eq!(
                 accounts_db.alive_bytes_after_shrink(&store_with_tombstones),
@@ -3038,7 +3038,7 @@ fn test_store_overhead() {
     accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
     let store = accounts.storage.get_slot_storage_entry(0).unwrap();
-    let total_len = store.written_bytes() as usize;
+    let total_len = store.num_stored_bytes() as usize;
     assert_eq!(total_len, store.accounts.calculate_stored_size(0));
 }
 
@@ -5287,7 +5287,7 @@ fn test_is_candidate_for_shrink() {
             .as_slice(),
         ))
         .unwrap();
-    let written_bytes = entry.written_bytes() as usize;
+    let written_bytes = entry.num_stored_bytes() as usize;
     match accounts.shrink_ratio {
         AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
             assert_eq!(

@@ -84,7 +84,7 @@ impl AncientSlotInfos {
         is_candidate_for_shrink: bool,
     ) {
         if alive_bytes_after_shrink > 0 {
-            let written_bytes = storage.written_bytes();
+            let written_bytes = storage.num_stored_bytes();
             // two criteria we're shrinking by later:
             // 1. alive ratio so that we don't consume too much disk space with dead accounts
             // 2. # of active ancient roots, so that we don't consume too many open file handles
@@ -401,7 +401,7 @@ impl AccountsDb {
             .shrink_stats
             .bytes_written
             .fetch_add(
-                shrink_in_progress.new_storage().written_bytes(),
+                shrink_in_progress.new_storage().num_stored_bytes(),
                 Ordering::Relaxed,
             );
 
@@ -1477,7 +1477,7 @@ mod tests {
     fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry) {
         assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
-        assert_eq!(storage.written_bytes(), info.written_bytes);
+        assert_eq!(storage.num_stored_bytes(), info.written_bytes);
         assert_eq!(storage.alive_bytes(), info.alive_bytes as usize);
     }
 
@@ -1653,7 +1653,7 @@ mod tests {
                         let alive = alives[slot as usize];
                         if !alive {
                             // make this storage not alive
-                            storage.remove_accounts(storage.written_bytes() as usize, 1);
+                            storage.remove_accounts(storage.num_stored_bytes() as usize, 1);
                         }
                     });
                     let alive_storages = storages
@@ -2207,7 +2207,7 @@ mod tests {
 
                         let bytes = storages
                             .iter()
-                            .map(|storage| storage.written_bytes())
+                            .map(|storage| storage.num_stored_bytes())
                             .sum::<u64>();
                         assert_eq!(
                             bytes,

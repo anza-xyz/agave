@@ -1892,7 +1892,7 @@ impl AccountsDb {
         &self,
         store: &AccountStorageEntry,
     ) -> GetUniqueAccountsResult {
-        let written_bytes = store.written_bytes();
+        let written_bytes = store.num_stored_bytes();
         let mut stored_accounts = Vec::with_capacity(store.count());
         store
             .accounts
@@ -2157,7 +2157,7 @@ impl AccountsDb {
 
         // Count the bytes actually written to the new storage
         self.shrink_stats.bytes_written.fetch_add(
-            shrink_in_progress.new_storage().written_bytes(),
+            shrink_in_progress.new_storage().num_stored_bytes(),
             Ordering::Relaxed,
         );
 
@@ -2267,7 +2267,7 @@ impl AccountsDb {
             };
             let alive_bytes_after_shrink = self.alive_bytes_after_shrink(&store) as u64;
             total_alive_bytes += alive_bytes_after_shrink;
-            let written_bytes = store.written_bytes();
+            let written_bytes = store.num_stored_bytes();
             total_bytes += written_bytes;
             debug_assert!(
                 written_bytes > 0,
@@ -2318,7 +2318,7 @@ impl AccountsDb {
                     break;
                 }
             } else {
-                let current_store_size = store.written_bytes();
+                let current_store_size = store.num_stored_bytes();
                 let after_shrink_size = store_usage.alive_bytes_after_shrink;
                 let bytes_saved = current_store_size.saturating_sub(after_shrink_size);
                 total_bytes -= bytes_saved;
@@ -2405,7 +2405,7 @@ impl AccountsDb {
             while let Some((slot, written_bytes)) = ancients.pop_front() {
                 if let Some(store) = self.storage.get_slot_storage_entry(slot)
                     && !shrink_slots.contains(&slot)
-                    && written_bytes == store.written_bytes()
+                    && written_bytes == store.num_stored_bytes()
                     && self.is_candidate_for_shrink(&store)
                 {
                     let ancient_bytes_added_to_shrink =
@@ -3266,7 +3266,7 @@ impl AccountsDb {
         for remove_slot in removed_slots {
             // Remove the storage entries and collect some metrics
             if let Some(store) = self.storage.remove(remove_slot, false) {
-                total_removed_stored_bytes += store.written_bytes();
+                total_removed_stored_bytes += store.num_stored_bytes();
                 all_removed_slot_storages.push(store);
             }
         }
@@ -3855,7 +3855,7 @@ impl AccountsDb {
             oldest_slot = std::cmp::min(oldest_slot, slot);
 
             total_alive_bytes += store.alive_bytes();
-            total_bytes += store.written_bytes();
+            total_bytes += store.num_stored_bytes();
         }
         info!(
             "total_stores: {total_count}, newest_slot: {newest_slot}, oldest_slot: {oldest_slot}"
@@ -4204,7 +4204,7 @@ impl AccountsDb {
 
     fn is_shrinking_productive(&self, store: &AccountStorageEntry) -> bool {
         let alive_count = store.count();
-        let total_bytes = store.written_bytes();
+        let total_bytes = store.num_stored_bytes();
         let alive_bytes = self.alive_bytes_after_shrink(store) as u64;
         if Self::should_not_shrink(alive_bytes, total_bytes) {
             trace!(
@@ -4225,7 +4225,7 @@ impl AccountsDb {
     /// Determines whether a given AccountStorageEntry instance is a
     /// candidate for shrinking.
     pub(crate) fn is_candidate_for_shrink(&self, store: &AccountStorageEntry) -> bool {
-        let total_bytes = store.written_bytes();
+        let total_bytes = store.num_stored_bytes();
         let alive_bytes = self.alive_bytes_after_shrink(store) as u64;
         match self.shrink_ratio {
             AccountShrinkThreshold::TotalSpace { shrink_ratio: _ } => alive_bytes < total_bytes,

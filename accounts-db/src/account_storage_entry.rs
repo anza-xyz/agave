@@ -192,11 +192,6 @@ impl AccountStorageEntry {
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 
-    /// Returns the number of bytes used in this storage
-    pub fn written_bytes(&self) -> u64 {
-        self.num_stored_bytes()
-    }
-
     pub fn has_accounts(&self) -> bool {
         self.count() > 0
     }
