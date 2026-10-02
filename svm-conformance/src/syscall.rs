@@ -13,7 +13,10 @@ use {
         memory_context::MemoryContext,
         solana_sbpf::{
             aligned_memory::AlignedMemory,
-            ebpf::{HOST_ALIGN, MM_BYTECODE_START, MM_HEAP_START, MM_INPUT_START, MM_STACK_START},
+            ebpf::{
+                HOST_ALIGN, MM_BYTECODE_START, MM_HEAP_START, MM_INPUT_START, MM_RODATA_START,
+                MM_STACK_START,
+            },
             error::{EbpfError, ProgramResult, StableResult},
             memory_region::{AccessViolationHandler, MemoryMapping, MemoryRegion},
             program::{BuiltinProgram, SBPFVersion},
@@ -41,13 +44,19 @@ const STACK_SIZE: usize = 64 * STACK_GAP_SIZE as usize;
 /// Upper bound on `vm_context.heap_max` — matches Firedancer's cap so the same
 /// fuzzer inputs run on either implementation.
 const HEAP_MAX: usize = 256 * 1024;
-const SBPF_VERSION: SBPFVersion = SBPFVersion::V0;
 
 pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
     let instr_context = InstrContext::from(input.instr_ctx.expect("missing instr context"));
     let mut vm_context = input.vm_ctx.expect("missing vm context");
     let syscall_invocation = input.syscall_invocation.unwrap_or_default();
     let registers = get_registers(&vm_context);
+    let sbpf_version = match vm_context.sbpf_version {
+        0 => SBPFVersion::V0,
+        1 => SBPFVersion::V1,
+        2 => SBPFVersion::V2,
+        3 => SBPFVersion::V3,
+        v => panic!("unsupported sbpf_version {v}"),
+    };
 
     let feature_set = instr_context.feature_set;
     let virtual_address_space_adjustments = feature_set.virtual_address_space_adjustments;
@@ -139,6 +148,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
             &mut heap,
             input_memory_regions,
             &config,
+            sbpf_version,
             access_violation_handler,
         )
     };
@@ -166,7 +176,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         let invoke_context_static: &mut InvokeContext<'static, 'static> =
             unsafe { std::mem::transmute(&mut invoke_context) };
 
-        let mut vm = EbpfVm::new(loader, SBPF_VERSION, invoke_context_static, STACK_SIZE);
+        let mut vm = EbpfVm::new(loader, sbpf_version, invoke_context_static, STACK_SIZE);
         vm.registers = registers;
 
         vm.invoke_function(syscall_function);
@@ -265,15 +275,22 @@ unsafe fn create_memory_mapping(
     heap: &mut AlignedMemory<HOST_ALIGN>,
     input_memory_regions: Vec<MemoryRegion>,
     config: &Config,
+    sbpf_version: SBPFVersion,
     acces_violation_handler: AccessViolationHandler,
 ) -> MemoryMapping {
-    let stack_frame_gap = if SBPF_VERSION.stack_frame_gaps() && config.enable_stack_frame_gaps {
+    let stack_frame_gap = if sbpf_version.stack_frame_gaps() && config.enable_stack_frame_gaps {
         config.stack_frame_size as u64
     } else {
         0
     };
+    // V3 maps rodata at vaddr 0, earlier versions at 0x100000000.
+    let rodata_start = if sbpf_version.enable_lower_rodata_vaddr() {
+        MM_RODATA_START
+    } else {
+        MM_BYTECODE_START
+    };
     let regions = [
-        MemoryRegion::new(rodata.as_slice() as *const [u8], MM_BYTECODE_START),
+        MemoryRegion::new(rodata.as_slice() as *const [u8], rodata_start),
         MemoryRegion::new_gapped(
             stack.as_slice_mut() as *mut [u8],
             MM_STACK_START,
@@ -288,7 +305,7 @@ unsafe fn create_memory_mapping(
         MemoryMapping::new_with_access_violation_handler(
             regions,
             config,
-            SBPF_VERSION,
+            sbpf_version,
             acces_violation_handler,
         )
         .expect("failed to create memory mapping")
@@ -395,7 +412,7 @@ mod tests {
             address: sysvar::rent::id().to_bytes().to_vec(),
             lamports: 1,
             data_repr: Some(DataRepr::Data(
-                bincode::serialize(&Rent::default()).unwrap(),
+                wincode::serialize(&Rent::default()).unwrap(),
             )),
             executable: false,
             owner: sysvar::id().to_bytes().to_vec(),

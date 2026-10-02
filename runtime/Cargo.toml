@@ -36,6 +36,7 @@ dev-context-only-utils = [
 stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "agave-votor-messages/stable-abi",
     "solana-account/stable-abi",
     "solana-accounts-db/stable-abi",
     "solana-epoch-schedule/stable-abi",

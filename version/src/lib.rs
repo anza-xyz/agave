@@ -1,9 +1,5 @@
 #![cfg(feature = "agave-unstable-api")]
 
-#[cfg_attr(feature = "stable-abi", macro_use)]
-#[cfg(feature = "stable-abi")]
-extern crate solana_frozen_abi_macro;
-
 mod client_ids;
 pub mod v3;
 pub mod v4;

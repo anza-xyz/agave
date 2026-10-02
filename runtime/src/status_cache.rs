@@ -897,8 +897,7 @@ mod shuttle_tests {
                     .unwrap()
                     .get_status(key, &bh, &ancestors)
                     .is_some(),
-                "missing key {}",
-                i
+                "missing key {i}",
             );
         }
     }

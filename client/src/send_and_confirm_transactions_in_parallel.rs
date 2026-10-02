@@ -3,7 +3,6 @@ use {
         nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
         rpc_client::RpcClient as BlockingRpcClient,
     },
-    bincode::serialize,
     dashmap::DashMap,
     futures_util::future::join_all,
     solana_hash::Hash,
@@ -449,7 +448,7 @@ async fn sign_all_messages_and_send<T: Signers + ?Sized, S: WireTransactionSende
             let transaction = sign_versioned_message(message.clone(), signers, dedupe_signers)
                 .expect("Transaction should be signable");
             let serialized_transaction =
-                serialize(&transaction).expect("Transaction should serialize");
+                wincode::serialize(&transaction).expect("Transaction should serialize");
             let signature = transaction.signatures[0];
 
             // send to confirm the transaction

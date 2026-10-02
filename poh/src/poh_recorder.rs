@@ -23,7 +23,7 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded},
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_entry::{
         block_component::{BlockFooterV1, VersionedBlockMarker},
         entry::Entry,
@@ -37,7 +37,8 @@ use {
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank, block_component_processor::BankFooterError,
+        bank::{Bank, BankId},
+        block_component_processor::BankFooterError,
         installed_scheduler_pool::BankWithScheduler,
         validated_reward_certificate::Error as ValidatedRewardCertError,
     },
@@ -1768,7 +1769,7 @@ mod tests {
         // We haven't yet reached the minimum tick height for the working bank,
         // so record should fail
         assert_matches!(
-            poh_recorder.record(bank1.slot(), h1, vec![tx.into()]),
+            poh_recorder.record(bank1.bank_id(), h1, vec![tx.into()]),
             Err(PohRecorderError::MinHeightNotReached)
         );
         assert!(entry_receiver.try_recv().is_err());
@@ -1804,10 +1805,9 @@ mod tests {
             poh_recorder.working_bank.as_ref().unwrap().min_tick_height
         );
 
-        // However we hand over a bad slot so record fails
-        let bad_slot = bank.slot() + 1;
+        // However we hand over a bad bank id so record fails
         assert_matches!(
-            poh_recorder.record(bad_slot, h1, vec![tx.into()]),
+            poh_recorder.record(bank.bank_id_generator().next(), h1, vec![tx.into()]),
             Err(PohRecorderError::MaxHeightReached)
         );
     }
@@ -1857,7 +1857,7 @@ mod tests {
         let h1 = hash(b"hello world!");
         assert!(
             poh_recorder
-                .record(bank1.slot(), h1, vec![tx.into()])
+                .record(bank1.bank_id(), h1, vec![tx.into()])
                 .is_ok()
         );
         assert_eq!(poh_recorder.tick_cache.len(), 0);
@@ -1901,7 +1901,7 @@ mod tests {
         let h1 = hash(b"hello world!");
         assert!(
             poh_recorder
-                .record(bank.slot(), h1, vec![tx.into()])
+                .record(bank.bank_id(), h1, vec![tx.into()])
                 .is_err()
         );
         for _ in 0..num_ticks_to_max {
@@ -2142,7 +2142,7 @@ mod tests {
         let h1 = hash(b"hello world!");
         assert!(
             poh_recorder
-                .record(bank.slot(), h1, vec![tx.into()])
+                .record(bank.bank_id(), h1, vec![tx.into()])
                 .is_err()
         );
         assert!(poh_recorder.working_bank.is_none());

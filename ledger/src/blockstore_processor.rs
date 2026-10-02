@@ -28,7 +28,7 @@ use {
         account_locks::validate_account_locks, accounts_db::AccountsDbConfig,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_entry::{
         block_component::{ParsedBlockComponent, VersionedBlockMarker},
         entry::{
@@ -42,7 +42,7 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, NewBankOptions},
+        bank::{Bank, BankId, NewBankOptions},
         bank_forks::BankForks,
         block_component_processor::BlockComponentProcessorError,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -326,7 +326,6 @@ pub struct ProcessOptions {
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub limit_load_slot_count_from_snapshot: Option<usize>,
     pub allow_dead_slots: bool,
-    pub accounts_db_force_initial_clean: bool,
     pub accounts_db_config: AccountsDbConfig,
     pub verify_index: bool,
     pub runtime_config: RuntimeConfig,
@@ -2494,7 +2493,7 @@ pub mod tests {
         agave_transaction_view::transaction_view::SanitizedTransactionView,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
-            consensus_message::Block,
+            consensus_message::{Block, BlockId},
         },
         assert_matches::assert_matches,
         crossbeam_channel::bounded,
@@ -2521,7 +2520,7 @@ pub mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::bank_hash_details::SlotDetails,
+            bank::{BankIdGenerator, bank_hash_details::SlotDetails},
             genesis_utils::{
                 self, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
@@ -2578,7 +2577,7 @@ pub mod tests {
     fn test_startup_replay_enable_waits_for_poh_service_when_started() {
         let genesis_block = Block {
             slot: 1,
-            block_id: Hash::new_from_array([7; solana_hash::HASH_BYTES]),
+            block_id: BlockId::new_unique(),
         };
         let migration_status = Arc::new(ready_to_enable_migration_status(genesis_block));
         let poh_service = {
@@ -5299,6 +5298,7 @@ pub mod tests {
             AsyncVerificationProgress::new(result_channel_capacity),
             AsyncVerificationProgress::new(result_channel_capacity),
         ];
+        let bank_id_generator = BankIdGenerator::default();
 
         // simulate full slots
         for _ in 0..fake_max_fec_sets_per_slot {
@@ -5341,7 +5341,7 @@ pub mod tests {
                         &worker_pool,
                         unverified_signatures,
                         slot,
-                        slot,
+                        bank_id_generator.next(),
                         None,
                     )
                     .unwrap();

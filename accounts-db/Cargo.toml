@@ -59,7 +59,7 @@ seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
-solana-address-lookup-table-interface = { workspace = true, features = ["bincode", "bytemuck"] }
+solana-address-lookup-table-interface = { workspace = true, features = ["bytemuck", "wincode"] }
 solana-bucket-map = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -98,11 +98,10 @@ wincode = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
-bincode = { workspace = true }
 criterion = { workspace = true }
 memoffset = { workspace = true }
 rand_chacha = { workspace = true }
-serde_bytes = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
 solana-sdk-ids = { workspace = true }

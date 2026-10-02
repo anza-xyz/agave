@@ -1,6 +1,8 @@
 //! Definitions for the base of all Gossip protocol messages
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::{field_qualifiers, qualifiers};
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{
         crds_data::{CrdsData, MAX_WALLCLOCK},

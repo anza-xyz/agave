@@ -1,5 +1,7 @@
 //! Simple Bloom Filter
 
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     bv::BitVec,
     fnv::FnvHasher,

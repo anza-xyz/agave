@@ -49,7 +49,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     } else if bpf_loader_upgradeable::check_id(program_account.owner()) {
         if let Ok(UpgradeableLoaderState::Program {
             programdata_address,
-        }) = bincode::deserialize(program_account.data())
+        }) = wincode::deserialize(program_account.data())
         {
             if let Some(programdata_account) =
                 callbacks.get_account_shared_data(&programdata_address)
@@ -58,7 +58,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
                     if let Ok(UpgradeableLoaderState::ProgramData {
                         slot,
                         upgrade_authority_address: _,
-                    }) = bincode::deserialize(programdata_account.data())
+                    }) = wincode::deserialize(programdata_account.data())
                     {
                         ProgramAccountLoadResult::ProgramOfLoaderV3(
                             program_account,
@@ -207,7 +207,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
             // a valid ProgramData account.
             if let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
-            }) = bincode::deserialize(program.data())
+            }) = wincode::deserialize(program.data())
             {
                 let programdata = callbacks
                     .get_account_shared_data(&programdata_address)
@@ -218,7 +218,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
                 if let Ok(UpgradeableLoaderState::ProgramData {
                     slot,
                     upgrade_authority_address: _,
-                }) = bincode::deserialize(programdata.data())
+                }) = wincode::deserialize(programdata.data())
                 {
                     return Ok(slot);
                 }
@@ -336,7 +336,7 @@ pub mod test_utils {
         let mut account = AccountSharedData::default();
         account.set_owner(bpf_loader_upgradeable::id());
         account.set_data_from_slice(
-            &bincode::serialize(&UpgradeableLoaderState::Program {
+            &wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address,
             })
             .unwrap(),
@@ -347,7 +347,7 @@ pub mod test_utils {
     pub fn loader_v3_programdata_account(slot: Slot, elf: &[u8]) -> AccountSharedData {
         let offset = UpgradeableLoaderState::size_of_programdata_metadata();
         let mut data = vec![0u8; offset];
-        bincode::serialize_into(
+        wincode::serialize_into(
             &mut data[..offset],
             &UpgradeableLoaderState::ProgramData {
                 slot,
@@ -865,7 +865,7 @@ mod tests {
         let state = UpgradeableLoaderState::Program {
             programdata_address: key2,
         };
-        account_data.set_data_from_slice(&bincode::serialize(&state).unwrap());
+        account_data.set_data_from_slice(&wincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -876,7 +876,7 @@ mod tests {
             upgrade_authority_address: None,
         };
         let mut account_data2 = AccountSharedData::default();
-        account_data2.set_data_from_slice(&bincode::serialize(&state).unwrap());
+        account_data2.set_data_from_slice(&wincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -897,7 +897,7 @@ mod tests {
         assert_eq!(entry, Arc::new(loaded_program));
 
         let mut buffer = load_test_program();
-        let mut header = bincode::serialize(&state).unwrap();
+        let mut header = wincode::serialize(&state).unwrap();
         let mut complement = vec![
             0;
             std::cmp::max(
@@ -1265,7 +1265,7 @@ mod tests {
             programdata_address,
         };
         let mut program = AccountSharedData::new(1, 1, &loader_ids[2]);
-        program.set_data_from_slice(&bincode::serialize(&state).unwrap());
+        program.set_data_from_slice(&wincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -1275,7 +1275,7 @@ mod tests {
             upgrade_authority_address: None,
         };
         let mut programdata = AccountSharedData::new(1, 1, &loader_ids[2]);
-        programdata.set_data_from_slice(&bincode::serialize(&state).unwrap());
+        programdata.set_data_from_slice(&wincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()

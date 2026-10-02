@@ -418,12 +418,16 @@ impl ResponseSender for GossipXdpSender {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = batch.iter().filter_map(|pkt| {
             let addr = pkt.meta().socket_addr();
-            let data = pkt.data(..)?;
 
             // For XDP, we don't support IPv6 and no private or loopback IPv4 addresses.
-            match addr.ip() {
-                IpAddr::V4(ip) if !ip.is_private() && !ip.is_loopback() => Some((data, addr)),
-                _ => None,
+            if !pkt.meta().discard()
+                && let IpAddr::V4(ip) = addr.ip()
+                && !ip.is_private()
+                && !ip.is_loopback()
+            {
+                Some((pkt.buffer().clone(), addr))
+            } else {
+                None
             }
         });
 
@@ -432,10 +436,7 @@ impl ResponseSender for GossipXdpSender {
         let mut num_dropped_disconnected = 0;
 
         for (idx, (payload, addr)) in packets.enumerate() {
-            match self
-                .0
-                .try_send(idx, addr, bytes::Bytes::copy_from_slice(payload))
-            {
+            match self.0.try_send(idx, addr, payload) {
                 Ok(()) => {
                     num_sent += 1;
                 }

@@ -13,7 +13,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         crds::Cursor,
@@ -28,7 +28,7 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, BankId},
         bank_forks::{BankForks, SharableBanks},
         commitment::VOTE_THRESHOLD_SIZE,
         epoch_stakes::VersionedEpochStakes,
@@ -261,7 +261,7 @@ impl BufferedVote {
             (Self::Executed(parsed_vote), ReplayVoteAction::Executed(_)) => {
                 debug_assert!(
                     false,
-                    "duplicate Executed replay vote for same bank {replay_bank_id} message hash \
+                    "duplicate Executed replay vote for same bank {replay_bank_id:?} message hash \
                      {message_hash}"
                 );
                 Some(Self::Executed(parsed_vote))
@@ -356,7 +356,7 @@ impl VoteBuffer {
                 } => {
                     debug_assert!(
                         !message_hashes.is_empty(),
-                        "empty replay Verified message for bank {replay_bank_id}, slot \
+                        "empty replay Verified message for bank {replay_bank_id:?}, slot \
                          {replay_slot}"
                     );
                     match self.bank_votes.entry(replay_bank_id) {
@@ -616,7 +616,7 @@ impl ClusterInfoVoteListener {
             .zip(packet_batches)
             .filter(|(_, packet_batch)| {
                 assert_eq!(packet_batch.len(), 1);
-                !packet_batch.get(0).unwrap().meta().discard()
+                !packet_batch.first().unwrap().meta().discard()
             })
             .filter_map(|(tx, packet_batch)| {
                 let (vote_account_key, vote, ..) = vote_parser::parse_vote_transaction(&tx)?;
@@ -1837,7 +1837,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_gates_unverified_votes() {
-        let replay_bank_id = 1;
+        let replay_bank_id = BankId::new(1);
         let replay_slot = 42;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();
@@ -1873,7 +1873,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_gates_unexecuted_votes() {
-        let replay_bank_id = 3;
+        let replay_bank_id = BankId::new(3);
         let replay_slot = 77;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();
@@ -1909,7 +1909,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_same_signature_different_tx() {
-        let replay_bank_id = 4;
+        let replay_bank_id = BankId::new(4);
         let replay_slot = 88;
         let valid_vote = sample_parsed_vote(replay_slot);
         let spoofed_vote = sample_parsed_vote(replay_slot + 1);
@@ -1955,7 +1955,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_invalid_bank_drops_late_messages() {
-        let replay_bank_id = 2;
+        let replay_bank_id = BankId::new(2);
         let replay_slot = 100;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();
@@ -2013,7 +2013,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_bank_complete_clears_pending_state() {
-        let replay_bank_id = 5;
+        let replay_bank_id = BankId::new(5);
         let replay_slot = 123;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();
@@ -2048,7 +2048,7 @@ mod tests {
 
     #[test]
     fn test_replay_vote_buffer_processes_verified_message_hash() {
-        let replay_bank_id = 6;
+        let replay_bank_id = BankId::new(6);
         let replay_slot = 124;
         let parsed_vote = sample_parsed_vote(replay_slot);
         let message_hash = Hash::default();

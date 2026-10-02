@@ -1,5 +1,7 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi::stable_abi;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use std::{
     ffi::{CStr, CString},
@@ -16,6 +18,7 @@ use {
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
+    agave_votor_messages::consensus_message::BlockId,
     log::*,
     smallvec::SmallVec,
     solana_accounts_db::{
@@ -76,7 +79,9 @@ pub use status_cache::serialize_status_cache_into;
 #[cfg(test)]
 pub(crate) use storages_list::StorageListItem;
 pub(crate) use {
-    obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
+    obsolete_accounts::{
+        LegacyObsoleteAccountsMap, SerdeObsoleteAccounts, SerdeObsoleteAccountsMap,
+    },
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
     storages_list::StoragesList,
@@ -445,8 +450,8 @@ struct ExtraFieldsToDeserialize {
     versioned_epoch_stakes: Vec<(u64, DeserializableVersionedEpochStakes)>,
     #[wincode(with = "DefaultOnEmptyRead<Option<SerdeAccountsLtHash>>")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    #[wincode(with = "DefaultOnEmptyRead<Option<Hash>>")]
-    block_id: Option<Hash>,
+    #[wincode(with = "DefaultOnEmptyRead<Option<BlockId>>")]
+    block_id: Option<BlockId>,
 }
 
 /// Extra fields that are serialized at the end of snapshots.

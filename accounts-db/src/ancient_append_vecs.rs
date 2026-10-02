@@ -84,7 +84,7 @@ impl AncientSlotInfos {
         is_candidate_for_shrink: bool,
     ) {
         if alive_bytes_after_shrink > 0 {
-            let written_bytes = storage.written_bytes();
+            let written_bytes = storage.num_stored_bytes();
             // two criteria we're shrinking by later:
             // 1. alive ratio so that we don't consume too much disk space with dead accounts
             // 2. # of active ancient roots, so that we don't consume too many open file handles
@@ -401,7 +401,7 @@ impl AccountsDb {
             .shrink_stats
             .bytes_written
             .fetch_add(
-                shrink_in_progress.new_storage().written_bytes(),
+                shrink_in_progress.new_storage().num_stored_bytes(),
                 Ordering::Relaxed,
             );
 
@@ -764,11 +764,8 @@ mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            accounts_db::{
-                AccountsDbConfig,
-                tests::{ACCOUNTS_DB_CONFIG_APPEND_VEC, append_single_account_with_default_hash},
-            },
-            accounts_index::{ReclaimsSlotList, UpsertReclaim},
+            accounts_db::{AccountsDbConfig, tests::ACCOUNTS_DB_CONFIG_APPEND_VEC},
+            accounts_index::{AccountsIndex, ReclaimsSlotList, UpsertReclaim},
             append_vec::{self, AppendVec},
             is_zero_lamport::IsZeroLamport as _,
             storable_accounts::StorableAccountsBySlot,
@@ -988,6 +985,44 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
+    fn append_single_account_with_default_hash(
+        storage: &AccountStorageEntry,
+        pubkey: &Pubkey,
+        account: &AccountSharedData,
+        mark_alive: bool,
+        add_to_index: Option<&AccountsIndex<AccountInfo, AccountInfo>>,
+    ) {
+        let slot = storage.slot();
+        let accounts = [(pubkey, account)];
+        let slice = &accounts[..];
+        let storable_accounts = (slot, slice);
+        let offsets = storage.write_accounts(&storable_accounts).unwrap();
+        if !mark_alive {
+            let data_len = if account.is_zero_lamport() {
+                0
+            } else {
+                account.data().len()
+            };
+            let stored_size = storage.accounts.calculate_stored_size(data_len);
+            storage.remove_accounts(stored_size, offsets.len());
+        }
+
+        if let Some(index) = add_to_index {
+            let account_info = AccountInfo::new(
+                StorageLocation::AccountsFile(storage.id(), offsets[0]),
+                account.lamports() == 0,
+            );
+            index.upsert(
+                slot,
+                slot,
+                pubkey,
+                account_info,
+                &mut ReclaimsSlotList::new(),
+                UpsertReclaim::IgnoreReclaims,
+            );
+        }
+    }
+
     #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
     fn test_write_packed_storages_empty(accounts_db_config: AccountsDbConfig) {
         let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
@@ -1005,15 +1040,8 @@ mod tests {
         let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
         let (storages, slots, _infos) = get_sample_storages(&db, 1, None);
         let accounts_to_combine = AccountsToCombine::default();
-        let offset = 0;
-        let account = storages
-            .first()
-            .unwrap()
-            .accounts
-            .get_stored_account_without_data_callback(offset, |account| {
-                AccountFromStorage::new(offset, &account)
-            })
-            .unwrap();
+        let stored_accounts = db.get_unique_accounts_from_storage(storages.first().unwrap());
+        let account = *stored_accounts.stored_accounts.first().unwrap();
         let accounts = [&account];
 
         let packed_contents = vec![PackedAncientStorage {
@@ -1086,7 +1114,16 @@ mod tests {
 
                 let account_template = storages
                     .first()
-                    .and_then(|storage| storage.accounts.get_account_shared_data(0))
+                    .map(|storage| {
+                        let accounts = db.get_unique_accounts_from_storage(storage);
+                        let offset = accounts
+                            .stored_accounts
+                            .first()
+                            .unwrap()
+                            .index_info
+                            .offset();
+                        storage.accounts.get_account_shared_data(offset).unwrap()
+                    })
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
                 let mut lamports = 1000;
@@ -1195,7 +1232,7 @@ mod tests {
 
                 let account_template = storages
                     .first()
-                    .and_then(|storage| storage.accounts.get_account_shared_data(0))
+                    .and_then(|storage| storage.accounts.get_account_shared_data(0).ok())
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
                 let mut data_size = 450;
@@ -1440,8 +1477,8 @@ mod tests {
     fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry) {
         assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
-        assert_eq!(storage.written_bytes(), info.written_bytes);
-        assert_eq!(storage.alive_bytes(), info.alive_bytes as usize);
+        assert_eq!(storage.num_stored_bytes(), info.written_bytes);
+        assert_eq!(storage.num_alive_bytes(), info.alive_bytes as usize);
     }
 
     #[derive(EnumIter, Debug, PartialEq, Eq)]
@@ -1464,7 +1501,7 @@ mod tests {
                 create_storages_and_update_index(&db, slot1, slots, alive, data_size);
                 let mut infos = AncientSlotInfos::default();
                 let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
-                let alive_bytes_expected = storage.alive_bytes();
+                let alive_bytes_expected = storage.num_alive_bytes();
                 let high_slot = false;
                 let is_candidate_for_shrink = db.is_candidate_for_shrink(&storage);
                 let mut tuning = PackedAncientStorageTuning {
@@ -1562,7 +1599,7 @@ mod tests {
                         .collect::<Vec<_>>();
                     let alive_bytes_expected = storages
                         .iter()
-                        .map(|storage| storage.alive_bytes() as u64)
+                        .map(|storage| storage.num_alive_bytes() as u64)
                         .sum::<u64>();
                     let infos = db.calc_ancient_slot_info(slot_vec.clone(), &tuning);
                     if !alive {
@@ -1616,7 +1653,7 @@ mod tests {
                         let alive = alives[slot as usize];
                         if !alive {
                             // make this storage not alive
-                            storage.remove_accounts(storage.written_bytes() as usize, 1);
+                            storage.remove_accounts(storage.num_stored_bytes() as usize, 1);
                         }
                     });
                     let alive_storages = storages
@@ -1625,7 +1662,7 @@ mod tests {
                         .collect::<Vec<_>>();
                     let alive_bytes_expected = alive_storages
                         .iter()
-                        .map(|storage| storage.alive_bytes() as u64)
+                        .map(|storage| storage.num_alive_bytes() as u64)
                         .sum::<u64>();
 
                     let infos = match method {
@@ -2050,7 +2087,7 @@ mod tests {
                 }
                 let alive_bytes_expected = storages
                     .iter()
-                    .map(|storage| storage.alive_bytes() as u64)
+                    .map(|storage| storage.num_alive_bytes() as u64)
                     .sum::<u64>();
                 let infos = match method {
                     TestCollectInfo::CalcAncientSlotInfo => {
@@ -2170,7 +2207,7 @@ mod tests {
 
                         let bytes = storages
                             .iter()
-                            .map(|storage| storage.written_bytes())
+                            .map(|storage| storage.num_stored_bytes())
                             .sum::<u64>();
                         assert_eq!(
                             bytes,

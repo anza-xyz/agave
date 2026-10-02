@@ -40,6 +40,8 @@
 //! `VoteMessage` verification happens in the bls-sigverify crate and
 //! `Certificate` verfication happens in the `bls-cert-verify` crate.
 
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{
         certificate::{Certificate, CertificateType},
@@ -557,12 +559,12 @@ pub fn get_vote_payload_to_sign(vote: Vote, shred_version: u16) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::consensus_message::BlockId};
 
     fn vote_payloads() -> [VotePayloadToSign; 6] {
         let block = Block {
             slot: 42,
-            block_id: solana_hash::Hash::new_from_array([7; 32]),
+            block_id: BlockId::new_unique(),
         };
         let shred_version = 123;
         [

@@ -26,8 +26,8 @@ fn syscall_error_code(error: &SyscallError) -> i64 {
     (error.discriminant() as i64).saturating_add(1)
 }
 
-pub fn serialized_error_code<T: serde::Serialize>(error: &T) -> u32 {
-    let serialized = bincode::serialize(error).unwrap();
+pub fn serialized_error_code<T: wincode::Serialize<Src = T>>(error: &T) -> u32 {
+    let serialized = wincode::serialize(error).unwrap();
     u32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
 }
 

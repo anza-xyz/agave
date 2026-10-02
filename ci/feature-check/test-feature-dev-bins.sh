@@ -11,8 +11,11 @@ EOF
 	exit 1
 fi
 
-# shellcheck source=ci/rust-version.sh
-source "$here"/../rust-version.sh nightly
+export RUSTFLAGS="-D warnings"
 
-cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-targets
-cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-targets --all-features
+cargo hack clippy \
+	--manifest-path "$here/../../dev-bins/Cargo.toml" \
+	--features agave-unstable-api \
+	--ignore-unknown-features \
+	--each-feature \
+	--all-targets \

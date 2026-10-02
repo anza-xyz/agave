@@ -44,9 +44,8 @@
 //! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads (AncestorHashesService and ClusterSlotsService)
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::certificate::CertSignature,
+    crate::{certificate::CertSignature, consensus_message::BlockId},
     solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-    solana_hash::Hash,
 };
 use {
     crate::{certificate::GenesisCert, consensus_message::Block, fraction::Fraction},
@@ -358,7 +357,7 @@ impl MigrationStatus {
         let genesis_certificate = GenesisCert {
             block: Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),

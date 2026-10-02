@@ -149,7 +149,6 @@ async fn main() -> anyhow::Result<()> {
             let now = Utc::now().naive_utc();
             let delta_time = (now - solana_epoch).num_microseconds().unwrap() as u64;
             for pkt in batch.iter() {
-                let pkt = pkt.to_bytes_packet();
                 if pkt.buffer().len() < 32 {
                     continue;
                 }

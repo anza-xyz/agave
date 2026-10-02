@@ -52,6 +52,8 @@
 pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 #[cfg(test)]
 use rand::Rng;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},
@@ -909,6 +911,7 @@ mod tests {
         assert_matches::assert_matches,
         rand_chacha::{ChaChaRng, rand_core::SeedableRng},
         solana_keypair::keypair_from_seed,
+        solana_perf::packet::BytesPacket,
         test_case::test_case,
     };
 
@@ -1176,7 +1179,8 @@ mod tests {
     }
 
     fn verify_shred_layout(shred: &Shred, packet: &Packet) {
-        let data = layout::get_shred(packet).unwrap();
+        let packet = BytesPacket::from(packet);
+        let data = layout::get_shred(&packet).unwrap();
         assert_eq!(data, packet.data(..).unwrap());
         assert_eq!(layout::get_slot(data), Some(shred.slot()));
         assert_eq!(layout::get_index(data), Some(shred.index()));

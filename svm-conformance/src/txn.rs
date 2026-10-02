@@ -178,7 +178,7 @@ mod tests {
                     address: clock_pubkey.to_bytes().to_vec(),
                     lamports: 1,
                     data_repr: Some(DataRepr::Data(
-                        bincode::serialize(&Clock {
+                        wincode::serialize(&Clock {
                             slot: 1,
                             ..Clock::default()
                         })

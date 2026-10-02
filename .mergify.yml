@@ -9,6 +9,7 @@ pull_request_rules:
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
+      - author≠agave-version-bumper[bot]
     actions:
       label:
         add:
@@ -20,6 +21,7 @@ pull_request_rules:
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
+      - author≠agave-version-bumper[bot]
       # Only request reviews from the pr subscribers group if no one
       # has reviewed the community PR yet. These checks only match
       # reviewers with admin, write or maintain permission on the repository.
@@ -31,46 +33,6 @@ pull_request_rules:
       request_reviews:
         teams:
           - "@anza-xyz/community-pr-subscribers"
-  - name: automatic merge (squash) on CI success
-    conditions:
-      - and:
-        - status-success=buildkite/agave
-        - status-success=ci-gate
-        - label=automerge
-        - label!=no-automerge
-        - or:
-          - -files~=(\.rs|Cargo\.toml|Cargo\.lock|\.github/scripts/cargo-clippy-before-script\.sh|\.github/workflows/cargo\.yml)$
-          - or:
-            - check-success=clippy-nightly (macos-latest)
-            - check-success=clippy-nightly (macos-latest-large)
-        - or:
-          - -files~=(Cargo\.toml|.github/workflows/crate-check\.yml|ci/check-crates\.sh)$
-          - check-success=crate check
-    actions:
-      merge:
-        method: squash
-  - name: remove automerge label on CI failure
-    conditions:
-      - and:
-        - label=automerge
-        - "#status-failure!=0"
-        - -merged
-    actions:
-      label:
-        remove:
-          - automerge
-      comment:
-        message: automerge label removed due to a CI failure
-  - name: v4.2 backport
-    conditions:
-      - label=v4.2
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        branches:
-          - v4.2
   - name: v4.3 backport
     conditions:
       - label=v4.3
@@ -94,7 +56,6 @@ pull_request_rules:
   - name: backport warning comment
     conditions:
       - or:
-        - label=v4.2
         - label=v4.3
         - label=v4.4
     actions:
@@ -112,7 +73,6 @@ pull_request_rules:
   - name: close PRs against EoL version branches
     conditions:
       - base ~= ^v[0-9]+\.[0-9]+$
-      - base != v4.2
       - base != v4.3
       - base != v4.4
     actions:

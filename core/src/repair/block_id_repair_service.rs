@@ -27,7 +27,7 @@ use {
         common::DELTA,
         event::{RepairEvent, RepairEventReceiver},
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::consensus_message::{Block, BlockId},
     crossbeam_channel::select,
     lazy_lru::LruCache,
     log::{debug, info},
@@ -39,7 +39,7 @@ use {
         blockstore_meta::BlockLocation,
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
-    solana_perf::packet::{PacketBatch, PacketRef, packet_config},
+    solana_perf::packet::{BytesPacket, PacketBatch, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::SharableBanks,
     solana_streamer::{
@@ -528,7 +528,7 @@ impl BlockIdRepairService {
     /// - Queue more repair requests or events
     fn process_block_id_repair_response(
         my_pubkey: &Pubkey,
-        packet: PacketRef<'_>,
+        packet: &BytesPacket,
         keypair: &solana_keypair::Keypair,
         block_id_repair_socket: &UdpSocket,
         state: &mut RepairState,
@@ -590,10 +590,18 @@ impl BlockIdRepairService {
 
         debug!("{my_pubkey}: Received valid response for request {request:?}");
 
-        // Remove from sent_requests since we got a response
-        state
+        // A retry sends the request again with a fresh nonce, and the nonce of the
+        // earlier attempt stays live. Only the first valid reply is processed: a
+        // reply to another attempt finds no sent_requests entry and is dropped.
+        if state
             .sent_requests
-            .remove(&OutgoingMessage::Metadata(request));
+            .remove(&OutgoingMessage::Metadata(request))
+            .is_none()
+        {
+            debug!("{my_pubkey}: Dropping reply for already answered request {request:?}");
+            state.response_stats.late_replies += 1;
+            return;
+        }
 
         let Block { slot, block_id } = request.block();
 
@@ -607,7 +615,7 @@ impl BlockIdRepairService {
                 state.push_pending_repair_event(RepairEvent::FetchBlock {
                     block: Block {
                         slot: p_slot,
-                        block_id: p_block_id,
+                        block_id: BlockId::from(p_block_id),
                     },
                 });
 
@@ -618,7 +626,7 @@ impl BlockIdRepairService {
                         let fec_set_index = i * DATA_SHREDS_PER_FEC_BLOCK as u32;
                         OutgoingMessage::Metadata(BlockIdRepairType::FecSetRoot {
                             slot,
-                            block_id,
+                            block_id: block_id.to_hash(),
                             fec_set_index,
                             fec_set_count,
                         })
@@ -732,7 +740,7 @@ impl BlockIdRepairService {
 
                 // Check if we already have the full block, if so queue fetching the parent.
                 if let Some((slot_meta, _location)) =
-                    blockstore.get_slot_meta_for_block_id(block.slot, block.block_id)?
+                    blockstore.get_slot_meta_for_block_id(block.slot, block.block_id.to_hash())?
                 {
                     return Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
                         slot_meta,
@@ -764,7 +772,7 @@ impl BlockIdRepairService {
                         );
                         Ok(PendingRepairDecision::KeepPending)
                     }
-                    Some(turbine_block_id) if turbine_block_id != block.block_id => {
+                    Some(turbine_block_id) if turbine_block_id != block.block_id.to_hash() => {
                         // Turbine has a different block
                         warn!(
                             "{my_pubkey}: FetchBlock: Turbine has different block \
@@ -782,8 +790,8 @@ impl BlockIdRepairService {
                              fetching parent",
                             block.slot
                         );
-                        if let Some((slot_meta, _location)) =
-                            blockstore.get_slot_meta_for_block_id(block.slot, block.block_id)?
+                        if let Some((slot_meta, _location)) = blockstore
+                            .get_slot_meta_for_block_id(block.slot, block.block_id.to_hash())?
                         {
                             Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
                                 slot_meta,
@@ -836,7 +844,7 @@ impl BlockIdRepairService {
                     .push(OutgoingMessage::Metadata(
                         BlockIdRepairType::ParentAndFecSetCount {
                             slot: block.slot,
-                            block_id: block.block_id,
+                            block_id: block.block_id.to_hash(),
                         },
                     ));
                 state.requested_blocks.insert(block);
@@ -858,7 +866,7 @@ impl BlockIdRepairService {
         state.push_pending_repair_event(RepairEvent::FetchBlock {
             block: Block {
                 slot: meta.parent_slot.expect("Parent must exist for full slots"),
-                block_id: meta.parent_block_id,
+                block_id: BlockId::from(meta.parent_block_id),
             },
         });
 
@@ -905,7 +913,7 @@ impl BlockIdRepairService {
         };
 
         blockstore
-            .has_alternate_data_shred(*slot, u64::from(*index), *block_id)
+            .has_alternate_data_shred(*slot, u64::from(*index), block_id.to_hash())
             .ok()
             .unwrap_or(false)
     }
@@ -994,7 +1002,7 @@ impl BlockIdRepairService {
                     else {
                         state.requested_blocks.remove(&Block {
                             slot: shred_request.slot(),
-                            block_id: shred_request.block_id().unwrap(),
+                            block_id: BlockId::from(shred_request.block_id().unwrap()),
                         });
                         continue;
                     };
@@ -1061,7 +1069,7 @@ mod tests {
             shred::merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY},
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::Packet,
+        solana_perf::packet::BytesPacket,
         solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config},
         solana_sha256_hasher::hashv,
         std::sync::RwLock,
@@ -1092,11 +1100,8 @@ mod tests {
     }
 
     /// Create a packet from serialized data
-    fn make_packet(data: &[u8]) -> Packet {
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..data.len()].copy_from_slice(data);
-        packet.meta_mut().size = data.len();
-        packet
+    fn make_packet(data: &[u8]) -> BytesPacket {
+        BytesPacket::from_bytes(None, data.to_vec())
     }
 
     fn new_test_cluster_info() -> ClusterInfo {
@@ -1323,20 +1328,20 @@ mod tests {
             slot: 103,
             index: 5,
             fec_set_merkle_root: Hash::new_unique().into(),
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         });
         state
             .sent_requests
             .insert(expired_shred_not_received.clone(), expired_time);
 
         // 5. Expired shred request, shred IS in blockstore - should NOT retry
-        let received_block_id = Hash::new_unique();
+        let received_block_id = BlockId::new_unique();
         let received_slot = 104u64;
         let received_shred_index = 10u32;
         blockstore
             .insert_shred_index_for_alternate_block(
                 received_slot,
-                received_block_id,
+                received_block_id.to_hash(),
                 received_shred_index,
             )
             .unwrap();
@@ -1356,7 +1361,7 @@ mod tests {
             slot: 105,
             index: 15,
             fec_set_merkle_root: Hash::new_unique().into(),
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         });
         state.sent_requests.insert(recent_shred.clone(), now);
 
@@ -1426,7 +1431,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1436,7 +1441,7 @@ mod tests {
         assert_eq!(state.pending_repair_events.len(), 1);
         let RepairEvent::FetchBlock { block } = state.pending_repair_events.first().unwrap();
         assert_eq!(block.slot, parent_slot);
-        assert_eq!(block.block_id, parent_block_id);
+        assert_eq!(block.block_id.to_hash(), parent_block_id);
 
         // Verify: FecSetRoot requests were added to pending
         assert_eq!(state.pending_repair_requests.len(), fec_set_count_usize);
@@ -1509,7 +1514,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1539,7 +1544,7 @@ mod tests {
                             && index < fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32
                     );
                     assert_eq!(fec_set_merkle_root, fec_set_root);
-                    assert_eq!(b, block_id);
+                    assert_eq!(b.to_hash(), block_id);
                 }
                 _ => panic!("Expected ShredForBlockId request"),
             }
@@ -1575,7 +1580,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1587,6 +1592,66 @@ mod tests {
 
         // Verify: invalid packet stat was incremented
         assert_eq!(state.response_stats.invalid_packets, 1);
+    }
+
+    #[test]
+    fn test_process_block_id_repair_response_drops_late_reply() {
+        // A timed-out request is requeued and removed from sent_requests while it
+        // waits to be resent. The nonce of the earlier attempt stays live, so a
+        // reply to it still verifies, but it finds no sent_requests entry and is
+        // dropped: the resent request covers the repair instead.
+        let (mut state, _bank_forks) = create_test_repair_state();
+        let keypair = Keypair::new();
+        let block_id_repair_socket = test_udp_socket();
+
+        let slot = 100u64;
+        let parent_slot = 99u64;
+        let parent_block_id = Hash::new_unique();
+        let fec_set_count = 2u32;
+
+        // Create valid merkle tree for the response
+        let fec_set_roots: Vec<Hash> = (0..fec_set_count).map(|_| Hash::new_unique()).collect();
+        let parent_info_leaf = hashv(&[
+            &parent_slot.to_le_bytes(),
+            parent_block_id.as_ref(),
+            &fec_set_count.to_le_bytes(),
+        ]);
+        let mut leaves = fec_set_roots.clone();
+        leaves.push(parent_info_leaf);
+        let (block_id, proofs) = build_merkle_tree(&leaves);
+        let parent_proof = proofs[usize::try_from(fec_set_count).unwrap()].clone();
+
+        // Create the request that would have been sent. It is registered in
+        // outstanding_requests but NOT tracked in sent_requests, like a request
+        // that timed out and is waiting in the queue to be resent.
+        let request = BlockIdRepairType::ParentAndFecSetCount { slot, block_id };
+        let nonce = state.outstanding_requests.add_request(request, timestamp());
+
+        // Build the response
+        let response = BlockIdRepairResponse::ParentFecSetCount {
+            fec_set_count,
+            parent_info: (parent_slot, parent_block_id),
+            parent_proof,
+        };
+
+        // Serialize and create packet
+        let data = serialize_response(&response, nonce);
+        let packet = make_packet(&data);
+
+        BlockIdRepairService::process_block_id_repair_response(
+            &Pubkey::new_unique(),
+            &packet,
+            &keypair,
+            &block_id_repair_socket,
+            &mut state,
+        );
+
+        // Verify: the reply was dropped - no events or requests generated
+        assert!(state.pending_repair_events.is_empty());
+        assert!(state.pending_repair_requests.is_empty());
+
+        // Verify: the late reply stat was incremented
+        assert_eq!(state.response_stats.late_replies, 1);
     }
 
     #[test]
@@ -1606,7 +1671,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1645,7 +1710,7 @@ mod tests {
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1658,7 +1723,7 @@ mod tests {
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1684,7 +1749,7 @@ mod tests {
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
-            (&packet).into(),
+            &packet,
             &keypair,
             &block_id_repair_socket,
             &mut state,
@@ -1702,7 +1767,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let slot = 100u64;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
 
         // Mark the slot as dead (Turbine failed)
         blockstore.set_dead_slot(slot).unwrap();
@@ -1722,7 +1787,7 @@ mod tests {
                 block_id: b,
             }) => {
                 assert_eq!(s, slot);
-                assert_eq!(b, block_id);
+                assert_eq!(b, block_id.to_hash());
             }
             _ => panic!("Expected ParentAndFecSetCount request"),
         }
@@ -1742,7 +1807,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let slot = 100u64;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let event = RepairEvent::FetchBlock {
             block: Block { slot, block_id },
         };
@@ -1771,7 +1836,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let slot = 100u64;
-        let requested_block_id = Hash::new_unique();
+        let requested_block_id = BlockId::new_unique();
         let turbine_block_id = Hash::new_unique(); // Different block_id from Turbine
 
         // Set up blockstore to have a different block_id at Original location
@@ -1797,7 +1862,7 @@ mod tests {
                 block_id: b,
             }) => {
                 assert_eq!(s, slot);
-                assert_eq!(b, requested_block_id);
+                assert_eq!(b, requested_block_id.to_hash());
             }
             _ => panic!("Expected ParentAndFecSetCount request"),
         }
@@ -1819,7 +1884,7 @@ mod tests {
         let (mut state, _bank_forks) = create_test_repair_state();
 
         let slot = 100u64;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
 
         // Pre-add block to requested_blocks
         state.requested_blocks.insert(Block { slot, block_id });
@@ -1843,7 +1908,7 @@ mod tests {
 
         // Use slot 0 which is at root
         let slot = 0u64;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let event = RepairEvent::FetchBlock {
             block: Block { slot, block_id },
         };
@@ -1869,7 +1934,7 @@ mod tests {
             state.requested_blocks.insert(Block::new_unique(slot));
         }
 
-        let new_block_id = Hash::new_unique();
+        let new_block_id = BlockId::new_unique();
         let event = RepairEvent::FetchBlock {
             block: Block {
                 slot,
@@ -1900,7 +1965,7 @@ mod tests {
         blockstore.set_dead_slot(slot).unwrap();
 
         let block_ids: Vec<_> = (0..=MAX_ALTERNATE_BLOCKS_PER_SLOT)
-            .map(|_| Hash::new_unique())
+            .map(|_| BlockId::new_unique())
             .collect();
         let actions: Vec<_> = block_ids
             .iter()

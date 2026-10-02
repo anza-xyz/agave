@@ -672,7 +672,7 @@ mod tests {
                 .storage
                 .get_slot_storage_entry(tombstone_slot)
                 .unwrap()
-                .count(),
+                .num_alive_accounts(),
             2
         );
 
@@ -745,7 +745,7 @@ mod tests {
                 .storage
                 .get_slot_storage_entry(tombstone_slot)
                 .unwrap()
-                .count(),
+                .num_alive_accounts(),
             1
         );
 
@@ -846,7 +846,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             accounts_db_config,
             None,

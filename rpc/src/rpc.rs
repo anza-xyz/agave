@@ -2136,7 +2136,8 @@ impl JsonRpcRequestProcessor {
                 mint_owner,
                 mint,
                 vec![],
-                true,
+                // Don't sort here: the heap below handles sorting
+                false,
             )
             .await?
         {
@@ -3799,17 +3800,7 @@ pub mod rpc_full {
                         .map(|addr| socket_addr_space.check(&addr))
                         .unwrap_or_default()
                     {
-                        let (version, feature_set, client_id) = if let Some(version) =
-                            cluster_info.get_node_version(contact_info.pubkey())
-                        {
-                            (
-                                Some(version.to_string()),
-                                Some(version.feature_set()),
-                                Some(version.client().clone()),
-                            )
-                        } else {
-                            (None, None, None)
-                        };
+                        let version = contact_info.version();
                         Some(RpcContactInfo {
                             pubkey: contact_info.pubkey().to_string(),
                             gossip: contact_info.gossip(),
@@ -3836,9 +3827,9 @@ pub mod rpc_full {
                             pubsub: contact_info
                                 .rpc_pubsub()
                                 .filter(|addr| socket_addr_space.check(addr)),
-                            version,
-                            client_id: client_id.map(|id| format!("{id}")),
-                            feature_set,
+                            version: Some(version.to_string()),
+                            client_id: Some(version.client().to_string()),
+                            feature_set: Some(version.feature_set()),
                             shred_version: Some(contact_info.shred_version()),
                         })
                     } else {

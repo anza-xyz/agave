@@ -128,11 +128,15 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
             excluded_accounts.extend(tombstone_offsets.iter().map(|offset| (*offset, 0)));
         }
 
-        let len_for_archive = storage.accounts.len_for_archive(
-            excluded_accounts
-                .iter()
-                .map(|(_offset, data_len)| *data_len),
-        );
+        let excluded_size: usize = excluded_accounts
+            .iter()
+            .map(|(_offset, data_len)| AppendVec::calculate_stored_size(*data_len))
+            .sum();
+        let len_for_archive = storage
+            .num_stored_bytes()
+            .checked_sub(excluded_size as u64)
+            .expect("stored bytes shall be at least the excluded size")
+            as usize;
 
         let mut excluded_offsets: Vec<_> = excluded_accounts
             .into_iter()
@@ -245,7 +249,7 @@ mod tests {
             (&Pubkey::new_unique(), &account2),
         ];
 
-        storage.accounts.write_accounts(&(slot, &accounts[..]));
+        storage.write_accounts(&(slot, &accounts[..])).unwrap();
 
         let files = open_storage_files(iter::once(&storage), false)
             .collect::<io::Result<Vec<_>>>()
@@ -268,35 +272,35 @@ mod tests {
         );
     }
 
-    #[test_case(0, 0, 0, TombstonesFilter::Include)]
-    #[test_case(1, 0, 0, TombstonesFilter::Include)]
-    #[test_case(1, 1, 0, TombstonesFilter::Include)]
-    #[test_case(1, 1, 0, TombstonesFilter::Exclude)]
-    #[test_case(1, 0, 1, TombstonesFilter::Include)]
-    #[test_case(100, 0, 0, TombstonesFilter::Include)]
-    #[test_case(100, 0, 10, TombstonesFilter::Include)]
-    #[test_case(100, 0, 100, TombstonesFilter::Include)]
-    #[test_case(100, 10, 0, TombstonesFilter::Include)]
-    #[test_case(100, 10, 0, TombstonesFilter::Exclude)]
-    #[test_case(100, 100, 0, TombstonesFilter::Include)]
-    #[test_case(100, 100, 0, TombstonesFilter::Exclude)]
-    #[test_case(100, 10, 10, TombstonesFilter::Include)]
-    #[test_case(100, 10, 10, TombstonesFilter::Exclude)]
+    #[test_matrix(
+        [AccountsFileProvider::AppendVec],
+        [
+            (0, 0, 0, TombstonesFilter::Include),
+            (1, 0, 0, TombstonesFilter::Include),
+            (1, 1, 0, TombstonesFilter::Include),
+            (1, 1, 0, TombstonesFilter::Exclude),
+            (1, 0, 1, TombstonesFilter::Include),
+            (100, 0, 0, TombstonesFilter::Include),
+            (100, 0, 10, TombstonesFilter::Include),
+            (100, 0, 100, TombstonesFilter::Include),
+            (100, 10, 0, TombstonesFilter::Include),
+            (100, 10, 0, TombstonesFilter::Exclude),
+            (100, 100, 0, TombstonesFilter::Include),
+            (100, 100, 0, TombstonesFilter::Exclude),
+            (100, 10, 10, TombstonesFilter::Include),
+            (100, 10, 10, TombstonesFilter::Exclude),
+        ]
+    )]
     fn test_account_storage_reader_with_excluded_accounts(
-        total_accounts: usize,
-        num_tombstones: usize,
-        num_obsolete: usize,
-        tombstones_filter: TombstonesFilter,
+        accounts_file_provider: AccountsFileProvider,
+        test_case: (usize, usize, usize, TombstonesFilter),
     ) {
+        let (total_accounts, num_tombstones, num_obsolete, tombstones_filter) = test_case;
+
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
-        let storage = AccountStorageEntry::new(
-            temp_dir.path(),
-            slot,
-            11,
-            1_000_000,
-            AccountsFileProvider::AppendVec,
-        );
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -332,9 +336,7 @@ mod tests {
             .collect();
 
         let offsets = storage
-            .accounts
             .write_accounts(&(slot, &accounts_to_append[..]))
-            .map(|stored_accounts_info| stored_accounts_info.offsets)
             .unwrap_or_default();
 
         let tombstone_offsets: Vec<_> = tombstone_indexes
@@ -448,17 +450,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_account_storage_reader_filter_by_slot() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    fn test_account_storage_reader_filter_by_slot(accounts_file_provider: AccountsFileProvider) {
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
-        let storage = AccountStorageEntry::new(
-            temp_dir.path(),
-            slot,
-            11,
-            1_000_000,
-            AccountsFileProvider::AppendVec,
-        );
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
         let total_accounts = 30;
 
         // Create a bunch of accounts and add them to the storage
@@ -473,8 +470,8 @@ mod tests {
             .collect();
 
         let offsets = storage
-            .accounts
-            .write_accounts(&(slot, &accounts_to_append[..]));
+            .write_accounts(&(slot, &accounts_to_append[..]))
+            .unwrap();
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -483,20 +480,12 @@ mod tests {
         // Use a seedable RNG with the generated seed for reproducibility
         let mut rng = StdRng::seed_from_u64(seed);
 
-        let max_offset = offsets
-            .as_ref()
-            .and_then(|offsets| offsets.offsets.iter().max().cloned())
-            .unwrap();
+        let max_offset = offsets.iter().max().cloned().unwrap();
 
         let mut obsolete_account_offset = offsets
-            .map(|offsets| {
-                offsets
-                    .offsets
-                    .choose_multiple(&mut rng, total_accounts - 1)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            .choose_multiple(&mut rng, total_accounts - 1)
+            .cloned()
+            .collect::<Vec<_>>();
 
         // Ensure that the last entry will be marked obsolete at some point
         if !obsolete_account_offset.contains(&max_offset) {
@@ -615,19 +604,19 @@ mod tests {
     /// * excluded accounts
     /// * exceeding the file reader's stack buffer
     #[test_matrix(
+        [AccountsFileProvider::AppendVec],
         [false, true],
         [0, 1, 2, 3, 4, 5, 6, 7])
     ]
-    fn test_write_to(exclude_last_account: bool, data_len_last_account: usize) {
+    fn test_write_to(
+        accounts_file_provider: AccountsFileProvider,
+        exclude_last_account: bool,
+        data_len_last_account: usize,
+    ) {
         let slot = 11;
         let temp_dir = TempDir::new().unwrap();
-        let storage = AccountStorageEntry::new(
-            temp_dir.path(),
-            slot,
-            11,
-            1_000_000,
-            AccountsFileProvider::AppendVec,
-        );
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
         let accounts: Vec<_> = [3, 256 * 1024 + 1, data_len_last_account]
             .into_iter()
             .enumerate()
@@ -640,10 +629,7 @@ mod tests {
                 (Pubkey::new_unique(), account)
             })
             .collect();
-        let stored_accounts_info = storage
-            .accounts
-            .write_accounts(&(0, &accounts[..]))
-            .unwrap();
+        let stored_account_offsets = storage.write_accounts(&(0, &accounts[..])).unwrap();
         // exclude one account, either the first or last
         let excluded_index = if exclude_last_account { 2 } else { 0 };
         storage
@@ -652,7 +638,7 @@ mod tests {
             .unwrap()
             .mark_accounts_obsolete(
                 [(
-                    stored_accounts_info.offsets[excluded_index],
+                    stored_account_offsets[excluded_index],
                     accounts[excluded_index].1.data().len(),
                 )]
                 .into_iter(),

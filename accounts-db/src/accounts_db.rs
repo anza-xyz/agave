@@ -55,12 +55,12 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         append_vec::{self, AppendVec},
+        bank_id::BankId,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
-        u64_align,
         utils::{self, create_account_shared_data},
     },
     agave_fs::buffered_reader::RequiredLenBufFileRead,
@@ -72,7 +72,7 @@ use {
     rayon::{ThreadPool, prelude::*},
     seqlock::SeqLock,
     solana_account::{Account, AccountSharedData, ReadableAccount},
-    solana_clock::{BankId, Epoch, Slot},
+    solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::{
         batch,
@@ -301,7 +301,6 @@ struct IndexGenerationAccumulator {
     all_accounts_are_zero_lamports_slots: u64,
     /// List of slots with only zero lamports accounts and indices into `storages` used in `generate_index`
     slots_with_only_zero_lamport_accounts: Vec<(Slot, usize)>,
-    storage_info: StorageSizeAndCountList,
     /// Number of accounts in this slot that didn't already exist in the index
     num_did_not_exist: u64,
     /// Number of accounts in this slot that already existed, and were in-mem
@@ -322,14 +321,13 @@ struct IndexGenerationAccumulator {
     slot_arena: IndexGenerationSlotArena,
 }
 impl IndexGenerationAccumulator {
-    fn with_slots_capacity(num_slots: usize) -> Self {
+    fn new() -> Self {
         Self {
             insert_time_us: 0,
             num_accounts: 0,
             accounts_data_len: 0,
             all_accounts_are_zero_lamports_slots: 0,
             slots_with_only_zero_lamport_accounts: Vec::new(),
-            storage_info: Vec::with_capacity(num_slots),
             num_did_not_exist: 0,
             num_existed_in_mem: 0,
             num_existed_on_disk: 0,
@@ -357,7 +355,6 @@ impl IndexGenerationAccumulator {
             .expect("capitalization cannot overflow");
         self.num_obsolete_accounts_skipped += other.num_obsolete_accounts_skipped;
         self.num_zero_lamport_pubkeys += other.num_zero_lamport_pubkeys;
-        self.storage_info.append(&mut other.storage_info);
     }
 }
 
@@ -396,7 +393,6 @@ struct GenerateIndexTimings {
     pub total_time_us: u64,
     pub index_time: u64,
     pub insertion_time_us: u64,
-    pub storage_size_storages_us: u64,
     pub index_flush_us: u64,
     pub total_including_duplicates: u64,
     pub visit_duplicate_accounts_time_us: u64,
@@ -413,15 +409,6 @@ struct GenerateIndexTimings {
     pub num_zero_lamport_pubkeys: u64,
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
-struct StorageSizeAndCount {
-    /// total size stored, including both alive and dead bytes
-    pub stored_size: usize,
-    /// number of accounts in the storage including both alive and dead accounts
-    pub count: usize,
-}
-type StorageSizeAndCountList = Vec<(AccountsFileId, StorageSizeAndCount)>;
-
 impl GenerateIndexTimings {
     pub fn report(&self, startup_stats: &StartupStats) {
         datapoint_info!(
@@ -430,11 +417,6 @@ impl GenerateIndexTimings {
             ("index_time_us", self.index_time, i64),
             // we cannot accurately measure index insertion time because of many threads and lock contention
             ("insertion_time_us", self.insertion_time_us, i64),
-            (
-                "storage_size_storages_us",
-                self.storage_size_storages_us,
-                i64
-            ),
             ("index_flush_us", self.index_flush_us, i64),
             (
                 "total_items_including_duplicates",
@@ -653,6 +635,15 @@ impl LoadedAccountAccessor {
                             .get_stored_account_callback(*offset, |account| {
                                 callback(LoadedAccount::Stored(account))
                             })
+                            .inspect_err(|err| {
+                                trace!(
+                                    "get_loaded_account() failed! storage slot: {}, id: {}, \
+                                     offset: {offset}, err: {err}",
+                                    storage_entry.slot(),
+                                    storage_entry.id(),
+                                );
+                            })
+                            .ok()
                     })
             }
         }
@@ -1508,19 +1499,13 @@ impl AccountsDb {
     // collection
     // Only remove those accounts where the entire rooted history of the account
     // can be purged because there are no live append vecs in the ancestors
-    pub fn clean_accounts(&self, max_clean_root_inclusive: Slot, is_startup: bool) {
+    pub fn clean_accounts(&self, max_clean_root_inclusive: Slot) {
         if self.verify_index {
             // verify_index calls par_iter, so give it a pool of its own rather than inheriting
-            // whichever one the caller happens to be running on. At startup there is no replay to
-            // protect, so use all cores; otherwise stay narrow and leave the rest for replay.
-            let num_threads = if is_startup {
-                num_cpus::get()
-            } else {
-                quarter_thread_count()
-            };
+            // whichever one the caller happens to be running on.
             let pool = rayon::ThreadPoolBuilder::new()
                 .thread_name(|i| format!("solAcctsDbVfy{i:02}"))
-                .num_threads(num_threads)
+                .num_threads(quarter_thread_count())
                 .build()
                 .expect("new rayon threadpool");
             pool.install(|| self.verify_index(max_clean_root_inclusive));
@@ -1530,12 +1515,13 @@ impl AccountsDb {
 
         let purges_old_accounts_count = AtomicU64::default();
 
+        // Report store stats outside of the clean measuring window
+        self.report_store_stats();
+
         let mut measure_all = Measure::start("clean_accounts");
         let max_clean_root_inclusive = self
             .max_clean_root(Some(max_clean_root_inclusive))
             .expect("max_clean_root_inclusive must be Some");
-
-        self.report_store_stats();
 
         // purge_slots_from_cache delays handling of the pubkeys it removes from the cache
         // so that the purge path never modifies the accounts index. Handle them here
@@ -1658,11 +1644,7 @@ impl AccountsDb {
             .activate(ActiveStatItem::CleanScanCandidates);
         let mut accounts_scan = Measure::start("accounts_scan");
         if num_candidates > 0 {
-            if is_startup {
-                do_clean_scan();
-            } else {
-                self.thread_pool_background.install(do_clean_scan);
-            }
+            self.thread_pool_background.install(do_clean_scan);
         }
         accounts_scan.stop();
         drop(active_guard);
@@ -1910,8 +1892,8 @@ impl AccountsDb {
         &self,
         store: &AccountStorageEntry,
     ) -> GetUniqueAccountsResult {
-        let written_bytes = store.written_bytes();
-        let mut stored_accounts = Vec::with_capacity(store.count());
+        let written_bytes = store.num_stored_bytes();
+        let mut stored_accounts = Vec::with_capacity(store.num_alive_accounts());
         store
             .accounts
             .scan_accounts_without_data(|offset, account| {
@@ -2175,7 +2157,7 @@ impl AccountsDb {
 
         // Count the bytes actually written to the new storage
         self.shrink_stats.bytes_written.fetch_add(
-            shrink_in_progress.new_storage().written_bytes(),
+            shrink_in_progress.new_storage().num_stored_bytes(),
             Ordering::Relaxed,
         );
 
@@ -2285,7 +2267,7 @@ impl AccountsDb {
             };
             let alive_bytes_after_shrink = self.alive_bytes_after_shrink(&store) as u64;
             total_alive_bytes += alive_bytes_after_shrink;
-            let written_bytes = store.written_bytes();
+            let written_bytes = store.num_stored_bytes();
             total_bytes += written_bytes;
             debug_assert!(
                 written_bytes > 0,
@@ -2336,7 +2318,7 @@ impl AccountsDb {
                     break;
                 }
             } else {
-                let current_store_size = store.written_bytes();
+                let current_store_size = store.num_stored_bytes();
                 let after_shrink_size = store_usage.alive_bytes_after_shrink;
                 let bytes_saved = current_store_size.saturating_sub(after_shrink_size);
                 total_bytes -= bytes_saved;
@@ -2423,7 +2405,7 @@ impl AccountsDb {
             while let Some((slot, written_bytes)) = ancients.pop_front() {
                 if let Some(store) = self.storage.get_slot_storage_entry(slot)
                     && !shrink_slots.contains(&slot)
-                    && written_bytes == store.written_bytes()
+                    && written_bytes == store.num_stored_bytes()
                     && self.is_candidate_for_shrink(&store)
                 {
                     let ancient_bytes_added_to_shrink =
@@ -3284,7 +3266,7 @@ impl AccountsDb {
         for remove_slot in removed_slots {
             // Remove the storage entries and collect some metrics
             if let Some(store) = self.storage.remove(remove_slot, false) {
-                total_removed_stored_bytes += store.written_bytes();
+                total_removed_stored_bytes += store.num_stored_bytes();
                 all_removed_slot_storages.push(store);
             }
         }
@@ -3860,6 +3842,7 @@ impl AccountsDb {
     }
 
     fn report_store_stats(&self) {
+        let mut measure = Measure::start("report_store_stats");
         let mut total_count = 0;
         let mut newest_slot = 0;
         let mut oldest_slot = u64::MAX;
@@ -3871,8 +3854,8 @@ impl AccountsDb {
 
             oldest_slot = std::cmp::min(oldest_slot, slot);
 
-            total_alive_bytes += store.alive_bytes();
-            total_bytes += store.written_bytes();
+            total_alive_bytes += store.num_alive_bytes();
+            total_bytes += store.num_stored_bytes();
         }
         info!(
             "total_stores: {total_count}, newest_slot: {newest_slot}, oldest_slot: {oldest_slot}"
@@ -3883,9 +3866,11 @@ impl AccountsDb {
         } else {
             0.
         };
+        measure.stop();
 
         datapoint_info!(
             "accounts_db-stores",
+            ("report_store_stats_us", measure.as_us(), i64),
             ("total_count", total_count, i64),
             ("total_bytes", total_bytes, i64),
             ("total_alive_bytes", total_alive_bytes, i64),
@@ -4213,13 +4198,13 @@ impl AccountsDb {
         if self.can_purge_zero_lamport_accounts(store.slot()) {
             store.alive_bytes_exclude_zero_lamport_accounts()
         } else {
-            store.alive_bytes()
+            store.num_alive_bytes()
         }
     }
 
     fn is_shrinking_productive(&self, store: &AccountStorageEntry) -> bool {
-        let alive_count = store.count();
-        let total_bytes = store.written_bytes();
+        let alive_count = store.num_alive_accounts();
+        let total_bytes = store.num_stored_bytes();
         let alive_bytes = self.alive_bytes_after_shrink(store) as u64;
         if Self::should_not_shrink(alive_bytes, total_bytes) {
             trace!(
@@ -4240,7 +4225,7 @@ impl AccountsDb {
     /// Determines whether a given AccountStorageEntry instance is a
     /// candidate for shrinking.
     pub(crate) fn is_candidate_for_shrink(&self, store: &AccountStorageEntry) -> bool {
-        let total_bytes = store.written_bytes();
+        let total_bytes = store.num_stored_bytes();
         let alive_bytes = self.alive_bytes_after_shrink(store) as u64;
         match self.shrink_ratio {
             AccountShrinkThreshold::TotalSpace { shrink_ratio: _ } => alive_bytes < total_bytes,
@@ -4294,10 +4279,10 @@ impl AccountsDb {
                 let remaining_accounts = if is_tombstone_reclaim {
                     // Tombstones stay alive in the storage; only record their offsets
                     store.batch_insert_tombstone_offsets(offsets);
-                    store.count()
-                } else if offsets.len() == store.count() {
+                    store.num_alive_accounts()
+                } else if offsets.len() == store.num_alive_accounts() {
                     // all remaining alive accounts in the storage are being removed, so the entire storage/slot is dead
-                    store.remove_accounts(store.alive_bytes(), offsets.len())
+                    store.remove_accounts(store.num_alive_bytes(), offsets.len())
                 } else {
                     // not all accounts are being removed, so figure out sizes of accounts we are removing and update the alive bytes and alive account count
                     let (remaining_accounts, us) = measure_us!({
@@ -4654,37 +4639,31 @@ impl AccountsDb {
         }
 
         let store_id = storage.id();
-        let stored_accounts_info = storage
-            .accounts
+        let stored_account_offsets = storage
             .write_accounts(accounts_and_meta_to_store)
-            .unwrap_or_else(|| {
+            .unwrap_or_else(|err| {
                 panic!(
-                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, len: {} \
-                     bytes, num accounts: {num_accounts}",
+                    "failed to write accounts to storage! slot: {slot}, id: {store_id}, len: {} \
+                     bytes, num accounts: {num_accounts}, error: {err}",
                     storage.accounts.len(),
                 )
             });
 
         assert_eq!(
-            stored_accounts_info.offsets.len(),
+            stored_account_offsets.len(),
             num_accounts,
             "failed to write all accounts to storage! {slot}, id: {store_id}, len: {} bytes, num \
              accounts written: {}, num accounts total: {num_accounts}",
             storage.accounts.len(),
-            stored_accounts_info.offsets.len(),
+            stored_account_offsets.len(),
         );
 
-        for (i, offset) in stored_accounts_info.offsets.iter().enumerate() {
+        for (i, offset) in stored_account_offsets.iter().enumerate() {
             infos.push(AccountInfo::new(
                 StorageLocation::AccountsFile(store_id, *offset),
                 accounts_and_meta_to_store.is_zero_lamport(i),
             ));
         }
-        storage.add_accounts(
-            stored_accounts_info.offsets.len(),
-            stored_accounts_info.size,
-        );
-
         infos
     }
 
@@ -4942,25 +4921,19 @@ impl AccountsDb {
                 .insert_new_if_missing_into_primary_index(slot, keyed_account_infos)
         );
 
-        if insert_info.count > 0 {
-            // push summary info for store_id into thread state (all threads build a piece of full list)
-            let info = StorageSizeAndCount {
-                stored_size: stored_size_alive,
-                count: insert_info.count,
-            };
+        let stored_size_total = stored_size_alive
+            + storage.get_obsolete_bytes(None)
+            + storage.num_tombstones() * storage.accounts.calculate_stored_size(0);
 
-            // sanity check that stored_size is not larger than the u64 aligned size of the accounts files.
-            // Note that the stored_size is aligned, so it can be larger than the size of the accounts file.
-            assert!(
-                info.stored_size <= u64_align!(storage.accounts.len()),
-                "Stored size ({}) is larger than the size of the accounts file ({}) for store_id: \
-                 {}",
-                info.stored_size,
-                storage.accounts.len(),
-                store_id
-            );
-            accum.storage_info.push((store_id, info));
-        }
+        storage
+            .num_alive_accounts
+            .store(insert_info.count, Ordering::Release);
+        storage
+            .num_alive_bytes
+            .store(stored_size_alive, Ordering::Release);
+        storage
+            .num_stored_bytes
+            .store(stored_size_total as u64, Ordering::Release);
 
         // Zero-lamport accounts stay alive in the index until clean removes them. Their storages
         // are not otherwise dirty, so add the pubkeys into `uncleaned_pubkeys` for the first
@@ -5007,7 +4980,7 @@ impl AccountsDb {
 
         self.accounts_index.set_startup(Startup::Startup);
 
-        let mut total_accum = IndexGenerationAccumulator::with_slots_capacity(num_storages);
+        let mut total_accum = IndexGenerationAccumulator::new();
         let storages_orderer =
             AccountStoragesOrderer::with_random_order(&storages).into_concurrent_consumer();
         let exit_logger = AtomicBool::new(false);
@@ -5020,9 +4993,7 @@ impl AccountsDb {
                     thread::Builder::new()
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
-                            let mut thread_accum = IndexGenerationAccumulator::with_slots_capacity(
-                                num_storages.div_ceil(num_threads),
-                            );
+                            let mut thread_accum = IndexGenerationAccumulator::new();
                             let mut reader = append_vec::new_scan_accounts_reader();
                             for next_item in storages_orderer.iter() {
                                 let storage = next_item.storage;
@@ -5271,8 +5242,6 @@ impl AccountsDb {
             total_accum.slots_with_only_zero_lamport_accounts.len()
         );
 
-        self.set_storage_count_and_alive_bytes(total_accum.storage_info, &mut timings);
-
         let mut mark_obsolete_accounts_time = Measure::start("mark_obsolete_accounts_time");
         // Mark all reclaims at max_slot. This is safe because only the snapshot paths care about
         // this information. Since this account was just restored from the previous snapshot and
@@ -5439,43 +5408,6 @@ impl AccountsDb {
         )
     }
 
-    fn set_storage_count_and_alive_bytes(
-        &self,
-        stored_sizes_and_counts: StorageSizeAndCountList,
-        timings: &mut GenerateIndexTimings,
-    ) {
-        // store count and size for each storage
-        let mut storage_size_storages_time = Measure::start("storage_size_storages");
-        let stored_sizes_and_counts: IntMap<_, _> = stored_sizes_and_counts.into_iter().collect();
-        for (_slot, store) in self.storage.iter() {
-            let id = store.id();
-            // Should be default at this point
-            assert_eq!(store.alive_bytes(), 0);
-            if let Some(entry) = stored_sizes_and_counts.get(&id) {
-                trace!(
-                    "id: {} setting count: {} cur: {}",
-                    id,
-                    entry.count,
-                    store.count(),
-                );
-                {
-                    let prev_count = store
-                        .num_alive_accounts
-                        .swap(entry.count, Ordering::Release);
-                    assert_eq!(prev_count, 0);
-                }
-                store
-                    .num_alive_bytes
-                    .store(entry.stored_size, Ordering::Release);
-            } else {
-                trace!("id: {id} clearing count");
-                store.num_alive_accounts.store(0, Ordering::Release);
-            }
-        }
-        storage_size_storages_time.stop();
-        timings.storage_size_storages_us = storage_size_storages_time.as_us();
-    }
-
     pub fn print_accounts_stats(&self, label: &str) {
         self.print_index();
         self.print_count_and_status(label);
@@ -5507,7 +5439,7 @@ impl AccountsDb {
                 "  slot: {} id: {} count: {} len: {}",
                 slot,
                 entry.id(),
-                entry.count(),
+                entry.num_alive_accounts(),
                 entry.accounts.len(),
             );
         }
@@ -5596,7 +5528,7 @@ impl AccountsDb {
             .map(|(slot, _storage)| slot)
             .max()
             .unwrap_or_default();
-        self.clean_accounts(max_storage_slot, false)
+        self.clean_accounts(max_storage_slot)
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
@@ -5653,11 +5585,7 @@ impl AccountsDb {
             let idx = rng().random_range(0..num);
             let account = self.do_load_for_tests(&ancestors, &pubkeys[idx]);
             let account1 = Some((
-                AccountSharedData::new(
-                    (idx + count) as u64,
-                    0,
-                    AccountSharedData::default().owner(),
-                ),
+                AccountSharedData::new((idx + count) as u64, 0, &Pubkey::default()),
                 slot,
             ));
             assert_eq!(account, account1);
@@ -5698,18 +5626,14 @@ impl AccountsDb {
     #[allow(clippy::needless_range_loop)]
     pub fn modify_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
         for idx in 0..num {
-            let account = AccountSharedData::new(
-                (idx + count) as u64,
-                0,
-                AccountSharedData::default().owner(),
-            );
+            let account = AccountSharedData::new((idx + count) as u64, 0, &Pubkey::default());
             self.store_for_tests((slot, [(&pubkeys[idx], &account)].as_slice()));
         }
     }
 
     pub fn check_storage(&self, slot: Slot, alive_count: usize, total_count: usize) {
         let store = self.storage.get_slot_storage_entry(slot).unwrap();
-        assert_eq!(store.count(), alive_count);
+        assert_eq!(store.num_alive_accounts(), alive_count);
         assert_eq!(store.accounts_count(), total_count);
     }
 
@@ -5724,8 +5648,7 @@ impl AccountsDb {
         let ancestors = Ancestors::from(vec![slot]);
         for t in 0..num {
             let pubkey = solana_pubkey::new_rand();
-            let account =
-                AccountSharedData::new((t + 1) as u64, space, AccountSharedData::default().owner());
+            let account = AccountSharedData::new((t + 1) as u64, space, &Pubkey::default());
             pubkeys.push(pubkey);
             assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
@@ -5744,7 +5667,7 @@ impl AccountsDb {
     pub fn alive_account_count_in_slot(&self, slot: Slot) -> usize {
         self.storage
             .get_slot_storage_entry(slot)
-            .map(|storage| storage.count())
+            .map(|storage| storage.num_alive_accounts())
             .unwrap_or(0)
             .saturating_add(
                 self.accounts_cache

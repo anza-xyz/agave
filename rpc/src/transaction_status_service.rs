@@ -25,7 +25,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::{self, Builder, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     },
     thiserror::Error,
 };
@@ -39,6 +39,42 @@ enum Error {
     NonFrozenBank(Slot),
 }
 type Result<T> = std::result::Result<T, Error>;
+
+struct Metrics {
+    /// The number of transaction status messages received
+    num_recv_messages: u64,
+    /// The number of transaction message receive timeouts
+    num_recv_timeouts: u64,
+    /// The time at which this datapoint was last submitted
+    last_report: Instant,
+}
+
+impl Metrics {
+    const NAME: &str = "transaction-status-loop-stats";
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
+    fn new() -> Self {
+        Self {
+            num_recv_messages: 0,
+            num_recv_timeouts: 0,
+            last_report: Instant::now(),
+        }
+    }
+
+    fn should_report(&self) -> bool {
+        self.last_report.elapsed() > Self::REPORT_INTERVAL
+    }
+
+    fn report_and_reset(&mut self, channel_len: usize) {
+        datapoint_info!(
+            Self::NAME,
+            ("num_recv_messages", self.num_recv_messages as i64, i64),
+            ("num_recv_timeouts", self.num_recv_timeouts as i64, i64),
+            ("message_queue_len", channel_len as i64, i64),
+        );
+        *self = Self::new();
+    }
+}
 
 // Used when draining and shutting down TSS in unit tests.
 #[cfg(feature = "dev-context-only-utils")]
@@ -70,6 +106,7 @@ impl TransactionStatusService {
             .spawn({
                 let transaction_status_receiver = transaction_status_receiver.clone();
                 move || {
+                    let mut metrics = Metrics::new();
                     info!("{} has started", Self::SERVICE_NAME);
                     loop {
                         if exit.load(Ordering::Relaxed) {
@@ -79,12 +116,16 @@ impl TransactionStatusService {
                         let message = match transaction_status_receiver
                             .recv_timeout(Duration::from_secs(1))
                         {
-                            Ok(message) => message,
+                            Ok(message) => {
+                                metrics.num_recv_messages += 1;
+                                message
+                            }
                             Err(err @ RecvTimeoutError::Disconnected) => {
                                 info!("{} is stopping because: {err}", Self::SERVICE_NAME);
                                 break;
                             }
                             Err(RecvTimeoutError::Timeout) => {
+                                metrics.num_recv_timeouts += 1;
                                 continue;
                             }
                         };
@@ -98,7 +139,14 @@ impl TransactionStatusService {
                             enable_extended_tx_metadata_storage,
                             depenency_tracker.clone(),
                         ) {
-                            Ok(_) => {}
+                            Ok(bank_frozen) => {
+                                // Only check for metrics submissions when a
+                                // bank is frozen to avoid excessive overhead
+                                if bank_frozen && metrics.should_report() {
+                                    let queue_length = transaction_status_receiver.len();
+                                    metrics.report_and_reset(queue_length);
+                                }
+                            }
                             Err(err) => {
                                 error!("{} is stopping because: {err}", Self::SERVICE_NAME);
                                 exit.store(true, Ordering::Relaxed);
@@ -125,7 +173,7 @@ impl TransactionStatusService {
         blockstore: &Blockstore,
         enable_extended_tx_metadata_storage: bool,
         dependency_tracker: Option<Arc<DependencyTracker>>,
-    ) -> Result<()> {
+    ) -> Result</*bank_frozen:*/ bool> {
         match transaction_status_message {
             TransactionStatusMessage::Batch((
                 TransactionStatusBatch {
@@ -264,6 +312,8 @@ impl TransactionStatusService {
                 {
                     dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
                 }
+
+                Ok(false)
             }
             TransactionStatusMessage::Freeze(bank) => {
                 if !bank.is_frozen() {
@@ -271,9 +321,10 @@ impl TransactionStatusService {
                 }
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
+
+                Ok(true)
             }
         }
-        Ok(())
     }
 
     fn write_block_meta(bank: &Bank, blockstore: &Blockstore) -> Result<()> {
@@ -355,7 +406,7 @@ pub(crate) mod tests {
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
-        solana_clock::{BankId, Slot},
+        solana_clock::Slot,
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -364,7 +415,7 @@ pub(crate) mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_runtime::bank::{Bank, BankId, TransactionBalancesSet},
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -481,7 +532,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            fee_payer_post_balance: 0,
+            fee_payer_post_balance: Some(0),
         });
 
         let balances = TransactionBalancesSet {
@@ -615,7 +666,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            fee_payer_post_balance: 0,
+            fee_payer_post_balance: Some(0),
         });
 
         let balances = TransactionBalancesSet {

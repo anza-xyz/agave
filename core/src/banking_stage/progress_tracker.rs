@@ -6,10 +6,10 @@ use {
     agave_scheduler_bindings::ProgressMessage,
     agave_votor::slot_clock::SharedAlpenglowSlotClock,
     agave_votor_messages::migration::MigrationStatus,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_cost_model::cost_tracker::{SharedAllocatedAccountsDataSize, SharedBlockCost},
     solana_poh::poh_recorder::SharedLeaderState,
-    solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
+    solana_runtime::{bank::BankId, leader_schedule_utils::last_of_consecutive_leader_slots},
     std::{
         sync::{
             Arc,
@@ -304,7 +304,7 @@ fn next_alpenglow_progress_deadline(
     started_at.checked_add(Duration::from_nanos_u128(next_boundary_nanos))
 }
 
-fn alpenglow_slot_progress(
+pub(super) fn alpenglow_slot_progress(
     window_start_slot: Slot,
     elapsed: Duration,
     slot_duration: Duration,

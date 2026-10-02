@@ -19,7 +19,7 @@ solana-instructions-sysvar = { workspace = true }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["std"] }
 solana-sdk-ids = { workspace = true }
 solana-stake-history = { workspace = true }
 solana-sysvar = { workspace = true, features = ["bytemuck", "wincode"] }

@@ -19,8 +19,6 @@ jobs:
   version-bump:
     if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-24.04
-    permissions:
-      pull-requests: write
     environment: "Version Bump"
     steps:
       - name: Create github app token
@@ -51,7 +49,7 @@ jobs:
           cargo install toml-cli --locked
 
           # install xtask
-          cargo install anza-xtask@0.2.3 --locked
+          cargo install anza-xtask@0.2.5 --locked
 
       - name: Process
         id: process
@@ -78,7 +76,7 @@ jobs:
           NEW_VERSION: ${{ steps.process.outputs.new_version }}
           TARGET_BRANCH: ${{ steps.process.outputs.target_branch }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const pr = await github.rest.pulls.create({
               owner: context.repo.owner,

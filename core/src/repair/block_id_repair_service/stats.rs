@@ -12,6 +12,10 @@ pub(super) struct BlockIdRepairResponsesStats {
     /// Invalid response (failed deserialization or nonce)
     pub invalid_packets: usize,
 
+    /// Valid replies to requests that were already answered (the first valid
+    /// reply wins)
+    pub late_replies: usize,
+
     /// Ping challenges
     pub ping_responses: usize,
     /// Ping challenges from peers we have not recently requested metadata from.
@@ -35,6 +39,7 @@ impl BlockIdRepairResponsesStats {
             ("processed", self.processed, i64),
             ("dropped_packets", self.dropped_packets, i64),
             ("invalid_packets", self.invalid_packets, i64),
+            ("late_replies", self.late_replies, i64),
             ("ping_responses", self.ping_responses, i64),
             (
                 "unexpected_ping_responses",

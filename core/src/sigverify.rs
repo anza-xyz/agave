@@ -415,7 +415,7 @@ fn apply_priority_floor_to_batch(
 ) -> (usize, bool) {
     let mut dropped: usize = 0;
     let mut any_kept = false;
-    for mut packet in batch.iter_mut() {
+    for packet in batch.iter_mut() {
         if packet.meta().discard() {
             continue;
         }

@@ -2,8 +2,6 @@
 pub mod data_budget;
 pub mod deduper;
 pub mod packet;
-pub mod recycled_vec;
-pub mod recycler;
 pub mod sigverify;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod test_tx;
@@ -14,13 +12,6 @@ extern crate log;
 
 #[cfg(test)]
 extern crate assert_matches;
-
-#[macro_use]
-extern crate solana_metrics;
-
-#[cfg_attr(feature = "stable-abi", macro_use)]
-#[cfg(feature = "stable-abi")]
-extern crate solana_frozen_abi_macro;
 
 fn is_rosetta_emulated() -> bool {
     #[cfg(target_os = "macos")]

@@ -2,6 +2,8 @@
 //! node stakes
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::{
         alpenglow_epoch_type::RewardEpochDelegatedStakes, stake_account,
@@ -262,10 +264,14 @@ impl<T: Clone> Stakes<T> {
         &self,
         max_vote_accounts: usize,
         minimum_vote_account_balance: u64,
+        block_revenue_sharing: bool,
     ) -> Stakes<T> {
         Self::new(
-            self.vote_accounts
-                .clone_and_filter_for_vat(max_vote_accounts, minimum_vote_account_balance),
+            self.vote_accounts.clone_and_filter_for_vat(
+                max_vote_accounts,
+                minimum_vote_account_balance,
+                block_revenue_sharing,
+            ),
             self.epoch,
         )
     }
@@ -1543,5 +1549,54 @@ pub(crate) mod tests {
             !stakes.stake_delegations().contains_key(&stake_pubkey),
             case.is_droppable(in_epoch_rewards_period)
         );
+    }
+
+    #[test]
+    fn test_load_from_deserialized_delegations_ignores_reserved_bytes() {
+        let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
+            create_staked_node_accounts(10, &Rent::default());
+        let StakeStateV2::Stake(_, stake, _) = stake_account.state().unwrap() else {
+            unreachable!()
+        };
+        let get_account = |pubkey: &Pubkey| {
+            if *pubkey == vote_pubkey {
+                Some(vote_account.clone())
+            } else if *pubkey == stake_pubkey {
+                Some(stake_account.clone())
+            } else {
+                None
+            }
+        };
+        let deserialized = |delegation: Delegation| {
+            let mut vote_accounts = VoteAccounts::default();
+            vote_accounts.insert(
+                vote_pubkey,
+                VoteAccount::try_from(vote_account.clone()).unwrap(),
+                || 0,
+            );
+            DeserializableDelegationStakes {
+                vote_accounts,
+                stake_delegations: vec![(stake_pubkey, delegation)],
+                unused: 0,
+                epoch: 0,
+                stake_history: StakeHistory::default(),
+            }
+        };
+
+        // A snapshot written with the old `warmup_cooldown_rate` bytes loads.
+        let mut delegation = stake.delegation;
+        delegation._reserved = 0.25f64.to_le_bytes();
+        let stakes =
+            Stakes::load_from_deserialized_delegations(deserialized(delegation), get_account)
+                .unwrap();
+        assert!(stakes.stake_delegations().contains_key(&stake_pubkey));
+
+        // The other fields are still checked.
+        let mut delegation = stake.delegation;
+        delegation.stake += 1;
+        assert!(matches!(
+            Stakes::load_from_deserialized_delegations(deserialized(delegation), get_account),
+            Err(Error::InvalidDelegation(pubkey)) if pubkey == stake_pubkey
+        ));
     }
 }

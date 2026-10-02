@@ -4,6 +4,7 @@ on:
   pull_request_target:
     branches:
       - master
+      - v[0-9]+.[0-9]+
     types:
       - opened
       - synchronize
@@ -14,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}-${{ github.event.label.name || 'CI' }}
   cancel-in-progress: true
 
 jobs:
@@ -33,11 +34,23 @@ jobs:
           REPO: ${{ github.repository }}
           USERNAME: ${{ github.event.sender.login }}
         run: |
+          TRUSTED_CI_USERS=(
+            "mergify[bot]"
+            "agave-version-bumper[bot]"
+          )
+          for trusted_ci_user in "${TRUSTED_CI_USERS[@]}"; do
+            if [[ "$USERNAME" == "$trusted_ci_user" ]]; then
+              echo "should_trigger=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          ENCODED_USERNAME=$(jq -rn --arg username "$USERNAME" '$username | @uri')
           ROLE_NAME=$(curl -sS -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
-            https://api.github.com/repos/$REPO/collaborators/$USERNAME/permission | jq -r ".role_name")
+            "https://api.github.com/repos/$REPO/collaborators/$ENCODED_USERNAME/permission" | jq -r ".role_name")
 
           case "$ROLE_NAME" in
             admin|maintain|write|triage)

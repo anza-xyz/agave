@@ -242,11 +242,11 @@ fn try_transform_program_data(
         if let Ok(UpgradeableLoaderState::ProgramData {
             upgrade_authority_address,
             ..
-        }) = bincode::deserialize::<UpgradeableLoaderState>(programdata_meta)
+        }) = wincode::deserialize::<UpgradeableLoaderState>(programdata_meta)
         {
             // Serialize new programdata metadata into the resulting account,
             // to overwrite the deployment slot to `0`.
-            bincode::serialize_into(
+            wincode::serialize_into(
                 account.data_as_mut_slice(),
                 &UpgradeableLoaderState::ProgramData {
                     slot: 0,
@@ -954,7 +954,7 @@ impl TestValidator {
                 &[upgradeable_program.program_id.as_ref()],
                 &upgradeable_program.loader,
             );
-            let mut program_data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
+            let mut program_data = wincode::serialize(&UpgradeableLoaderState::ProgramData {
                 slot: 0,
                 upgrade_authority_address: Some(upgradeable_program.upgrade_authority),
             })
@@ -971,7 +971,7 @@ impl TestValidator {
                 }),
             );
 
-            let data = bincode::serialize(&UpgradeableLoaderState::Program {
+            let data = wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address,
             })
             .unwrap();
@@ -1432,7 +1432,7 @@ mod test {
             let active_feature_accounts = rpc_client.get_multiple_accounts(chunk).await.unwrap();
             for feature_account in active_feature_accounts {
                 let account = feature_account.unwrap();
-                let feature_state: Feature = bincode::deserialize(account.data()).unwrap();
+                let feature_state: Feature = wincode::deserialize(account.data()).unwrap();
                 assert!(feature_state.activated_at.is_some());
             }
         }
@@ -1641,7 +1641,7 @@ mod test {
             let active_feature_accounts = rpc_client.get_multiple_accounts(chunk).await.unwrap();
             for f in active_feature_accounts {
                 let account = f.unwrap(); // Should be `Some`.
-                let feature_state: Feature = bincode::deserialize(account.data()).unwrap();
+                let feature_state: Feature = wincode::deserialize(account.data()).unwrap();
                 assert!(feature_state.activated_at.is_some());
             }
         }
@@ -1681,7 +1681,7 @@ mod test {
         // The second one should be a feature account.
         let feature_account = our_accounts[1].as_ref().unwrap();
         assert_eq!(feature_account.owner, solana_sdk_ids::feature::id());
-        let feature_state: Feature = bincode::deserialize(feature_account.data()).unwrap();
+        let feature_state: Feature = wincode::deserialize(feature_account.data()).unwrap();
         assert!(feature_state.activated_at.is_some());
     }
 

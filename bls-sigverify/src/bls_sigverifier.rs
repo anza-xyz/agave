@@ -3,13 +3,14 @@
 use {
     crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
-        bls_vote_sigverify::verify_and_send_votes,
+        bls_vote_sigverify::{batch::Batch, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
+        rank_map_cache::RankMapCache,
         rewards::{RewardInput, rewards_wants_vote},
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
-        unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
+        unverified_votes_batch::UnverifiedVotePayload,
         vote_pool::{VotePool, VotePoolError},
     },
     agave_votor_messages::{
@@ -28,7 +29,7 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError, select},
     log::{error, info},
     rayon::{ThreadPool, ThreadPoolBuilder},
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
@@ -146,14 +147,13 @@ struct SigVerifier {
     verified_certs: HashSet<CertificateType>,
     /// Tracks when the cache was last pruned.
     last_checked_root_slot: Slot,
-    last_checked_root_epoch: Epoch,
     cluster_info: Arc<ClusterInfo>,
     leader_schedule: Arc<LeaderScheduleCache>,
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
     vote_pool: VotePool,
-    rank_map_cache: HashMap<Epoch, Arc<BLSPubkeyToRankMap>>,
+    rank_map_cache: RankMapCache,
 }
 
 impl SigVerifier {
@@ -183,12 +183,11 @@ impl SigVerifier {
             verified_certs: HashSet::new(),
             vote_pool: VotePool::default(),
             last_checked_root_slot: 0,
-            last_checked_root_epoch: 0,
             cluster_info,
             leader_schedule,
             thread_pool,
             generated_cert_types,
-            rank_map_cache: HashMap::new(),
+            rank_map_cache: RankMapCache::default(),
         }
     }
 
@@ -250,7 +249,7 @@ impl SigVerifier {
         &mut self,
         my_pubkey: &Pubkey,
         datagrams: &[Datagram],
-        votes_buffer: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
+        votes_buffer: &mut HashMap<VotePayloadToSign, Batch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
     ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
@@ -308,12 +307,7 @@ impl SigVerifier {
             self.verified_certs.retain(|cert| cert.slot() >= root_slot);
             self.vote_pool.prune(root_slot);
         }
-        if self.last_checked_root_epoch < root_epoch {
-            self.last_checked_root_epoch = root_epoch;
-            // Keeping previous epoch as we need to look up slots older than root_slot for rewards.
-            self.rank_map_cache
-                .retain(|epoch, _| *epoch >= root_epoch.saturating_sub(1));
-        }
+        self.rank_map_cache.purge(root_epoch);
     }
 
     fn add_certificate_to_group(
@@ -343,7 +337,7 @@ impl SigVerifier {
         &mut self,
         my_pubkey: &Pubkey,
         datagrams: &[Datagram],
-        votes_buffer: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
+        votes_buffer: &mut HashMap<VotePayloadToSign, Batch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
     ) -> HashMap<CertificateType, Vec<CertPayload>> {
@@ -441,7 +435,7 @@ impl SigVerifier {
         migration_slot: Option<Slot>,
         max_vote_slot: Slot,
         root_bank: &Bank,
-        votes: &mut HashMap<VotePayloadToSign, UnverifiedBatch>,
+        votes: &mut HashMap<VotePayloadToSign, Batch>,
         unverified_vote: UnverifiedVoteMessage,
     ) {
         // votes from self take a different pathway.
@@ -491,25 +485,20 @@ impl SigVerifier {
             Entry::Vacant(e) => {
                 let vote_slot = unverified_vote.vote.slot();
                 let vote_epoch = root_bank.epoch_schedule().get_epoch(vote_slot);
-                let rank_map = match self.rank_map_cache.entry(vote_epoch) {
-                    Entry::Occupied(entry) => entry.get().clone(),
-                    Entry::Vacant(entry) => {
-                        let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
-                            self.stats.discard_vote_no_epoch_stakes += 1;
-                            self.stats.num_keep_vote_failed += 1;
-                            return;
-                        };
-                        entry.insert(rank_map.clone()).clone()
-                    }
+                let Some(rank_map) = self.rank_map_cache.get_rank_map(root_bank, vote_epoch) else {
+                    self.stats.discard_vote_no_epoch_stakes += 1;
+                    self.stats.num_keep_vote_failed += 1;
+                    return;
                 };
                 match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
                     Some((payload, sender_vote_account_pubkey)) => {
-                        e.insert(UnverifiedBatch::new(
+                        let batch = Batch::new(
                             vote_payload_to_sign,
                             payload,
                             sender_vote_account_pubkey,
                             rank_map,
-                        ));
+                        );
+                        e.insert(batch);
                     }
                     None => {
                         self.stats.num_keep_vote_failed += 1;
@@ -613,7 +602,7 @@ mod tests {
         },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
-            consensus_message::{Block, ConsensusMessage, VoteMessage},
+            consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
             vote::Vote,
             wire::{VersionedWireConsensusMessage, get_vote_payload_to_sign},
@@ -627,7 +616,6 @@ mod tests {
         },
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
@@ -1307,6 +1295,28 @@ mod tests {
             });
         assert_eq!(total_aggregates, 2);
         assert_eq!(total_votes_verified, num_votes);
+        assert_eq!(
+            ctx.verifier.stats.vote_stats.votes_to_sig_verify.0,
+            num_votes
+        );
+        assert_eq!(
+            ctx.verifier
+                .stats
+                .vote_stats
+                .vote_verification_stats
+                .optimistic_verification_succeeded
+                .0,
+            2
+        );
+        assert_eq!(
+            ctx.verifier
+                .stats
+                .vote_stats
+                .vote_verification_stats
+                .optimistic_batch
+                .count(),
+            2
+        );
         assert_eq!(
             ctx.verifier.stats.vote_stats.distinct_votes_stats.count(),
             1
@@ -2211,7 +2221,7 @@ mod tests {
             highest_parent_ready_slot,
             Block {
                 slot: highest_parent_ready_slot,
-                block_id: Hash::new_unique(),
+                block_id: BlockId::new_unique(),
             },
         );
         let max_vote_slot = highest_parent_ready_slot + MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY;
@@ -2221,7 +2231,7 @@ mod tests {
 
         let genesis_block = Block {
             slot: genesis_slot,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         };
         ctx.verifier
             .migration_status
@@ -2266,7 +2276,7 @@ mod tests {
             ctx.verifier.cluster_info.my_shred_version(),
             Vote::new_genesis_vote(Block {
                 slot: genesis_slot,
-                block_id: Hash::new_unique(),
+                block_id: BlockId::new_unique(),
             }),
             different_hash_genesis_vote_rank,
         ));

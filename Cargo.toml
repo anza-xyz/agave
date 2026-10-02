@@ -149,6 +149,44 @@ license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.98.1"
 
+# Agave binary and package names, grouped by intended audience.
+# Read by scripts/agave-build-lists.sh, which build/install scripts source.
+[workspace.metadata.agave-build-lists]
+dev = [
+    "solana-test-validator",
+]
+end-user = [
+    "agave-install",
+    "solana",
+    "solana-keygen",
+]
+val-op = [
+    "agave-validator",
+    "agave-watchtower",
+    "solana-gossip",
+    "solana-genesis",
+    "solana-faucet",
+]
+dcou = [
+    "agave-ledger-tool",
+]
+# These bins are deprecated and will be removed in a future release
+deprecated = [
+    "solana-stake-accounts",
+    "solana-tokens",
+    "agave-install-init",
+]
+dcou-tainted-packages = [
+    "agave-conformance",
+    "agave-ledger-tool",
+    "agave-store-histogram",
+    "agave-store-tool",
+    "solana-accounts-cluster-bench",
+    "solana-banking-bench",
+    "solana-local-cluster",
+    "solana-svm-conformance",
+]
+
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
@@ -328,7 +366,6 @@ seqlock = "0.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_bytes = "0.11.19"
 serde_json = "1.0.151"
-serde_with = { version = "3.23.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
 shaq = { version = "4.4.0" }
@@ -336,7 +373,7 @@ shuttle = "0.9.3"
 signal-hook = "0.4.4"
 slab = "0.4.12"
 slotmap = "1.0.7"
-smallvec = { version = "1.16.1", default-features = false, features = ["union"] }
+smallvec = { version = "1.16.2", default-features = false, features = ["union"] }
 smpl_jwt = "0.9.0"
 socket2 = "0.6.5"
 soketto = "0.8"
@@ -416,7 +453,7 @@ solana-last-restart-slot = "3.2.0"
 solana-lattice-hash = { path = "lattice-hash", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-leader-schedule = { path = "leader-schedule", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ledger = { path = "ledger", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
-solana-loader-v2-interface = "3.0.0"
+solana-loader-v2-interface = "3.1.0"
 solana-loader-v3-interface = "9.0.0"
 solana-loader-v4-interface = "3.1.0"
 solana-local-cluster = { path = "local-cluster", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -484,7 +521,7 @@ solana-slot-hashes = "4.0.0"
 solana-slot-history = "3.2.0"
 solana-stable-layout = "4.0.0"
 solana-stake-history = "2.1.0"
-solana-stake-interface = "5.1.0"
+solana-stake-interface = "5.1.1"
 solana-storage-bigtable = { path = "storage-bigtable", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-storage-proto = { path = "storage-proto", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "streamer", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -545,8 +582,8 @@ sysctl = "0.7.1"
 tar = "0.4.46"
 tarpc = "0.38.0"
 tempfile = "3.27.0"
-test-case = "3.3.1"
-thiserror = "2.0.20"
+test-case = "3.4.0"
+thiserror = "2.0.21"
 tokio = "1.53.1"
 tokio-serde = "0.9.0"
 tokio-stream = "0.1.19"
@@ -564,7 +601,7 @@ ur-registry = { version = "1.0.8", default-features = false, features = ["std"] 
 uriparse = "0.6.4"
 url = "2.5.8"
 winapi = "0.3.8"
-wincode = { version = "0.6.1", features = ["derive"] }
+wincode = { version = "0.6.2", features = ["derive"] }
 winreg = "0.55"
 xxhash-rust = "0.8.5"
 zstd = "0.14.0"

@@ -106,7 +106,7 @@ spl-token-interface = { workspace = true }
 stream-cancel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-tokio-util = { workspace = true, features = ["codec", "compat"] }
+tokio-util = { workspace = true, features = ["codec", "compat", "rt"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
@@ -140,6 +140,7 @@ solana-svm-log-collector = { path = "../svm-log-collector", features = ["agave-u
 solana-vote-interface = { workspace = true, features = ["wincode"] }
 symlink = { workspace = true }
 test-case = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

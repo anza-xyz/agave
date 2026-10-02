@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
@@ -70,7 +72,7 @@ pub struct BankingTracer {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
-        abi_digest = "6WDJa7JLPQEZdP5iHBWpdkBF6cdVYXeW4swypaLmpLag",
+        abi_digest = "AGYC1vpcM7bBZDeLoc2Lckf9JLEVQ1GsKYCFqFqBsneF",
         test_roundtrip = "eq_and_wire",
     )
 )]

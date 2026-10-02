@@ -43,7 +43,6 @@ stable-abi = [
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
-bincode = { workspace = true }
 bytes = { workspace = true, features = ["serde"] }
 log = { workspace = true }
 num_cpus = { workspace = true }
@@ -56,8 +55,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stab
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
-solana-metrics = { workspace = true }
-solana-packet = { workspace = true, features = ["bincode"] }
+solana-packet = { workspace = true, features = ["serde"] }
 solana-pubkey = { workspace = true, default-features = false, features = ["rand"] }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -67,7 +65,7 @@ solana-signer = { workspace = true, optional = true }
 solana-system-interface = { workspace = true, optional = true }
 solana-system-transaction = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
-solana-transaction = { workspace = true, optional = true, features = ["serde"] }
+solana-transaction = { workspace = true, optional = true, features = ["serde", "wincode"] }
 solana-transaction-context = { workspace = true }
 solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
@@ -93,10 +91,6 @@ jemallocator = { workspace = true }
 
 [[bench]]
 name = "dedup"
-harness = false
-
-[[bench]]
-name = "recycler"
 harness = false
 
 [[bench]]

@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::consensus::{
         Result, Tower, TowerError, TowerVersions, tower1_7_14::SavedTower1_7_14,

@@ -14,6 +14,7 @@ use {
         certificate::{Certificate, CertificateType},
         vote::Vote,
     },
+    bitvec::vec::BitVec,
     solana_clock::Slot,
     std::{
         collections::{BTreeMap, HashMap},
@@ -24,13 +25,13 @@ use {
 };
 
 #[derive(Debug)]
-pub(super) struct VotePool {
+struct VotePool {
     max_validators: usize,
     accumulators: HashMap<Vote, AggregateAccumulator>,
 }
 
 impl VotePool {
-    pub(super) fn new(max_validators: usize) -> Self {
+    fn new(max_validators: usize) -> Self {
         Self {
             max_validators,
             accumulators: HashMap::new(),
@@ -144,8 +145,9 @@ impl VotePool {
     }
 
     /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
-    pub(super) fn add_pool_vote(
+    fn add_pool_vote(
         &mut self,
+        freelist: &mut AccumulatorsFreeList,
         total_stake: NonZero<u64>,
         msg: &PoolVote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
@@ -154,7 +156,7 @@ impl VotePool {
         let acc = self
             .accumulators
             .entry(vote)
-            .or_insert_with(|| AggregateAccumulator::new(self.max_validators));
+            .or_insert_with(|| freelist.allocate(self.max_validators));
         let stake = match msg {
             PoolVote::Own(vote_msg) => acc.add_own_vote_message(vote_msg),
             PoolVote::External(a) => acc.add_aggregate(a),
@@ -185,6 +187,7 @@ const VOTE_POOLS_CAPACITY: usize = MAX_VOTE_SLOT_DISTANCE_FROM_ROOT as usize + 1
 /// can receive votes in a fixed sized ring buffer which is pruned when the root_slot updates.
 pub(super) struct VotePools {
     pools: Box<[Option<VotePool>; VOTE_POOLS_CAPACITY]>,
+    freelist: AccumulatorsFreeList,
     root_slot: Slot,
     offset: usize,
 }
@@ -198,6 +201,7 @@ impl VotePools {
             .try_into()
             .expect("the sizes of the array should match");
         Self {
+            freelist: AccumulatorsFreeList::default(),
             pools,
             root_slot,
             offset: 0,
@@ -230,13 +234,13 @@ impl VotePools {
             None => {
                 let mut pool = VotePool::new(max_validators);
                 let res = pool
-                    .add_pool_vote(total_stake, msg, completed_certs)
+                    .add_pool_vote(&mut self.freelist, total_stake, msg, completed_certs)
                     .map_err(VotePoolError::AddVote)?;
                 self.pools[ind] = Some(pool);
                 Ok(res)
             }
             Some(pool) => pool
-                .add_pool_vote(total_stake, msg, completed_certs)
+                .add_pool_vote(&mut self.freelist, total_stake, msg, completed_certs)
                 .map_err(VotePoolError::AddVote),
         }
     }
@@ -247,16 +251,61 @@ impl VotePools {
         };
         let diff = diff as usize;
         if diff >= self.pools.len() {
+            for pool in self.pools.iter_mut() {
+                if let Some(mut pool) = pool.take() {
+                    for (_, acc) in pool.accumulators.drain() {
+                        self.freelist.recycle(acc);
+                    }
+                }
+            }
             self.pools.fill_with(|| None);
             self.offset = 0;
         } else {
             for ind in self.offset..(self.offset.saturating_add(diff)) {
                 let ind = ind.rem_euclid(self.pools.len());
-                self.pools[ind] = None;
+                if let Some(mut pool) = self.pools[ind].take() {
+                    for (_, acc) in pool.accumulators.drain() {
+                        self.freelist.recycle(acc);
+                    }
+                }
             }
             self.offset = (self.offset.saturating_add(diff)).rem_euclid(self.pools.len());
         }
         self.root_slot = root_slot;
+    }
+}
+
+#[derive(Debug)]
+/// A freelist of `AggregateAccumulator`s to support recycling memory.
+struct AccumulatorsFreeList {
+    freelist: Vec<BitVec<u8>>,
+    /// Sets an upper bound on how many objects will be stored in the freelist.  To ensure that in
+    /// case of bursts or abnormal behavior, we do not end up consuming too much memory here.
+    capacity: usize,
+}
+
+impl Default for AccumulatorsFreeList {
+    fn default() -> Self {
+        const CAPACITY: usize = MAX_VOTE_SLOT_DISTANCE_FROM_ROOT as usize * 2;
+        Self {
+            freelist: vec![],
+            capacity: CAPACITY,
+        }
+    }
+}
+
+impl AccumulatorsFreeList {
+    fn allocate(&mut self, max_validators: usize) -> AggregateAccumulator {
+        match self.freelist.pop() {
+            Some(ranks) => AggregateAccumulator::from_recycled_ranks(ranks, max_validators),
+            None => AggregateAccumulator::new(max_validators),
+        }
+    }
+
+    fn recycle(&mut self, acc: AggregateAccumulator) {
+        if self.freelist.len() < self.capacity {
+            self.freelist.push(acc.into_ranks());
+        }
     }
 }
 
@@ -322,14 +371,71 @@ mod tests {
 
         // Partial purges retain the new root's votes.
         pools.purge(1024);
+        assert_eq!(pools.freelist.freelist.len(), 3);
         let (accumulated, stake) = add_vote(&mut pools, 1024, 2);
         assert_eq!(accumulated, 3 * stake);
 
         // Advancing by the full capacity clears all previous accumulators.
         let new_root = 1024 + pools.pools.len() as Slot;
         pools.purge(new_root);
+        assert_eq!(pools.freelist.freelist.len(), 4);
         let (accumulated, stake) = add_vote(&mut pools, new_root, 0);
         assert_eq!(accumulated, stake);
+    }
+
+    #[test]
+    fn test_purge_recycles_multiple_accumulators_from_one_pool() {
+        let ctx = TestContext::new();
+        let mut pools = VotePools::new(10);
+        let total_stake = ctx
+            .bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .get_rank_map(0)
+            .unwrap()
+            .total_stake();
+
+        for vote in [Vote::new_skip_vote(10), Vote::new_skip_fallback_vote(10)] {
+            let msg = PoolVote::Own(ctx.new_vote_msg(0, vote));
+            pools
+                .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
+                .unwrap();
+        }
+        assert_eq!(pools.pools.iter().filter(|pool| pool.is_some()).count(), 1);
+
+        pools.purge(11);
+        assert_eq!(pools.freelist.freelist.len(), 2);
+
+        for vote in [Vote::new_skip_vote(11), Vote::new_skip_fallback_vote(11)] {
+            let vote_msg = ctx.new_vote_msg(0, vote);
+            let stake = vote_msg.stake.get();
+            let msg = PoolVote::Own(vote_msg);
+            let (accumulated, _) = pools
+                .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
+                .unwrap();
+            assert_eq!(accumulated, stake);
+        }
+        assert!(pools.freelist.freelist.is_empty());
+    }
+
+    #[test]
+    fn test_accumulators_freelist_respects_capacity() {
+        let capacity = 2;
+        let mut freelist = AccumulatorsFreeList {
+            freelist: Vec::new(),
+            capacity,
+        };
+
+        for _ in 0..capacity {
+            freelist.recycle(AggregateAccumulator::new(1));
+        }
+        assert_eq!(freelist.freelist.len(), capacity);
+
+        for _ in 0..capacity {
+            freelist.recycle(AggregateAccumulator::new(1));
+            assert_eq!(freelist.freelist.len(), capacity);
+        }
     }
 
     #[test]

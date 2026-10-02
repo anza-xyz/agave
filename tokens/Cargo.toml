@@ -56,7 +56,7 @@ solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
-solana-stake-interface = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -69,9 +69,9 @@ thiserror = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
-bincode = { workspace = true }
 solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction-error = { workspace = true }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,5 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::{stake_history::StakeHistory, stakes::SerdeStakesToStakeFormat},
     solana_bls_signatures::pubkey::{

@@ -25,7 +25,6 @@ conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
 dev-context-only-utils = [
     "dep:qualifier_attr",
     "dep:solana-message",
-    "solana-epoch-schedule/wincode",
 ]
 dummy-for-ci-check = ["metrics"]
 metrics = []
@@ -35,32 +34,30 @@ svm-internal = ["dep:qualifier_attr"]
 
 [dependencies]
 base64 = { workspace = true }
-bincode = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
-serde = { workspace = true }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
-solana-clock = { workspace = true, features = ["serde", "sysvar"] }
-solana-epoch-rewards = { workspace = true }
-solana-epoch-schedule = { workspace = true }
+solana-clock = { workspace = true, features = ["sysvar", "wincode"] }
+solana-epoch-rewards = { workspace = true, features = ["wincode"] }
+solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-fee-structure = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["num-traits"] }
-solana-last-restart-slot = { workspace = true }
+solana-last-restart-slot = { workspace = true, features = ["wincode"] }
 solana-loader-v3-interface = { workspace = true }
 solana-message = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-rent = { workspace = true }
+solana-rent = { workspace = true, features = ["wincode"] }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
-solana-slot-hashes = { workspace = true, features = ["serde", "sysvar", "wincode"] }
+solana-slot-hashes = { workspace = true, features = ["sysvar", "wincode"] }
 solana-stable-layout = { workspace = true }
-solana-stake-history = { workspace = true, features = ["serde", "sysvar"] }
+solana-stake-history = { workspace = true, features = ["sysvar", "wincode"] }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
@@ -69,7 +66,7 @@ solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true, features = ["serde"] }
+solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 thiserror = { workspace = true }
@@ -81,8 +78,8 @@ libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 solana-account-info = { workspace = true }
 solana-ed25519-program = { workspace = true }
-solana-instruction = { workspace = true, features = ["bincode"] }
-solana-instruction-error = { workspace = true, features = ["serde"] }
+solana-instruction = { workspace = true, features = ["wincode"] }
+solana-instruction-error = { workspace = true, features = ["wincode"] }
 solana-keypair = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -91,7 +88,7 @@ solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [lints]

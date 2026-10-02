@@ -27,7 +27,9 @@ pub enum IpEchoClientError {
     #[error(transparent)]
     Timeout(#[from] tokio::time::error::Elapsed),
     #[error(transparent)]
-    BincodeError(#[from] bincode::Error),
+    Serialize(#[from] wincode::WriteError),
+    #[error(transparent)]
+    Deserialize(#[from] wincode::ReadError),
     #[error("{0}")]
     InvalidResponse(String),
 }
@@ -70,7 +72,7 @@ async fn make_request(
     // Start with HEADER_LENGTH null bytes to avoid looking like an HTTP GET/POST request
     let mut bytes = BytesMut::with_capacity(IP_ECHO_SERVER_RESPONSE_LENGTH);
     bytes.extend_from_slice(&[0u8; HEADER_LENGTH]);
-    bytes.extend_from_slice(&bincode::serialize(&msg)?);
+    bytes.extend_from_slice(&wincode::serialize(&msg)?);
 
     // End with '\n' to make this request look HTTP-ish and tickle an error response back
     // from an HTTP server
@@ -108,7 +110,7 @@ fn parse_response(
                 ))
             })?;
     let payload = match response_header {
-        [0, 0, 0, 0] => bincode::deserialize(body)?,
+        [0, 0, 0, 0] => wincode::deserialize(body)?,
         [b'H', b'T', b'T', b'P'] => {
             let http_response = std::str::from_utf8(body);
             match http_response {

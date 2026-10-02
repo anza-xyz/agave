@@ -63,7 +63,7 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        BankId, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot,
+        DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot,
         UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
@@ -1941,7 +1941,7 @@ fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_sema
                 loaded_accounts_count: 2,
                 loaded_accounts_data_size,
             },
-            fee_payer_post_balance: fee_payer_initial_balance - 5000,
+            fee_payer_post_balance: Some(fee_payer_initial_balance - 5000),
         })]
     );
 }
@@ -2015,7 +2015,7 @@ fn test_load_and_execute_commit_transactions_failure() {
                 loaded_accounts_count: 3,
                 loaded_accounts_data_size: 149, // size of system account (initially recipient does not exist)
             },
-            fee_payer_post_balance: starting_balance - 5000,
+            fee_payer_post_balance: Some(starting_balance - 5000),
         })]
     );
 }
@@ -2082,7 +2082,7 @@ fn test_load_and_execute_commit_transactions_success() {
                 loaded_accounts_count: 3,
                 loaded_accounts_data_size: 149, // size of system account (initially recipient does not exist)
             },
-            fee_payer_post_balance: starting_balance - 5000 - transfer_amount,
+            fee_payer_post_balance: Some(starting_balance - 5000 - transfer_amount),
         })]
     );
 }
@@ -2548,11 +2548,11 @@ fn test_verify_snapshot_bank() {
     .unwrap();
     bank.freeze();
     add_root_and_flush_write_cache(&bank);
-    assert!(bank.verify_snapshot_bank(false, bank.slot(), None));
+    assert!(bank.verify_snapshot_bank(None));
 
     // tamper the bank after freeze!
     bank.increment_signature_count(1);
-    assert!(!bank.verify_snapshot_bank(false, bank.slot(), None));
+    assert!(!bank.verify_snapshot_bank(None));
 }
 
 // Test that two bank forks with the same transactions should not hash to the same value.
@@ -5761,7 +5761,6 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         Some(leader_for_snapshot_restore),
         None,
         false,
-        false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         Arc::default(),
@@ -5826,7 +5825,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "F1RGWPgPj4ACW2q9FhmN36YGcMZ4ReSBp1kjHGGXwNAP",
+        "FhK44Rm28aCttSnQr5BpxBaNW526YmFW21wUNBNUNcQm",
     );
 }
 
@@ -8266,8 +8265,8 @@ fn setup_banks_on_fork_to_remove(
     assert!(step_size >= 2);
     let pubkeys_to_modify: Vec<Pubkey> = pubkeys_to_modify.iter().cloned().collect();
     let pubkeys_to_modify_per_slot = (pubkeys_to_modify.len() / step_size).max(1);
-    for _ in (0..num_banks_on_fork).step_by(step_size) {
-        let mut lamports_this_round = 0;
+    for round_start in (0..num_banks_on_fork).step_by(step_size) {
+        let lamports_this_round = round_start as u64 + starting_lamports + 1;
         for i in 0..step_size {
             let slot = bank_at_fork_tip.slot() + 1;
             bank_at_fork_tip = Arc::new(Bank::new_from_parent(
@@ -8275,9 +8274,6 @@ fn setup_banks_on_fork_to_remove(
                 SlotLeader::new_unique(),
                 slot,
             ));
-            if lamports_this_round == 0 {
-                lamports_this_round = bank_at_fork_tip.bank_id() + starting_lamports + 1;
-            }
             let pubkey_to_modify_starting_index = i * pubkeys_to_modify_per_slot;
             let account = AccountSharedData::new(lamports_this_round, 0, program_id);
             for pubkey_index_to_modify in pubkey_to_modify_starting_index
@@ -13648,7 +13644,12 @@ fn test_new_for_txn_tests_system_transfer() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts((parent_slot, refs.as_slice()), 0, None, &ancestors);
+    accounts.store_accounts(
+        (parent_slot, refs.as_slice()),
+        BankId::new(0),
+        None,
+        &ancestors,
+    );
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
@@ -13827,7 +13828,12 @@ fn test_new_for_block_tests_with_vote_account() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts((parent_slot, refs.as_slice()), 0, None, &ancestors);
+    accounts.store_accounts(
+        (parent_slot, refs.as_slice()),
+        BankId::new(0),
+        None,
+        &ancestors,
+    );
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);

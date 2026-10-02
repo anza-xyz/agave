@@ -54,6 +54,7 @@ solana-svm-type-overrides = { workspace = true }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -76,7 +77,6 @@ solana-system-program = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 test-case = { workspace = true }
-wincode = { workspace = true }
 
 [[bench]]
 name = "serialization"

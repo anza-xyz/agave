@@ -9,9 +9,10 @@ use {
     log::*,
     smallvec::SmallVec,
     solana_account_decoder_client_types::token::UiTokenAmount,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
+    solana_runtime::bank::BankId,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_context::transaction::TransactionReturnData,
@@ -170,7 +171,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             match plugin.notify_transaction_for_bank(
                 ReplicaTransactionInfoVersions::V0_0_4(&transaction_log_info),
                 slot,
-                bank_id,
+                bank_id.into(),
             ) {
                 Err(err) => {
                     error!(
@@ -348,7 +349,7 @@ mod tests {
             &self,
             transaction_info: ReplicaTransactionInfoVersions,
             slot: Slot,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> Result<()> {
             let ReplicaTransactionInfoVersions::V0_0_4(info) = transaction_info;
             self.captured.lock().unwrap().push(format!(
@@ -450,7 +451,7 @@ mod tests {
 
         notifier.notify_transaction(
             42,
-            9,
+            BankId::new(9),
             3,
             &Signature::default(),
             &Hash::default(),
@@ -539,7 +540,7 @@ mod tests {
         };
         notifier.notify_transaction(
             43,
-            9,
+            BankId::new(9),
             0,
             &Signature::default(),
             &Hash::default(),

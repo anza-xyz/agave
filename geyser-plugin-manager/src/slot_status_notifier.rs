@@ -1,11 +1,8 @@
 use {
     agave_geyser_plugin_host::GeyserPluginHost,
-    agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
-    arc_swap::ArcSwap,
-    log::*,
-    solana_clock::{BankId, Slot},
-    solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
-    std::sync::Arc,
+    agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus, arc_swap::ArcSwap, log::*,
+    solana_clock::Slot, solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
+    solana_runtime::bank::BankId, std::sync::Arc,
 };
 
 pub struct SlotStatusNotifierImpl {
@@ -87,7 +84,7 @@ impl SlotStatusNotifierImpl {
         }
 
         for plugin in plugin_manager.plugins().iter() {
-            match plugin.update_bank_status(slot, parent, &slot_status, bank_id) {
+            match plugin.update_bank_status(slot, parent, &slot_status, bank_id.into()) {
                 Err(err) => {
                     error!(
                         "Failed to update bank status at slot {}, error: {} to plugin {}",
@@ -119,7 +116,7 @@ mod tests {
         std::sync::{Arc, Mutex},
     };
 
-    type SlotStatusUpdate = (Slot, Option<Slot>, SlotStatus, BankId);
+    type SlotStatusUpdate = (Slot, Option<Slot>, SlotStatus, u64);
     type SlotUpdate = (Slot, Option<Slot>, SlotStatus);
 
     #[derive(Debug, Default)]
@@ -151,7 +148,7 @@ mod tests {
             slot: Slot,
             parent: Option<u64>,
             status: &SlotStatus,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> Result<()> {
             self.updates
                 .lock()
@@ -189,8 +186,8 @@ mod tests {
         let updates = Arc::new(Mutex::new(Vec::new()));
         let notifier = create_notifier(updates.clone());
 
-        notifier.notify_created_bank(42, 41, 9);
-        notifier.notify_slot_processed(42, Some(41), 9);
+        notifier.notify_created_bank(42, 41, BankId::new(9));
+        notifier.notify_slot_processed(42, Some(41), BankId::new(9));
 
         assert_eq!(
             *updates.lock().unwrap(),

@@ -21,6 +21,7 @@ mod ancient_append_vecs;
 pub mod append_vec;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod append_vec;
+pub mod bank_id;
 pub mod blockhash_queue;
 pub mod contains;
 pub mod is_loadable;
@@ -52,7 +53,3 @@ pub use {
 
 #[macro_use]
 extern crate solana_metrics;
-
-#[cfg_attr(feature = "stable-abi", macro_use)]
-#[cfg(feature = "stable-abi")]
-extern crate solana_frozen_abi_macro;

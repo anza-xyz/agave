@@ -84,7 +84,7 @@ pub async fn add_upgradeable_loader_account(
         account_data_len,
         &id(),
     );
-    bincode::serialize_into(account.data_as_mut_slice(), account_state)
+    wincode::serialize_into(account.data_as_mut_slice(), account_state)
         .expect("state failed to serialize into account data");
     account_callback(&mut account);
     context.set_account(account_address, &account);
