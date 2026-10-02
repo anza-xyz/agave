@@ -790,7 +790,7 @@ pub async fn process_airdrop(
         Err(err) => log_instruction_custom_error::<SystemError>(Err(err), config).map_err(|err| {
             match web_faucet_url(&config.json_rpc_url, &pubkey) {
                 Some(url) => format!(
-                    "{err}\n\nThe CLI faucet is closed on this cluster. Request an airdrop at:\n  \
+                    "{err}\n\nThe CLI faucet is closed on this cluster. Request an airdrop at:\n\
                      {url}"
                 )
                 .into(),
