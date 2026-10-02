@@ -46,8 +46,12 @@ use {
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
-    solana_entry::entry::create_ticks,
+    solana_entry::{
+        block_component::{BlockComponent, BlockFooterV1, VersionedBlockMarker},
+        entry::{Entry, create_ticks},
+    },
     solana_feature_gate_interface::{self as feature, Feature},
+    solana_hash::Hash,
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_keypair::{Keypair, keypair_from_seed},
@@ -69,6 +73,7 @@ use {
             bank_hash_details::{self, SlotDetails, TransactionDetails},
         },
         bank_forks::BankForks,
+        block_component_processor::BlockComponentProcessor,
         inflation_rewards::points::{InflationPointCalculationEvent, PointValue},
         installed_scheduler_pool::BankWithScheduler,
         snapshot_bank_utils,
@@ -116,6 +121,108 @@ mod ledger_path;
 mod ledger_utils;
 mod output;
 mod program;
+
+fn synthetic_alpenglow_block_time_nanos(bank: &Bank) -> i64 {
+    let parent = bank
+        .parent()
+        .expect("Synthetic Alpenglow child bank must have a parent");
+    let parent_time_nanos = parent
+        .get_nanosecond_clock()
+        .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
+    let elapsed_slot_duration_nanos =
+        bank.slot_range_duration_nanos(parent.slot().saturating_add(1), bank.slot());
+    let (lower_bound_nanos, upper_bound_nanos) = BlockComponentProcessor::nanosecond_time_bounds(
+        parent_time_nanos,
+        elapsed_slot_duration_nanos,
+    );
+    let lower_bound_nanos = lower_bound_nanos.max(0);
+    assert!(
+        lower_bound_nanos <= upper_bound_nanos,
+        "Unable to generate a valid synthetic Alpenglow block timestamp"
+    );
+
+    let nominal_slot_duration_nanos =
+        i64::try_from(elapsed_slot_duration_nanos).unwrap_or(i64::MAX);
+    parent_time_nanos
+        .saturating_add(nominal_slot_duration_nanos)
+        .clamp(lower_bound_nanos, upper_bound_nanos)
+}
+
+fn make_synthetic_alpenglow_shreds(
+    bank: &Bank,
+    keypair: &Keypair,
+    footer: BlockFooterV1,
+    alpentick: Entry,
+    shred_version: u16,
+    mut chained_merkle_root: Hash,
+) -> Vec<Shred> {
+    let parent = bank
+        .parent()
+        .expect("Synthetic Alpenglow child bank must have a parent");
+    let parent_block_id = parent
+        .block_id()
+        .expect("Synthetic Alpenglow child bank parent must have a block ID");
+    let ticks_per_slot = u8::try_from(bank.ticks_per_slot())
+        .expect("Alpenglow ticks per slot must fit in a shred reference tick");
+    // Alpenglow blocks only contain one tick at the end of the slot.
+    // So:
+    // - Header (reference tick = 0)
+    // - Transactions & footer (reference tick = max - 1)
+    // - Alpentick (reference tick = max)
+    let header_reference_tick = 0;
+    let footer_reference_tick = ticks_per_slot
+        .checked_sub(1)
+        .expect("Alpenglow bank must have at least one tick per slot");
+    let components = [
+        (
+            BlockComponent::new_block_header(parent.slot(), parent_block_id),
+            header_reference_tick,
+            false,
+        ),
+        (
+            BlockComponent::new_block_marker(VersionedBlockMarker::from_block_footer(footer)),
+            footer_reference_tick,
+            false,
+        ),
+        (
+            BlockComponent::new_entry_batch(vec![alpentick])
+                .expect("Alpentick entry batch must be valid"),
+            ticks_per_slot,
+            true,
+        ),
+    ];
+    let reed_solomon_cache = ReedSolomonCache::default();
+    let mut data_shreds = Vec::new();
+    let mut next_shred_index = 0;
+    let mut next_code_index = 0;
+
+    for (component, reference_tick, is_last_in_slot) in components {
+        let shredder = Shredder::new(bank.slot(), parent.slot(), reference_tick, shred_version)
+            .expect("Shredder creation must succeed");
+        let shreds = shredder.make_merkle_shreds_from_component(
+            keypair,
+            &component,
+            is_last_in_slot,
+            chained_merkle_root,
+            next_shred_index,
+            next_code_index,
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        if let Some(last_data_shred) = shreds.iter().filter(|shred| shred.is_data()).last() {
+            next_shred_index = last_data_shred.index() + 1;
+            chained_merkle_root = last_data_shred
+                .merkle_root()
+                .expect("Alpenglow data shreds must have a Merkle root");
+        }
+        if let Some(last_code_shred) = shreds.iter().filter(|shred| shred.is_code()).last() {
+            next_code_index = last_code_shred.index() + 1;
+        }
+        data_shreds.extend(shreds.into_iter().filter(Shred::is_data));
+    }
+
+    data_shreds
+}
 
 fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result<()> {
     let mut child = Command::new("dot")
@@ -1232,21 +1339,78 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
         }
     }
 
+    let pre_capitalization = bank.capitalization();
+    let post_capitalization = bank.calculate_capitalization_for_tests();
+    bank.set_capitalization_for_tests(post_capitalization);
+
+    let capitalization_message = if pre_capitalization != post_capitalization {
+        let amount = if pre_capitalization > post_capitalization {
+            format!("-{}", pre_capitalization - post_capitalization)
+        } else {
+            (post_capitalization - pre_capitalization).to_string()
+        };
+        let msg = format!("Capitalization change: {amount} lamports");
+        warn!("{msg}");
+        if !enable_capitalization_change {
+            eprintln!("{msg}\nBut `--enable-capitalization-change flag not provided");
+            exit(1);
+        }
+        Some(msg)
+    } else {
+        None
+    };
+
     let new_shred_version = compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
     if child_bank_required {
-        let num_ticks_per_slot = bank.ticks_per_slot();
-        let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
         let parent_blockhash = bank.last_blockhash();
-        let tick_entries = create_ticks(num_ticks_per_slot, num_hashes_per_tick, parent_blockhash);
-
         let scheduler = BankWithScheduler::no_scheduler_available();
-        tick_entries.iter().for_each(|tick_entry| {
-            bank.register_tick(&tick_entry.hash, &scheduler);
-        });
+        let is_alpenglow = bank.is_alpenglow();
+        let (tick_entries, alpenglow_footer) = if is_alpenglow {
+            bank.set_tick_height(
+                bank.max_tick_height()
+                    .checked_sub(1)
+                    .expect("Alpenglow bank must have a final tick"),
+            );
+            let block_producer_time_nanos = synthetic_alpenglow_block_time_nanos(&bank);
+            BlockComponentProcessor::update_bank_with_footer_fields(
+                &bank,
+                block_producer_time_nanos,
+                None,
+                None,
+                None,
+            )
+            .expect("Synthetic Alpenglow footer fields must be valid");
 
-        // Calculate and set the block ID so we can read it to
-        // properly chain shreds for the child bank
-        Bank::calculate_and_set_block_id_for_dcou(&bank);
+            let tick_entries = create_ticks(1, 1, parent_blockhash);
+            bank.register_tick(&tick_entries[0].hash, &scheduler);
+            bank.freeze();
+
+            let footer = BlockFooterV1 {
+                bank_hash: bank.hash(),
+                block_producer_time_nanos: u64::try_from(block_producer_time_nanos)
+                    .expect("Synthetic Alpenglow timestamp must fit in u64"),
+                block_user_agent: format!("agave-ledger-tool/{}", solana_version::version!())
+                    .into_bytes(),
+                block_final_cert: None,
+                skip_reward_cert: None,
+                notar_reward_cert: None,
+            };
+            (tick_entries, Some(footer))
+        } else {
+            let tick_entries = create_ticks(
+                bank.ticks_per_slot(),
+                bank.hashes_per_tick().unwrap_or(1),
+                parent_blockhash,
+            );
+            tick_entries.iter().for_each(|tick_entry| {
+                bank.register_tick(&tick_entry.hash, &scheduler);
+            });
+
+            // Calculate and set the legacy block ID so it is available for the snapshot and for
+            // chaining subsequent shreds.
+            Bank::calculate_and_set_block_id_for_dcou(&bank);
+            (tick_entries, None)
+        };
 
         // Next steps will need write access to the Blockstore
         // so ensure we have R/W access
@@ -1299,20 +1463,36 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
         // Use a "dummy" but deterministic keyapir to sign
         let keypair = keypair_from_seed(&[0; Keypair::SECRET_KEY_LENGTH])
             .expect("Keypair creation must succeed");
-        let chained_merkle_root = bank
+        let parent_block_id = bank
             .parent()
             .expect("Child bank must have parent bank available")
             .block_id()
             .expect("Parent bank must have block ID set");
+        let chained_merkle_root = rw_blockstore
+            .get_last_shred_merkle_root(bank.parent_slot())
+            .expect("Blockstore operation must succeed")
+            .unwrap_or(parent_block_id);
 
-        let shredder = Shredder::new(
-            slot,
-            bank.parent_slot(),
-            /*reference_tick:*/ 0,
-            new_shred_version,
-        )
-        .expect("Shredder creation must succeed");
-        let shreds: Vec<_> = shredder
+        let shreds = if let Some(footer) = alpenglow_footer {
+            make_synthetic_alpenglow_shreds(
+                &bank,
+                &keypair,
+                footer,
+                tick_entries
+                    .into_iter()
+                    .next()
+                    .expect("Synthetic Alpenglow bank must have an alpentick"),
+                new_shred_version,
+                chained_merkle_root,
+            )
+        } else {
+            Shredder::new(
+                slot,
+                bank.parent_slot(),
+                /*reference_tick:*/ 0,
+                new_shred_version,
+            )
+            .expect("Shredder creation must succeed")
             .make_merkle_shreds_from_entries(
                 &keypair,
                 &tick_entries,
@@ -1325,35 +1505,26 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
             )
             .into_iter()
             .filter(Shred::is_data)
-            .map(Cow::Owned)
-            .collect();
+            .collect()
+        };
+        let shreds: Vec<_> = shreds.into_iter().map(Cow::Owned).collect();
         let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
         let mut write_batch = rw_blockstore.get_write_batch();
         rw_blockstore
             .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
             .expect("Blockstore operation must succeed");
-    }
 
-    let pre_capitalization = bank.capitalization();
-    let post_capitalization = bank.calculate_capitalization_for_tests();
-    bank.set_capitalization_for_tests(post_capitalization);
-
-    let capitalization_message = if pre_capitalization != post_capitalization {
-        let amount = if pre_capitalization > post_capitalization {
-            format!("-{}", pre_capitalization - post_capitalization)
-        } else {
-            (post_capitalization - pre_capitalization).to_string()
-        };
-        let msg = format!("Capitalization change: {amount} lamports");
-        warn!("{msg}");
-        if !enable_capitalization_change {
-            eprintln!("{msg}\nBut `--enable-capitalization-change flag not provided");
-            exit(1);
+        if is_alpenglow {
+            let block_id = rw_blockstore
+                .get_double_merkle_root(
+                    slot,
+                    solana_ledger::blockstore_meta::BlockLocation::Original,
+                )
+                .expect("Blockstore operation must succeed")
+                .expect("Synthetic Alpenglow slot must have a double Merkle root");
+            bank.set_block_id(Some(block_id));
         }
-        Some(msg)
-    } else {
-        None
-    };
+    }
 
     let bank = if let Some(warp_slot) = warp_slot {
         // Need to flush the write cache in order to use
