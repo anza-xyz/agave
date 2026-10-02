@@ -1893,7 +1893,7 @@ impl AccountsDb {
         store: &AccountStorageEntry,
     ) -> GetUniqueAccountsResult {
         let written_bytes = store.num_stored_bytes();
-        let mut stored_accounts = Vec::with_capacity(store.count());
+        let mut stored_accounts = Vec::with_capacity(store.num_alive_accounts());
         store
             .accounts
             .scan_accounts_without_data(|offset, account| {
@@ -4203,7 +4203,7 @@ impl AccountsDb {
     }
 
     fn is_shrinking_productive(&self, store: &AccountStorageEntry) -> bool {
-        let alive_count = store.count();
+        let alive_count = store.num_alive_accounts();
         let total_bytes = store.num_stored_bytes();
         let alive_bytes = self.alive_bytes_after_shrink(store) as u64;
         if Self::should_not_shrink(alive_bytes, total_bytes) {
@@ -4279,8 +4279,8 @@ impl AccountsDb {
                 let remaining_accounts = if is_tombstone_reclaim {
                     // Tombstones stay alive in the storage; only record their offsets
                     store.batch_insert_tombstone_offsets(offsets);
-                    store.count()
-                } else if offsets.len() == store.count() {
+                    store.num_alive_accounts()
+                } else if offsets.len() == store.num_alive_accounts() {
                     // all remaining alive accounts in the storage are being removed, so the entire storage/slot is dead
                     store.remove_accounts(store.alive_bytes(), offsets.len())
                 } else {
@@ -5439,7 +5439,7 @@ impl AccountsDb {
                 "  slot: {} id: {} count: {} len: {}",
                 slot,
                 entry.id(),
-                entry.count(),
+                entry.num_alive_accounts(),
                 entry.accounts.len(),
             );
         }
@@ -5633,7 +5633,7 @@ impl AccountsDb {
 
     pub fn check_storage(&self, slot: Slot, alive_count: usize, total_count: usize) {
         let store = self.storage.get_slot_storage_entry(slot).unwrap();
-        assert_eq!(store.count(), alive_count);
+        assert_eq!(store.num_alive_accounts(), alive_count);
         assert_eq!(store.accounts_count(), total_count);
     }
 
@@ -5667,7 +5667,7 @@ impl AccountsDb {
     pub fn alive_account_count_in_slot(&self, slot: Slot) -> usize {
         self.storage
             .get_slot_storage_entry(slot)
-            .map(|storage| storage.count())
+            .map(|storage| storage.num_alive_accounts())
             .unwrap_or(0)
             .saturating_add(
                 self.accounts_cache

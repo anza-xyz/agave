@@ -150,7 +150,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
         append_vec.accounts.calculate_stored_size(0),
     );
     assert_eq!(append_vec.accounts_count(), 1);
-    assert_eq!(append_vec.count(), 1);
+    assert_eq!(append_vec.num_alive_accounts(), 1);
     assert_eq!(result.accounts_data_len, 0);
     assert_eq!(0, append_vec.num_tombstones());
     assert_eq!(
@@ -339,8 +339,8 @@ fn test_accountsdb_count_stores() {
         let slot_1_store = &db.storage.get_slot_storage_entry(1).unwrap();
 
         // flush_write_cache will clean pubkeys in slot0 when flushing slot1
-        assert_eq!(slot_0_store.count(), 1);
-        assert_eq!(slot_1_store.count(), 2);
+        assert_eq!(slot_0_store.num_alive_accounts(), 1);
+        assert_eq!(slot_1_store.num_alive_accounts(), 2);
         assert_eq!(slot_0_store.accounts_count(), 2);
         assert_eq!(slot_1_store.accounts_count(), 2);
     }
@@ -353,8 +353,8 @@ fn test_accountsdb_count_stores() {
     {
         let slot_0_store = &db.storage.get_slot_storage_entry(0).unwrap();
         let slot_1_store = &db.storage.get_slot_storage_entry(1).unwrap();
-        assert_eq!(slot_0_store.count(), 1);
-        assert_eq!(slot_1_store.count(), 2);
+        assert_eq!(slot_0_store.num_alive_accounts(), 1);
+        assert_eq!(slot_1_store.num_alive_accounts(), 2);
         assert_eq!(slot_0_store.accounts_count(), 2);
         assert_eq!(slot_1_store.accounts_count(), 2);
     }
@@ -908,7 +908,7 @@ fn test_account_grow() {
         if pass == 0 {
             accounts.add_root_and_flush_write_cache(0);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
-            assert_eq!(store.count(), 1);
+            assert_eq!(store.num_alive_accounts(), 1);
             continue;
         }
 
@@ -920,7 +920,7 @@ fn test_account_grow() {
             accounts.add_root_and_flush_write_cache(0);
             assert_eq!(accounts.storage.len(), 1);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
-            assert_eq!(store.count(), 2);
+            assert_eq!(store.num_alive_accounts(), 2);
             continue;
         }
         let ancestors = Ancestors::from(vec![0]);
@@ -1381,7 +1381,7 @@ fn test_clean_converts_zero_lamport_single_ref_account_to_tombstone_after_shrink
     // ensure ids are different, to indicate shrink ran
     assert_ne!(new_storage1.id(), storage1.id());
     // ensure there are exactly three accounts in the storage now, removing the obsolete one
-    assert_eq!(new_storage1.count(), 3);
+    assert_eq!(new_storage1.num_alive_accounts(), 3);
 
     // shrink kept the zero lamport single ref account's index entry; clean has not run yet
     assert!(accounts_db.contains(&zero_lamport_single_ref_pubkey));
@@ -1658,7 +1658,7 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
         storage_after_shrink.alive_bytes(),
         expected_alive_bytes_after_shrink,
     );
-    assert_eq!(storage_after_shrink.count(), 1);
+    assert_eq!(storage_after_shrink.num_alive_accounts(), 1);
     assert!(accounts_db.contains(&alive_pubkey));
     for pubkey in &dead_pubkeys {
         assert!(!accounts_db.contains(pubkey));
@@ -3216,7 +3216,7 @@ fn test_flush_purged_zero_lamport_account_purges_secondary_index() {
     // The zero-lamport accounts were not in the accounts index, so neither was written to
     // storage. Only the live account was flushed
     let storage = accounts.storage.get_slot_storage_entry(0).unwrap();
-    assert_eq!(storage.count(), 1);
+    assert_eq!(storage.num_alive_accounts(), 1);
     assert_eq!(storage.num_tombstones(), 0);
     assert!(!accounts.contains(&pubkey_purged));
     assert!(accounts.accounts_cache.contains_pubkey(&pubkey_cached));
@@ -4143,7 +4143,7 @@ fn test_alive_bytes() {
             num_obsolete_accounts += reclaims.len();
             accounts_db.remove_dead_accounts(reclaims.iter(), MarkAccountsObsolete::Yes(slot + 1));
             let after_size = storage0.alive_bytes();
-            if storage0.count() == 0 {
+            if storage0.num_alive_accounts() == 0 {
                 // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
                 assert_eq!(after_size, 0);
             } else {

@@ -86,7 +86,7 @@ impl AccountStorageEntry {
         Ok(self.accounts.reopen_as_readonly()?.map(|accounts| Self {
             id: self.id,
             slot: self.slot,
-            num_alive_accounts: AtomicUsize::new(self.count()),
+            num_alive_accounts: AtomicUsize::new(self.num_alive_accounts()),
             num_alive_bytes: AtomicUsize::new(self.alive_bytes()),
             num_stored_bytes: AtomicU64::new(self.num_stored_bytes()),
             accounts,
@@ -114,7 +114,7 @@ impl AccountStorageEntry {
     }
 
     /// Returns the number of alive accounts in this storage
-    pub fn count(&self) -> usize {
+    pub fn num_alive_accounts(&self) -> usize {
         self.num_alive_accounts.load(Ordering::Acquire)
     }
 
@@ -181,7 +181,7 @@ impl AccountStorageEntry {
     /// index entries (tombstones were removed from the index when created), so it is fully dead.
     pub(crate) fn has_only_tombstones(&self) -> bool {
         let num_tombstones = self.num_tombstones();
-        num_tombstones > 0 && self.count() == num_tombstones
+        num_tombstones > 0 && self.num_alive_accounts() == num_tombstones
     }
 
     /// Return the "alive_bytes" minus the bytes of this storage's tombstones
@@ -193,7 +193,7 @@ impl AccountStorageEntry {
     }
 
     pub fn has_accounts(&self) -> bool {
-        self.count() > 0
+        self.num_alive_accounts() > 0
     }
 
     pub fn slot(&self) -> Slot {
