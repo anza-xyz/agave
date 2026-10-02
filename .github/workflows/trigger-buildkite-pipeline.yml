@@ -36,6 +36,7 @@ jobs:
         run: |
           TRUSTED_CI_USERS=(
             "mergify[bot]"
+            "agave-version-bumper"
           )
           for trusted_ci_user in "${TRUSTED_CI_USERS[@]}"; do
             if [[ "$USERNAME" == "$trusted_ci_user" ]]; then
