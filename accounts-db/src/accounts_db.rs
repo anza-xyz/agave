@@ -4819,9 +4819,6 @@ impl AccountsDb {
         let mut capitalization = 0_u64;
         let mut accounts_data_len = 0;
         let mut stored_size_alive = 0;
-        let mut stored_size_total = 0;
-        let excluded_offsets = storage.excluded_offsets(None);
-        let mut num_obsolete_accounts_skipped = 0;
         let mut all_accounts_are_zero_lamports = true;
         accum.slot_arena.ensure_empty();
         let keyed_account_infos = &mut accum.slot_arena.keyed_account_infos;
@@ -4845,17 +4842,10 @@ impl AccountsDb {
         // Since we scan the storage from oldest to newest, we can simply increment a local
         // counter per account and use that for the write version.
         let mut write_version_for_geyser = 0;
-        storage
-            .accounts
-            .scan_accounts(reader, |offset, account| {
+        let num_obsolete_accounts_skipped = storage
+            .scan_accounts(reader, None, |offset, account| {
                 let data_len = account.data.len();
-                let stored_size = storage.accounts.calculate_stored_size(data_len);
-                stored_size_total += stored_size as u64;
-                if excluded_offsets.contains(&offset) {
-                    num_obsolete_accounts_skipped += 1;
-                    return;
-                }
-                stored_size_alive += stored_size;
+                stored_size_alive += storage.accounts.calculate_stored_size(data_len);
                 let is_account_zero_lamport = account.is_zero_lamport();
                 if !is_account_zero_lamport {
                     accounts_data_len += data_len as u64;
@@ -4921,12 +4911,9 @@ impl AccountsDb {
                 .insert_new_if_missing_into_primary_index(slot, keyed_account_infos)
         );
 
-        // Alive bytes must not exceed the size of all stored accounts.
-        assert!(
-            stored_size_alive as u64 <= stored_size_total,
-            "Alive bytes ({stored_size_alive}) is larger than the stored bytes of the accounts \
-             file ({stored_size_total}) for store_id: {store_id}",
-        );
+        let stored_size_total = stored_size_alive
+            + storage.get_obsolete_bytes(None)
+            + storage.num_tombstones() * storage.accounts.calculate_stored_size(0);
 
         storage
             .num_alive_accounts
@@ -4936,7 +4923,7 @@ impl AccountsDb {
             .store(stored_size_alive, Ordering::Release);
         storage
             .num_stored_bytes
-            .store(stored_size_total, Ordering::Release);
+            .store(stored_size_total as u64, Ordering::Release);
 
         // Zero-lamport accounts stay alive in the index until clean removes them. Their storages
         // are not otherwise dirty, so add the pubkeys into `uncleaned_pubkeys` for the first

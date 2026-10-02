@@ -251,7 +251,7 @@ impl AccountStorageEntry {
     }
 
     /// Collect the offsets that should be excluded from scans
-    pub(crate) fn excluded_offsets(&self, obsolete_slot: Option<Slot>) -> IntSet<Offset> {
+    fn excluded_offsets(&self, obsolete_slot: Option<Slot>) -> IntSet<Offset> {
         let mut offsets: IntSet<_> = self
             .obsolete_accounts_read_lock()
             .filter_obsolete_accounts(obsolete_slot)
