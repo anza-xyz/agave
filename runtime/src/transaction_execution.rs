@@ -88,7 +88,7 @@ pub fn execute_batch<'a>(
 
     let mut check_block_costs_elapsed = Measure::start("check_block_costs");
 
-    let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions());
+    let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions())?;
     let checked_tx_costs_result =
         check_block_cost_limits(bank, batch.sanitized_transactions(), &tx_costs);
 
@@ -132,13 +132,7 @@ pub fn execute_batch<'a>(
         let (balances, token_balances) =
             compile_collected_balances(balance_collector.unwrap_or_default());
 
-        // The length of costs vector needs to be consistent with all other
-        // vectors that are sent over (such as `transactions`). So, replace the
-        // None elements with Some(0)
-        let tx_costs = tx_costs
-            .into_iter()
-            .map(|tx_cost_option| tx_cost_option.map(|tx_cost| tx_cost.sum()).or(Some(0)))
-            .collect();
+        let tx_cost_sums = tx_costs.iter().map(|tx_cost| Some(tx_cost.sum())).collect();
 
         transaction_status_sender.send_transaction_status_batch(
             bank.slot(),
@@ -147,7 +141,7 @@ pub fn execute_batch<'a>(
             commit_results,
             balances,
             token_balances,
-            tx_costs,
+            tx_cost_sums,
             transaction_indexes.into_owned(),
         );
     }
@@ -158,16 +152,14 @@ pub fn execute_batch<'a>(
 fn check_block_cost_limits<Tx: TransactionWithMeta>(
     bank: &Bank,
     transactions: &[Tx],
-    tx_costs: &[Option<TransactionCost>],
+    tx_costs: &[TransactionCost],
 ) -> TransactionResult<()> {
     assert_eq!(transactions.len(), tx_costs.len());
     let mut cost_tracker = bank.write_cost_tracker().unwrap();
     for (transaction, tx_cost) in transactions.iter().zip(tx_costs) {
-        if let Some(tx_cost) = tx_cost {
-            cost_tracker
-                .try_add(tx_cost, writable_accounts(transaction))
-                .map_err(TransactionError::from)?;
-        }
+        cost_tracker
+            .try_add(tx_cost, writable_accounts(transaction))
+            .map_err(TransactionError::from)?;
     }
 
     Ok(())
@@ -178,25 +170,20 @@ fn get_transaction_costs<Tx: TransactionWithMeta>(
     bank: &Bank,
     commit_results: &[TransactionCommitResult],
     sanitized_transactions: &[Tx],
-) -> Vec<Option<TransactionCost>> {
+) -> TransactionResult<Vec<TransactionCost>> {
     assert_eq!(sanitized_transactions.len(), commit_results.len());
 
-    commit_results
-        .iter()
-        .zip(sanitized_transactions)
-        .map(|(commit_result, tx)| {
-            if let Ok(committed_tx) = commit_result {
-                Some(CostModel::calculate_cost_for_executed_transaction(
-                    tx,
-                    committed_tx.executed_units,
-                    committed_tx.loaded_account_stats.loaded_accounts_data_size,
-                    &bank.feature_set,
-                ))
-            } else {
-                None
-            }
-        })
-        .collect()
+    let mut tx_costs = Vec::with_capacity(commit_results.len());
+    for (commit_result, tx) in commit_results.iter().zip(sanitized_transactions) {
+        let committed_tx = commit_result.as_ref().map_err(Clone::clone)?;
+        tx_costs.push(CostModel::calculate_cost_for_executed_transaction(
+            tx,
+            committed_tx.executed_units,
+            committed_tx.loaded_account_stats.loaded_accounts_data_size,
+            &bank.feature_set,
+        ));
+    }
+    Ok(tx_costs)
 }
 
 fn get_first_error<T, Tx: SVMTransaction>(
@@ -345,7 +332,7 @@ mod tests {
             .set_limits(CostTrackerLimits::new(u64::MAX, block_limit, u64::MAX));
 
         let transactions = std::slice::from_ref(&tx);
-        let tx_costs = [Some(tx_cost)];
+        let tx_costs = [tx_cost];
         // The transaction will fit when added the first time
         assert!(check_block_cost_limits(&bank, transactions, &tx_costs).is_ok());
         // But adding a second time will exceed the block limit
@@ -353,8 +340,6 @@ mod tests {
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
             check_block_cost_limits(&bank, transactions, &tx_costs)
         );
-        // Adding another None will noop (even though the block is already full)
-        assert!(check_block_cost_limits(&bank, transactions, &[None]).is_ok());
     }
 
     #[test]
@@ -547,9 +532,9 @@ mod tests {
         assert_eq!(committed.executed_units, compute);
 
         let tx_costs =
-            get_transaction_costs(&bank, &commit_results, batch.sanitized_transactions());
+            get_transaction_costs(&bank, &commit_results, batch.sanitized_transactions()).unwrap();
 
-        let noop_cost = tx_costs[0].as_ref().unwrap().sum();
+        let noop_cost = tx_costs[0].sum();
         assert_eq!(noop_cost, sig + locks + data + compute + size);
 
         check_block_cost_limits(&bank, batch.sanitized_transactions(), &tx_costs).unwrap();
