@@ -93,10 +93,12 @@ pub fn initialize_logging(logfile: Option<PathBuf>) {
         return;
     };
 
+    // Redirect before building the logger: env_logger probes stderr for color support once,
+    // at build time, so probing the launching tty writes ANSI escapes into the logfile.
     #[cfg(unix)]
     {
-        setup_with_default_filter();
         redirect_stderr(&logfile);
+        setup_with_default_filter();
     }
     #[cfg(not(unix))]
     {
