@@ -2,7 +2,10 @@
 
 use {
     crate::{
-        cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
+        cluster_info::{
+            CHANNEL_CONSUME_CAPACITY, ClusterInfo, GOSSIP_CHANNEL_CAPACITY,
+            GOSSIP_INGRESS_CHANNEL_CAPACITY,
+        },
         cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
@@ -56,7 +59,7 @@ impl GossipService {
         exit: Arc<AtomicBool>,
     ) -> Self {
         let (request_sender, request_receiver) =
-            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
+            EvictingSender::new_bounded(GOSSIP_INGRESS_CHANNEL_CAPACITY);
         trace!(
             "GossipService: id: {}, listening on primary interface: {:?}, all available \
              interfaces: {:?}",
@@ -77,7 +80,7 @@ impl GossipService {
             false,
         );
         let (consume_sender, listen_receiver) =
-            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
+            EvictingSender::new_bounded(CHANNEL_CONSUME_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
             epoch_specs.as_ref().map(|es| es.clone_box()),
             request_receiver,
