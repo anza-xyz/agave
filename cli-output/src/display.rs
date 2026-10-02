@@ -581,12 +581,9 @@ fn write_rewards<W: io::Write>(
         )?;
         for reward in rewards {
             let sign = if reward.lamports < 0 { "-" } else { "" };
-            // Amount and New Balance are Strings; a precision on a String truncates
-            // rather than limiting decimal places, so balances whose SOL
-            // representation is longer than 9 characters rendered wrong.
             writeln!(
                 w,
-                "{}  {:<44}  {:^15}  {}◎{:<14}  ◎{:<18}",
+                "{}  {:<44}  {:^15}  {}◎{:<14.14}  ◎{:<18.18}",
                 prefix,
                 reward.pubkey,
                 if let Some(reward_type) = reward.reward_type {
@@ -950,9 +947,6 @@ Rewards:
 
     #[test]
     fn test_write_rewards_does_not_truncate_balances() {
-        // Amount and New Balance are Strings; the previous `{:<14.9}` precision
-        // truncated any balance whose SOL representation is longer than 9
-        // characters, e.g. 1_234_567_891 lamports displayed as 1.2345678 SOL.
         let rewards: Rewards = vec![Reward {
             pubkey: Pubkey::new_from_array([1u8; 32]).to_string(),
             lamports: 1_234_567_891,
