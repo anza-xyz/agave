@@ -24,9 +24,6 @@ pub enum RouteError {
     #[error("missing output interface in route")]
     MissingOutputInterface,
 
-    #[error("could not resolve MAC address")]
-    MacResolutionError,
-
     #[error("unknown interface index {0}")]
     UnknownInterfaceIndex(u32),
 }
