@@ -629,8 +629,8 @@ fn default_trigger_secondary_step() -> buildkite::Step {
         name: String::from("Trigger Build on agave-secondary"),
         trigger: String::from("agave-secondary"),
         branches: vec![String::from("!pull/*")],
-        is_async: Some(true),
-        soft_fail: Some(true),
+        is_async: None,
+        soft_fail: None,
         build: Some(buildkite::Build {
             message: Some(String::from("${BUILDKITE_MESSAGE}")),
             commit: Some(String::from("${BUILDKITE_COMMIT}")),
