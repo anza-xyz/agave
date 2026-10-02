@@ -1,6 +1,7 @@
 use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Epoch, Slot, UnixTimestamp},
+    solana_hash::Hash,
     solana_inflation::Inflation,
     solana_transaction_status_client_types::ConfirmedTransactionStatusWithSignature,
     std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
@@ -579,6 +580,12 @@ impl From<ConfirmedTransactionStatusWithSignature> for RpcConfirmedTransactionSt
 pub struct RpcSnapshotSlotInfo {
     pub full: Slot,
     pub incremental: Option<Slot>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RpcSnapshotHashes {
+    pub full: (Slot, Hash),
+    pub incremental: Option<(Slot, Hash)>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

@@ -1328,7 +1328,7 @@ fn should_use_local_snapshot(
 
 /// Get the node's highest snapshot hashes from CRDS
 fn get_snapshot_hashes_for_node(cluster_info: &ClusterInfo, node: &Pubkey) -> Option<SnapshotHash> {
-    cluster_info.get_snapshot_hashes_for_node(node).map(
+    let mut hash = cluster_info.get_snapshot_hashes_for_node(node).map(
         |crds_data::SnapshotHashes {
              full, incremental, ..
          }| {
@@ -1338,7 +1338,26 @@ fn get_snapshot_hashes_for_node(cluster_info: &ClusterInfo, node: &Pubkey) -> Op
                 incr: highest_incremental_snapshot_hash,
             }
         },
-    )
+    );
+    if hash.is_none() {
+        let peer = cluster_info.lookup_contact_info(&node, |ci| ci.clone())?;
+        let rpc_addr = peer.rpc()?;
+        let rpc_client = RpcClient::new_socket_with_timeout(rpc_addr, Duration::from_secs(1));
+        hash = match rpc_client.get_snapshot_hashes() {
+                   Ok(hashes) => {
+                       if let Some(hashes) = hashes {
+                           Some(SnapshotHash {
+                               full: hashes.full,
+                               incr: hashes.incremental,
+                           })
+                       } else {
+                           None
+                       }
+                   }
+                   Err(_) => None
+               };
+    }
+    hash
 }
 
 #[cfg(test)]
