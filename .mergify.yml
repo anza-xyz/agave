@@ -9,6 +9,7 @@ pull_request_rules:
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
+      - author≠agave-version-bumper[bot]
     actions:
       label:
         add:
@@ -20,6 +21,7 @@ pull_request_rules:
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
+      - author≠agave-version-bumper[bot]
       # Only request reviews from the pr subscribers group if no one
       # has reviewed the community PR yet. These checks only match
       # reviewers with admin, write or maintain permission on the repository.
