@@ -3854,7 +3854,7 @@ impl AccountsDb {
 
             oldest_slot = std::cmp::min(oldest_slot, slot);
 
-            total_alive_bytes += store.alive_bytes();
+            total_alive_bytes += store.num_alive_bytes();
             total_bytes += store.num_stored_bytes();
         }
         info!(
@@ -4198,7 +4198,7 @@ impl AccountsDb {
         if self.can_purge_zero_lamport_accounts(store.slot()) {
             store.alive_bytes_exclude_zero_lamport_accounts()
         } else {
-            store.alive_bytes()
+            store.num_alive_bytes()
         }
     }
 
@@ -4282,7 +4282,7 @@ impl AccountsDb {
                     store.num_alive_accounts()
                 } else if offsets.len() == store.num_alive_accounts() {
                     // all remaining alive accounts in the storage are being removed, so the entire storage/slot is dead
-                    store.remove_accounts(store.alive_bytes(), offsets.len())
+                    store.remove_accounts(store.num_alive_bytes(), offsets.len())
                 } else {
                     // not all accounts are being removed, so figure out sizes of accounts we are removing and update the alive bytes and alive account count
                     let (remaining_accounts, us) = measure_us!({

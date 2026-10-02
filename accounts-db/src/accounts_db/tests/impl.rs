@@ -146,7 +146,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     // `uncleaned_pubkeys` for clean to handle
     assert_eq!(db.accounts_index.slot_list_len(&pubkey), 1);
     assert_eq!(
-        append_vec.alive_bytes(),
+        append_vec.num_alive_bytes(),
         append_vec.accounts.calculate_stored_size(0),
     );
     assert_eq!(append_vec.accounts_count(), 1);
@@ -1640,7 +1640,7 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
 
     assert_eq!(storage.num_tombstones(), dead_pubkeys.len());
 
-    let alive_bytes_before_shrink = storage.alive_bytes();
+    let alive_bytes_before_shrink = storage.num_alive_bytes();
     let expected_alive_bytes_after_shrink = accounts_db.alive_bytes_after_shrink(&storage);
     assert_ne!(expected_alive_bytes_after_shrink, 0);
     assert!(expected_alive_bytes_after_shrink < alive_bytes_before_shrink);
@@ -1655,7 +1655,7 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
 
     let storage_after_shrink = accounts_db.get_storage_for_slot(slot).unwrap();
     assert_eq!(
-        storage_after_shrink.alive_bytes(),
+        storage_after_shrink.num_alive_bytes(),
         expected_alive_bytes_after_shrink,
     );
     assert_eq!(storage_after_shrink.num_alive_accounts(), 1);
@@ -2958,7 +2958,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         // Bytes from tombstones are alive, and will stay alive after shrink.
         assert_eq!(
             accounts_db.alive_bytes_after_shrink(&store_with_tombstones),
-            store_with_tombstones.alive_bytes(),
+            store_with_tombstones.num_alive_bytes(),
         );
         assert!(!accounts_db.is_candidate_for_shrink(&store_with_tombstones));
         assert!(!accounts_db.is_shrinking_productive(&store_with_tombstones));
@@ -2966,7 +2966,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         // Stores without tombstones use the raw alive bytes.
         assert_eq!(
             accounts_db.alive_bytes_after_shrink(&store_no_tombstones),
-            store_no_tombstones.alive_bytes(),
+            store_no_tombstones.num_alive_bytes(),
         );
 
         let (selected_candidates, next_candidates) = accounts_db
@@ -2992,7 +2992,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
 
             // Bytes from tombstones are alive, but would be dead after shrink.
             assert_eq!(
-                store_with_tombstones.alive_bytes() as u64,
+                store_with_tombstones.num_alive_bytes() as u64,
                 store_with_tombstones.num_stored_bytes(),
             );
             assert_eq!(
@@ -3005,7 +3005,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
             // Stores without tombstones use the raw alive bytes.
             assert_eq!(
                 accounts_db.alive_bytes_after_shrink(&store_no_tombstones),
-                store_no_tombstones.alive_bytes(),
+                store_no_tombstones.num_alive_bytes(),
             );
 
             let (selected_candidates, next_candidates) = accounts_db
@@ -4131,7 +4131,7 @@ fn test_alive_bytes() {
     storage0
         .accounts
         .scan_accounts_without_data(|_offset, account| {
-            let before_size = storage0.alive_bytes();
+            let before_size = storage0.num_alive_bytes();
             let account_info = accounts_db
                 .accounts_index
                 .get_and_then(account.pubkey(), |entry| {
@@ -4142,7 +4142,7 @@ fn test_alive_bytes() {
             let reclaims = [account_info];
             num_obsolete_accounts += reclaims.len();
             accounts_db.remove_dead_accounts(reclaims.iter(), MarkAccountsObsolete::Yes(slot + 1));
-            let after_size = storage0.alive_bytes();
+            let after_size = storage0.num_alive_bytes();
             if storage0.num_alive_accounts() == 0 {
                 // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
                 assert_eq!(after_size, 0);
@@ -4188,7 +4188,7 @@ fn test_alive_bytes_exclude_zero_lamport_accounts() {
 
     // Flushing cache should only create one storage entry
     let storage = accounts_db.get_and_assert_single_storage(slot);
-    let alive_bytes = storage.alive_bytes();
+    let alive_bytes = storage.num_alive_bytes();
     assert!(alive_bytes > 0);
 
     // assert the number of tombstones

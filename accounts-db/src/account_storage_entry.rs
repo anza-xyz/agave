@@ -87,7 +87,7 @@ impl AccountStorageEntry {
             id: self.id,
             slot: self.slot,
             num_alive_accounts: AtomicUsize::new(self.num_alive_accounts()),
-            num_alive_bytes: AtomicUsize::new(self.alive_bytes()),
+            num_alive_bytes: AtomicUsize::new(self.num_alive_bytes()),
             num_stored_bytes: AtomicU64::new(self.num_stored_bytes()),
             accounts,
             tombstone_offsets: RwLock::new(self.tombstone_offsets.read().unwrap().clone()),
@@ -118,7 +118,7 @@ impl AccountStorageEntry {
         self.num_alive_accounts.load(Ordering::Acquire)
     }
 
-    pub fn alive_bytes(&self) -> usize {
+    pub fn num_alive_bytes(&self) -> usize {
         self.num_alive_bytes.load(Ordering::Acquire)
     }
 
@@ -189,7 +189,8 @@ impl AccountStorageEntry {
     pub(crate) fn alive_bytes_exclude_zero_lamport_accounts(&self) -> usize {
         let zero_lamport_dead_bytes =
             self.num_tombstones() * self.accounts.calculate_stored_size(0);
-        self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
+        self.num_alive_bytes()
+            .saturating_sub(zero_lamport_dead_bytes)
     }
 
     pub fn has_accounts(&self) -> bool {

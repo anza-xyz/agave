@@ -1478,7 +1478,7 @@ mod tests {
         assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
         assert_eq!(storage.num_stored_bytes(), info.written_bytes);
-        assert_eq!(storage.alive_bytes(), info.alive_bytes as usize);
+        assert_eq!(storage.num_alive_bytes(), info.alive_bytes as usize);
     }
 
     #[derive(EnumIter, Debug, PartialEq, Eq)]
@@ -1501,7 +1501,7 @@ mod tests {
                 create_storages_and_update_index(&db, slot1, slots, alive, data_size);
                 let mut infos = AncientSlotInfos::default();
                 let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
-                let alive_bytes_expected = storage.alive_bytes();
+                let alive_bytes_expected = storage.num_alive_bytes();
                 let high_slot = false;
                 let is_candidate_for_shrink = db.is_candidate_for_shrink(&storage);
                 let mut tuning = PackedAncientStorageTuning {
@@ -1599,7 +1599,7 @@ mod tests {
                         .collect::<Vec<_>>();
                     let alive_bytes_expected = storages
                         .iter()
-                        .map(|storage| storage.alive_bytes() as u64)
+                        .map(|storage| storage.num_alive_bytes() as u64)
                         .sum::<u64>();
                     let infos = db.calc_ancient_slot_info(slot_vec.clone(), &tuning);
                     if !alive {
@@ -1662,7 +1662,7 @@ mod tests {
                         .collect::<Vec<_>>();
                     let alive_bytes_expected = alive_storages
                         .iter()
-                        .map(|storage| storage.alive_bytes() as u64)
+                        .map(|storage| storage.num_alive_bytes() as u64)
                         .sum::<u64>();
 
                     let infos = match method {
@@ -2087,7 +2087,7 @@ mod tests {
                 }
                 let alive_bytes_expected = storages
                     .iter()
-                    .map(|storage| storage.alive_bytes() as u64)
+                    .map(|storage| storage.num_alive_bytes() as u64)
                     .sum::<u64>();
                 let infos = match method {
                     TestCollectInfo::CalcAncientSlotInfo => {

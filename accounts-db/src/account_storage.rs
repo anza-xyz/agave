@@ -575,7 +575,7 @@ mod tests {
             alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.alive_bytes())
+                .map(|entry| entry.num_alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -591,7 +591,7 @@ mod tests {
             alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.alive_bytes())
+                .map(|entry| entry.num_alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -603,7 +603,7 @@ mod tests {
             alive_bytes2,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.alive_bytes())
+                .map(|entry| entry.num_alive_bytes())
                 .unwrap_or_default()
         );
     }
