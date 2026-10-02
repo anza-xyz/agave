@@ -13,7 +13,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
-    solana_measure::{measure::Measure, measure_us},
+    solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     std::{
         mem::ManuallyDrop,
@@ -54,8 +54,8 @@ pub struct ReadOnlyCacheStats {
     pub hits: u64,
     pub misses: u64,
     pub evicts: u64,
-    pub load_us: u64,
-    pub store_us: u64,
+    pub load_ns: u64,
+    pub store_ns: u64,
     pub evict_us: u64,
     pub evict_run_count: u64,
 }
@@ -65,8 +65,8 @@ struct AtomicReadOnlyCacheStats {
     hits: AtomicU64,
     misses: AtomicU64,
     evicts: AtomicU64,
-    load_us: AtomicU64,
-    store_us: AtomicU64,
+    load_ns: AtomicU64,
+    store_ns: AtomicU64,
     evict_us: AtomicU64,
     evict_run_count: AtomicU64,
 }
@@ -166,7 +166,7 @@ impl ReadOnlyAccountsCache {
         pubkey: &Pubkey,
         valid_slot: impl FnOnce(Slot) -> bool,
     ) -> Option<(AccountSharedData, Slot)> {
-        let (found, load_us) = measure_us!({
+        let (found, load_duration) = meas_dur!({
             let mut found = None;
             if let Some(entry) = self.cache.get(pubkey)
                 && valid_slot(entry.slot)
@@ -185,7 +185,9 @@ impl ReadOnlyAccountsCache {
             }
             found
         });
-        self.stats.load_us.fetch_add(load_us, Ordering::Relaxed);
+        self.stats
+            .load_ns
+            .fetch_add(load_duration.as_nanos() as u64, Ordering::Relaxed);
         found
     }
 
@@ -224,8 +226,8 @@ impl ReadOnlyAccountsCache {
             }
         };
         update_stat(&self.data_size, old_account_size, new_account_size);
-        let store_us = measure_store.end_as_us();
-        self.stats.store_us.fetch_add(store_us, Ordering::Relaxed);
+        let store_ns = measure_store.end_as_ns();
+        self.stats.store_ns.fetch_add(store_ns, Ordering::Relaxed);
     }
 
     /// remove entry if it exists.
@@ -271,8 +273,8 @@ impl ReadOnlyAccountsCache {
         let hits = self.stats.hits.swap(0, Ordering::Relaxed);
         let misses = self.stats.misses.swap(0, Ordering::Relaxed);
         let evicts = self.stats.evicts.swap(0, Ordering::Relaxed);
-        let load_us = self.stats.load_us.swap(0, Ordering::Relaxed);
-        let store_us = self.stats.store_us.swap(0, Ordering::Relaxed);
+        let load_ns = self.stats.load_ns.swap(0, Ordering::Relaxed);
+        let store_ns = self.stats.store_ns.swap(0, Ordering::Relaxed);
         let evict_us = self.stats.evict_us.swap(0, Ordering::Relaxed);
         let evict_run_count = self.stats.evict_run_count.swap(0, Ordering::Relaxed);
 
@@ -280,8 +282,8 @@ impl ReadOnlyAccountsCache {
             hits,
             misses,
             evicts,
-            load_us,
-            store_us,
+            load_ns,
+            store_ns,
             evict_us,
             evict_run_count,
         }

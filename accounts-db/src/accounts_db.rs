@@ -4737,13 +4737,13 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "read_only_accounts_cache_load_us",
-                    read_cache_stats.load_us,
+                    "read_only_accounts_cache_load_ns",
+                    read_cache_stats.load_ns,
                     i64
                 ),
                 (
-                    "read_only_accounts_cache_store_us",
-                    read_cache_stats.store_us,
+                    "read_only_accounts_cache_store_ns",
+                    read_cache_stats.store_ns,
                     i64
                 ),
                 (
