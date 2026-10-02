@@ -9128,6 +9128,7 @@ dependencies = [
  "agave-wake-channel",
  "assert_matches",
  "crossbeam-channel",
+ "crossbeam-queue",
  "crossbeam-utils",
  "dashmap",
  "derive_more 2.1.1",

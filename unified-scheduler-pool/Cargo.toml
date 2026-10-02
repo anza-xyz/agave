@@ -24,6 +24,7 @@ agave-jemalloc = { workspace = true, features = ["metrics"] }
 agave-wake-channel = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
+crossbeam-queue = { workspace = true }
 crossbeam-utils = { workspace = true }
 dashmap = { workspace = true }
 derive_more = { workspace = true }
