@@ -544,10 +544,10 @@ fn network_run_pull(
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
-                    let from_pubkey = from.keypair.pubkey();
-                    let label = CrdsValueLabel::ContactInfo(from_pubkey);
-                    let gossip_crds = from.gossip.crds.read();
-                    let self_info = gossip_crds.get::<&CrdsValue>(&label).unwrap().clone();
+                    // As in new_pull_requests: the caller's contact info carries the request time.
+                    let mut node = from.contact_info.clone();
+                    node.set_wallclock(now);
+                    let self_info = CrdsValue::new(CrdsData::ContactInfo(node), &from.keypair);
                     requests
                         .into_iter()
                         .map(move |(peer, filters)| (*peer.pubkey(), filters, self_info.clone()))
@@ -570,10 +570,9 @@ fn network_run_pull(
                 let requests: Vec<_> = filters
                     .into_iter()
                     .map(|filter| PullRequest {
-                        pubkey: from,
                         addr: SocketAddr::from(([0; 4], 0)),
-                        wallclock: now,
                         filter,
+                        caller: caller_info.clone(),
                     })
                     .collect();
                 let rsp: Vec<_> = network
