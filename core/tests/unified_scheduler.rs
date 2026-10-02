@@ -46,19 +46,18 @@ fn test_scheduler_waited_by_drop_bank_service() {
     struct StallingHandler;
     impl TaskHandler for StallingHandler {
         fn handle(
-            result: &mut Result<()>,
             timings: &mut ExecuteTimings,
             scheduling_context: &SchedulingContext,
             task: &Task,
             handler_context: &HandlerContext,
-        ) {
+        ) -> Result<()> {
             info!("Stalling at StallingHandler::handle()...");
             *LOCK_TO_STALL.lock().unwrap();
             // Wait a bit for the replay stage to prune banks
             std::thread::sleep(std::time::Duration::from_secs(3));
             info!("Now entering into DefaultTaskHandler::handle()...");
 
-            DefaultTaskHandler::handle(result, timings, scheduling_context, task, handler_context);
+            DefaultTaskHandler::handle(timings, scheduling_context, task, handler_context)
         }
     }
 

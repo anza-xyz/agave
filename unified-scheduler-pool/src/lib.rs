@@ -637,12 +637,11 @@ where
 
 pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
     fn handle(
-        result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
         task: &Task,
         handler_context: &HandlerContext,
-    );
+    ) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -650,12 +649,11 @@ pub struct DefaultTaskHandler;
 
 impl TaskHandler for DefaultTaskHandler {
     fn handle(
-        result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
         task: &Task,
         handler_context: &HandlerContext,
-    ) {
+    ) -> Result<()> {
         let bank = scheduling_context.bank();
         let transaction = task.transaction();
         let task_id = task.task_id();
@@ -668,7 +666,7 @@ impl TaskHandler for DefaultTaskHandler {
             transaction_indexes,
         };
 
-        *result = execute_batch(
+        let result = execute_batch(
             &batch_with_indexes,
             bank,
             handler_context.transaction_status_sender.as_ref(),
@@ -682,22 +680,17 @@ impl TaskHandler for DefaultTaskHandler {
             handler_context.prioritization_fee_cache.as_deref(),
         );
         sleepless_testing::at(CheckPoint::TaskHandled(task_id));
+        result
     }
 }
 
 struct ExecutedTask {
     task: Task,
-    result_with_timings: ResultWithTimings,
+    result: Result<()>,
+    timings: ExecuteTimings,
 }
 
 impl ExecutedTask {
-    fn new_boxed(task: Task) -> Box<Self> {
-        Box::new(Self {
-            task,
-            result_with_timings: initialized_result_with_timings(),
-        })
-    }
-
     fn consumed_block_size(&self) -> BlockSize {
         self.task.consumed_block_size()
     }
@@ -1115,17 +1108,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
     fn execute_task_with_handler(
         scheduling_context: &SchedulingContext,
-        executed_task: &mut Box<ExecutedTask>,
+        task: Task,
         handler_context: &HandlerContext,
-    ) {
+    ) -> Box<ExecutedTask> {
         debug!("handling task at {:?}", thread::current());
-        TH::handle(
-            &mut executed_task.result_with_timings.0,
-            &mut executed_task.result_with_timings.1,
-            scheduling_context,
-            &executed_task.task,
-            handler_context,
-        );
+        let mut timings = ExecuteTimings::default();
+        let result = TH::handle(&mut timings, scheduling_context, &task, handler_context);
+        Box::new(ExecutedTask {
+            task,
+            result,
+            timings,
+        })
     }
 
     fn max_running_task_count() -> Option<usize> {
@@ -1165,13 +1158,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         (result, timings): &mut ResultWithTimings,
         executed_task: Box<ExecutedTask>,
     ) -> bool {
+        let task_result = executed_task.result.clone();
         sleepless_testing::at(CheckPoint::TaskAccumulated(
             executed_task.task.task_id(),
-            &executed_task.result_with_timings.0,
+            &task_result,
         ));
-        timings.accumulate(&executed_task.result_with_timings.1);
+        timings.accumulate(&executed_task.timings);
 
-        match executed_task.result_with_timings.0 {
+        match task_result {
             Ok(()) => {
                 // The most normal case
                 // This is only for block production.
@@ -1656,13 +1650,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             warn!("failed to notify a panic from {current_thread:?}");
                         }
                     }
-                    let mut task = ExecutedTask::new_boxed(task);
-                    Self::execute_task_with_handler(
+                    let executed_task = Self::execute_task_with_handler(
                         runnable_task_receiver.context(),
-                        &mut task,
+                        task,
                         &handler_context,
                     );
-                    if sender.send(Ok(task)).is_err() {
+                    if sender.send(Ok(executed_task)).is_err() {
                         warn!("handler_thread: scheduler thread aborted...");
                         break;
                     }
@@ -2171,12 +2164,11 @@ mod tests {
 
         impl TaskHandler for ArenaCheckingHandler {
             fn handle(
-                _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<()> {
                 let task_id = task.task_id();
                 sleepless_testing::at((ArenaCheckPoint::Started, task_id));
                 sleepless_testing::at((ArenaCheckPoint::Released, task_id));
@@ -2193,6 +2185,7 @@ mod tests {
                     u128::from(Jemalloc::current_thread_arena().unwrap().as_raw()),
                     expected_arena_id
                 );
+                Ok(())
             }
         }
 
@@ -2478,13 +2471,13 @@ mod tests {
         struct ExecuteTimingCounter;
         impl TaskHandler for ExecuteTimingCounter {
             fn handle(
-                _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 _task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<()> {
                 timings.metrics[ExecuteTimingType::CheckUs] += 123;
+                Ok(())
             }
         }
         let pool = pool_raw.clone();
@@ -2654,13 +2647,12 @@ mod tests {
     struct FaultyHandler;
     impl TaskHandler for FaultyHandler {
         fn handle(
-            result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
             _scheduling_context: &SchedulingContext,
             _task: &Task,
             _handler_context: &HandlerContext,
-        ) {
-            *result = Err(TransactionError::AccountNotFound);
+        ) -> Result<()> {
+            Err(TransactionError::AccountNotFound)
         }
     }
 
@@ -2675,14 +2667,13 @@ mod tests {
         struct CommitCancelledHandler;
         impl TaskHandler for CommitCancelledHandler {
             fn handle(
-                result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<()> {
                 assert_eq!(task.task_id(), 0);
-                *result = Err(TransactionError::CommitCancelled);
+                Err(TransactionError::CommitCancelled)
             }
         }
 
@@ -2821,13 +2812,13 @@ mod tests {
         struct CountingHandler;
         impl TaskHandler for CountingHandler {
             fn handle(
-                _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 _task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<()> {
                 *TASK_COUNT.lock().unwrap() += 1;
+                Ok(())
             }
         }
 
@@ -3144,12 +3135,11 @@ mod tests {
         struct PanickingHandler;
         impl TaskHandler for PanickingHandler {
             fn handle(
-                _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<()> {
                 let task_id = task.task_id();
                 if task_id == 0 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
@@ -3223,18 +3213,20 @@ mod tests {
         struct CountingFaultyHandler;
         impl TaskHandler for CountingFaultyHandler {
             fn handle(
-                result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<()> {
                 let task_id = task.task_id();
                 *TASK_COUNT.lock().unwrap() += 1;
-                if task_id == 1 {
-                    *result = Err(TransactionError::AccountNotFound);
-                }
+                let result = if task_id == 1 {
+                    Err(TransactionError::AccountNotFound)
+                } else {
+                    Ok(())
+                };
                 sleepless_testing::at(CheckPoint::TaskHandled(task_id));
+                result
             }
         }
 
@@ -3307,12 +3299,11 @@ mod tests {
         struct StallingHandler;
         impl TaskHandler for StallingHandler {
             fn handle(
-                result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
                 scheduling_context: &SchedulingContext,
                 task: &Task,
                 handler_context: &HandlerContext,
-            ) {
+            ) -> Result<()> {
                 let task_id = task.task_id();
                 match task_id {
                     STALLED_TRANSACTION_INDEX => {
@@ -3322,13 +3313,7 @@ mod tests {
                     _ => unreachable!(),
                 };
 
-                DefaultTaskHandler::handle(
-                    result,
-                    timings,
-                    scheduling_context,
-                    task,
-                    handler_context,
-                );
+                DefaultTaskHandler::handle(timings, scheduling_context, task, handler_context)
             }
         }
 
@@ -3414,14 +3399,14 @@ mod tests {
         struct TaskAndContextChecker;
         impl TaskHandler for TaskAndContextChecker {
             fn handle(
-                _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<()> {
                 // The task task_id must always be matched to the slot.
                 assert_eq!(task.task_id() as Slot, scheduling_context.slot());
+                Ok(())
             }
         }
 
@@ -3520,15 +3505,13 @@ mod tests {
                 // is handle before finishing executing scheduled transactions
                 std::thread::sleep(std::time::Duration::from_secs(1));
 
-                let mut result = Ok(());
                 let mut timings = ExecuteTimings::default();
 
                 let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |_| {
                     UsageQueue::new(&Capability::FifoQueueing)
                 });
 
-                <DefaultTaskHandler as TaskHandler>::handle(
-                    &mut result,
+                let result = <DefaultTaskHandler as TaskHandler>::handle(
                     &mut timings,
                     &context,
                     &task,
@@ -3738,7 +3721,6 @@ mod tests {
 
         // this internally should call validate_account_locks() via
         // Bank::prepare_unlocked_batch_from_single_tx().
-        let result = &mut Ok(());
         let timings = &mut ExecuteTimings::default();
         let scheduling_context = &SchedulingContext::new(bank.clone());
         let handler_context = &HandlerContext {
@@ -3752,7 +3734,8 @@ mod tests {
         let task = SchedulingStateMachine::create_task(ReplayTransaction::from(tx), 0, &mut |_| {
             UsageQueue::new(&Capability::FifoQueueing)
         });
-        DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
+        let result =
+            DefaultTaskHandler::handle(timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
 }
