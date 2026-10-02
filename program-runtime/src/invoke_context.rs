@@ -1398,8 +1398,9 @@ mod tests {
         assert_eq!(invoke_context.get_stack_height(), max_depth);
     }
 
-    #[test]
-    fn test_max_instruction_trace_length_top_level() {
+    #[test_case(false; "simd_582_disabled")]
+    #[test_case(true; "simd_582_enabled")]
+    fn test_max_instruction_trace_length_top_level(fail_early: bool) {
         const MAX_INSTRUCTIONS: usize = 8;
         let mut transaction_context = TransactionContext::new(
             vec![(
@@ -1412,7 +1413,7 @@ mod tests {
             MAX_INSTRUCTIONS,
         );
         for _ in 0..MAX_INSTRUCTIONS {
-            transaction_context.push(false).unwrap();
+            transaction_context.push(fail_early).unwrap();
             transaction_context
                 .configure_top_level_instruction_for_tests(
                     0,
@@ -1422,14 +1423,16 @@ mod tests {
                 .unwrap();
             transaction_context.pop().unwrap();
         }
+
         assert_eq!(
-            transaction_context.push(false),
+            transaction_context.push(fail_early),
             Err(InstructionError::MaxInstructionTraceLengthExceeded)
         );
     }
 
-    #[test]
-    fn test_max_instruction_trace_length_cpi() {
+    #[test_case(false; "simd_582_disabled")]
+    #[test_case(true; "simd_582_enabled")]
+    fn test_max_instruction_trace_length_cpi(fail_early: bool) {
         // Hitting the limit with CPIs
         const MAX_INSTRUCTIONS: usize = 8;
         let mut transaction_context = TransactionContext::new(
@@ -1466,8 +1469,17 @@ mod tests {
             )
             .unwrap();
 
-        for _ in 0..MAX_INSTRUCTIONS {
-            transaction_context.push(false).unwrap();
+        for ix_in_trace in (2..).take(MAX_INSTRUCTIONS) {
+            let result = transaction_context.push(fail_early);
+            if ix_in_trace > MAX_INSTRUCTIONS && fail_early {
+                assert_eq!(
+                    result,
+                    Err(InstructionError::MaxInstructionTraceLengthExceeded)
+                );
+            } else {
+                assert!(result.is_ok());
+            }
+
             transaction_context
                 .configure_next_cpi_for_tests(
                     0,
@@ -1477,10 +1489,12 @@ mod tests {
                 .unwrap();
         }
 
-        assert_eq!(
-            transaction_context.push(false),
-            Err(InstructionError::MaxInstructionTraceLengthExceeded)
-        );
+        if !fail_early {
+            assert_eq!(
+                transaction_context.push(false),
+                Err(InstructionError::MaxInstructionTraceLengthExceeded)
+            );
+        }
     }
 
     #[test_case(MockInstruction::NoopSuccess, Ok(()); "NoopSuccess")]
@@ -1808,12 +1822,12 @@ mod tests {
 
         test_case_1(&invoke_context);
 
-        invoke_context.transaction_context.push(false).unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         invoke_context.transaction_context.pop().unwrap();
 
         test_case_2(&invoke_context);
 
-        invoke_context.transaction_context.push(false).unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         invoke_context
             .build_instruction_frame(instruction_1)
             .unwrap();
@@ -1822,7 +1836,7 @@ mod tests {
             .unwrap();
         test_case_1(&invoke_context);
 
-        invoke_context.transaction_context.push(false).unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         invoke_context
             .build_instruction_frame(instruction_2)
             .unwrap();
@@ -1896,7 +1910,7 @@ mod tests {
             }
         }
 
-        invoke_context.transaction_context.push(false).unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
 
         let instruction = Instruction::new_with_bytes(
             program_id,
