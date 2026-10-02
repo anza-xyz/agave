@@ -57,7 +57,7 @@ use {
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
         },
-        thread::{self, Builder, JoinHandle},
+        thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
@@ -77,6 +77,8 @@ const IDLE_TICK: Duration = Duration::from_millis(10);
 const RESPONSE_CHANNEL_SIZE: usize = SHRED_FETCH_CHANNEL_SIZE / DATA_SHREDS_PER_FEC_BLOCK;
 /// Roughly 1/32th of shred sigverify, amortizes overhead without starving processing
 const SOFT_RECEIVE_CAP: usize = 192;
+
+const SUBMIT_BLOCK_ID_REPAIR_STATS_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The type of messages that this service will send
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -260,6 +262,10 @@ impl BlockIdRepairService {
         repair_info: RepairInfo,
         outstanding_shred_requests: Arc<RwLock<OutstandingShredRepairs>>,
     ) -> Self {
+        let receiver_stats = Arc::new(StreamerReceiveStats::new(
+            "block_id_repair_response_receiver",
+        ));
+
         let (response_sender, response_receiver) =
             EvictingSender::new_bounded(RESPONSE_CHANNEL_SIZE);
 
@@ -269,15 +275,13 @@ impl BlockIdRepairService {
             block_id_repair_socket.clone(),
             exit.clone(),
             response_sender,
-            Arc::new(StreamerReceiveStats::new(
-                "block_id_repair_response_receiver",
-            )),
+            receiver_stats.clone(),
             None,  // coalesce
             false, // is_staked_service
         );
 
         let t_block_id_repair = Self::run(BlockIdRepairContext {
-            exit,
+            exit: exit.clone(),
             response_receiver,
             channels: block_id_repair_channels,
             blockstore,
@@ -289,8 +293,18 @@ impl BlockIdRepairService {
             outstanding_shred_requests,
         });
 
+        let t_metrics = Builder::new()
+            .name("solBlockIdMetr".to_string())
+            .spawn(move || {
+                while !exit.load(Ordering::Relaxed) {
+                    sleep(SUBMIT_BLOCK_ID_REPAIR_STATS_INTERVAL);
+                    receiver_stats.report();
+                }
+            })
+            .unwrap();
+
         Self {
-            thread_hdls: vec![t_receiver, t_block_id_repair],
+            thread_hdls: vec![t_receiver, t_block_id_repair, t_metrics],
         }
     }
 
