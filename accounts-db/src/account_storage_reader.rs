@@ -132,7 +132,11 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
             .iter()
             .map(|(_offset, data_len)| AppendVec::calculate_stored_size(*data_len))
             .sum();
-        let len_for_archive = storage.num_stored_bytes() as usize - excluded_size;
+        let len_for_archive = storage
+            .num_stored_bytes()
+            .checked_sub(excluded_size as u64)
+            .expect("stored bytes shall be at least the excluded size")
+            as usize;
 
         let mut excluded_offsets: Vec<_> = excluded_accounts
             .into_iter()
