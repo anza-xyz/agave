@@ -19,8 +19,6 @@ jobs:
   version-bump:
     if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-24.04
-    permissions:
-      pull-requests: write
     environment: "Version Bump"
     steps:
       - name: Create github app token
