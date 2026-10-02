@@ -117,6 +117,9 @@ pub enum PohRecorderError {
     #[error("couldn't reschedule pre-UpdateParent transactions for slot {0}")]
     RescheduleTransactionsError(Slot),
 
+    #[error("failed to enqueue transaction-history purge for slot {0}: {1}")]
+    PurgeTransactionHistory(Slot, String),
+
     #[error("leader window moved past slot {0}")]
     WindowMovedOn(Slot),
 }
