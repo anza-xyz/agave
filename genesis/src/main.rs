@@ -667,11 +667,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                      testnet, devnet, localhost]. Used for cloning feature sets",
                 ),
         )
-        .arg(
-            Arg::with_name("alpenglow")
-                .long("alpenglow")
-                .help("Whether we use Alpenglow consensus."),
-        )
         .get_matches();
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
@@ -815,8 +810,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let commission = value_t_or_exit!(matches, "vote_commission_percentage", u8);
     let rent = genesis_config.rent.clone();
 
-    let is_alpenglow = matches.is_present("alpenglow");
-
     if let Some(creation_time) = unix_timestamp_from_rfc3339_datetime(&matches, "creation_time") {
         genesis_config.creation_time = creation_time;
     }
@@ -836,8 +829,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
 
-    if is_alpenglow {
-        solana_runtime::genesis_utils::activate_all_features_alpenglow(&mut genesis_config);
+    if features_to_deactivate.contains(&agave_feature_set::alpenglow::id()) {
+        solana_runtime::genesis_utils::activate_all_features_tower(&mut genesis_config);
     } else {
         solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
     }
