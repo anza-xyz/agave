@@ -146,11 +146,11 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     // `uncleaned_pubkeys` for clean to handle
     assert_eq!(db.accounts_index.slot_list_len(&pubkey), 1);
     assert_eq!(
-        append_vec.alive_bytes(),
+        append_vec.num_alive_bytes(),
         append_vec.accounts.calculate_stored_size(0),
     );
     assert_eq!(append_vec.accounts_count(), 1);
-    assert_eq!(append_vec.count(), 1);
+    assert_eq!(append_vec.num_alive_accounts(), 1);
     assert_eq!(result.accounts_data_len, 0);
     assert_eq!(0, append_vec.num_tombstones());
     assert_eq!(
@@ -339,8 +339,8 @@ fn test_accountsdb_count_stores() {
         let slot_1_store = &db.storage.get_slot_storage_entry(1).unwrap();
 
         // flush_write_cache will clean pubkeys in slot0 when flushing slot1
-        assert_eq!(slot_0_store.count(), 1);
-        assert_eq!(slot_1_store.count(), 2);
+        assert_eq!(slot_0_store.num_alive_accounts(), 1);
+        assert_eq!(slot_1_store.num_alive_accounts(), 2);
         assert_eq!(slot_0_store.accounts_count(), 2);
         assert_eq!(slot_1_store.accounts_count(), 2);
     }
@@ -353,8 +353,8 @@ fn test_accountsdb_count_stores() {
     {
         let slot_0_store = &db.storage.get_slot_storage_entry(0).unwrap();
         let slot_1_store = &db.storage.get_slot_storage_entry(1).unwrap();
-        assert_eq!(slot_0_store.count(), 1);
-        assert_eq!(slot_1_store.count(), 2);
+        assert_eq!(slot_0_store.num_alive_accounts(), 1);
+        assert_eq!(slot_1_store.num_alive_accounts(), 2);
         assert_eq!(slot_0_store.accounts_count(), 2);
         assert_eq!(slot_1_store.accounts_count(), 2);
     }
@@ -908,7 +908,7 @@ fn test_account_grow() {
         if pass == 0 {
             accounts.add_root_and_flush_write_cache(0);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
-            assert_eq!(store.count(), 1);
+            assert_eq!(store.num_alive_accounts(), 1);
             continue;
         }
 
@@ -920,7 +920,7 @@ fn test_account_grow() {
             accounts.add_root_and_flush_write_cache(0);
             assert_eq!(accounts.storage.len(), 1);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
-            assert_eq!(store.count(), 2);
+            assert_eq!(store.num_alive_accounts(), 2);
             continue;
         }
         let ancestors = Ancestors::from(vec![0]);
@@ -1381,7 +1381,7 @@ fn test_clean_converts_zero_lamport_single_ref_account_to_tombstone_after_shrink
     // ensure ids are different, to indicate shrink ran
     assert_ne!(new_storage1.id(), storage1.id());
     // ensure there are exactly three accounts in the storage now, removing the obsolete one
-    assert_eq!(new_storage1.count(), 3);
+    assert_eq!(new_storage1.num_alive_accounts(), 3);
 
     // shrink kept the zero lamport single ref account's index entry; clean has not run yet
     assert!(accounts_db.contains(&zero_lamport_single_ref_pubkey));
@@ -1640,7 +1640,7 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
 
     assert_eq!(storage.num_tombstones(), dead_pubkeys.len());
 
-    let alive_bytes_before_shrink = storage.alive_bytes();
+    let alive_bytes_before_shrink = storage.num_alive_bytes();
     let expected_alive_bytes_after_shrink = accounts_db.alive_bytes_after_shrink(&storage);
     assert_ne!(expected_alive_bytes_after_shrink, 0);
     assert!(expected_alive_bytes_after_shrink < alive_bytes_before_shrink);
@@ -1655,10 +1655,10 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
 
     let storage_after_shrink = accounts_db.get_storage_for_slot(slot).unwrap();
     assert_eq!(
-        storage_after_shrink.alive_bytes(),
+        storage_after_shrink.num_alive_bytes(),
         expected_alive_bytes_after_shrink,
     );
-    assert_eq!(storage_after_shrink.count(), 1);
+    assert_eq!(storage_after_shrink.num_alive_accounts(), 1);
     assert!(accounts_db.contains(&alive_pubkey));
     for pubkey in &dead_pubkeys {
         assert!(!accounts_db.contains(pubkey));
@@ -2737,7 +2737,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store2.written_bytes() as usize / 2, Ordering::Release);
+        .store(store2.num_stored_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     let store3_slot = 33;
@@ -2754,7 +2754,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     db.storage.insert(Arc::clone(&store3));
     store3
         .num_alive_bytes
-        .store(store3.written_bytes() as usize, Ordering::Release);
+        .store(store3.num_stored_bytes() as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
     // Set the target alive ratio to 0.6 so that we can just get rid of store1, the remaining two stores
@@ -2810,7 +2810,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store2.written_bytes() as usize / 2, Ordering::Release);
+        .store(store2.num_stored_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     let store3_slot = 33;
@@ -2827,7 +2827,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     db.storage.insert(Arc::clone(&store3));
     store3
         .num_alive_bytes
-        .store(store3.written_bytes() as usize, Ordering::Release);
+        .store(store3.num_stored_bytes() as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
     // Set the target ratio to default (0.8), both store1 and store2 must be selected and store3 is ignored.
@@ -2865,7 +2865,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
     db.storage.insert(Arc::clone(&store1));
     store1
         .num_alive_bytes
-        .store(store1.written_bytes() as usize / 4, Ordering::Release);
+        .store(store1.num_stored_bytes() as usize / 4, Ordering::Release);
     candidates.insert(store1_slot);
 
     let store2_slot = 22;
@@ -2882,7 +2882,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store2.written_bytes() as usize / 2, Ordering::Release);
+        .store(store2.num_stored_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     // Set the target ratio to default (0.8), both stores from the two different slots must be selected.
@@ -2923,7 +2923,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         .unwrap();
     store_with_tombstones.batch_insert_tombstone_offsets(stored_accounts_offsets);
     store_with_tombstones.num_alive_bytes.store(
-        store_with_tombstones.written_bytes() as usize,
+        store_with_tombstones.num_stored_bytes() as usize,
         Ordering::Release,
     );
     accounts_db
@@ -2943,7 +2943,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         .write_accounts(&(slot_with_tombstones, accounts_to_store.as_slice()))
         .unwrap();
     store_no_tombstones.num_alive_bytes.store(
-        store_no_tombstones.written_bytes() as usize,
+        store_no_tombstones.num_stored_bytes() as usize,
         Ordering::Release,
     );
     accounts_db.storage.insert(Arc::clone(&store_no_tombstones));
@@ -2958,7 +2958,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         // Bytes from tombstones are alive, and will stay alive after shrink.
         assert_eq!(
             accounts_db.alive_bytes_after_shrink(&store_with_tombstones),
-            store_with_tombstones.alive_bytes(),
+            store_with_tombstones.num_alive_bytes(),
         );
         assert!(!accounts_db.is_candidate_for_shrink(&store_with_tombstones));
         assert!(!accounts_db.is_shrinking_productive(&store_with_tombstones));
@@ -2966,7 +2966,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
         // Stores without tombstones use the raw alive bytes.
         assert_eq!(
             accounts_db.alive_bytes_after_shrink(&store_no_tombstones),
-            store_no_tombstones.alive_bytes(),
+            store_no_tombstones.num_alive_bytes(),
         );
 
         let (selected_candidates, next_candidates) = accounts_db
@@ -2992,8 +2992,8 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
 
             // Bytes from tombstones are alive, but would be dead after shrink.
             assert_eq!(
-                store_with_tombstones.alive_bytes() as u64,
-                store_with_tombstones.written_bytes(),
+                store_with_tombstones.num_alive_bytes() as u64,
+                store_with_tombstones.num_stored_bytes(),
             );
             assert_eq!(
                 accounts_db.alive_bytes_after_shrink(&store_with_tombstones),
@@ -3005,7 +3005,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
             // Stores without tombstones use the raw alive bytes.
             assert_eq!(
                 accounts_db.alive_bytes_after_shrink(&store_no_tombstones),
-                store_no_tombstones.alive_bytes(),
+                store_no_tombstones.num_alive_bytes(),
             );
 
             let (selected_candidates, next_candidates) = accounts_db
@@ -3038,7 +3038,7 @@ fn test_store_overhead() {
     accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
     let store = accounts.storage.get_slot_storage_entry(0).unwrap();
-    let total_len = store.written_bytes() as usize;
+    let total_len = store.num_stored_bytes() as usize;
     assert_eq!(total_len, store.accounts.calculate_stored_size(0));
 }
 
@@ -3216,7 +3216,7 @@ fn test_flush_purged_zero_lamport_account_purges_secondary_index() {
     // The zero-lamport accounts were not in the accounts index, so neither was written to
     // storage. Only the live account was flushed
     let storage = accounts.storage.get_slot_storage_entry(0).unwrap();
-    assert_eq!(storage.count(), 1);
+    assert_eq!(storage.num_alive_accounts(), 1);
     assert_eq!(storage.num_tombstones(), 0);
     assert!(!accounts.contains(&pubkey_purged));
     assert!(accounts.accounts_cache.contains_pubkey(&pubkey_cached));
@@ -4131,7 +4131,7 @@ fn test_alive_bytes() {
     storage0
         .accounts
         .scan_accounts_without_data(|_offset, account| {
-            let before_size = storage0.alive_bytes();
+            let before_size = storage0.num_alive_bytes();
             let account_info = accounts_db
                 .accounts_index
                 .get_and_then(account.pubkey(), |entry| {
@@ -4142,8 +4142,8 @@ fn test_alive_bytes() {
             let reclaims = [account_info];
             num_obsolete_accounts += reclaims.len();
             accounts_db.remove_dead_accounts(reclaims.iter(), MarkAccountsObsolete::Yes(slot + 1));
-            let after_size = storage0.alive_bytes();
-            if storage0.count() == 0 {
+            let after_size = storage0.num_alive_bytes();
+            if storage0.num_alive_accounts() == 0 {
                 // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
                 assert_eq!(after_size, 0);
             } else {
@@ -4188,7 +4188,7 @@ fn test_alive_bytes_exclude_zero_lamport_accounts() {
 
     // Flushing cache should only create one storage entry
     let storage = accounts_db.get_and_assert_single_storage(slot);
-    let alive_bytes = storage.alive_bytes();
+    let alive_bytes = storage.num_alive_bytes();
     assert!(alive_bytes > 0);
 
     // assert the number of tombstones
@@ -5287,7 +5287,7 @@ fn test_is_candidate_for_shrink() {
             .as_slice(),
         ))
         .unwrap();
-    let written_bytes = entry.written_bytes() as usize;
+    let written_bytes = entry.num_stored_bytes() as usize;
     match accounts.shrink_ratio {
         AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
             assert_eq!(

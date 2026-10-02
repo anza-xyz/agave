@@ -362,7 +362,7 @@ impl<'a> AccountStoragesOrderer<'a> {
     ) -> Self {
         let len_range = 0..storages.len();
         let mut indices: Vec<_> = len_range.clone().collect();
-        indices.sort_unstable_by_key(|i| storages[*i].written_bytes());
+        indices.sort_unstable_by_key(|i| storages[*i].num_stored_bytes());
         indices.iter_mut().for_each(|i| {
             *i = select_from_range_with_start_end_rates(len_range.clone(), *i, small_to_large_ratio)
         });
@@ -575,7 +575,7 @@ mod tests {
             alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.alive_bytes())
+                .map(|entry| entry.num_alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -591,7 +591,7 @@ mod tests {
             alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.alive_bytes())
+                .map(|entry| entry.num_alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -603,7 +603,7 @@ mod tests {
             alive_bytes2,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.alive_bytes())
+                .map(|entry| entry.num_alive_bytes())
                 .unwrap_or_default()
         );
     }
