@@ -1,7 +1,8 @@
 //! Definitions related to consensus metrics collection.
 
 use {
-    crate::{VoteAccountPubkeys, vote::Vote},
+    crate::pubkeys::VoteAccountPubkeys,
+    agave_votor_messages::vote::Vote,
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
     solana_pubkey::Pubkey,

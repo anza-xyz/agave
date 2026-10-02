@@ -20,9 +20,9 @@ use {
         },
         votor::{ExitOnDrop, SharedContext},
     },
+    agave_bls_sigverify::metric_types::ConsensusMetricsEvent,
     agave_votor_messages::{
         consensus_message::{Block, BlockId},
-        metric_types::ConsensusMetricsEvent,
         migration::MigrationStatus,
         vote::Vote,
     },
@@ -1057,10 +1057,9 @@ mod tests {
             },
             voting_service::BLSOp,
         },
-        agave_bls_sigverify::rewards::RewardInput,
+        agave_bls_sigverify::{metric_types::ConsensusMetricsEventReceiver, rewards::RewardInput},
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
-            metric_types::ConsensusMetricsEventReceiver,
             wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},

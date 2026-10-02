@@ -530,7 +530,6 @@ name = "agave-votor-messages"
 version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
- "crossbeam-channel",
  "log",
  "serde",
  "solana-address 2.9.0",

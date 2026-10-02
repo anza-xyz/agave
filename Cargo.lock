@@ -555,7 +555,6 @@ version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-votor-messages",
- "crossbeam-channel",
  "log",
  "serde",
  "solana-address 2.9.0",

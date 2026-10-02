@@ -6,6 +6,8 @@ use {
         bls_vote_sigverify::{batch::Batch, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
+        metric_types::ConsensusMetricsEventSender,
+        pubkeys::VerifiedVotorSlotsMessage,
         rank_map_cache::RankMapCache,
         rewards::{RewardInput, rewards_wants_vote},
         sig_verified_messages::SigVerifiedBatch,
@@ -14,10 +16,8 @@ use {
         vote_pool::{VotePool, VotePoolError},
     },
     agave_votor_messages::{
-        VerifiedVotorSlotsMessage,
         certificate::CertificateType,
         consensus_message::Block,
-        metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,

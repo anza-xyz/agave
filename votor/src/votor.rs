@@ -64,13 +64,14 @@ use {
         voting_utils::VotingContext,
     },
     agave_bls_sigverify::{
-        generated_cert_types::GeneratedCertTypes, rewards::RewardInput,
+        generated_cert_types::GeneratedCertTypes,
+        metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
+        rewards::RewardInput,
         sig_verified_messages::SigVerifiedBatch,
     },
     agave_votor_messages::{
         certificate::Certificate,
         consensus_message::{Block, VoteMessage},
-        metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
     },
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
