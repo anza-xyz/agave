@@ -5,9 +5,12 @@ use solana_runtime::installed_scheduler_pool::{
 };
 use {
     crate::{
-        filter::filter_allows, max_slots::MaxSlots,
+        filter::filter_allows,
+        max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
+        parsed_token_accounts::*,
+        rpc_cache::{CachedRankMap, LargestAccountsCache, RankMapCache},
+        rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
     agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
@@ -254,6 +257,7 @@ pub struct JsonRpcRequestProcessor {
     bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
+    rank_map_cache: Arc<RwLock<RankMapCache>>,
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -418,6 +422,7 @@ impl JsonRpcRequestProcessor {
         bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
+        rank_map_cache: Arc<RwLock<RankMapCache>>,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -440,6 +445,7 @@ impl JsonRpcRequestProcessor {
                 bigtable_ledger_storage,
                 optimistically_confirmed_bank,
                 largest_accounts_cache,
+                rank_map_cache,
                 max_slots,
                 leader_schedule_cache,
                 max_complete_transaction_status_slot,
@@ -527,6 +533,7 @@ impl JsonRpcRequestProcessor {
             bigtable_ledger_storage: None,
             optimistically_confirmed_bank,
             largest_accounts_cache: Arc::new(RwLock::new(LargestAccountsCache::new(30))),
+            rank_map_cache: Arc::new(RwLock::new(RankMapCache::default())),
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache,
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
@@ -939,6 +946,48 @@ impl JsonRpcRequestProcessor {
                     bitmap: c.signature.bitmap,
                 },
             })
+    }
+
+    pub async fn get_rank_map(
+        &self,
+        slot: Slot,
+        config: RpcRankMapConfig,
+    ) -> Result<RpcResponse<Option<Arc<RpcRankMap>>>> {
+        let identity = config.identity.as_deref().map(verify_pubkey).transpose()?;
+        let bank = self.get_bank_with_config(RpcContextConfig {
+            commitment: config.commitment,
+            min_context_slot: config.min_context_slot,
+        })?;
+        let epoch = bank.epoch_schedule().get_epoch(slot);
+        let Some(epoch_stakes) = bank.epoch_stakes_from_slot(slot) else {
+            return Ok(new_response(&bank, None));
+        };
+        let cell = self
+            .rank_map_cache
+            .write()
+            .unwrap()
+            .get_or_insert(epoch, epoch_stakes.stakes().vote_accounts());
+        let cached = cell
+            .get_or_try_init(|| async {
+                let bank = Arc::clone(&bank);
+                self.runtime
+                    .spawn_blocking(move || {
+                        CachedRankMap::new(
+                            epoch,
+                            bank.epoch_stakes_from_slot(slot)
+                                .expect("epoch stakes were found in this bank before spawning"),
+                        )
+                    })
+                    .await
+                    .map_err(|_| Error::internal_error())
+            })
+            .await?;
+        Ok(new_response(
+            &bank,
+            cached
+                .as_ref()
+                .map(|cached| cached.response(identity.as_ref())),
+        ))
     }
 
     pub fn get_balance(
@@ -3127,6 +3176,14 @@ pub mod rpc_bank {
         fn get_ag_genesis_cert(&self, meta: Self::Metadata)
         -> Result<Option<WireBlockCertMessage>>;
 
+        #[rpc(meta, name = "getRankMap")]
+        fn get_rank_map(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+            config: Option<RpcRankMapConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcRankMap>>>>>;
+
         #[rpc(meta, name = "getBlockProduction")]
         fn get_block_production(
             &self,
@@ -3208,6 +3265,16 @@ pub mod rpc_bank {
         ) -> Result<Option<WireBlockCertMessage>> {
             debug!("get_ag_genesis_cert rpc request received");
             Ok(meta.get_ag_genesis_cert())
+        }
+
+        fn get_rank_map(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+            config: Option<RpcRankMapConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcRankMap>>>>> {
+            debug!("get_rank_map rpc request received: {slot}");
+            async move { meta.get_rank_map(slot, config.unwrap_or_default()).await }.boxed()
         }
 
         fn get_block_production(
@@ -4978,6 +5045,7 @@ pub mod tests {
                 None,
                 optimistically_confirmed_bank,
                 Arc::new(RwLock::new(LargestAccountsCache::new(30))),
+                Arc::new(RwLock::new(RankMapCache::default())),
                 max_slots.clone(),
                 Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
                 max_complete_transaction_status_slot.clone(),
@@ -5344,6 +5412,186 @@ pub mod tests {
             },
         });
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_rank_map() {
+        let rpc = RpcHandler::start();
+        let request = create_test_request("getRankMap", Some(json!([0])));
+        let response: RpcResponse<Option<RpcRankMap>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let rank_map = response.value.unwrap();
+
+        assert_eq!(response.context.slot, 0);
+        assert_eq!(rank_map.epoch, 0);
+        assert_eq!(rank_map.validators.len(), 1);
+        let validator = &rank_map.validators[0];
+        assert_eq!(validator.rank, 0);
+        assert_eq!(validator.vote_pubkey, rpc.leader_vote_pubkey().to_string());
+        assert_eq!(validator.node_pubkey, rpc.leader_pubkey().to_string());
+        let bank = rpc.working_bank();
+        let compressed = bank
+            .epoch_stakes_from_slot(0)
+            .unwrap()
+            .stakes()
+            .vote_accounts()
+            .get(&rpc.leader_vote_pubkey())
+            .unwrap()
+            .vote_state_view()
+            .bls_pubkey_compressed()
+            .unwrap();
+        assert_eq!(
+            validator.bls_pubkey_compressed,
+            bs58::encode(compressed).into_string()
+        );
+        assert_eq!(rank_map.total_stake, validator.stake);
+
+        let request = create_test_request("getRankMap", Some(json!([TEST_SLOTS_PER_EPOCH])));
+        let response: RpcResponse<Option<RpcRankMap>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(response.value.unwrap().epoch, 1);
+
+        let unavailable_slot = TEST_SLOTS_PER_EPOCH * 2;
+        let request = create_test_request("getRankMap", Some(json!([unavailable_slot])));
+        let response: RpcResponse<Option<RpcRankMap>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(response.value.is_none());
+    }
+
+    fn rank_map_test_stakes(stakes: &[u64]) -> solana_runtime::epoch_stakes::VersionedEpochStakes {
+        use {
+            solana_bls_signatures::keypair::Keypair as BLSKeypair,
+            solana_vote::vote_account::VoteAccount,
+            solana_vote_program::vote_state::create_v4_account_with_authorized,
+        };
+        let accounts = stakes
+            .iter()
+            .map(|stake| {
+                let node = Pubkey::new_unique();
+                let bls = BLSKeypair::new().public.to_bytes_compressed();
+                let account = create_v4_account_with_authorized(
+                    &node, &node, bls, &node, 0, &node, 0, &node, 100,
+                );
+                (
+                    Pubkey::new_unique(),
+                    (*stake, VoteAccount::try_from(account).unwrap()),
+                )
+            })
+            .collect();
+        solana_runtime::epoch_stakes::VersionedEpochStakes::new_for_tests(accounts, 0)
+    }
+
+    #[test]
+    fn test_rpc_rank_map_cache_and_filter() {
+        let rpc = RpcHandler::start();
+        let stakes = rank_map_test_stakes(&[100, 300, 200]);
+        let original_bank = rpc.working_bank();
+        let mut bank = Bank::new_from_parent(original_bank.clone(), SlotLeader::default(), 1);
+        bank.set_epoch_stakes_for_test(0, stakes);
+        let bank = Arc::new(bank);
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = bank.clone();
+        let config = RpcRankMapConfig {
+            commitment: Some(CommitmentConfig::confirmed()),
+            min_context_slot: Some(1),
+            ..RpcRankMapConfig::default()
+        };
+        let first = rpc
+            .meta
+            .runtime
+            .block_on(rpc.meta.get_rank_map(0, config.clone()))
+            .unwrap();
+        let first = first.value.unwrap();
+        assert_eq!(
+            first
+                .validators
+                .iter()
+                .map(|entry| entry.stake.get())
+                .collect::<Vec<_>>(),
+            [300, 200, 100]
+        );
+
+        // Slots in the same epoch reuse the response, while the context follows the selected bank.
+        let child = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), 2));
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = child;
+        let second = rpc
+            .meta
+            .runtime
+            .block_on(rpc.meta.get_rank_map(1, config.clone()))
+            .unwrap();
+        assert_eq!(second.context.slot, 2);
+        assert!(Arc::ptr_eq(&first, &second.value.unwrap()));
+        for validator in &first.validators {
+            let request = create_test_request(
+                "getRankMap",
+                Some(json!([0, {
+                    "identity": validator.node_pubkey, "commitment": "confirmed", "minContextSlot": 1
+                }])),
+            );
+            let response: RpcResponse<Option<RpcRankMap>> =
+                parse_success_result(rpc.handle_request_sync(request));
+            let filtered = response.value.unwrap();
+            assert_eq!(filtered.validators, std::slice::from_ref(validator));
+            assert_eq!(filtered.total_stake, first.total_stake);
+        }
+        let request = create_test_request(
+            "getRankMap",
+            Some(json!([0, {
+                "identity": Pubkey::new_unique().to_string(), "commitment": "confirmed"
+            }])),
+        );
+        let response: RpcResponse<Option<RpcRankMap>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(response.value.unwrap().validators.is_empty());
+
+        // A different fork in the same epoch must not reuse the cached map.
+        let mut fork = Bank::new_from_parent(original_bank, SlotLeader::default(), 3);
+        fork.set_epoch_stakes_for_test(0, rank_map_test_stakes(&[400]));
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = Arc::new(fork);
+        let fork = rpc
+            .meta
+            .runtime
+            .block_on(rpc.meta.get_rank_map(0, config))
+            .unwrap();
+        assert_eq!(fork.context.slot, 3);
+        assert_eq!(fork.value.unwrap().total_stake.get(), 400);
+        let finalized = rpc
+            .meta
+            .runtime
+            .block_on(rpc.meta.get_rank_map(0, RpcRankMapConfig::default()))
+            .unwrap();
+        assert_eq!(finalized.context.slot, 0);
+        assert_eq!(
+            finalized.value.unwrap().validators[0].node_pubkey,
+            rpc.leader_pubkey().to_string()
+        );
+    }
+
+    #[test]
+    fn test_rpc_rank_map_errors_and_empty_epochs() {
+        let rpc = RpcHandler::start();
+        for slot in [0, TEST_SLOTS_PER_EPOCH * 2] {
+            let request = create_test_request(
+                "getRankMap",
+                Some(json!([slot, {
+                    "minContextSlot": 1
+                }])),
+            );
+            let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
+            assert_eq!(code, JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED);
+        }
+        let request = create_test_request("getRankMap", Some(json!([0, {"identity": "invalid"}])));
+        let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, -32602);
+        for stakes in [&[][..], &[0, 0][..]] {
+            let mut bank = Bank::new_from_parent(rpc.working_bank(), SlotLeader::default(), 1);
+            bank.set_epoch_stakes_for_test(0, rank_map_test_stakes(stakes));
+            rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = Arc::new(bank);
+            let request =
+                create_test_request("getRankMap", Some(json!([0, {"commitment": "confirmed"}])));
+            let response: RpcResponse<Option<RpcRankMap>> =
+                parse_success_result(rpc.handle_request_sync(request));
+            assert!(response.value.is_none());
+        }
     }
 
     #[test]
@@ -7171,6 +7419,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank,
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
+            Arc::new(RwLock::new(RankMapCache::default())),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
@@ -7486,6 +7735,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank,
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
+            Arc::new(RwLock::new(RankMapCache::default())),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
@@ -9337,6 +9587,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank.clone(),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
+            Arc::new(RwLock::new(RankMapCache::default())),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             max_complete_transaction_status_slot,

@@ -21,6 +21,10 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
+  for the epoch containing a requested slot, with an optional identity filter.
+* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+
 ### Validator
 
 #### Breaking

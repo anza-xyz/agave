@@ -28,7 +28,7 @@ use {
             Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockProduction,
             RpcBlockProductionRange, RpcBlockhash, RpcConfirmedTransactionStatusWithSignature,
             RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
-            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee,
+            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee, RpcRankMap,
             RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
             RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
         },
@@ -187,6 +187,15 @@ impl RpcSender for MockSender {
                 };
                 serde_json::to_value(Some(cert))?
             }
+            "getRankMap" => serde_json::to_value(Response::<
+                Option<RpcRankMap>,
+            > {
+                context: RpcResponseContext {
+                    slot: 1,
+                    api_version: None,
+                },
+                value: None,
+            })?,
             "getSignatureStatuses" => {
                 let status: TransactionResult<()> = if self.url == "account_in_use" {
                     Err(TransactionError::AccountInUse)
