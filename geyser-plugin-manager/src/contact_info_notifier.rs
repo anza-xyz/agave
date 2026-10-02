@@ -12,24 +12,12 @@
 //! info notifications. Gossip never invokes plugin code directly. This
 //! ensures a misbehaving plugin cannot stall the gossip subsystem.
 //!
-//! ## Semantic dedup
+//! ## Republishes
 //!
-//! Contact info is rebroadcast by every validator on a multi-second
-//! cadence even when nothing meaningful has changed. Without dedup,
-//! plugins would receive a steady stream of redundant notifications.
-//!
-//! The dispatch thread keeps a private bounded `LruCache<Pubkey, u64>`
-//! of semantic fingerprints (a hash of socket addresses, shred_version,
-//! version components, and outset — *not* wallclock, since wallclock
-//! advances on every routine republish) and skips any notification
-//! whose fingerprint matches the last one delivered for that identity.
-//! Outset is included because a change there indicates a node restart
-//! or identity transfer, which is meaningful signal even if no other
-//! field happens to differ.
-//!
-//! Because the cache is owned by a single thread, no lock is needed;
-//! the LRU bound prevents long-running validators from accumulating
-//! fingerprint state without bound as cluster membership churns.
+//! Subscribed plugins receive contact info republishes even when only the
+//! wallclock changes. Plugins and downstream clients can learn about unchanged
+//! nodes from later republishes. Consumers that only want changes to endpoints
+//! or other fields can deduplicate the notifications themselves.
 //!
 //! ## Startup replay (single-shot)
 //!
@@ -50,15 +38,12 @@ use {
         ReplicaContactInfoV0_0_1, ReplicaContactInfoVersions,
     },
     arc_swap::ArcSwap,
-    lazy_lru::LruCache,
     log::*,
     solana_gossip::contact_info_notifier::{
         ContactInfoEvent, ContactInfoReceiver, ContactInfoSender, ContactInfoSnapshot,
     },
     solana_pubkey::Pubkey,
     std::{
-        collections::hash_map::DefaultHasher,
-        hash::{Hash, Hasher},
         sync::Arc,
         thread::{self, JoinHandle},
     },
@@ -69,14 +54,6 @@ use {
 /// (~2,000 validators × 1 republish per ~6 s ≈ 333/s). Override by
 /// passing a different value to [`attach`] or [`channel`].
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 4096;
-
-/// Capacity of the per-identity semantic-fingerprint dedup cache held by
-/// the dispatch thread. Sized at ~2× the protocol-level validator
-/// admission cap so that recently-departed validators stay in the cache
-/// long enough to avoid spurious "first-seen" notifications when they
-/// rejoin, while still bounding long-term memory growth on
-/// long-running validators.
-const FINGERPRINT_CACHE_CAPACITY: usize = 4096;
 
 /// Owns the dispatch thread for contact info notifications.
 ///
@@ -94,14 +71,10 @@ impl ContactInfoNotifier {
     /// the initial state is exhausted, the thread switches to draining
     /// the receiver and delivering live updates with `is_startup=false`.
     ///
-    /// **Caveat:** this is a single-shot startup replay. Plugins loaded
-    /// after the dispatch thread starts will only see live updates from
-    /// the moment of their load forward; they do *not* receive a
-    /// retroactive dump of the current CRDS state. This matches Option A
-    /// from the design discussion: the common deployment pattern is to
-    /// restart the validator when reconfiguring plugins, and gossip
-    /// self-heals within one rebroadcast cycle (~6 s) for any
-    /// validator that gossips again.
+    /// Plugins loaded after the dispatch thread starts receive live updates,
+    /// including later republishes of unchanged contact info. They do not receive
+    /// a fresh startup replay. Delivery is best-effort, so learning the current
+    /// cluster state takes time and depends on subsequent gossip activity.
     pub fn spawn(
         plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
         initial_state: Vec<ContactInfoSnapshot>,
@@ -191,35 +164,16 @@ fn run_dispatch_loop(
     initial_state: Vec<ContactInfoSnapshot>,
     receiver: ContactInfoReceiver,
 ) {
-    // Per-identity semantic-fingerprint dedup. Bounded LRU rather than
-    // an unbounded HashMap so a long-running validator that observes
-    // churn over months doesn't accumulate state without bound.
-    let mut fingerprints: LruCache<Pubkey, u64> = LruCache::new(FINGERPRINT_CACHE_CAPACITY);
-
-    // Phase 1: deliver initial state with is_startup=true.
     for snapshot in initial_state {
-        let fp = semantic_fingerprint(&snapshot);
-        fingerprints.put(snapshot.pubkey, fp);
         dispatch_updated(&plugin_manager, &snapshot, /* is_startup */ true);
     }
 
-    // Phase 2: drain the live channel until disconnect.
     while let Ok(event) = receiver.recv() {
         match event {
             ContactInfoEvent::Updated(snapshot) => {
-                let fp = semantic_fingerprint(&snapshot);
-                let unchanged = fingerprints.get(&snapshot.pubkey).copied() == Some(fp);
-                if unchanged {
-                    continue;
-                }
-                fingerprints.put(snapshot.pubkey, fp);
                 dispatch_updated(&plugin_manager, &snapshot, /* is_startup */ false);
             }
             ContactInfoEvent::Removed(pubkey) => {
-                // Drop the fingerprint so that if this identity later
-                // rejoins the cluster, the next `Updated` event is
-                // delivered (not suppressed by a stale fingerprint).
-                fingerprints.pop(&pubkey);
                 dispatch_removed(&plugin_manager, &pubkey);
             }
         }
@@ -310,65 +264,6 @@ fn dispatch_removed(plugin_manager: &Arc<ArcSwap<GeyserPluginManager>>, pubkey: 
     }
 }
 
-/// Hash of the fields that meaningfully describe a validator's network
-/// presence. Excludes `pubkey` (it's the cache key) and `wallclock`
-/// (which advances on every republish without semantic change). Includes
-/// `outset` because a change there indicates a node restart or identity
-/// transfer — both of which are real events consumers want to see, even
-/// if no other field happens to differ.
-///
-/// The exhaustive destructure pattern below forces a compile error if a
-/// new field is added to `ContactInfoSnapshot`, so the fingerprint can
-/// never silently miss a new socket or version field.
-fn semantic_fingerprint(s: &ContactInfoSnapshot) -> u64 {
-    let ContactInfoSnapshot {
-        pubkey: _,
-        wallclock: _,
-        outset,
-        shred_version,
-        version_major,
-        version_minor,
-        version_patch,
-        version_commit,
-        version_feature_set,
-        version_client_id,
-        gossip,
-        tpu_quic,
-        tpu_forwards_quic,
-        tpu_vote_udp,
-        tpu_vote_quic,
-        tvu_udp,
-        tvu_quic,
-        serve_repair_udp,
-        serve_repair_quic,
-        rpc,
-        rpc_pubsub,
-        alpenglow,
-    } = s;
-    let mut hasher = DefaultHasher::new();
-    outset.hash(&mut hasher);
-    shred_version.hash(&mut hasher);
-    version_major.hash(&mut hasher);
-    version_minor.hash(&mut hasher);
-    version_patch.hash(&mut hasher);
-    version_commit.hash(&mut hasher);
-    version_feature_set.hash(&mut hasher);
-    version_client_id.hash(&mut hasher);
-    gossip.hash(&mut hasher);
-    tpu_quic.hash(&mut hasher);
-    tpu_forwards_quic.hash(&mut hasher);
-    tpu_vote_udp.hash(&mut hasher);
-    tpu_vote_quic.hash(&mut hasher);
-    tvu_udp.hash(&mut hasher);
-    tvu_quic.hash(&mut hasher);
-    serve_repair_udp.hash(&mut hasher);
-    serve_repair_quic.hash(&mut hasher);
-    rpc.hash(&mut hasher);
-    rpc_pubsub.hash(&mut hasher);
-    alpenglow.hash(&mut hasher);
-    hasher.finish()
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -384,6 +279,7 @@ mod tests {
                 Arc, Mutex,
                 atomic::{AtomicUsize, Ordering},
             },
+            time::Duration,
         },
     };
 
@@ -391,6 +287,7 @@ mod tests {
     struct RecordingPlugin {
         name: &'static str,
         enabled: bool,
+        notification_sender: Option<crossbeam_channel::Sender<u64>>,
         live_count: Arc<AtomicUsize>,
         startup_count: Arc<AtomicUsize>,
         removed_count: Arc<AtomicUsize>,
@@ -419,6 +316,9 @@ mod tests {
             } else {
                 self.live_count.fetch_add(1, Ordering::Relaxed);
             }
+            if let Some(sender) = &self.notification_sender {
+                sender.send(info.wallclock).unwrap();
+            }
             Ok(())
         }
 
@@ -445,6 +345,7 @@ mod tests {
         RecordingPlugin {
             name,
             enabled,
+            notification_sender: None,
             live_count,
             startup_count,
             removed_count,
@@ -528,36 +429,90 @@ mod tests {
     }
 
     #[test]
-    fn semantic_dedup_skips_identical_republish() {
+    fn delivers_republishes_to_all_subscribed_plugins() {
+        let live_counts = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];
+        let startup_counts = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];
+        let plugins = live_counts
+            .iter()
+            .zip(&startup_counts)
+            .map(|(live, startup)| {
+                loaded(recording_plugin(
+                    "recorder",
+                    true,
+                    live.clone(),
+                    startup.clone(),
+                    Arc::new(AtomicUsize::new(0)),
+                ))
+            })
+            .collect();
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager { plugins })));
+        let mut snapshot = make_snapshot(Pubkey::new_unique(), 8000);
+        let (sender, receiver) = channel(64);
+        let notifier = ContactInfoNotifier::spawn(plugin_manager, vec![snapshot], receiver);
+
+        for wallclock in [100, 200] {
+            snapshot.wallclock = wallclock;
+            sender.send(ContactInfoEvent::Updated(snapshot)).unwrap();
+        }
+        drop(sender);
+        notifier.join().unwrap();
+
+        for live in live_counts {
+            assert_eq!(live.load(Ordering::Relaxed), 2);
+        }
+        for startup in startup_counts {
+            assert_eq!(startup.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
+    fn plugin_loaded_after_startup_receives_republish() {
+        let (notification_sender, notifications) = crossbeam_channel::bounded(1);
+        let mut original = recording_plugin(
+            "original",
+            true,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        original.notification_sender = Some(notification_sender);
+        let original = loaded(original);
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
+            plugins: vec![original.clone()],
+        })));
+        let mut snapshot = make_snapshot(Pubkey::new_unique(), 8000);
+        let (sender, receiver) = channel(64);
+        let notifier = ContactInfoNotifier::spawn(plugin_manager.clone(), vec![snapshot], receiver);
+        assert_eq!(
+            notifications.recv_timeout(Duration::from_secs(5)).unwrap(),
+            0
+        );
+
         let live = Arc::new(AtomicUsize::new(0));
         let startup = Arc::new(AtomicUsize::new(0));
-        let removed = Arc::new(AtomicUsize::new(0));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![loaded(recording_plugin(
-                "recorder",
-                true,
-                live.clone(),
-                startup.clone(),
-                removed.clone(),
-            ))],
-        })));
-
-        let pk = Pubkey::new_unique();
-        let (sender, receiver) = channel(64);
-        let notifier = ContactInfoNotifier::spawn(plugin_manager, vec![], receiver);
-
-        // Same semantic content, just a wallclock advance. Dedup should suppress.
-        let mut snap = make_snapshot(pk, 8000);
-        sender.send(ContactInfoEvent::Updated(snap)).unwrap();
-        snap.wallclock = 100;
-        sender.send(ContactInfoEvent::Updated(snap)).unwrap();
-        snap.wallclock = 200;
-        sender.send(ContactInfoEvent::Updated(snap)).unwrap();
+        let added = recording_plugin(
+            "added",
+            true,
+            live.clone(),
+            startup.clone(),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let last_pubkey = added.last_pubkey.clone();
+        plugin_manager.store(Arc::new(GeyserPluginManager {
+            plugins: vec![original, loaded(added)],
+        }));
+        snapshot.wallclock = 100;
+        sender.send(ContactInfoEvent::Updated(snapshot)).unwrap();
         drop(sender);
-
         notifier.join().unwrap();
-        assert_eq!(startup.load(Ordering::Relaxed), 0);
+
         assert_eq!(live.load(Ordering::Relaxed), 1);
+        assert_eq!(startup.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            last_pubkey.lock().unwrap().as_deref(),
+            Some(snapshot.pubkey.as_ref())
+        );
+        assert_eq!(notifications.recv().unwrap(), 100);
     }
 
     #[test]
@@ -632,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn removal_event_invokes_removed_callback_and_clears_fingerprint() {
+    fn delivers_removal_and_subsequent_republishes() {
         let live = Arc::new(AtomicUsize::new(0));
         let startup = Arc::new(AtomicUsize::new(0));
         let removed = Arc::new(AtomicUsize::new(0));
@@ -652,9 +607,6 @@ mod tests {
         let (sender, receiver) = channel(64);
         let notifier = ContactInfoNotifier::spawn(plugin_manager, vec![], receiver);
 
-        // Update → Update (semantic dup, suppressed) → Removed → Update
-        // (must fire again because the fingerprint was cleared by the
-        // Removed event).
         sender
             .send(ContactInfoEvent::Updated(make_snapshot(pk, 8000)))
             .unwrap();
@@ -669,9 +621,7 @@ mod tests {
 
         notifier.join().unwrap();
 
-        // Two Updated events fired (one before remove, one after); the
-        // republish in between was suppressed by semantic dedup.
-        assert_eq!(live.load(Ordering::Relaxed), 2);
+        assert_eq!(live.load(Ordering::Relaxed), 3);
         assert_eq!(startup.load(Ordering::Relaxed), 0);
         // Exactly one Removed event reached the plugin, carrying the
         // correct identity pubkey.
