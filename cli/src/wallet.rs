@@ -31,7 +31,6 @@ use {
     },
     solana_commitment_config::CommitmentConfig,
     solana_message::Message,
-    solana_native_token::LAMPORTS_PER_SOL,
     solana_offchain_message::OffchainMessage,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -770,52 +769,47 @@ pub async fn process_airdrop(
 
     let pre_balance = rpc_client.get_balance(&pubkey).await?;
 
-    let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports).await;
-    if let Ok(signature) = result {
-        let signature_cli_message = log_instruction_custom_error::<SystemError>(result, config)?;
-        writeln_stdout(format_args!("{signature_cli_message}"))?;
+    match request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports).await {
+        Ok(signature) => {
+            let signature_cli_message =
+                log_instruction_custom_error::<SystemError>(Ok(signature), config)?;
+            writeln_stdout(format_args!("{signature_cli_message}"))?;
 
-        let current_balance = rpc_client.get_balance(&pubkey).await?;
+            let current_balance = rpc_client.get_balance(&pubkey).await?;
 
-        if current_balance < pre_balance.saturating_add(lamports) {
-            writeln_stdout(format_args!("Balance unchanged"))?;
-            writeln_stdout(format_args!(
-                "Run `solana confirm -v {signature:?}` for more info"
-            ))?;
-            Ok("".to_string())
-        } else {
-            Ok(build_balance_message(current_balance, false, true))
+            if current_balance < pre_balance.saturating_add(lamports) {
+                writeln_stdout(format_args!("Balance unchanged"))?;
+                writeln_stdout(format_args!(
+                    "Run `solana confirm -v {signature:?}` for more info"
+                ))?;
+                Ok("".to_string())
+            } else {
+                Ok(build_balance_message(current_balance, false, true))
+            }
         }
-    } else {
-        let err = log_instruction_custom_error::<SystemError>(result, config).unwrap_err();
-        match web_faucet_url(&config.json_rpc_url, &pubkey, lamports) {
-            Some(url) => Err(format!(
-                "airdrop request failed. The CLI faucet is closed on this cluster. Request an \
-                 airdrop at:\n  {url}"
-            )
-            .into()),
-            None => Err(err),
-        }
+        Err(err) => log_instruction_custom_error::<SystemError>(Err(err), config).map_err(|err| {
+            match web_faucet_url(&config.json_rpc_url, &pubkey) {
+                Some(url) => format!(
+                    "{err}\n\nThe CLI faucet is closed on this cluster. Request an airdrop at:\n  \
+                     {url}"
+                )
+                .into(),
+                None => err,
+            }
+        }),
     }
 }
 
-const WEB_FAUCET_AMOUNTS_SOL: [f64; 4] = [0.5, 1.0, 2.5, 5.0];
-
-fn web_faucet_url(json_rpc_url: &str, pubkey: &Pubkey, lamports: u64) -> Option<String> {
-    if !json_rpc_url.contains("devnet") && !json_rpc_url.contains("testnet") {
+fn web_faucet_url(json_rpc_url: &str, pubkey: &Pubkey) -> Option<String> {
+    let cluster = if json_rpc_url.contains("testnet") {
+        "testnet"
+    } else if json_rpc_url.contains("devnet") {
+        "devnet"
+    } else {
         return None;
-    }
-    let requested_sol = lamports as f64 / LAMPORTS_PER_SOL as f64;
-    let amount = WEB_FAUCET_AMOUNTS_SOL
-        .iter()
-        .min_by(|a, b| {
-            (*a - requested_sol)
-                .abs()
-                .total_cmp(&(*b - requested_sol).abs())
-        })
-        .unwrap();
+    };
     Some(format!(
-        "https://faucet.solana.com/?walletAddress={pubkey}&amount={amount}"
+        "https://faucet.solana.com/?walletAddress={pubkey}&cluster={cluster}"
     ))
 }
 
@@ -1143,26 +1137,24 @@ mod tests {
     #[test]
     fn test_web_faucet_url() {
         let pubkey = Pubkey::new_unique();
-        let url = |cluster: &str, sol: f64| {
-            web_faucet_url(
-                &format!("https://api.{cluster}.solana.com"),
-                &pubkey,
-                (sol * LAMPORTS_PER_SOL as f64) as u64,
-            )
-        };
-        let expected = |amount: &str| {
-            format!("https://faucet.solana.com/?walletAddress={pubkey}&amount={amount}")
+        let expected = |cluster: &str| {
+            Some(format!(
+                "https://faucet.solana.com/?walletAddress={pubkey}&cluster={cluster}"
+            ))
         };
 
-        assert_eq!(url("devnet", 0.1), Some(expected("0.5")));
-        assert_eq!(url("devnet", 1.0), Some(expected("1")));
-        assert_eq!(url("devnet", 2.0), Some(expected("2.5")));
-        assert_eq!(url("testnet", 4.0), Some(expected("5")));
-        assert_eq!(url("testnet", 100.0), Some(expected("5")));
-        assert_eq!(url("mainnet-beta", 1.0), None);
         assert_eq!(
-            web_faucet_url("http://localhost:8899", &pubkey, LAMPORTS_PER_SOL),
+            web_faucet_url("https://api.devnet.solana.com", &pubkey),
+            expected("devnet")
+        );
+        assert_eq!(
+            web_faucet_url("https://api.testnet.solana.com", &pubkey),
+            expected("testnet")
+        );
+        assert_eq!(
+            web_faucet_url("https://api.mainnet-beta.solana.com", &pubkey),
             None
         );
+        assert_eq!(web_faucet_url("http://localhost:8899", &pubkey), None);
     }
 }
