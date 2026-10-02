@@ -20,6 +20,7 @@ fn config(path: &Path) -> Config {
         pack_to_check_worker_capacity: 256,
         check_worker_to_pack_capacity: 512,
         transaction_state_capacity: 512,
+        execution_margin: Duration::from_millis(10),
     }
 }
 
@@ -44,9 +45,58 @@ pub(super) fn setup(check_capacity: usize) -> (Scheduler, AgaveSession) {
         simulate_worker_to_pack_capacity: 0,
     })
     .unwrap();
-    let mut scheduler = Scheduler::new(client, 512).unwrap();
-    scheduler.state = SchedulerState::LeaderReady { slot: 100 };
+    let mut scheduler = Scheduler::new(client, 512, Duration::from_millis(10)).unwrap();
+    scheduler.state = SchedulerState::LeaderReady {
+        slot: 100,
+        remaining_cost_units: 0,
+        slot_start: Instant::now(),
+        slot_duration: Duration::from_millis(400),
+    };
     (scheduler, agave)
+}
+
+#[test]
+fn initializes_pacing_once_per_slot() {
+    let (mut scheduler, _agave) = setup(2);
+    let start = Instant::now();
+    scheduler.state = SchedulerState::LeaderReady {
+        slot: 100,
+        remaining_cost_units: 100,
+        slot_start: start,
+        slot_duration: Duration::from_millis(400),
+    };
+    scheduler.handle_slot_change();
+    assert_eq!(
+        scheduler.pacing_budget(start + Duration::from_millis(195), 0),
+        50
+    );
+
+    scheduler.state = SchedulerState::LeaderReady {
+        slot: 100,
+        remaining_cost_units: 90,
+        slot_start: Instant::now(),
+        slot_duration: Duration::from_millis(400),
+    };
+    scheduler.handle_slot_change();
+    assert_eq!(
+        scheduler.pacing_budget(start + Duration::from_millis(195), 10),
+        40
+    );
+
+    let next_start = Instant::now();
+    scheduler.state = SchedulerState::LeaderReady {
+        slot: 101,
+        remaining_cost_units: 200,
+        slot_start: next_start,
+        slot_duration: Duration::from_millis(400),
+    };
+    scheduler.handle_slot_change();
+    assert_eq!(scheduler.pacing_budget(next_start, 0), 0);
+    assert_eq!(scheduler.scheduling_slot, Some(101));
+    assert_eq!(
+        scheduler.pacing_budget(next_start + Duration::from_millis(195), 0),
+        100
+    );
 }
 
 #[test]

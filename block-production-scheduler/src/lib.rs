@@ -14,16 +14,26 @@ use {
         ClientCheckWorkerSession, ClientHandshakeError, ClientLogon, ClientSession,
         ClientWorkerSession, client,
     },
+    agave_scheduling_utils::cost_pacer::CostPacer,
     core::{
         sync::atomic::{AtomicBool, Ordering},
         time::Duration,
     },
     rts_alloc::Allocator,
+    solana_clock::Slot,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
-    std::{collections::HashSet, path::PathBuf},
+    std::{collections::HashSet, path::PathBuf, time::Instant},
 };
 
 mod check_response;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "used by upcoming execution dispatch and response handling"
+    )
+)]
+mod in_flight_tracker;
 mod progress_tracker;
 mod resolved_transaction;
 mod tpu_ingress;
@@ -68,6 +78,8 @@ pub struct Config {
     pub check_worker_to_pack_capacity: usize,
     /// Maximum number of checked transactions retained for scheduling.
     pub transaction_state_capacity: usize,
+    /// Time before slot end by which pacing releases the full cost budget.
+    pub execution_margin: Duration,
 }
 
 #[expect(
@@ -76,6 +88,9 @@ pub struct Config {
 )]
 struct Scheduler {
     state: SchedulerState,
+    scheduling_slot: Option<Slot>,
+    cost_pacer: Option<CostPacer>,
+    execution_margin: Duration,
     allocator: Allocator,
     tpu_receiver: shaq::spsc::Consumer<TpuToPackMessage>,
     progress_receiver: shaq::spsc::Consumer<ProgressMessage>,
@@ -91,6 +106,7 @@ impl Scheduler {
     fn new(
         session: ClientSession,
         transaction_state_capacity: usize,
+        execution_margin: Duration,
     ) -> Result<Self, ClientHandshakeError> {
         let ClientSession {
             allocator,
@@ -107,6 +123,9 @@ impl Scheduler {
 
         Ok(Self {
             state: SchedulerState::new(),
+            scheduling_slot: None,
+            cost_pacer: None,
+            execution_margin,
             allocator,
             tpu_receiver: tpu_to_pack,
             progress_receiver: progress_tracker,
@@ -121,6 +140,7 @@ impl Scheduler {
 
     fn run_iteration(&mut self) {
         self.handle_leader_progress();
+        self.handle_slot_change();
         self.handle_check_worker_responses();
         self.handle_tpu_ingress();
         core::hint::spin_loop();
@@ -128,6 +148,44 @@ impl Scheduler {
 
     fn handle_leader_progress(&mut self) {
         self.state.drain_progress(&mut self.progress_receiver);
+    }
+
+    fn handle_slot_change(&mut self) {
+        let SchedulerState::LeaderReady {
+            slot,
+            remaining_cost_units,
+            slot_start,
+            slot_duration,
+        } = self.state
+        else {
+            return;
+        };
+        // Seed the slot once. Later snapshots can include our own reservations and must not
+        // replace the initial pacing budget.
+        if self.scheduling_slot == Some(slot) {
+            return;
+        }
+
+        self.scheduling_slot = Some(slot);
+        self.cost_pacer = Some(CostPacer::new(
+            remaining_cost_units,
+            slot_start,
+            slot_duration.saturating_sub(self.execution_margin),
+        ));
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by upcoming execution dispatch")
+    )]
+    fn pacing_budget(&self, now: Instant, consumed_cost: u64) -> u64 {
+        if !matches!(self.state, SchedulerState::LeaderReady { slot, .. } if self.scheduling_slot == Some(slot))
+        {
+            return 0;
+        }
+        self.cost_pacer
+            .as_ref()
+            .map_or(0, |pacer| pacer.available_budget(now, consumed_cost))
     }
 }
 
@@ -162,6 +220,7 @@ pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError
     let mut scheduler = Scheduler::new(
         client::connect(config.ipc_path, logon, config.handshake_timeout)?,
         config.transaction_state_capacity,
+        config.execution_margin,
     )?;
 
     while !exit.load(Ordering::Relaxed) {

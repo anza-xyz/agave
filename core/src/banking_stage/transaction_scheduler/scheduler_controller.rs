@@ -21,7 +21,9 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    agave_scheduling_utils::transaction_priority_queue::TransactionPriorityId,
+    agave_scheduling_utils::{
+        cost_pacer::CostPacer, transaction_priority_queue::TransactionPriorityId,
+    },
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
@@ -33,7 +35,7 @@ use {
             Arc,
             atomic::{AtomicBool, Ordering},
         },
-        time::{Duration, Instant},
+        time::Instant,
     },
 };
 
@@ -295,11 +297,9 @@ where
                         );
                     }
 
-                    CostPacer {
-                        block_limit,
+                    BankCostPacer {
+                        pacer: CostPacer::new(block_limit, now, fill_time.unwrap_or_default()),
                         shared_block_cost,
-                        detection_time: now,
-                        fill_time: self.config.scheduler_pacing.fill_time(),
                     }
                 });
             }
@@ -355,7 +355,7 @@ where
     fn process_transactions(
         &mut self,
         decision: &BufferedPacketsDecision,
-        cost_pacer: Option<&CostPacer>,
+        cost_pacer: Option<&BankCostPacer>,
         now: &Instant,
     ) -> Result<usize, SchedulerError> {
         let scheduled = match decision {
@@ -577,30 +577,15 @@ where
     }
 }
 
-struct CostPacer {
-    block_limit: u64,
+struct BankCostPacer {
+    pacer: CostPacer,
     shared_block_cost: SharedBlockCost,
-    detection_time: Instant,
-    fill_time: Option<Duration>,
 }
 
-impl CostPacer {
+impl BankCostPacer {
     fn scheduling_budget(&self, current_time: &Instant) -> u64 {
-        let target = if let Some(fill_time) = &self.fill_time {
-            let time_since = current_time.saturating_duration_since(self.detection_time);
-            if time_since >= *fill_time {
-                self.block_limit
-            } else {
-                // on millisecond granularity, pace the cost linearly.
-                let allocation_per_milli = self.block_limit / fill_time.as_millis() as u64;
-                let millis_since_detection = time_since.as_millis() as u64;
-                allocation_per_milli * millis_since_detection
-            }
-        } else {
-            self.block_limit
-        };
-
-        target.saturating_sub(self.shared_block_cost.load())
+        self.pacer
+            .available_budget(*current_time, self.shared_block_cost.load())
     }
 }
 
@@ -646,6 +631,7 @@ mod tests {
         std::{
             num::NonZeroUsize,
             sync::{Arc, RwLock},
+            time::Duration,
         },
     };
 
@@ -975,13 +961,15 @@ mod tests {
             scheduler_controller
                 .process_transactions(
                     &decision,
-                    Some(&CostPacer {
-                        block_limit: u64::MAX,
+                    Some(&BankCostPacer {
+                        pacer: CostPacer::new(
+                            u64::MAX,
+                            now.checked_sub(slot_time).unwrap(),
+                            slot_time.saturating_sub(Duration::from_millis(
+                                DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS,
+                            )),
+                        ),
                         shared_block_cost: SharedBlockCost::new(0),
-                        detection_time: now.checked_sub(slot_time).unwrap(),
-                        fill_time: Some(slot_time.saturating_sub(Duration::from_millis(
-                            DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS
-                        ))),
                     }),
                     &now
                 )
