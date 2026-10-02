@@ -53,16 +53,10 @@ impl Drop for ConnectionCleanup {
 
 #[cfg_attr(
     feature = "stable-abi",
-    derive(
-        StableAbi,
-        StableAbiSample,
-        PartialEq,
-        serde::Serialize,
-        serde::Deserialize
-    ),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "4WNVCd86MjzMaRMEjbWEUDJgMXvynPA1VVoGFS9Su1Qd",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]
@@ -74,10 +68,10 @@ pub(crate) struct IpEchoServerMessage {
 
 #[cfg_attr(
     feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, serde::Serialize, serde::Deserialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "W5tqLfJoZojQh6E9LfTwqGr5hu4g94QDEqi5UY78MYL",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]
@@ -86,10 +80,6 @@ pub struct IpEchoServerResponse {
     // Public IP address of request echoed back to the node.
     pub(crate) address: IpAddr,
     // Cluster shred-version of the node running the server.
-    #[cfg_attr(
-        feature = "stable-abi",
-        serde(deserialize_with = "solana_serde::default_on_eof")
-    )]
     #[wincode(with = "DefaultOnEmptyRead<Option<u16>>")]
     pub(crate) shred_version: Option<u16>,
 }
