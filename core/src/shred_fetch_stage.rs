@@ -127,14 +127,9 @@ impl ShredFetchStage {
 
             // Filter out shreds that are way too far in the future to avoid the
             // overhead of having to hold onto them.
-<<<<<<< HEAD
+            let mut num_valid_packets = 0usize;
             for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if shred_filter_ctx.should_discard_packet(packet.as_ref()) {
-=======
-            let mut num_valid_packets = 0usize;
-            for packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
-                if shred_filter_ctx.should_discard_packet(packet) {
->>>>>>> 895eb72 (repair: prioritize shred ingest (#15638))
                     packet.meta_mut().set_discard(true);
                 } else {
                     packet.meta_mut().flags.insert(flags);

@@ -648,7 +648,7 @@ impl PendingRepairPingRingBuffer {
         packet_batch: &mut PacketBatch,
         stats: &mut ShredFetchStats,
     ) {
-        for packet in packet_batch.iter_mut() {
+        for mut packet in packet_batch.iter_mut() {
             // Large packets are probably shreds.
             if packet.meta().size > REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
                 continue;
@@ -1973,53 +1973,6 @@ impl ServeRepair {
         Self::repair_proto_to_bytes(&request_proto, identity_keypair)
     }
 
-<<<<<<< HEAD
-    /// Distinguish and process `RepairResponse` ping packets ignoring other
-    /// packets in the batch.
-    pub(crate) fn handle_repair_response_pings(
-        repair_socket: &UdpSocket,
-        keypair: &Keypair,
-        packet_batch: &mut PacketBatch,
-        stats: &mut ShredFetchStats,
-    ) {
-        let mut pending_pongs = Vec::default();
-        for mut packet in packet_batch.iter_mut() {
-            if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
-                continue;
-            }
-            if let Some(data) = packet.data(..)
-                && let Ok(RepairResponse::Ping(ping)) = wincode::deserialize(data)
-            {
-                if !ping.verify() {
-                    // Do _not_ set `discard` to allow shred processing to attempt to
-                    // handle the packet.
-                    // Ping error count may include false posities for shreds of size
-                    // `REPAIR_RESPONSE_SERIALIZED_PING_BYTES` whose first 4 bytes
-                    // match `RepairResponse` discriminator (these 4 bytes overlap
-                    // with the shred signature field).
-                    stats.ping_err_verify_count += 1;
-                    continue;
-                }
-                packet.meta_mut().set_discard(true);
-                stats.ping_count += 1;
-                let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = wincode::serialize(&pong) {
-                    let from_addr = packet.meta().socket_addr();
-                    pending_pongs.push((pong, from_addr));
-                }
-            }
-        }
-        if !pending_pongs.is_empty() {
-            let num_pkts = pending_pongs.len();
-            let pending_pongs = pending_pongs.iter().map(|(bytes, addr)| (bytes, addr));
-            if let Err(SendPktsError::IoError(err)) = batch_send(repair_socket, pending_pongs) {
-                warn!("batch_send failed to send a batch of {num_pkts} pongs: {err:?}");
-            }
-        }
-    }
-
-=======
->>>>>>> 895eb72 (repair: prioritize shred ingest (#15638))
     pub fn repair_proto_to_bytes(request: &RepairProtocol, keypair: &Keypair) -> Result<Vec<u8>> {
         debug_assert!(request.supports_signature());
         let mut payload = serialize(&request)?;
