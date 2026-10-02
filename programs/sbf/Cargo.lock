@@ -647,7 +647,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2 0.5.10",
- "thiserror 2.0.21",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "web-time",
@@ -671,7 +671,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
- "thiserror 2.0.21",
+ "thiserror 2.0.20",
  "tinyvec",
  "tracing",
  "web-time",
@@ -7425,11 +7425,8 @@ name = "solana-net-utils"
 version = "4.4.0-beta.0"
 dependencies = [
  "agave-xdp",
-<<<<<<< HEAD
- "bincode",
-=======
  "anza-quinn",
->>>>>>> 77b6ff0 (quinn_proto: bump to 0.11.18 (#15650))
+ "bincode",
  "bytes",
  "cfg-if 1.0.4",
  "dashmap",
