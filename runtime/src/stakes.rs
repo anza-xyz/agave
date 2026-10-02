@@ -95,6 +95,7 @@ impl StakesCache {
         self.0.read().unwrap()
     }
 
+    #[cfg(test)]
     pub(crate) fn check_and_store(
         &self,
         pubkey: &Pubkey,
@@ -102,6 +103,32 @@ impl StakesCache {
         new_rate_activation_epoch: Option<Epoch>,
         in_epoch_rewards_period: bool,
         remove_inactive_stakes: bool,
+    ) {
+        self.check_and_store_with_loader(
+            pubkey,
+            account,
+            new_rate_activation_epoch,
+            in_epoch_rewards_period,
+            remove_inactive_stakes,
+            |_| None,
+        )
+    }
+
+    /// Stores `account` into the cache if it is a vote or stake account.
+    /// When a delegated stake account points at a vote account the cache
+    /// does not hold, `load_vote_account` fetches it and it is stored too,
+    /// so the delegation's stake is not dropped.  A cache built by Agave
+    /// holds every live vote account, so the load only happens for a cache
+    /// restored from a snapshot that listed fewer, as another client may
+    /// produce, or for a delegation whose vote account was closed.
+    pub(crate) fn check_and_store_with_loader(
+        &self,
+        pubkey: &Pubkey,
+        account: &AccountSharedData,
+        new_rate_activation_epoch: Option<Epoch>,
+        in_epoch_rewards_period: bool,
+        remove_inactive_stakes: bool,
+        load_vote_account: impl FnOnce(&Pubkey) -> Option<AccountSharedData>,
     ) {
         // TODO: If the account is already cached as a vote or stake account
         // but the owner changes, then this needs to evict the account from
@@ -151,14 +178,30 @@ impl StakesCache {
         } else if stake_program::check_id(owner) {
             match StakeAccount::try_from(account.clone()) {
                 Ok(stake_account) => {
-                    let mut stakes = self.0.write().unwrap();
-                    stakes.upsert_stake_delegation(
-                        *pubkey,
-                        stake_account,
-                        new_rate_activation_epoch,
-                        in_epoch_rewards_period,
-                        remove_inactive_stakes,
-                    );
+                    let voter_pubkey = stake_account.delegation().voter_pubkey;
+                    let voter_missing = {
+                        let mut stakes = self.0.write().unwrap();
+                        stakes.upsert_stake_delegation(
+                            *pubkey,
+                            stake_account,
+                            new_rate_activation_epoch,
+                            in_epoch_rewards_period,
+                            remove_inactive_stakes,
+                        )
+                    };
+                    // The vote account takes its stake from the cached
+                    // delegations when inserted.
+                    if voter_missing
+                        && let Some(account) = load_vote_account(&voter_pubkey)
+                        && VoteStateVersions::is_correct_size_and_initialized(account.data())
+                        && let Ok(vote_account) = VoteAccount::try_from(account)
+                    {
+                        // drop the old account after releasing the lock
+                        let _old_vote_account = {
+                            let mut stakes = self.0.write().unwrap();
+                            stakes.upsert_vote_account(&voter_pubkey, vote_account)
+                        };
+                    }
                 }
                 Err(_) => {
                     let mut stakes = self.0.write().unwrap();
@@ -684,6 +727,8 @@ impl Stakes<StakeAccount> {
             .insert(*vote_pubkey, vote_account, calculate_delegated_stake)
     }
 
+    /// Returns true when the delegation's vote account is not in the cache,
+    /// in which case its stake was not attributed to any vote account.
     fn upsert_stake_delegation(
         &mut self,
         stake_pubkey: Pubkey,
@@ -691,7 +736,7 @@ impl Stakes<StakeAccount> {
         new_rate_activation_epoch: Option<Epoch>,
         in_epoch_rewards_period: bool,
         remove_inactive_stakes: bool,
-    ) {
+    ) -> bool {
         debug_assert_ne!(stake_account.lamports(), 0u64);
         let delegation = stake_account.delegation();
         let voter_pubkey = delegation.voter_pubkey;
@@ -717,10 +762,11 @@ impl Stakes<StakeAccount> {
                 );
             if !may_be_awaiting_rewards {
                 self.remove_stake_delegation(&stake_pubkey, new_rate_activation_epoch);
-                return;
+                return false;
             }
         }
         let stake = activation_status.effective;
+        let voter_missing = self.vote_accounts.get(&voter_pubkey).is_none();
         match self.stake_delegations.insert(stake_pubkey, stake_account) {
             None => {
                 self.add_delegated_stake(voter_pubkey, stake);
@@ -742,6 +788,7 @@ impl Stakes<StakeAccount> {
                 }
             }
         }
+        voter_missing
     }
 
     /// Returns a reference to the map of stake delegations.
