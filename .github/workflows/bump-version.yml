@@ -78,7 +78,7 @@ jobs:
           NEW_VERSION: ${{ steps.process.outputs.new_version }}
           TARGET_BRANCH: ${{ steps.process.outputs.target_branch }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const pr = await github.rest.pulls.create({
               owner: context.repo.owner,
