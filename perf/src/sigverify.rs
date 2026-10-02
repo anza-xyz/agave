@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_small_packet() {
         let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         data[0] = 0xff;
         data[1] = 0xff;
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn test_large_sig_len() {
         let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // Make the signatures len huge
         data[0] = 0x7f;
@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn test_really_large_sig_len() {
         let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // Make the signatures len huge
         data[0] = 0xff;
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn test_invalid_pubkey_len() {
         let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // make pubkey len huge
         const PUBKEY_OFFSET: usize =
@@ -354,7 +354,7 @@ mod tests {
     #[test]
     fn test_unsupported_version() {
         let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // Set message version to 2. V1 is supported by transaction-view, but
         // still explicitly feature-gated by sigverify.
@@ -408,7 +408,7 @@ mod tests {
 
     fn test_verify_n(n: usize, modify_data: bool) {
         let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // jumble some data to test failure
         if modify_data {
@@ -496,7 +496,7 @@ mod tests {
         agave_logger::setup();
 
         let tx = test_multisig_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         let n = 4;
         let num_batches = 3;

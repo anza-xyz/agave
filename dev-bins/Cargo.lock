@@ -7400,7 +7400,6 @@ version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e376ff05aaf06d7e1900e32b8522188184628916863358a1a2a3944e2755141"
 dependencies = [
- "bincode",
  "bitflags 2.13.2",
  "cfg_eval",
  "serde",
@@ -7416,7 +7415,6 @@ dependencies = [
  "agave-transaction-view",
  "ahash 0.8.12",
  "arc-swap",
- "bincode",
  "bytes",
  "caps",
  "libc",
