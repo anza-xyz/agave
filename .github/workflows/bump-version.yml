@@ -19,6 +19,8 @@ jobs:
   version-bump:
     if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
     environment: "Version Bump"
     steps:
       - name: Create github app token
@@ -76,7 +78,7 @@ jobs:
           NEW_VERSION: ${{ steps.process.outputs.new_version }}
           TARGET_BRANCH: ${{ steps.process.outputs.target_branch }}
         with:
-          github-token: ${{ steps.app-token.outputs.token }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const pr = await github.rest.pulls.create({
               owner: context.repo.owner,
