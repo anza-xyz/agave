@@ -2061,9 +2061,7 @@ mod tests {
     fn simple_test_validator(alice: Pubkey) -> TestValidator {
         let test_validator =
             TestValidator::start_with_config(alice, None, SocketAddrSpace::Unspecified);
-        // Programs deployed at genesis (e.g. the stake program) are only usable
-        // after the first slots are processed. Wait until the validator is ready,
-        // following the CLI's check_ready.
+        // Programs deployed at genesis are not immediately available
         let rpc_client =
             RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
         while rpc_client
