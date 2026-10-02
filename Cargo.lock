@@ -10968,6 +10968,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-syscall-test-cases"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "solana-big-mod-exp",
+ "solana-bn254",
+ "solana-define-syscall 5.2.0",
+ "solana-keccak-hasher",
+ "solana-sha256-hasher",
+]
+
+[[package]]
 name = "solana-syscalls"
 version = "4.5.0-alpha.0"
 dependencies = [

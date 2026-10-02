@@ -1,0 +1,24 @@
+[package]
+name = "solana-syscall-test-cases"
+description = "Shared deterministic syscall workloads for local and validator tests"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[features]
+agave-unstable-api = []
+pairing = ["dep:solana-bn254"]
+modexp = ["dep:solana-big-mod-exp"]
+
+[dependencies]
+solana-big-mod-exp = { workspace = true, optional = true }
+solana-bn254 = { workspace = true, optional = true }
+solana-define-syscall = { workspace = true }
+solana-keccak-hasher = { workspace = true, features = ["sha3"] }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
+
+[lints]
+workspace = true

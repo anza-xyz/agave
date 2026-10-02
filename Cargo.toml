@@ -102,6 +102,7 @@ members = [
     "svm-measure",
     "svm-timings",
     "svm-type-overrides",
+    "syscall-test-cases",
     "syscalls",
     "syscalls/gen-syscall-list",
     "test-validator",
@@ -530,6 +531,7 @@ solana-svm-measure = { path = "svm-measure", version = "=4.5.0-alpha.0", feature
 solana-svm-timings = { path = "svm-timings", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = "6.0.0"
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
+solana-syscall-test-cases = { path = "syscall-test-cases", features = ["agave-unstable-api"] }
 solana-syscalls = { path = "syscalls", version = "=4.5.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-system-interface = { version = "3.3.0", features = ["alloc", "bincode", "serde", "wincode"] }
 solana-system-program = { path = "programs/system", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
