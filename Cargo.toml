@@ -89,6 +89,11 @@ members = [
     "runtime-transaction",
     "scheduling-utils",
     "send-transaction-service",
+    "shred",
+    "shred/fec-set-recovery",
+    "shred/shredder",
+    "shred/verify",
+    "shred/wire-format",
     "snapshots",
     "stake-accounts",
     "storage-bigtable",
@@ -174,6 +179,7 @@ agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.5.0-alpha.0", 
 agave-bls-sigverify = { path = "bls-sigverify", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-cpu-utils = { path = "cpu-utils", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-feature-set = { path = "feature-set", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
+agave-fec-set-recovery = { path = "shred/fec-set-recovery", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = "=5.0.0"
 agave-io-uring = { path = "io-uring", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
@@ -186,6 +192,10 @@ agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.5.
 agave-scheduler-bindings = "6.0.0"
 agave-scheduler-handshake = "7.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
+agave-shred = { path = "shred", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
+agave-shred-verify = { path = "shred/verify", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
+agave-shred-wire-format = { path = "shred/wire-format", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
+agave-shredder = { path = "shred/shredder", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }
 agave-transaction-view = "7.0.0"
 agave-votor = { path = "votor", version = "=4.5.0-alpha.0", features = ["agave-unstable-api"] }

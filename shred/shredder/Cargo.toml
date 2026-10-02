@@ -1,0 +1,32 @@
+[package]
+name = "agave-shredder"
+description = "Builds and signs Solana shred erasure batches"
+documentation = "https://docs.rs/agave-shredder"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = [
+    "agave-shred-verify/agave-unstable-api",
+    "agave-shred-wire-format/agave-unstable-api",
+]
+dev-context-only-utils = []
+
+[dependencies]
+agave-shred-verify = { workspace = true }
+agave-shred-wire-format = { workspace = true }
+bytes = { workspace = true }
+reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
+solana-clock = { workspace = true }
+solana-hash = { workspace = true, features = ["copy"] }
+solana-keypair = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }
+
+[lints]
+workspace = true
