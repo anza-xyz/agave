@@ -21,6 +21,11 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns
+  `MinContextSlotNotReached` (-32016) when the node's context slot at the finalized commitment is
+  below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
+  `getBlocks` behavior.
+
 ### Validator
 
 #### Breaking
@@ -34,6 +39,9 @@ Release channels have their own copy of this changelog:
 * Prebuilt Windows releases are no longer provided.
 
 #### Changes
+
+* `airdrop` now prints a link to <https://faucet.solana.com>, pre-populated with the recipient address,
+  when the request fails on devnet or testnet.
 
 ## 4.4.0
 

@@ -769,25 +769,48 @@ pub async fn process_airdrop(
 
     let pre_balance = rpc_client.get_balance(&pubkey).await?;
 
-    let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports).await;
-    if let Ok(signature) = result {
-        let signature_cli_message = log_instruction_custom_error::<SystemError>(result, config)?;
-        writeln_stdout(format_args!("{signature_cli_message}"))?;
+    match request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports).await {
+        Ok(signature) => {
+            let signature_cli_message =
+                log_instruction_custom_error::<SystemError>(Ok(signature), config)?;
+            writeln_stdout(format_args!("{signature_cli_message}"))?;
 
-        let current_balance = rpc_client.get_balance(&pubkey).await?;
+            let current_balance = rpc_client.get_balance(&pubkey).await?;
 
-        if current_balance < pre_balance.saturating_add(lamports) {
-            writeln_stdout(format_args!("Balance unchanged"))?;
-            writeln_stdout(format_args!(
-                "Run `solana confirm -v {signature:?}` for more info"
-            ))?;
-            Ok("".to_string())
-        } else {
-            Ok(build_balance_message(current_balance, false, true))
+            if current_balance < pre_balance.saturating_add(lamports) {
+                writeln_stdout(format_args!("Balance unchanged"))?;
+                writeln_stdout(format_args!(
+                    "Run `solana confirm -v {signature:?}` for more info"
+                ))?;
+                Ok("".to_string())
+            } else {
+                Ok(build_balance_message(current_balance, false, true))
+            }
         }
-    } else {
-        log_instruction_custom_error::<SystemError>(result, config)
+        Err(err) => log_instruction_custom_error::<SystemError>(Err(err), config).map_err(|err| {
+            match web_faucet_url(&config.json_rpc_url, &pubkey) {
+                Some(url) => format!(
+                    "{err}\n\nThe CLI faucet is closed on this cluster. Request an airdrop \
+                     at:\n{url}"
+                )
+                .into(),
+                None => err,
+            }
+        }),
     }
+}
+
+fn web_faucet_url(json_rpc_url: &str, pubkey: &Pubkey) -> Option<String> {
+    let cluster = if json_rpc_url.contains("testnet") {
+        "testnet"
+    } else if json_rpc_url.contains("devnet") {
+        "devnet"
+    } else {
+        return None;
+    };
+    Some(format!(
+        "https://faucet.solana.com/?walletAddress={pubkey}&cluster={cluster}"
+    ))
 }
 
 pub async fn process_balance(
@@ -1104,5 +1127,34 @@ pub fn process_verify_offchain_signature(
         Ok("Signature is valid".to_string())
     } else {
         Err(CliError::InvalidSignature.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_web_faucet_url() {
+        let pubkey = Pubkey::new_unique();
+        let expected = |cluster: &str| {
+            Some(format!(
+                "https://faucet.solana.com/?walletAddress={pubkey}&cluster={cluster}"
+            ))
+        };
+
+        assert_eq!(
+            web_faucet_url("https://api.devnet.solana.com", &pubkey),
+            expected("devnet")
+        );
+        assert_eq!(
+            web_faucet_url("https://api.testnet.solana.com", &pubkey),
+            expected("testnet")
+        );
+        assert_eq!(
+            web_faucet_url("https://api.mainnet-beta.solana.com", &pubkey),
+            None
+        );
+        assert_eq!(web_faucet_url("http://localhost:8899", &pubkey), None);
     }
 }

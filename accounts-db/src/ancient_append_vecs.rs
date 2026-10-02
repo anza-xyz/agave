@@ -84,7 +84,7 @@ impl AncientSlotInfos {
         is_candidate_for_shrink: bool,
     ) {
         if alive_bytes_after_shrink > 0 {
-            let written_bytes = storage.written_bytes();
+            let written_bytes = storage.num_stored_bytes();
             // two criteria we're shrinking by later:
             // 1. alive ratio so that we don't consume too much disk space with dead accounts
             // 2. # of active ancient roots, so that we don't consume too many open file handles
@@ -401,7 +401,7 @@ impl AccountsDb {
             .shrink_stats
             .bytes_written
             .fetch_add(
-                shrink_in_progress.new_storage().written_bytes(),
+                shrink_in_progress.new_storage().num_stored_bytes(),
                 Ordering::Relaxed,
             );
 
@@ -1477,8 +1477,8 @@ mod tests {
     fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry) {
         assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
-        assert_eq!(storage.written_bytes(), info.written_bytes);
-        assert_eq!(storage.alive_bytes(), info.alive_bytes as usize);
+        assert_eq!(storage.num_stored_bytes(), info.written_bytes);
+        assert_eq!(storage.num_alive_bytes(), info.alive_bytes as usize);
     }
 
     #[derive(EnumIter, Debug, PartialEq, Eq)]
@@ -1501,7 +1501,7 @@ mod tests {
                 create_storages_and_update_index(&db, slot1, slots, alive, data_size);
                 let mut infos = AncientSlotInfos::default();
                 let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
-                let alive_bytes_expected = storage.alive_bytes();
+                let alive_bytes_expected = storage.num_alive_bytes();
                 let high_slot = false;
                 let is_candidate_for_shrink = db.is_candidate_for_shrink(&storage);
                 let mut tuning = PackedAncientStorageTuning {
@@ -1599,7 +1599,7 @@ mod tests {
                         .collect::<Vec<_>>();
                     let alive_bytes_expected = storages
                         .iter()
-                        .map(|storage| storage.alive_bytes() as u64)
+                        .map(|storage| storage.num_alive_bytes() as u64)
                         .sum::<u64>();
                     let infos = db.calc_ancient_slot_info(slot_vec.clone(), &tuning);
                     if !alive {
@@ -1653,7 +1653,7 @@ mod tests {
                         let alive = alives[slot as usize];
                         if !alive {
                             // make this storage not alive
-                            storage.remove_accounts(storage.written_bytes() as usize, 1);
+                            storage.remove_accounts(storage.num_stored_bytes() as usize, 1);
                         }
                     });
                     let alive_storages = storages
@@ -1662,7 +1662,7 @@ mod tests {
                         .collect::<Vec<_>>();
                     let alive_bytes_expected = alive_storages
                         .iter()
-                        .map(|storage| storage.alive_bytes() as u64)
+                        .map(|storage| storage.num_alive_bytes() as u64)
                         .sum::<u64>();
 
                     let infos = match method {
@@ -2087,7 +2087,7 @@ mod tests {
                 }
                 let alive_bytes_expected = storages
                     .iter()
-                    .map(|storage| storage.alive_bytes() as u64)
+                    .map(|storage| storage.num_alive_bytes() as u64)
                     .sum::<u64>();
                 let infos = match method {
                     TestCollectInfo::CalcAncientSlotInfo => {
@@ -2207,7 +2207,7 @@ mod tests {
 
                         let bytes = storages
                             .iter()
-                            .map(|storage| storage.written_bytes())
+                            .map(|storage| storage.num_stored_bytes())
                             .sum::<u64>();
                         assert_eq!(
                             bytes,
