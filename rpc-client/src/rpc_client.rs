@@ -1877,20 +1877,71 @@ impl RpcClient {
     /// Returns the Alpenglow validator rank map for the epoch containing `slot`.
     ///
     /// Returns `None` if the epoch is unavailable or has no eligible BLS validators.
-    pub fn get_alpenglow_rank_map(&self, slot: Slot) -> RpcResult<Option<RpcAlpenglowRankMap>> {
-        self.invoke((self.rpc_client.as_ref()).get_alpenglow_rank_map(slot))
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    ///
+    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let response = rpc_client.get_rank_map(certificate_slot)?;
+    /// if let Some(rank_map) = response.value {
+    ///     for validator in rank_map.validators {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_rank_map(&self, slot: Slot) -> RpcResult<Option<RpcRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_rank_map(slot))
     }
 
     /// Returns the Alpenglow validator rank map with an optional identity filter.
     ///
     /// The filter preserves the validator's rank and the full map's total stake.
     /// An unknown identity returns an empty validator list when the map is available.
-    pub fn get_alpenglow_rank_map_with_config(
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    ///
+    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcRankMapConfig};
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let identity = "67omRD8GkXTi8daWceprtQABkDeEm3SZYHUCrthQGB9D";
+    /// let response = rpc_client.get_rank_map_with_config(
+    ///     certificate_slot,
+    ///     RpcRankMapConfig {
+    ///         identity: Some(identity.to_string()),
+    ///         ..RpcRankMapConfig::default()
+    ///     },
+    /// )?;
+    /// if let Some(rank_map) = response.value {
+    ///     if let Some(validator) = rank_map.validators.first() {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_rank_map_with_config(
         &self,
         slot: Slot,
-        config: RpcAlpenglowRankMapConfig,
-    ) -> RpcResult<Option<RpcAlpenglowRankMap>> {
-        self.invoke((self.rpc_client.as_ref()).get_alpenglow_rank_map_with_config(slot, config))
+        config: RpcRankMapConfig,
+    ) -> RpcResult<Option<RpcRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_rank_map_with_config(slot, config))
     }
 
     /// Get block production for the current epoch.
@@ -4680,17 +4731,17 @@ mod tests {
     }
 
     #[test]
-    fn test_get_alpenglow_rank_map_variants() {
+    fn test_get_rank_map_variants() {
         let rpc_client = RpcClient::new_mock("succeeds".to_string());
 
-        let response = rpc_client.get_alpenglow_rank_map(0).unwrap();
+        let response = rpc_client.get_rank_map(0).unwrap();
         assert_eq!(response.context.slot, 1);
         assert!(response.value.is_none());
 
         let response = rpc_client
-            .get_alpenglow_rank_map_with_config(
+            .get_rank_map_with_config(
                 0,
-                RpcAlpenglowRankMapConfig {
+                RpcRankMapConfig {
                     identity: None,
                     commitment: Some(CommitmentConfig::confirmed()),
                     min_context_slot: Some(1),

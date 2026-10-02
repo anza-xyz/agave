@@ -25,13 +25,12 @@ use {
         config::RpcBlockProductionConfig,
         request::RpcRequest,
         response::{
-            Response, RpcAccountBalance, RpcAlpenglowRankMap, RpcBlockCommitment,
-            RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
-            RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcIdentity,
-            RpcInflationGovernor, RpcInflationRate, RpcInflationReward, RpcKeyedAccount,
-            RpcPerfSample, RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
-            RpcSnapshotSlotInfo, RpcSupply, RpcVersionInfo, RpcVoteAccountInfo,
-            RpcVoteAccountStatus,
+            Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockProduction,
+            RpcBlockProductionRange, RpcBlockhash, RpcConfirmedTransactionStatusWithSignature,
+            RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
+            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee, RpcRankMap,
+            RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
+            RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
         },
     },
     solana_signature::Signature,
@@ -188,8 +187,8 @@ impl RpcSender for MockSender {
                 };
                 serde_json::to_value(Some(cert))?
             }
-            "getAlpenglowRankMap" => serde_json::to_value(Response::<
-                Option<RpcAlpenglowRankMap>,
+            "getRankMap" => serde_json::to_value(Response::<
+                Option<RpcRankMap>,
             > {
                 context: RpcResponseContext {
                     slot: 1,

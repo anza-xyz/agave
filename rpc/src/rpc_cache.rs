@@ -1,9 +1,10 @@
 use {
+    lru::LruCache,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         config::RpcLargestAccountsFilter,
-        response::{RpcAccountBalance, RpcAlpenglowRankMap, RpcAlpenglowRankMapEntry},
+        response::{RpcAccountBalance, RpcRankMap, RpcRankMapEntry},
     },
     solana_runtime::{
         bank::MAX_LEADER_SCHEDULE_STAKES,
@@ -11,51 +12,50 @@ use {
     },
     solana_vote::vote_account::{VoteAccounts, VoteAccountsHashMap},
     std::{
-        collections::{HashMap, VecDeque},
+        collections::HashMap,
+        num::NonZeroUsize,
         sync::Arc,
         time::{Duration, SystemTime},
     },
     tokio::sync::OnceCell,
 };
 
-type RankMapCell = Arc<OnceCell<Option<CachedAlpenglowRankMap>>>;
+type RankMapCell = Arc<OnceCell<Option<CachedRankMap>>>;
 
-#[derive(Default)]
-pub(crate) struct AlpenglowRankMapCache {
-    entries: VecDeque<(Epoch, Arc<VoteAccountsHashMap>, RankMapCell)>,
+pub struct RankMapCache {
+    // Retain the accounts so the pointer used as a key cannot be reused while cached.
+    entries: LruCache<(Epoch, usize), (Arc<VoteAccountsHashMap>, RankMapCell)>,
 }
 
-impl AlpenglowRankMapCache {
-    pub(crate) fn get_or_insert(&mut self, epoch: Epoch, accounts: &VoteAccounts) -> RankMapCell {
-        let accounts = Arc::from(accounts);
-        // Epoch alone is insufficient: processed and confirmed banks can be on different forks.
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|(cached_epoch, cached_accounts, _)| {
-                *cached_epoch == epoch && Arc::ptr_eq(cached_accounts, &accounts)
-            })
-        {
-            let entry = self.entries.remove(index).unwrap();
-            let cell = Arc::clone(&entry.2);
-            self.entries.push_back(entry);
-            return cell;
+impl Default for RankMapCache {
+    fn default() -> Self {
+        Self {
+            entries: LruCache::new(
+                NonZeroUsize::new(MAX_LEADER_SCHEDULE_STAKES as usize)
+                    .expect("at least one epoch's stakes are retained"),
+            ),
         }
-        let cell = Arc::new(OnceCell::new());
-        if self.entries.len() == MAX_LEADER_SCHEDULE_STAKES as usize {
-            self.entries.pop_front();
-        }
-        self.entries.push_back((epoch, accounts, Arc::clone(&cell)));
-        cell
     }
 }
 
-pub(crate) struct CachedAlpenglowRankMap {
-    rank_map: Arc<BLSPubkeyToRankMap>,
-    response: Arc<RpcAlpenglowRankMap>,
+impl RankMapCache {
+    pub(crate) fn get_or_insert(&mut self, epoch: Epoch, accounts: &VoteAccounts) -> RankMapCell {
+        let accounts = Arc::from(accounts);
+        // Epoch alone is insufficient: processed and confirmed banks can be on different forks.
+        let key = (epoch, Arc::as_ptr(&accounts) as usize);
+        let (_, cell) = self
+            .entries
+            .get_or_insert(key, || (accounts, Arc::new(OnceCell::new())));
+        Arc::clone(cell)
+    }
 }
 
-impl CachedAlpenglowRankMap {
+pub(crate) struct CachedRankMap {
+    rank_map: Arc<BLSPubkeyToRankMap>,
+    response: Arc<RpcRankMap>,
+}
+
+impl CachedRankMap {
     pub(crate) fn new(epoch: Epoch, stakes: &VersionedEpochStakes) -> Option<Self> {
         let rank_map = Arc::clone(stakes.try_bls_pubkey_to_rank_map()?);
         let validators = rank_map
@@ -68,7 +68,7 @@ impl CachedAlpenglowRankMap {
                     bls_pubkey,
                     stake,
                 } = entry;
-                RpcAlpenglowRankMapEntry {
+                RpcRankMapEntry {
                     rank,
                     vote_pubkey: vote_account_pubkey.to_string(),
                     node_pubkey: node_pubkey.to_string(),
@@ -78,7 +78,7 @@ impl CachedAlpenglowRankMap {
                 }
             })
             .collect();
-        let response = Arc::new(RpcAlpenglowRankMap {
+        let response = Arc::new(RpcRankMap {
             epoch,
             total_stake: rank_map.total_stake(),
             validators,
@@ -86,7 +86,7 @@ impl CachedAlpenglowRankMap {
         Some(Self { rank_map, response })
     }
 
-    pub(crate) fn response(&self, identity: Option<&Pubkey>) -> Arc<RpcAlpenglowRankMap> {
+    pub(crate) fn response(&self, identity: Option<&Pubkey>) -> Arc<RpcRankMap> {
         match identity {
             None => Arc::clone(&self.response),
             Some(identity) => {
@@ -96,7 +96,7 @@ impl CachedAlpenglowRankMap {
                     .map(|(rank, _)| self.response.validators[usize::from(rank)].clone())
                     .into_iter()
                     .collect();
-                Arc::new(RpcAlpenglowRankMap {
+                Arc::new(RpcRankMap {
                     epoch: self.response.epoch,
                     total_stake: self.response.total_stake,
                     validators,
@@ -164,7 +164,7 @@ pub mod test {
 
     #[test]
     fn test_rank_map_cache_forks_and_eviction() {
-        let mut cache = AlpenglowRankMapCache::default();
+        let mut cache = RankMapCache::default();
         let accounts = VoteAccounts::default();
         let first = cache.get_or_insert(0, &accounts);
         assert!(Arc::ptr_eq(
@@ -186,14 +186,14 @@ pub mod test {
             !cache
                 .entries
                 .iter()
-                .any(|(_, _, cell)| Arc::ptr_eq(cell, &other_fork))
+                .any(|(_, (_, cell))| Arc::ptr_eq(cell, &other_fork))
         );
         assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0, &accounts)));
     }
 
     #[tokio::test]
     async fn test_rank_map_cache_initializes_once() {
-        let mut cache = AlpenglowRankMapCache::default();
+        let mut cache = RankMapCache::default();
         let cell = cache.get_or_insert(0, &VoteAccounts::default());
         let (first, second) = tokio::join!(
             cell.get_or_init(|| async {

@@ -45,6 +45,7 @@ jsonrpc-http-server = { workspace = true }
 jsonrpc-pubsub = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
+lru = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true, features = ["rc"] }

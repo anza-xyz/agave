@@ -389,18 +389,18 @@ pub struct RpcVote {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RpcAlpenglowRankMap {
+pub struct RpcRankMap {
     /// Epoch in which this rank map is effective.
     pub epoch: Epoch,
     /// Total stake in the full rank map, in lamports, regardless of the identity filter.
     pub total_stake: NonZero<u64>,
     /// Validators ordered by their Alpenglow rank.
-    pub validators: Vec<RpcAlpenglowRankMapEntry>,
+    pub validators: Vec<RpcRankMapEntry>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RpcAlpenglowRankMapEntry {
+pub struct RpcRankMapEntry {
     /// Zero-based index used in Alpenglow certificate bitmaps.
     pub rank: u16,
     /// Vote account address, as a base-58 encoded string.
@@ -629,13 +629,13 @@ pub mod tests {
                 "blsPubkeyCompressed": "bls", "stake": 100
             }]
         });
-        let response: RpcAlpenglowRankMap = serde_json::from_value(value.clone()).unwrap();
+        let response: RpcRankMap = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(response).unwrap(), value);
         value["totalStake"] = json!(0);
-        assert!(serde_json::from_value::<RpcAlpenglowRankMap>(value.clone()).is_err());
+        assert!(serde_json::from_value::<RpcRankMap>(value.clone()).is_err());
         value["totalStake"] = json!(100);
         value["validators"][0]["stake"] = json!(0);
-        assert!(serde_json::from_value::<RpcAlpenglowRankMap>(value).is_err());
+        assert!(serde_json::from_value::<RpcRankMap>(value).is_err());
     }
 
     // Make sure that `RpcPerfSample` can read previous version JSON, one without the
