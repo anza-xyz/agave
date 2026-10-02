@@ -4,6 +4,8 @@ use {
     crate::{
         bls_sigverifier::SigVerifierChannels,
         errors::SigVerifyVoteError,
+        metric_types::ConsensusMetricsEvent,
+        pubkeys::VoteAccountPubkeys,
         rewards::rewards_wants_vote,
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         stats::VoteSenderStats,
@@ -12,7 +14,7 @@ use {
             send_votes_to_rewards,
         },
     },
-    agave_votor_messages::{VoteAccountPubkeys, metric_types::ConsensusMetricsEvent, vote::Vote},
+    agave_votor_messages::vote::Vote,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,

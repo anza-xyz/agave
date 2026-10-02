@@ -5,6 +5,8 @@ pub mod bls_sigverifier;
 pub mod bls_vote_sigverify;
 mod errors;
 pub mod generated_cert_types;
+pub mod metric_types;
+pub mod pubkeys;
 mod rank_map_cache;
 pub mod rewards;
 pub mod sig_verified_messages;

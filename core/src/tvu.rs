@@ -29,6 +29,8 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
+        pubkeys::VerifiedVotorSlotsMessage,
         rewards::RewardInput,
     },
     agave_jemalloc::jemalloc::Arena,
@@ -41,10 +43,7 @@ use {
         voting_service::{VotingService as BLSVotingService, votor_rate_limit_pps},
         votor::{Votor, VotorConfig},
     },
-    agave_votor_messages::{
-        VerifiedVotorSlotsMessage, consensus_message::Block,
-        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
-    },
+    agave_votor_messages::consensus_message::Block,
     agave_votor_transport::{PeerList, endpoint::QuicDatagramEndpoint},
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},

@@ -1,13 +1,11 @@
 use {
     crate::{
         errors::{SigVerifyCertError, SigVerifyVoteError},
+        metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
+        pubkeys::{VerifiedVotorSlotsMessage, VoteAccountPubkeys},
         rewards::RewardInput,
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         stats::{SenderStats, VoteSenderStats},
-    },
-    agave_votor_messages::{
-        VerifiedVotorSlotsMessage, VoteAccountPubkeys,
-        metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
     },
     crossbeam_channel::{Sender, TrySendError},
     log::{error, info, warn},

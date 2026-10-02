@@ -6,6 +6,8 @@ use {
         bls_vote_sigverify::{batch::Batch, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
+        metric_types::ConsensusMetricsEventSender,
+        pubkeys::VerifiedVotorSlotsMessage,
         rank_map_cache::RankMapCache,
         rewards::{RewardInput, rewards_wants_vote},
         sig_verified_messages::SigVerifiedBatch,
@@ -14,10 +16,8 @@ use {
         vote_pool::{VotePool, VotePoolError},
     },
     agave_votor_messages::{
-        VerifiedVotorSlotsMessage,
         certificate::CertificateType,
         consensus_message::Block,
-        metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
@@ -595,7 +595,9 @@ fn recv_inputs(
 mod tests {
     use {
         super::*,
-        crate::sig_verified_messages::VoteAggregate,
+        crate::{
+            metric_types::ConsensusMetricsEventReceiver, sig_verified_messages::VoteAggregate,
+        },
         agave_bls_cert_verify::cert_verify::{
             test_create_base2_certificate, test_create_base2_unverified_certificate,
             test_create_base3_certificate,
@@ -603,7 +605,6 @@ mod tests {
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
-            metric_types::ConsensusMetricsEventReceiver,
             vote::Vote,
             wire::{VersionedWireConsensusMessage, get_vote_payload_to_sign},
         },
