@@ -197,11 +197,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
         ProgramCacheEntryOwner::LoaderV1 | ProgramCacheEntryOwner::LoaderV2 => {
             // V1 & V2 programs are immutable and hold no deployment metadata.
             // As long as there is *some* kind of ELF present, return slot 0.
-            if program
-                .data()
-                .get(0..4)
-                .is_some_and(|magic| magic == ELFMAG)
-            {
+            if program.data().starts_with(&ELFMAG) {
                 Ok(0)
             } else {
                 Err(TransactionError::ProgramAccountNotFound)
@@ -582,7 +578,7 @@ mod tests {
         // Fail: invalid state
         let mut program_account = AccountSharedData::default();
         program_account.set_owner(loader_v4::id());
-        program_account.set_data_from_slice(&[0u8; 4]);
+        program_account.set_data_from_slice(&[0u8; 4]); // `Uninitialized`
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -1160,7 +1156,7 @@ mod tests {
         // Fail: invalid state
         let mut program_account = AccountSharedData::default();
         program_account.set_owner(loader_v4::id());
-        program_account.set_data_from_slice(&[0u8; 4]);
+        program_account.set_data_from_slice(&[0u8; 4]); // `Uninitialized`
         assert_eq!(
             get_program_deployment_slot(
                 &mock_bank,
@@ -1255,7 +1251,7 @@ mod tests {
                 .account_shared_data
                 .borrow_mut()
                 .insert(loader_ids[i], AccountSharedData::new(1, 1, &program_ids[3]));
-            let mut program = AccountSharedData::new(4, 1, &loader_ids[i]);
+            let mut program = AccountSharedData::new(1, 1, &loader_ids[i]);
             program.set_data_from_slice(&ELFMAG);
             mock_bank
                 .account_shared_data
@@ -1412,7 +1408,7 @@ mod tests {
             // Same goes for non-empty but zero filled data.
             let mut account = AccountSharedData::default();
             account.set_owner(owner);
-            account.set_data_from_slice(&[0u8; 4]);
+            account.set_data_from_slice(&[0u8; 4]); // `Uninitialized`
             mock_bank
                 .account_shared_data
                 .borrow_mut()
