@@ -19,7 +19,7 @@ pub(in crate::parse_token) fn parse_cpi_guard_instruction(
         CpiGuardInstruction::Disable => "disable",
     };
     let mut value = json!({
-        "account": account_keys[account_indexes[0] as usize].to_string(),
+        "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
     });
     let map = value.as_object_mut().unwrap();
     parse_signers(
