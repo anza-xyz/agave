@@ -50,15 +50,17 @@ fn generate_test_data(
                 signature: signature.into(),
                 shred_version,
             };
+            let sender_vote_account_pubkey = Keypair::new().pubkey();
             (
                 UnverifiedVotePayload {
                     vote_message,
                     sender_bls_pubkey: bls_keypair.public,
                     sender_identity_pubkey: Keypair::new().pubkey(),
+                    sender_vote_account_pubkey,
                     rank: 0,
                     stake: NonZero::new(1234).unwrap(),
                 },
-                Keypair::new().pubkey(),
+                sender_vote_account_pubkey,
             )
         })
         .unzip();
