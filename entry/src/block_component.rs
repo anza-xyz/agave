@@ -264,7 +264,7 @@ pub struct UpdateParentV1 {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct GenesisCertBlockMarker {
     pub slot: Slot,
-    pub block_id: Hash,
+    pub block_id: BlockId,
     #[wincode(with = "PodBLSSignature")]
     pub bls_signature: BLSSignature,
     #[wincode(with = "WincodeVec<u8, BincodeLen>")]
@@ -289,7 +289,7 @@ impl TryFrom<GenesisCert> for GenesisCertBlockMarker {
         }
         Ok(Self {
             slot: cert.block.slot,
-            block_id: cert.block.block_id.to_hash(),
+            block_id: cert.block.block_id,
             bls_signature: cert.signature.signature,
             bitmap: cert.signature.bitmap,
         })
@@ -672,10 +672,7 @@ pub fn genesis_certificate_from_shred(
         return None;
     }
     Some(UnverifiedCertificate {
-        cert_type: CertificateType::Genesis(Block {
-            slot,
-            block_id: BlockId::from(block_id),
-        }),
+        cert_type: CertificateType::Genesis(Block { slot, block_id }),
         signature: bls_signature,
         bitmap,
         shred_version,
@@ -765,7 +762,7 @@ mod tests {
     #[test]
     fn parse_genesis_certificate_from_shred() {
         let parent_slot = 41;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let shred_version = 123;
         let signature: BlsSignature = BlsKeypair::new().sign(b"genesis").into();
         let bitmap = vec![0xa5; 64];
@@ -785,7 +782,7 @@ mod tests {
             certificate.cert_type,
             CertificateType::Genesis(Block {
                 slot: parent_slot,
-                block_id: BlockId::from(block_id),
+                block_id,
             })
         );
         assert_eq!(certificate.signature, signature);
@@ -895,7 +892,7 @@ mod tests {
 
         let marker = GenesisCertBlockMarker {
             slot: 999,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![1, 2, 3],
         };
@@ -946,7 +943,7 @@ mod tests {
     fn length_prefixed_rejects_oversized_deserialized_inner() {
         let marker = GenesisCertBlockMarker {
             slot: 999,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![0xAB; usize::from(u16::MAX) + 1],
         };

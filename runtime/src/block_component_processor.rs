@@ -13,7 +13,7 @@ use {
     agave_transaction_view::transaction_data::TransactionData,
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
-        consensus_message::{Block, BlockId},
+        consensus_message::Block,
         migration::MigrationStatus,
         unverified_vote_message::UnverifiedCertificate,
     },
@@ -506,7 +506,10 @@ impl BlockComponentProcessor {
             .parent_block_id()
             .expect("Block id is populated for all slots > 0");
         if (bank.parent_slot(), parent_block_id)
-            != (genesis_block_marker.slot, genesis_block_marker.block_id)
+            != (
+                genesis_block_marker.slot,
+                genesis_block_marker.block_id.to_hash(),
+            )
         {
             return Err(BlockComponentProcessorError::GenesisCertificateOnNonChild);
         }
@@ -518,7 +521,7 @@ impl BlockComponentProcessor {
         let genesis_cert = GenesisCert {
             block: Block {
                 slot: genesis_block_marker.slot,
-                block_id: BlockId::from(genesis_block_marker.block_id),
+                block_id: genesis_block_marker.block_id,
             },
             signature: CertSignature {
                 signature: genesis_block_marker.bls_signature,
@@ -796,6 +799,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
+        agave_votor_messages::consensus_message::BlockId,
         bytes::Bytes,
         rand::Rng,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
@@ -841,7 +845,7 @@ mod tests {
     fn test_genesis_cert_marker() -> GenesisCertBlockMarker {
         GenesisCertBlockMarker {
             slot: 0,
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         }
@@ -898,8 +902,8 @@ mod tests {
         let migration_status = post_migration_status_with_genesis_slot(1);
         let (genesis_bank, bank_forks) = create_test_bank();
         let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
-        let parent_block_id = Hash::new_unique();
-        parent.set_block_id(Some(parent_block_id));
+        let parent_block_id = BlockId::new_unique();
+        parent.set_block_id(Some(parent_block_id.to_hash()));
         let bank = create_child_bank(&bank_forks, &parent, 2);
         let genesis_marker = GenesisCertBlockMarker {
             slot: parent.slot(),
@@ -925,8 +929,8 @@ mod tests {
         migration_status.record_feature_activation(0);
         let (genesis_bank, bank_forks) = create_test_bank();
         let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
-        let parent_block_id = Hash::new_unique();
-        parent.set_block_id(Some(parent_block_id));
+        let parent_block_id = BlockId::new_unique();
+        parent.set_block_id(Some(parent_block_id.to_hash()));
         let bank = create_child_bank(&bank_forks, &parent, 2);
         let genesis_marker = GenesisCertBlockMarker {
             slot: parent.slot(),
