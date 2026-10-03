@@ -1080,6 +1080,7 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_transaction_receive_threads,
+            socket_addr_space: run_args.socket_addr_space,
             stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             ..Default::default()
@@ -1101,6 +1102,7 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_transaction_forward_receive_threads,
+            socket_addr_space: run_args.socket_addr_space,
             stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             ..Default::default()
@@ -1122,6 +1124,7 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_vote_transaction_receive_threads,
+            socket_addr_space: run_args.socket_addr_space,
             ..Default::default()
         },
         qos_config: SimpleQosConfig {

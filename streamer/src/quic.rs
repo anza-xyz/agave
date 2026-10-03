@@ -16,7 +16,7 @@ use {
     },
     rustls::KeyLogFile,
     solana_keypair::Keypair,
-    solana_net_utils::quic_socket::QuicSocket,
+    solana_net_utils::{SocketAddrSpace, quic_socket::QuicSocket},
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::PacketBatch,
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate, tls_server_config_builder},
@@ -211,7 +211,8 @@ pub struct StreamerStats {
     // regardless of the source IP address.
     pub(crate) connection_rate_limited_across_all: AtomicUsize,
     // Per IP rate-limiting is triggered each time when there are too many connections
-    // opened from a particular IP address.
+    // opened from a particular IP address, or when the IP address is not a valid
+    // peer address (e.g. multicast, or private under `SocketAddrSpace::Global`).
     pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
     pub(crate) staked_stream_load_ema: AtomicUsize,
@@ -574,6 +575,8 @@ pub struct QuicStreamerConfig {
     /// connection's peer still retains sufficient stake; randomized to spread
     /// reconnects of evicted peers over time.
     pub stake_revalidation_interval: RangeInclusive<Duration>,
+    /// Remote addresses outside of this space are ignored before any reply is sent.
+    pub socket_addr_space: SocketAddrSpace,
 }
 
 #[derive(Clone)]
@@ -597,6 +600,7 @@ impl Default for QuicStreamerConfig {
             stream_receive_window_size: PACKET_DATA_SIZE as u32,
             max_stream_data_bytes: PACKET_DATA_SIZE as u32,
             stake_revalidation_interval: DEFAULT_STAKE_REVALIDATION_INTERVAL,
+            socket_addr_space: SocketAddrSpace::Global,
         }
     }
 }
@@ -609,6 +613,7 @@ impl QuicStreamerConfig {
     pub fn default_for_tests() -> Self {
         Self {
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
+            socket_addr_space: SocketAddrSpace::Unspecified,
             ..Self::default()
         }
     }

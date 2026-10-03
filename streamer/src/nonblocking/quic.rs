@@ -15,7 +15,7 @@ use {
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
-    solana_net_utils::{quic_socket::QuicSocket, token_bucket::TokenBucket},
+    solana_net_utils::{SocketAddrSpace, quic_socket::QuicSocket, token_bucket::TokenBucket},
     solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
@@ -358,6 +358,23 @@ where
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
 
+            // source address is unauthenticated at this point, so refuse to
+            // reflect any traffic towards addresses no legitimate peer can have
+            if is_invalid_remote_address(
+                incoming.remote_address(),
+                quic_server_params.socket_addr_space,
+            ) {
+                stats
+                    .connection_rate_limited_per_ipaddr
+                    .fetch_add(1, Ordering::Relaxed);
+                debug!(
+                    "Ignoring incoming connection from invalid address {}",
+                    incoming.remote_address()
+                );
+                incoming.ignore();
+                continue;
+            }
+
             // check overall connection request rate limiter
             if overall_connection_rate_limiter.current_tokens() == 0 {
                 stats
@@ -426,6 +443,21 @@ where
     }
     tasks.close();
     tasks.wait().await;
+}
+
+fn is_invalid_remote_address(remote_addr: SocketAddr, socket_addr_space: SocketAddrSpace) -> bool {
+    // dual-stack sockets report IPv4 peers as IPv4-mapped IPv6 addresses,
+    // which would bypass the IPv4 checks below
+    let ip = remote_addr.ip().to_canonical();
+    let is_broadcast = match ip {
+        IpAddr::V4(ip) => ip.is_broadcast(),
+        IpAddr::V6(_) => false,
+    };
+    ip.is_unspecified()
+        || ip.is_multicast()
+        || is_broadcast
+        || remote_addr.port() == 0
+        || !socket_addr_space.check(&SocketAddr::new(ip, remote_addr.port()))
 }
 
 pub fn get_connection_stake(
