@@ -50,7 +50,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
-        ops::{Bound, Index, IndexMut, Range},
+        ops::{Bound, Deref, Index, IndexMut, Range},
         sync::Mutex,
     },
 };
@@ -169,12 +169,16 @@ pub(crate) struct NodesCursor<T> {
 }
 
 impl<T> NodesCursor<T> {
-    pub(crate) fn new(crds: &Crds) -> Self {
+    /// Takes the crds lock guard by value to release it before allocating.
+    pub(crate) fn new(crds: impl Deref<Target = Crds>) -> Self {
+        let num_nodes = crds.nodes.len();
+        let initial_num_nodes_removed = crds.num_nodes_removed;
+        drop(crds);
         Self {
-            end: crds.nodes.len(),
-            initial_num_nodes_removed: crds.num_nodes_removed,
+            end: num_nodes,
+            initial_num_nodes_removed,
             node_removed_between_chunks: false,
-            values: Vec::with_capacity(crds.nodes.len()),
+            values: Vec::with_capacity(num_nodes),
         }
     }
 
@@ -1481,7 +1485,7 @@ mod tests {
         // Walks the nodes, calling f after each chunk. Values are pubkeys and
         // the order of the read.
         fn walk(crds: &mut Crds, mut f: impl FnMut(&mut Crds)) -> NodesCursor<(Pubkey, usize)> {
-            let mut cursor = NodesCursor::new(crds);
+            let mut cursor = NodesCursor::new(&*crds);
             let mut num_reads = 0;
             while !cursor.is_done() {
                 cursor.read_chunk(crds, CHUNK_SIZE, |value| {
