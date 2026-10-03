@@ -701,6 +701,18 @@ pub fn execute(
         })
         .unwrap_or_default();
 
+    let accounts_file_provider = matches
+        .value_of("accounts_db_account_storage_file_format")
+        .map(|format| match format {
+            "append-vec" => AccountsFileProvider::AppendVec,
+            "split-experimental" => AccountsFileProvider::Split,
+            _ => {
+                // clap will enforce one of the above values is given
+                unreachable!("invalid value given to accounts_db_account_storage_file_format")
+            }
+        })
+        .unwrap();
+
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
@@ -723,7 +735,7 @@ pub fn execute(
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
-        accounts_file_provider: AccountsFileProvider::AppendVec,
+        accounts_file_provider,
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
