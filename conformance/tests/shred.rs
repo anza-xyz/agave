@@ -11,7 +11,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{
         DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shredder,
-        max_entries_per_n_shred_last_or_not,
+        max_entries_per_n_shred,
     },
     solana_signer::Signer,
     std::{mem::MaybeUninit, sync::Arc},
@@ -66,8 +66,7 @@ fn make_recoverable_fec_set_at(slot: u64, parent: u64) -> (Vec<Vec<u8>>, Vec<u8>
     let transaction =
         solana_system_transaction::transfer(&sender, &recipient.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![transaction]);
-    let num_entries =
-        max_entries_per_n_shred_last_or_not(&entry, DATA_SHREDS_PER_FEC_BLOCK as u64, false);
+    let num_entries = max_entries_per_n_shred(&entry, DATA_SHREDS_PER_FEC_BLOCK as u64, None);
     let entries = vec![entry; num_entries.try_into().unwrap()];
     let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
         &keypair,

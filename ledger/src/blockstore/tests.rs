@@ -3,8 +3,8 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
-            DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, PROOF_ENTRIES_FOR_32_32_BATCH,
-            ShredData, ShredFlags, max_ticks_per_n_shreds,
+            DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, ShredFlags,
+            max_ticks_per_n_shreds,
             merkle::finish_erasure_batch_for_tests,
             merkle_tree::{
                 SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
@@ -610,30 +610,6 @@ fn test_get_slot_entries3() {
         blockstore
             .insert_shreds(shreds, false)
             .expect("Expected successful write of shreds");
-        assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), entries);
-    }
-}
-
-/// A last-in-slot component whose serialized size lands between the capacity
-/// of the final, resigned, FEC set and that of a normal FEC set is
-/// shredded into two resigned FEC sets. This reproduces this niche scenario.
-#[test]
-fn test_get_slot_entries_last_fec_set_capacity_boundary() {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-    let entry_size = wincode::serialized_size(&create_ticks(2, 0, Hash::default())).unwrap()
-        - wincode::serialized_size(&create_ticks(1, 0, Hash::default())).unwrap();
-    let fec_set_capacity = |resigned| {
-        DATA_SHREDS_PER_FEC_BLOCK as u64
-            * ShredData::capacity(PROOF_ENTRIES_FOR_32_32_BATCH, resigned).unwrap() as u64
-    };
-    let num_entries = (fec_set_capacity(true) - entry_size) / entry_size
-        ..=(fec_set_capacity(false) + entry_size) / entry_size;
-    for (slot, num_entries) in num_entries.enumerate() {
-        let slot = slot as u64 + 1;
-        let entries = create_ticks(num_entries, 0, Hash::default());
-        let shreds = entries_to_test_shreds(&entries, slot, slot - 1, true, 0);
-        blockstore.insert_shreds(shreds, false).unwrap();
         assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), entries);
     }
 }
@@ -2456,6 +2432,8 @@ fn test_should_insert_coding_shred() {
     );
 }
 
+/// Inserts a full slot, then a second, longer version of the same slot. The second version
+/// must use more FEC sets, producing a block that is flagged as a duplicate.
 #[test]
 fn test_insert_multiple_is_last() {
     agave_logger::setup();
@@ -2472,7 +2450,7 @@ fn test_insert_multiple_is_last() {
     assert_eq!(slot_meta.last_index, Some(num_shreds - 1));
     assert!(slot_meta.is_full());
 
-    let (shreds, _) = make_slot_entries(0, 0, 600);
+    let (shreds, _) = make_slot_entries(0, 0, 700);
     assert!(shreds.len() > num_shreds as usize);
     blockstore.insert_shreds(shreds, false).unwrap();
     let slot_meta = blockstore.meta(0).unwrap().unwrap();
@@ -6641,7 +6619,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     let parent_slot = 990;
     let parent_block_id = Hash::default();
     let slot = 1000;
-    let num_entries = 200;
+    let num_entries = 250;
 
     // Create a set of shreds for a complete block
     let (data_shreds, _) = setup_erasure_shreds(slot, parent_slot, num_entries);
@@ -6715,7 +6693,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     // Verify the double merkle root matches our pre-computed value
     assert_eq!(double_merkle_root, expected_double_merkle_root);
     assert_eq!(double_merkle_meta.double_merkle_root, double_merkle_root);
-    assert_eq!(double_merkle_meta.fec_set_count, 3); // With 200 entries, we should have 3 FEC sets
+    assert_eq!(double_merkle_meta.fec_set_count, 3); // With 250 entries, we should have 3 FEC sets
     // Proofs are empty
     assert_eq!(double_merkle_meta.proofs.len(), 0);
 
