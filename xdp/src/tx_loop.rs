@@ -360,6 +360,13 @@ impl<T> Receiver<T> for TxReceiver<T> {
 }
 
 impl<U: Umem> TxLoop<U> {
+    /// Runs the tx loop: receives packets from the channel, routes each
+    /// destination, and writes them into the XDP ring.
+    ///
+    /// Packets are written as IPv4, so IPv6 destinations are not supported.
+    /// The destination is checked before waiting for ring space or reserving a
+    /// frame: debug builds panic on an IPv6 destination, release builds drop
+    /// the packet silently — consistent with the other drop paths.
     pub fn run<T, Rx, D, R>(self, receiver: Rx, mut drop_item: D, mut route_fn: R)
     where
         T: TxPacket,
@@ -422,6 +429,11 @@ impl<U: Umem> TxLoop<U> {
             let ecn = item.ecn();
             let can_overflow_mtu = item.allow_mtu_overflow();
             for addr in item.dst_addrs().as_ref() {
+                let IpAddr::V4(dst_ip) = addr.ip() else {
+                    debug_assert!(false, "IPv6 destination in XDP tx loop");
+                    continue;
+                };
+
                 if ring.available() == 0 || umem.available() == 0 {
                     commit_pending(&mut ring, &mut written_uncommitted);
                     kick(&ring);
@@ -451,9 +463,6 @@ impl<U: Umem> TxLoop<U> {
                 // at this point we're guaranteed to have a frame to write the next packet into and
                 // a slot in the ring to submit it
                 let mut frame = umem.reserve().unwrap();
-                let IpAddr::V4(dst_ip) = addr.ip() else {
-                    panic!("IPv6 not supported");
-                };
 
                 let payload = item.payload().as_ref();
                 let len = payload.len();
