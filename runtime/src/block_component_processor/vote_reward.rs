@@ -1067,17 +1067,12 @@ mod tests {
     }
 
     pub fn split_commission_checked(commission_bps: u16, reward: u64) -> (u64, u64) {
-        let (voter_reward, staker_reward, is_split) =
+        let (voter_reward, staker_reward) =
             commission_split_preserve_lamports(commission_bps, reward);
         assert_eq!(
             voter_reward + staker_reward,
             reward,
             "commission split must not lose lamports at {commission_bps} bps"
-        );
-        assert_eq!(
-            is_split,
-            commission_bps != 0 && commission_bps != MAX_BPS,
-            "is_split must be false only at the commission endpoints"
         );
         match commission_bps {
             0 => assert_eq!(voter_reward, 0, "0 bps must pay the voter nothing"),
