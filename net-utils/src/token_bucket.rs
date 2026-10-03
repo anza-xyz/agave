@@ -7,7 +7,12 @@ use std::sync::Arc;
 use {
     dashmap::{DashMap, mapref::entry::Entry},
     solana_svm_type_overrides::sync::atomic::{AtomicU64, AtomicUsize, Ordering},
-    std::{borrow::Borrow, cmp::Reverse, hash::Hash, time::Instant},
+    std::{
+        borrow::Borrow,
+        cmp::Reverse,
+        hash::{BuildHasher, Hash},
+        time::Instant,
+    },
 };
 
 /// Enforces a rate limit on the volume of requests per unit time.
@@ -379,12 +384,12 @@ where
                 Reverse(*last_update)
             });
 
-            shard.extend(
-                entries
-                    .drain(..)
-                    .take(target_shard_size)
-                    .map(|(key, _last_update, value)| (key, value)),
-            );
+            for (key, _last_update, value) in entries.drain(..).take(target_shard_size) {
+                let hash = self.data.hasher().hash_one(&key);
+                // SAFETY: re-adding subset of just removed elements requires no allocation and
+                // key is guaranteed to not exist
+                unsafe { shard.insert_no_grow(hash, (key, value)) };
+            }
             debug_assert!(shard.len() <= target_shard_size);
             actual_len += shard.len();
         }
