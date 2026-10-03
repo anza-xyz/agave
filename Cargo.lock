@@ -11405,6 +11405,7 @@ dependencies = [
  "solana-system-interface",
  "solana-transaction-context",
  "static_assertions",
+ "test-case",
  "wincode",
 ]
 
