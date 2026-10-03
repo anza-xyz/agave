@@ -24,7 +24,7 @@ use {
             BufReaderWithOverflow, BufferedReader, FileBufRead, RequiredLenBufFileRead,
             RequiredLenBufRead as _,
         },
-        file_io::{read_into_buffer, write_buffer_to_file},
+        file_io::read_into_buffer,
     },
     log::*,
     meta::{AccountMeta, StoredAccountNoData, StoredMeta},
@@ -35,11 +35,10 @@ use {
         self,
         convert::TryFrom,
         fs::{File, OpenOptions, remove_file},
-        io,
+        io::{self, BufWriter},
         iter::ExactSizeIterator,
         mem::{self, MaybeUninit, offset_of},
         path::{Path, PathBuf},
-        ptr,
         range::Range,
         slice,
         sync::{
@@ -120,32 +119,28 @@ struct AccountOffsets {
     offset_to_end_of_data: FileOffset,
 }
 
-/// Validates and serializes appends (when `append_guard` is called) such that only
+/// Appends land in page cache, so the buffer only amortizes write syscalls. Gains flatten out
+/// above 64KiB, so the capacity stays small to avoid oversized allocations.
+const APPEND_BUFFER_CAPACITY: usize = 256 * 1024;
+
+type AccountsAppender = AppendVecAccountWriter<BufWriter<File>>;
+
+/// Validates and serializes appends (when `appender` is called) such that only
 /// writable AppendVec is updated and only from a single thread at a time.
 #[derive(Debug)]
 enum ReadWriteState {
     ReadOnly,
+    /// The appender owns a separate file handle, so its cursor is independent of reads
     Writable {
-        /// A lock used to serialize append operations.
-        append_lock: Mutex<()>,
+        appender: Mutex<AccountsAppender>,
     },
 }
 
 impl ReadWriteState {
-    fn new(allow_writes: bool) -> Self {
-        if allow_writes {
-            Self::Writable {
-                append_lock: Mutex::new(()),
-            }
-        } else {
-            Self::ReadOnly
-        }
-    }
-
-    fn append_guard(&self) -> MutexGuard<'_, ()> {
+    fn appender(&self) -> MutexGuard<'_, AccountsAppender> {
         match self {
             Self::ReadOnly => panic!("append not allowed in read-only state"),
-            Self::Writable { append_lock } => append_lock.lock().unwrap(),
+            Self::Writable { appender } => appender.lock().unwrap(),
         }
     }
 }
@@ -241,19 +236,25 @@ impl AppendVec {
 
         // Theoretical performance optimization: set the logical/inode size
         // so that we don't have to resize it later, which may be expensive.
-        let size = u64::try_from(size).unwrap();
-        data.set_len(size).unwrap();
+        let file_size = u64::try_from(size).unwrap();
+        data.set_len(file_size).unwrap();
+
+        let appender_file = OpenOptions::new().write(true).open(&file).unwrap();
+        let appender = AppendVecAccountWriter::new(BufWriter::with_capacity(
+            size.min(APPEND_BUFFER_CAPACITY),
+            appender_file,
+        ));
 
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
         AppendVec {
             path: file,
             file: data,
-            // writable state's mutex forces append to be single threaded, but concurrent with
-            // reads. See UNSAFE usage in `append_ptr`
-            read_write_state: ReadWriteState::new(true),
+            read_write_state: ReadWriteState::Writable {
+                appender: Mutex::new(appender),
+            },
             current_len: AtomicUsize::new(initial_len),
-            file_size: size,
+            file_size,
             remove_file_on_drop: AtomicBool::new(true),
             is_dirty: AtomicBool::new(false),
         }
@@ -375,44 +376,6 @@ impl AppendVec {
             .0
             .get(offset..end)
             .map(|subslice| (subslice, u64_align!(end)))
-    }
-
-    /// Copy `len` bytes from `src` to the first 8-byte boundary after position `offset` of
-    /// the internal buffer. Then update `offset` to the first byte after the copied data.
-    fn append_ptr(&self, offset: &mut FileOffset, src: *const u8, len: usize) -> io::Result<()> {
-        let pos = align_offset(*offset);
-        // Safety: caller should ensure the passed pointer and length are valid.
-        let data = unsafe { slice::from_raw_parts(src, len) };
-        write_buffer_to_file(&self.file, data, pos)?;
-        *offset = pos + len as FileOffset;
-        Ok(())
-    }
-
-    /// Copy each value in `vals`, in order, to the first 8-byte boundary after position `offset`.
-    /// If there is sufficient space, then update `offset` and the internal `current_len` to the
-    /// first byte after the copied data and return the starting position of the copied data.
-    /// Otherwise return None and leave `offset` unchanged.
-    fn append_ptrs_locked(
-        &self,
-        offset: &mut FileOffset,
-        vals: &[(*const u8, usize)],
-    ) -> io::Result<Option<FileOffset>> {
-        let mut end = *offset;
-        for val in vals {
-            end = align_offset(end);
-            end += val.1 as FileOffset;
-        }
-
-        if self.file_size < end {
-            return Ok(None);
-        }
-
-        let pos = align_offset(*offset);
-        for val in vals {
-            self.append_ptr(offset, val.0, val.1)?
-        }
-        self.current_len.store(*offset as usize, Ordering::Release);
-        Ok(Some(pos))
     }
 
     /// Return a reference to the type at `offset` if its data doesn't overrun the internal buffer.
@@ -940,58 +903,52 @@ impl AppendVec {
     /// Otherwise, returns the starting offset of each account metadata.
     /// Plus, the final return value is the offset where the next entry would be appended.
     /// So, return.len() is 1 + (number of accounts written)
-    /// After each account is appended, the internal `current_len` is updated
+    /// Once all accounts are appended, the internal `current_len` is updated
     /// and will be available to other threads.
     pub fn append_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
     ) -> Option<StoredAccountsInfo> {
-        let _lock = self.read_write_state.append_guard();
-        let mut offset = self.len() as FileOffset;
+        let mut appender = self.read_write_state.appender();
+        let mut offset = align_offset(self.len() as FileOffset);
+        let mut end_of_data = self.len() as FileOffset;
         let len = accounts.len();
         // Here we have `len` number of accounts.  The +1 extra capacity
         // is for storing the aligned offset of the last-plus-one entry,
         // which is used to compute the size of the last stored account.
         let offsets_len = len + 1;
         let mut offsets = Vec::with_capacity(offsets_len);
-        let mut stop = false;
         for i in 0..len {
-            if stop {
+            let appended = accounts.account_default_if_zero_lamport(i, |account| {
+                let data_len = account.data().len();
+                let unaligned_end = offset + (STORE_META_OVERHEAD + data_len) as FileOffset;
+                if unaligned_end > self.file_size {
+                    return false;
+                }
+                appender
+                    .write_account(&StoredAccountInfo {
+                        pubkey: account.pubkey(),
+                        lamports: account.lamports(),
+                        owner: account.owner(),
+                        data: account.data(),
+                        executable: account.executable(),
+                        rent_epoch: account.rent_epoch(),
+                    })
+                    .expect("must append data to append_vec");
+                offsets.push(offset);
+                offset += Self::calculate_stored_size(data_len) as FileOffset;
+                end_of_data = unaligned_end;
+                true
+            });
+            if !appended {
                 break;
             }
-            accounts.account_default_if_zero_lamport(i, |account| {
-                let account_meta = AccountMeta {
-                    lamports: account.lamports(),
-                    owner: *account.owner(),
-                    rent_epoch: account.rent_epoch(),
-                    executable: account.executable(),
-                };
-
-                let stored_meta = StoredMeta {
-                    pubkey: *account.pubkey(),
-                    data_len: account.data().len() as u64,
-                    write_version_obsolete: 0,
-                };
-                let stored_meta_ptr = ptr::from_ref(&stored_meta).cast();
-                let account_meta_ptr = ptr::from_ref(&account_meta).cast();
-                let hash_ptr = ObsoleteAccountHash::ZEROED.0.as_ptr();
-                let data_ptr = account.data().as_ptr();
-                let ptrs = [
-                    (stored_meta_ptr, mem::size_of::<StoredMeta>()),
-                    (account_meta_ptr, mem::size_of::<AccountMeta>()),
-                    (hash_ptr, mem::size_of::<ObsoleteAccountHash>()),
-                    (data_ptr, stored_meta.data_len as usize),
-                ];
-                if let Some(start_offset) = self
-                    .append_ptrs_locked(&mut offset, &ptrs)
-                    .expect("must append data to append_vec")
-                {
-                    offsets.push(start_offset)
-                } else {
-                    stop = true;
-                }
-            });
         }
+
+        // Readers must see the appended data before it's included in `current_len`
+        appender.flush().expect("must flush data to append_vec");
+        self.current_len
+            .store(end_of_data as usize, Ordering::Release);
 
         if !offsets.is_empty() {
             // If we've actually written to the AppendVec, make sure we mark it as dirty.
@@ -1074,15 +1031,10 @@ fn align_offset(x: FileOffset) -> FileOffset {
 /// The per-account hash, stored in the AppendVec.
 ///
 /// This field is now obsolete, but it still lives in the file format.
-#[derive(Debug)]
-struct ObsoleteAccountHash([u8; 32]);
-
-impl ObsoleteAccountHash {
-    /// The constant of all zeroes, to be stored in the file.
-    const ZEROED: Self = Self([0; 32]);
-}
+type ObsoleteAccountHash = [u8; 32];
 
 /// Writes accounts in AppendVec format to a Writer.
+#[derive(Debug)]
 pub(crate) struct AppendVecAccountWriter<W> {
     output: W,
 }
@@ -1090,6 +1042,10 @@ pub(crate) struct AppendVecAccountWriter<W> {
 impl<W: io::Write> AppendVecAccountWriter<W> {
     pub(crate) fn new(output: W) -> Self {
         Self { output }
+    }
+
+    pub(crate) fn flush(&mut self) -> io::Result<()> {
+        self.output.flush()
     }
 
     /// Writes `account`, including its alignment padding.
@@ -1168,6 +1124,7 @@ mod tests {
         std::{
             io::{Seek as _, SeekFrom, Write as _},
             mem::ManuallyDrop,
+            ptr,
         },
         tempfile::TempDir,
         test_case::test_case,
