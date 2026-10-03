@@ -123,7 +123,10 @@ pub fn move_and_async_delete_path(path: impl AsRef<Path>) {
             trace!("background deleting {}...", path_delete.display());
             let (result, measure_delete) = measure_time!(dirs::remove_dir_all(&path_delete));
             if let Err(err) = result {
-                panic!("Failed to async delete '{}': {err}", path_delete.display());
+                match err.kind() {
+                    io::ErrorKind::NotFound => (),
+                    _ => panic!("Failed to async delete '{}': {err}", path_delete.display()),
+                }
             }
             trace!(
                 "background deleting {}... Done, and{measure_delete}",
