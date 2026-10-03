@@ -17,7 +17,7 @@ use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{Crds, Cursor, GossipRoute},
+        crds::{Crds, Cursor, GossipRoute, LOCK_CHUNK_SIZE},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
@@ -1989,6 +1989,69 @@ impl ClusterInfo {
         })
     }
 
+    // Discards values from nodes with a different shred-version. Takes the crds
+    // read lock once per chunk of values, and frees the discarded values after
+    // releasing it.
+    fn retain_matching_shred_versions(
+        &self,
+        packets: &mut [Vec<(SocketAddr, Protocol)>],
+        self_shred_version: u16,
+    ) {
+        let mut msgs = packets
+            .iter_mut()
+            .flatten()
+            .filter_map(|(_, msg)| match msg {
+                Protocol::PushMessage(_, values) => {
+                    Some((values, &self.stats.skip_push_message_shred_version))
+                }
+                Protocol::PullResponse(_, values) => {
+                    Some((values, &self.stats.skip_pull_response_shred_version))
+                }
+                // Pull-request callers are checked by
+                // check_pull_request_shred_version.
+                Protocol::PullRequest(..) => None,
+                // No values in prune, ping and pong messages.
+                Protocol::PruneMessage(..)
+                | Protocol::PingMessage(_)
+                | Protocol::PongMessage(_) => None,
+            });
+        let mut chunk = Vec::new();
+        let mut keep_flags = Vec::new();
+        loop {
+            let mut num_values = 0;
+            while num_values < LOCK_CHUNK_SIZE
+                && let Some(msg) = msgs.next()
+            {
+                num_values += msg.0.len();
+                chunk.push(msg);
+            }
+            if chunk.is_empty() {
+                break;
+            }
+            keep_flags.reserve(num_values);
+            {
+                let gossip_crds = self.gossip.crds.read();
+                keep_flags.extend(
+                    chunk
+                        .iter()
+                        .flat_map(|(values, _)| values.iter())
+                        .map(|value| {
+                            matches_shred_version(value, self_shred_version, &gossip_crds)
+                        }),
+                );
+            }
+            let mut keep = keep_flags.drain(..);
+            for (values, skip_counter) in chunk.drain(..) {
+                let num_values = values.len();
+                values.retain(|_| keep.next().expect("one flag per value"));
+                let num_skipped = num_values - values.len();
+                if num_skipped != 0 {
+                    skip_counter.add_relaxed(num_skipped as u64);
+                }
+            }
+        }
+    }
+
     fn process_packets(
         &self,
         packets: &mut Vec<Vec<(/*from:*/ SocketAddr, Protocol)>>,
@@ -2000,26 +2063,8 @@ impl ClusterInfo {
         let _st = ScopedTimer::from(&self.stats.process_gossip_packets_time);
         let self_keypair = self.keypair();
         let self_pubkey = self_keypair.pubkey();
-        // Filter out values if the shred-versions are different.
         let self_shred_version = self.my_shred_version();
-        {
-            let gossip_crds = self.gossip.crds.read();
-            let discard_different_shred_version = |msg| {
-                discard_different_shred_version(msg, self_shred_version, &gossip_crds, &self.stats)
-            };
-            if packets.len() < 4 && packets.iter().map(Vec::len).sum::<usize>() < 16 {
-                for (_, msg) in packets.iter_mut().flatten() {
-                    discard_different_shred_version(msg);
-                }
-            } else {
-                thread_pool.install(|| {
-                    packets
-                        .par_iter_mut()
-                        .flatten()
-                        .for_each(|(_, msg)| discard_different_shred_version(msg))
-                })
-            }
-        }
+        self.retain_matching_shred_versions(packets, self_shred_version);
         // Check if there is a duplicate instance of
         // this node with more recent timestamp.
         let check_duplicate_instance = {
@@ -2473,36 +2518,14 @@ fn check_pull_request_shred_version(self_shred_version: u16, caller: &CrdsValue)
     shred_version == self_shred_version
 }
 
-// Discards CrdsValues in PushMessages and PullResponses from nodes with
-// different shred-version.
-fn discard_different_shred_version(
-    msg: &mut Protocol,
-    self_shred_version: u16,
-    crds: &Crds,
-    stats: &GossipStats,
-) {
-    let (values, skip_shred_version_counter) = match msg {
-        Protocol::PullResponse(_, values) => (values, &stats.skip_pull_response_shred_version),
-        Protocol::PushMessage(_, values) => (values, &stats.skip_push_message_shred_version),
-        // Shred-version on pull-request callers can be checked without a lock
-        // on CRDS table and is so verified separately (by
-        // check_pull_request_shred_version).
-        Protocol::PullRequest(..) => return,
-        // No CRDS values in Prune, Ping and Pong messages.
-        Protocol::PruneMessage(_, _) | Protocol::PingMessage(_) | Protocol::PongMessage(_) => {
-            return;
-        }
-    };
-    let num_values = values.len();
-    values.retain(|value| match value.data() {
+// Returns false if the value is from a node with a different shred-version, or
+// isn't a ContactInfo and the table has nothing from its node.
+fn matches_shred_version(value: &CrdsValue, self_shred_version: u16, crds: &Crds) -> bool {
+    match value.data() {
         CrdsData::ContactInfo(ci) => ci.shred_version() == self_shred_version,
         // for any other CRDS types we check if we store anything already
         // for this pubkey, if we do we allow more values in
-        _ => crds.get_records(&value.pubkey()).next().is_some(),
-    });
-    let num_skipped = num_values - values.len();
-    if num_skipped != 0 {
-        skip_shred_version_counter.add_relaxed(num_skipped as u64);
+        _ => crds.has_records(&value.pubkey()),
     }
 }
 
@@ -2609,7 +2632,7 @@ mod tests {
             crds_value::{CrdsValue, CrdsValueLabel},
             duplicate_shred::tests::new_rand_shred,
             node::Node,
-            protocol::tests::new_rand_remote_node,
+            protocol::{MAX_CRDS_VALUES_PER_PACKET, tests::new_rand_remote_node},
             socketaddr,
         },
         itertools::izip,
@@ -3809,12 +3832,167 @@ mod tests {
     }
 
     #[test]
-    fn test_discard_different_shred_version_push_message() {
+    fn test_retain_matching_shred_versions() {
         let self_shred_version = 5555;
-        let mut crds = Crds::default();
-        let stats = GossipStats::default();
+        let mut rng = StdRng::seed_from_u64(7);
+        let keypair = Arc::new(Keypair::new());
+        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+        let caller = CrdsValue::new(CrdsData::from(contact_info.clone()), &keypair);
+        let cluster_info =
+            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
+        let known_pubkeys: Vec<_> = repeat_with(Pubkey::new_unique).take(32).collect();
+        {
+            let mut crds = cluster_info.gossip.crds.write();
+            for pubkey in &known_pubkeys {
+                let node = ContactInfo::new_localhost(pubkey, timestamp());
+                let value = CrdsValue::new_unsigned(CrdsData::from(node));
+                crds.insert(value, timestamp(), GossipRoute::LocalMessage)
+                    .expect("pubkeys are unique");
+            }
+        }
+        // Returns a value and whether the filter must keep it.
+        let new_value = |rng: &mut StdRng| {
+            let known_pubkey = known_pubkeys[rng.random_range(0..known_pubkeys.len())];
+            let unknown_pubkey = Pubkey::new_unique();
+            let (data, keep) = match rng.random_range(0..4) {
+                0 => {
+                    let node = ContactInfo::new(unknown_pubkey, timestamp(), self_shred_version);
+                    (CrdsData::from(node), true)
+                }
+                1 => {
+                    let node = ContactInfo::new(known_pubkey, timestamp(), self_shred_version + 1);
+                    (CrdsData::from(node), false)
+                }
+                2 => {
+                    let slots = EpochSlots::new_rand(rng, Some(known_pubkey));
+                    (CrdsData::EpochSlots(0, slots), true)
+                }
+                _ => {
+                    let slots = EpochSlots::new_rand(rng, Some(unknown_pubkey));
+                    (CrdsData::EpochSlots(0, slots), false)
+                }
+            };
+            (CrdsValue::new_unsigned(data), keep)
+        };
+        let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
+        let mut packets = vec![];
+        let mut expected = vec![];
+        let mut num_values = 0;
+        let mut num_push_skipped = 0;
+        let mut num_pull_skipped = 0;
+        for _ in 0..16 {
+            let mut batch = vec![];
+            for k in 0..rng.random_range(1..16) {
+                let mut values = vec![];
+                let mut kept = vec![];
+                let mut num_skipped = 0;
+                for _ in 0..rng.random_range(0..=MAX_CRDS_VALUES_PER_PACKET) {
+                    let (value, keep) = new_value(&mut rng);
+                    if keep {
+                        kept.push(value.clone());
+                    } else {
+                        num_skipped += 1;
+                    }
+                    values.push(value);
+                }
+                num_values += values.len();
+                expected.push(kept);
+                let msg = if k % 2 == 0 {
+                    num_push_skipped += num_skipped;
+                    Protocol::PushMessage(Pubkey::new_unique(), values)
+                } else {
+                    num_pull_skipped += num_skipped;
+                    Protocol::PullResponse(Pubkey::new_unique(), values)
+                };
+                batch.push((addr, msg));
+                let ping = Ping::new([k as u8; 32], &keypair);
+                batch.push((addr, Protocol::PongMessage(Pong::new(&ping, &keypair))));
+                batch.push((addr, Protocol::PingMessage(ping)));
+                let request = Protocol::PullRequest(CrdsFilter::default(), caller.clone());
+                batch.push((addr, request));
+            }
+            packets.push(batch);
+        }
+        assert!(
+            num_values > 2 * LOCK_CHUNK_SIZE,
+            "values must span several lock chunks, got {num_values}"
+        );
+        assert!(
+            num_push_skipped > 0 && num_pull_skipped > 0,
+            "both message types must have values to discard"
+        );
+        let layout = |packets: &[Vec<(SocketAddr, Protocol)>]| -> Vec<Vec<_>> {
+            packets
+                .iter()
+                .map(|batch| {
+                    batch
+                        .iter()
+                        .map(|(addr, msg)| (*addr, std::mem::discriminant(msg)))
+                        .collect()
+                })
+                .collect()
+        };
+        let expected_layout = layout(&packets);
+        cluster_info.retain_matching_shred_versions(&mut packets, self_shred_version);
+        assert_eq!(
+            layout(&packets),
+            expected_layout,
+            "filter must keep every message, in order and of the same type"
+        );
+        let retained: Vec<Vec<CrdsValue>> = packets
+            .into_iter()
+            .flatten()
+            .filter_map(|(_, msg)| match msg {
+                Protocol::PushMessage(_, values) | Protocol::PullResponse(_, values) => {
+                    Some(values)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            retained, expected,
+            "filter must keep exactly the values marked to keep"
+        );
+        assert_eq!(
+            cluster_info
+                .stats
+                .skip_push_message_shred_version
+                .load_relaxed(),
+            num_push_skipped,
+            "push message skip count must match the values discarded"
+        );
+        assert_eq!(
+            cluster_info
+                .stats
+                .skip_pull_response_shred_version
+                .load_relaxed(),
+            num_pull_skipped,
+            "pull response skip count must match the values discarded"
+        );
+    }
+
+    #[test]
+    fn test_retain_matching_shred_versions_push_message() {
+        let self_shred_version = 5555;
+        let node_keypair = Arc::new(Keypair::new());
+        let cluster_info = ClusterInfo::new(
+            ContactInfo::new_localhost(&node_keypair.pubkey(), 0),
+            node_keypair,
+            SocketAddrSpace::Unspecified,
+        );
+        let crds = &cluster_info.gossip.crds;
         let mut rng = rand::rng();
         let keypair = Keypair::new();
+        let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
+        let num_retained = |values: Vec<CrdsValue>| {
+            let msg = Protocol::PushMessage(keypair.pubkey(), values);
+            let mut packets = [vec![(addr, msg)]];
+            cluster_info.retain_matching_shred_versions(&mut packets, self_shred_version);
+            match &packets[0][0].1 {
+                Protocol::PushMessage(_, values) => values.len(),
+                _ => unreachable!("the filter must not change the message type"),
+            }
+        };
 
         // create contact info with matching shred version
         let contact_info = ContactInfo::new(
@@ -3824,12 +4002,11 @@ mod tests {
         );
         let ci = CrdsValue::new(CrdsData::ContactInfo(contact_info), &keypair);
 
-        // Test push message with matching shred version
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![ci.clone()]);
-        discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, values) = msg {
-            assert_eq!(values.len(), 1);
-        }
+        assert_eq!(
+            num_retained(vec![ci.clone()]),
+            1,
+            "ContactInfo with a matching shred version must be kept"
+        );
 
         let contact_info_wrong_shred_version =
             ContactInfo::new(keypair.pubkey(), /*wallclock:*/ 1234567890, 1);
@@ -3838,21 +4015,19 @@ mod tests {
             &keypair,
         );
 
-        // Test push message with non-matching shred version
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![ci_wrong_shred_version]);
-        discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, values) = msg {
-            assert_eq!(values.len(), 0);
-        }
+        assert_eq!(
+            num_retained(vec![ci_wrong_shred_version]),
+            0,
+            "ContactInfo with a different shred version must be discarded"
+        );
 
-        // Test EpochSlot w/o previous CI with matching shred version/pubkey -> should be rejected
         let epoch_slots = EpochSlots::new_rand(&mut rng, Some(keypair.pubkey()));
         let es = CrdsValue::new_unsigned(CrdsData::EpochSlots(0, epoch_slots));
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![es]);
-        discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
-            assert_eq!(values.len(), 0);
-        }
+        assert_eq!(
+            num_retained(vec![es]),
+            0,
+            "EpochSlots must be discarded while the table has nothing from its node"
+        );
 
         // Insert ContactInfo with different pubkey than EpochSlot
         let keypair2 = Keypair::new();
@@ -3864,31 +4039,27 @@ mod tests {
             )),
             &keypair2,
         );
-        assert!(
-            crds.insert(ci_wrong_pubkey, /*now=*/ 0, GossipRoute::LocalMessage)
-                .is_ok()
-        );
+        crds.write()
+            .insert(ci_wrong_pubkey, /*now=*/ 0, GossipRoute::LocalMessage)
+            .expect("table has nothing from keypair2");
 
-        // Test insert EpochSlot w/ previous ContactInfo w/ matching shred version but different pubkey -> should be rejected
         let epoch_slots = EpochSlots::new_rand(&mut rng, Some(keypair.pubkey()));
         let es: CrdsValue = CrdsValue::new_unsigned(CrdsData::EpochSlots(0, epoch_slots));
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![es.clone()]);
-        discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
-            assert_eq!(values.len(), 0);
-        }
-
-        // Now insert ContactInfo with same pubkey as EpochSlot
-        assert!(
-            crds.insert(ci.clone(), /*now=*/ 0, GossipRoute::LocalMessage)
-                .is_ok()
+        assert_eq!(
+            num_retained(vec![es.clone()]),
+            0,
+            "EpochSlots must be discarded while the table only has other nodes' values"
         );
 
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![es]);
-        discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
-            assert_eq!(values.len(), 1);
-        }
+        // Now insert ContactInfo with same pubkey as EpochSlot
+        crds.write()
+            .insert(ci.clone(), /*now=*/ 0, GossipRoute::LocalMessage)
+            .expect("table has nothing from keypair");
+        assert_eq!(
+            num_retained(vec![es]),
+            1,
+            "EpochSlots must be kept once the table has a value from its node"
+        );
 
         // Test multiple ContactInfo/EpochSlot with various shred versions. Crds table contains ContactInfo from `keypair`
         let keypair3 = Keypair::new();
@@ -3923,17 +4094,16 @@ mod tests {
                 &keypair4,
             ),
         ];
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), entries);
-        discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
-            // Only reject ContactInfo with invalid shred version. EpochSlot with associated ContactInfo is already in the table
-            assert_eq!(values.len(), 3);
-        }
+        assert_eq!(
+            num_retained(entries),
+            3,
+            "only the ContactInfo with a different shred version must be discarded"
+        );
 
         // Remove ContactInfo with matching pubkey as EpochSlot
-        crds.remove(&ci.label(), /* now */ 0);
+        crds.write().remove(&ci.label(), /* now */ 0);
 
-        // Test multiple ContactInfo with various shred versions. Crds table is empty
+        // Test multiple ContactInfo with various shred versions. Crds table has nothing from `keypair`
         let entries = vec![
             CrdsValue::new(
                 CrdsData::ContactInfo(ContactInfo::new(
@@ -3964,11 +4134,10 @@ mod tests {
                 &keypair,
             ),
         ];
-        let mut msg = Protocol::PushMessage(keypair.pubkey(), entries);
-        discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);
-        if let Protocol::PushMessage(_, ref values) = msg {
-            // Reject ContactInfo with invalid shred version and EpochSlot with no associated ContactInfo in the table
-            assert_eq!(values.len(), 2);
-        }
+        assert_eq!(
+            num_retained(entries),
+            2,
+            "the ContactInfo with a different shred version and the EpochSlots must be discarded"
+        );
     }
 }

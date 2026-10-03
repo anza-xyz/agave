@@ -49,7 +49,7 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 const MIN_CRDS_VALUE_SERIALIZED_SIZE: usize =
     PULL_RESPONSE_MIN_SERIALIZED_SIZE - (PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE);
-const MAX_CRDS_VALUES_PER_PACKET: usize =
+pub(crate) const MAX_CRDS_VALUES_PER_PACKET: usize =
     (PULL_RESPONSE_MAX_PAYLOAD_SIZE / MIN_CRDS_VALUE_SERIALIZED_SIZE) + 1;
 // Wincode's preallocation limit is decoded collection memory, not input bytes.
 // Bound it to the largest CRDS value vector that can fit in one gossip packet.
