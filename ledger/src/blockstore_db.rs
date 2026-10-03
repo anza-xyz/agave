@@ -329,6 +329,15 @@ impl Rocks {
         }
     }
 
+    pub(crate) fn flush_all_columns(&self) -> Result<()> {
+        // Block until the flushes are complete
+        let mut flush_options = rocksdb::FlushOptions::new();
+        flush_options.set_wait(true);
+
+        let all_cfs = Rocks::columns().map(|cf_name| self.cf_handle(cf_name));
+        Ok(self.db.flush_cfs_opt(&all_cfs, &flush_options)?)
+    }
+
     pub(crate) fn destroy(path: &Path) -> Result<()> {
         DB::destroy(&Options::default(), path)?;
 
@@ -343,6 +352,11 @@ impl Rocks {
 
     fn get_cf<K: AsRef<[u8]>>(&self, cf: &ColumnFamily, key: K) -> Result<Option<Vec<u8>>> {
         let opt = self.db.get_cf(cf, key)?;
+        Ok(opt)
+    }
+
+    pub(crate) fn get_pinned<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<DBPinnableSlice<'_>>> {
+        let opt = self.db.get_pinned(key)?;
         Ok(opt)
     }
 
@@ -368,6 +382,11 @@ impl Rocks {
         Ok(self.db.get_pinned_cf_into(cf, key, value)?)
     }
 
+    pub(crate) fn put<K: AsRef<[u8]>>(&self, key: K, value: &[u8]) -> Result<()> {
+        self.db.put(key, value)?;
+        Ok(())
+    }
+
     fn put_cf<K: AsRef<[u8]>>(&self, cf: &ColumnFamily, key: K, value: &[u8]) -> Result<()> {
         self.db.put_cf(cf, key, value)?;
         Ok(())
@@ -386,6 +405,11 @@ impl Rocks {
             .batched_multi_get_cf(cf, keys, /*sorted_input:*/ false)
             .into_iter()
             .map(|out| out.map_err(BlockstoreError::RocksDb))
+    }
+
+    pub(crate) fn delete<K: AsRef<[u8]>>(&self, key: K) -> Result<()> {
+        self.db.delete(key)?;
+        Ok(())
     }
 
     fn delete_cf<K: AsRef<[u8]>>(&self, cf: &ColumnFamily, key: K) -> Result<()> {
@@ -423,13 +447,21 @@ impl Rocks {
         }
     }
 
-    pub(crate) fn write<B: AsMut<WriteBatch>>(&self, mut batch: B) -> Result<()> {
+    pub(crate) fn write<B: AsMut<WriteBatch>>(
+        &self,
+        mut batch: B,
+        disable_wal: bool,
+    ) -> Result<()> {
         let batch = batch.as_mut();
         let op_start_instant = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_batch_perf_status,
         );
-        let result = self.db.write(&mut batch.write_batch);
+
+        let mut options = rocksdb::WriteOptions::default();
+        options.disable_wal(disable_wal);
+        let result = self.db.write_opt(&mut batch.write_batch, &options);
+
         if let Some(op_start_instant) = op_start_instant {
             report_rocksdb_write_perf(
                 PERF_METRIC_OP_NAME_WRITE_BATCH, // We use write_batch as cf_name for write batch.
