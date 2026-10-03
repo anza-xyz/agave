@@ -13975,3 +13975,128 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
         bank.calculate_capitalization_for_tests()
     );
 }
+
+#[test]
+fn test_simulate_transaction_batch_unchecked_carries_state_between_transactions() {
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let blockhash = bank.last_blockhash();
+    let fee = bank.fee_structure().lamports_per_signature;
+
+    let intermediate = Keypair::new();
+    let destination = Pubkey::new_unique();
+    let first_transfer = LAMPORTS_PER_SOL / 2;
+    let second_transfer = LAMPORTS_PER_SOL / 4;
+    // `intermediate` does not exist yet; the second transfer can only succeed if it observes
+    // the state written by the first transfer.
+    let transactions = [
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &intermediate.pubkey(),
+            first_transfer,
+            blockhash,
+        )),
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &intermediate,
+            &destination,
+            second_transfer,
+            blockhash,
+        )),
+    ];
+    let mint_balance = bank.get_balance(&mint_keypair.pubkey());
+
+    let results = bank
+        .simulate_transaction_batch_unchecked(&transactions)
+        .unwrap();
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].result, Ok(()));
+    assert_eq!(results[1].result, Ok(()));
+    assert!(results[0].units_consumed > 0);
+    assert!(results[0].loaded_accounts_data_size > 0);
+    assert_eq!(
+        results[0].fee_payer_post_balance,
+        Some(mint_balance - first_transfer - fee)
+    );
+    assert_eq!(
+        results[1].fee_payer_post_balance,
+        Some(first_transfer - second_transfer - fee)
+    );
+
+    // Nothing was committed.
+    assert_eq!(bank.get_balance(&mint_keypair.pubkey()), mint_balance);
+    assert_eq!(bank.get_balance(&intermediate.pubkey()), 0);
+    assert_eq!(bank.get_balance(&destination), 0);
+}
+
+#[test]
+fn test_simulate_transaction_batch_unchecked_fails_entire_batch() {
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let blockhash = bank.last_blockhash();
+
+    let unfunded = Keypair::new();
+    // Transfers to new accounts must be rent-exempt to succeed.
+    let transfer_lamports = LAMPORTS_PER_SOL / 10;
+    let transactions = [
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            transfer_lamports,
+            blockhash,
+        )),
+        // Fee payer does not exist: fails validation.
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &unfunded,
+            &Pubkey::new_unique(),
+            transfer_lamports,
+            blockhash,
+        )),
+        // Never attempted because the batch already failed.
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            transfer_lamports,
+            blockhash,
+        )),
+    ];
+    let mint_balance = bank.get_balance(&mint_keypair.pubkey());
+
+    let results = bank
+        .simulate_transaction_batch_unchecked(&transactions)
+        .unwrap();
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].result, Err(TransactionError::CommitCancelled));
+    assert_eq!(results[1].result, Err(TransactionError::AccountNotFound));
+    assert_eq!(results[2].result, Err(TransactionError::CommitCancelled));
+    assert!(
+        results
+            .iter()
+            .all(|result| result.fee_payer_post_balance.is_none())
+    );
+    assert_eq!(bank.get_balance(&mint_keypair.pubkey()), mint_balance);
+}
+
+#[test]
+fn test_simulate_transaction_batch_unchecked_quiesced_bank() {
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let transactions = [RuntimeTransaction::from_transaction_for_tests(
+        system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        ),
+    )];
+
+    bank.quiesce_transaction_execution();
+    assert!(
+        bank.simulate_transaction_batch_unchecked(&transactions)
+            .is_none()
+    );
+}
