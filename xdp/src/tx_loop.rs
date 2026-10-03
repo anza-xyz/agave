@@ -146,7 +146,7 @@ impl TxLoopBuilder<OwnedUmem> {
             tx: tx_size,
         } = ring_sizes;
 
-        let frame_count = (rx_size + tx_size) * 2;
+        let frame_count = total_frame_count(rx_size, tx_size);
 
         // try to allocate huge pages first, then fall back to regular pages
         const HUGE_2MB: usize = 2 * 1024 * 1024;
@@ -222,6 +222,12 @@ fn align_ring_sizes(RingSizes { rx, tx }: RingSizes) -> RingSizes {
         rx: align(rx),
         tx: align(tx),
     }
+}
+
+/// The total frame count for the umem. Must be a power of two, so asymmetric ring
+/// sizes are rounded up rather than tripping the allocation's debug assert.
+fn total_frame_count(rx_size: usize, tx_size: usize) -> usize {
+    ((rx_size + tx_size) * 2).next_power_of_two()
 }
 
 pub struct TxLoop<U: Umem> {
@@ -729,7 +735,9 @@ fn kick_error(e: std::io::Error) {
 mod tests {
     use crate::{
         device::RingSizes,
-        tx_loop::{Receiver, TryRecvError, TrySendError, align_ring_sizes, channel},
+        tx_loop::{
+            Receiver, TryRecvError, TrySendError, align_ring_sizes, channel, total_frame_count,
+        },
     };
 
     #[test]
@@ -748,6 +756,19 @@ mod tests {
             align_ring_sizes(RingSizes { rx: 0, tx: 511 }),
             RingSizes { rx: 0, tx: 512 }
         );
+    }
+
+    #[test]
+    fn test_total_frame_count_is_power_of_two() {
+        // Asymmetric power-of-two ring sizes are valid after align_ring_sizes, so
+        // the total frame count must be rounded up to a power of two rather than
+        // tripping the allocation's debug assert.
+        for (rx, tx) in [(1024, 4096), (4096, 1024), (512, 512), (0, 512), (511, 511)] {
+            let RingSizes { rx, tx } = align_ring_sizes(RingSizes { rx, tx });
+            let frame_count = total_frame_count(rx, tx);
+            assert!(frame_count.is_power_of_two());
+            assert!(frame_count >= (rx + tx) * 2);
+        }
     }
 
     #[test]
