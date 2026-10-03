@@ -6,7 +6,7 @@ use {
         unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
         verified_batch::VerifiedBatch,
     },
-    agave_votor_messages::wire::VotePayloadToSign,
+    agave_votor_messages::{pubkeys::NodePubkey, wire::VotePayloadToSign},
     agave_votor_transport::endpoint::BanSender,
     rayon::ThreadPool,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
@@ -62,7 +62,7 @@ impl Batch {
         self,
         root_bank: &Bank,
         leader_schedule: &LeaderScheduleCache,
-        my_pubkey: &Pubkey,
+        my_pubkey: &NodePubkey,
         channels: &SigVerifierChannels,
         sender_stats: &mut VoteSenderStats,
     ) -> Result<(), SigVerifyVoteError> {
@@ -114,7 +114,7 @@ impl BatchState {
         self,
         root_bank: &Bank,
         leader_schedule: &LeaderScheduleCache,
-        my_pubkey: &Pubkey,
+        my_pubkey: &NodePubkey,
         channels: &SigVerifierChannels,
         sender_stats: &mut VoteSenderStats,
     ) -> Result<(), SigVerifyVoteError> {

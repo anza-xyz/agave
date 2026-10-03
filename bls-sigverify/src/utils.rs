@@ -8,11 +8,11 @@ use {
     agave_votor_messages::{
         VerifiedVotorSlotsMessage, VoteAccountPubkeys,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
+        pubkeys::NodePubkey,
     },
     crossbeam_channel::{Sender, TrySendError},
     log::{error, info, warn},
     solana_clock::Slot,
-    solana_pubkey::Pubkey,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::time::Instant,
 };
@@ -23,7 +23,7 @@ const POOL_CHANNEL: &str = "channel_to_pool";
 const REPAIR_CHANNEL: &str = "channel_to_repair";
 
 pub(super) fn send_votes_to_metrics(
-    my_pubkey: &Pubkey,
+    my_pubkey: &NodePubkey,
     event: ConsensusMetricsEvent,
     channel: &ConsensusMetricsEventSender,
     stats: &mut VoteSenderStats,
@@ -42,7 +42,7 @@ pub(super) fn send_votes_to_metrics(
 }
 
 pub(super) fn send_votes_to_rewards(
-    my_pubkey: &Pubkey,
+    my_pubkey: &NodePubkey,
     votes: Vec<VoteAggregate>,
     channel: &Sender<RewardInput>,
     stats: &mut VoteSenderStats,
@@ -67,7 +67,7 @@ pub(super) fn send_votes_to_rewards(
 /// Sends the `batch` to the consensus pool.  If the channel is full, then does a
 /// blocking send.
 pub(super) fn send_sig_verified_batch_to_pool(
-    my_pubkey: &Pubkey,
+    my_pubkey: &NodePubkey,
     batch: SigVerifiedBatch,
     channel: &Sender<SigVerifiedBatch>,
     stats: &mut VoteSenderStats,
@@ -100,7 +100,7 @@ pub(super) fn send_sig_verified_batch_to_pool(
 }
 
 pub(super) fn send_votes_to_repair(
-    my_pubkey: &Pubkey,
+    my_pubkey: &NodePubkey,
     msg: (Slot, VoteAccountPubkeys),
     channel: &EvictingSender<VerifiedVotorSlotsMessage>,
     stats: &mut VoteSenderStats,
@@ -120,7 +120,7 @@ pub(super) fn send_votes_to_repair(
 /// Sends the `batch` to the consensus pool.  If the channel is bounded and full, then does a
 /// blocking send.
 pub(super) fn send_certs_to_pool(
-    my_pubkey: &Pubkey,
+    my_pubkey: &NodePubkey,
     batch: SigVerifiedBatch,
     channel: &Sender<SigVerifiedBatch>,
     stats: &mut SenderStats,

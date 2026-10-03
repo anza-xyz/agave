@@ -5,7 +5,7 @@ use {
         errors::SigVerifyVoteError,
         stats::{SigVerifyVoteStats, VoteSenderStats, VoteVerificationStats},
     },
-    agave_votor_messages::wire::VotePayloadToSign,
+    agave_votor_messages::{pubkeys::NodePubkey, wire::VotePayloadToSign},
     agave_votor_transport::endpoint::BanSender,
     rayon::{
         ThreadPool,
@@ -13,7 +13,6 @@ use {
     },
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure::Measure,
-    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::{collections::HashMap, num::Saturating},
 };
@@ -27,7 +26,7 @@ pub(crate) mod batch;
 pub(super) fn verify_and_send_votes(
     unverified_votes: &mut HashMap<VotePayloadToSign, Batch>,
     root_bank: &Bank,
-    my_pubkey: &Pubkey,
+    my_pubkey: &NodePubkey,
     leader_schedule: &LeaderScheduleCache,
     ban_sender: &BanSender,
     thread_pool: &ThreadPool,

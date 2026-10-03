@@ -6,6 +6,7 @@
 use {
     agave_bls_sigverify::unverified_votes_batch::{UnverifiedVotePayload, verify_individual_votes},
     agave_votor_messages::{
+        pubkeys::NodePubkey,
         unverified_vote_message::UnverifiedVoteMessage,
         vote::Vote,
         wire::{VotePayloadToSign, get_vote_payload_to_sign},
@@ -50,11 +51,12 @@ fn generate_test_data(
                 signature: signature.into(),
                 shred_version,
             };
+            let sender = NodePubkey(Keypair::new().pubkey());
             (
                 UnverifiedVotePayload {
                     vote_message,
                     sender_bls_pubkey: bls_keypair.public,
-                    sender_identity_pubkey: Keypair::new().pubkey(),
+                    sender,
                     rank: 0,
                     stake: NonZero::new(1234).unwrap(),
                 },
