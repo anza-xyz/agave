@@ -8,9 +8,8 @@ use {
         sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_votor_messages::{
-        VerifiedVotorSlotsMessage, VoteAccountPubkeys, migration::MigrationStatus,
-    },
+    agave_bls_sigverify::pubkeys::{VerifiedVotorSlotsMessage, VoteAccountPubkeys},
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     solana_clock::Slot,

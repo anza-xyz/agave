@@ -6,10 +6,12 @@ use {
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
         voting_service::BLSOp,
     },
-    agave_bls_sigverify::rewards::{RewardInput, rewards_wants_vote},
+    agave_bls_sigverify::{
+        metric_types::ConsensusMetricsEventSender,
+        rewards::{RewardInput, rewards_wants_vote},
+    },
     agave_votor_messages::{
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
-        metric_types::ConsensusMetricsEventSender,
         vote::Vote,
         wire::get_vote_payload_to_sign,
     },
