@@ -11627,7 +11627,6 @@ name = "solana-version"
 version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
- "bincode",
  "rand 0.9.4",
  "semver 1.0.28",
  "serde",

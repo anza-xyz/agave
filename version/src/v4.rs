@@ -433,8 +433,8 @@ impl<'de> Deserialize<'de> for Version {
 // Generates a random, always-serializable `Version`. `Version` has a packed
 // wire format with cross-field invariants (`minor` fits in 14 bits, non-stable
 // prereleases force `patch == 0`; see `PackedMinor::try_pack`), so the fields
-// cannot be sampled independently. Used by tests and as the `StableAbi` sampler.
-#[cfg(any(test, feature = "stable-abi"))]
+// cannot be sampled independently. Used as the `StableAbi` sampler.
+#[cfg(feature = "stable-abi")]
 fn random_version<R: Rng + ?Sized>(rng: &mut R) -> Version {
     let minor = rng.random::<u16>() & PackedMinor::PRERELEASE_MINOR_MAX;
     let (prerelease, patch) = match rng.random::<u8>() % 4 {
@@ -467,27 +467,7 @@ impl solana_frozen_abi::rand::distr::Distribution<Version>
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::v3};
-
-    #[test]
-    fn test_wincode_compatibility() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let version = random_version(&mut rng);
-
-            // Serialize with bincode, deserialize with wincode, check results agree.
-            let bincode_bytes = bincode::serialize(&version).unwrap();
-            let wincode_decoded: Version = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(version, wincode_decoded);
-
-            // Serialize with wincode, deserialize with bincode, check results agree.
-            let wincode_bytes = wincode::serialize(&version).unwrap();
-            let bincode_decoded: Version = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(version, bincode_decoded);
-
-            assert_eq!(bincode_bytes, wincode_bytes);
-        }
-    }
+    use super::*;
 
     #[test]
     fn test_prerelease_patch_is_valid() {
@@ -745,56 +725,14 @@ mod tests {
     }
 
     #[test]
-    fn test_v3_and_v4_same_size() {
-        // smallest
-        let v3_version = v3::Version {
-            major: 0,
-            minor: 0,
-            patch: 0,
-            commit: 0,
-            feature_set: 0,
-            client: 0,
-        };
-        let v4_version =
-            Version::new_from_parts(0, 0, 0, 0, 0, ClientId::Agave, Prerelease::Stable);
-        assert_eq!(
-            bincode::serialized_size(&v3_version).unwrap(),
-            bincode::serialized_size(&v4_version).unwrap(),
-        );
-
-        // largest
-        let v3_version = v3::Version {
-            major: u16::MAX,
-            minor: u16::MAX,
-            patch: u16::MAX,
-            commit: u32::MAX,
-            feature_set: u32::MAX,
-            client: u16::MAX,
-        };
-        let v4_version = Version::new_from_parts(
-            u16::MAX,
-            PackedMinor::PRERELEASE_MINOR_MAX,
-            0,
-            u32::MAX,
-            u32::MAX,
-            ClientId::Unknown(u16::MAX),
-            Prerelease::Alpha(u16::MAX),
-        );
-        assert_eq!(
-            bincode::serialized_size(&v3_version).unwrap(),
-            bincode::serialized_size(&v4_version).unwrap(),
-        );
-    }
-
-    #[test]
-    fn test_serde() {
+    fn test_wire_layout() {
         let version =
             Version::new_from_parts(0, 0, 0, 0, 0, ClientId::SolanaLabs, Prerelease::Stable);
 
-        let bytes = bincode::serialize(&version).unwrap();
+        let bytes = wincode::serialize(&version).unwrap();
         assert_eq!(bytes, [0u8; 12]);
 
-        let de_version: Version = bincode::deserialize(&bytes).unwrap();
+        let de_version: Version = wincode::deserialize(&bytes).unwrap();
         assert_eq!(version, de_version);
 
         let version = Version::new_from_parts(
@@ -807,7 +745,7 @@ mod tests {
             Prerelease::Alpha(u16::MAX),
         );
 
-        let bytes = bincode::serialize(&version).unwrap();
+        let bytes = wincode::serialize(&version).unwrap();
         assert_eq!(
             bytes,
             [
@@ -816,7 +754,7 @@ mod tests {
             ]
         );
 
-        let de_version: Version = bincode::deserialize(&bytes).unwrap();
+        let de_version: Version = wincode::deserialize(&bytes).unwrap();
         assert_eq!(version, de_version);
     }
 
