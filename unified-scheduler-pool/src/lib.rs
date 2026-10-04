@@ -27,8 +27,10 @@ use {
     log::*,
     scopeguard::defer,
     solana_clock::Slot,
+    solana_cost_model::transaction_cost::TrackedCost,
     solana_pubkey::Pubkey,
     solana_runtime::{
+        bank::Bank,
         installed_scheduler_pool::{
             InstalledScheduler, InstalledSchedulerBox, InstalledSchedulerPool, ResultWithTimings,
             ScheduleResult, SchedulerAborted, SchedulerId, SchedulingContext, TimeoutListener,
@@ -36,7 +38,8 @@ use {
         },
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_execution::{
-            TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
+            TransactionBatchWithIndexes, TransactionStatusSender, check_block_cost_limits,
+            execute_batch,
         },
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
@@ -637,12 +640,11 @@ where
 
 pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
     fn handle(
-        result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
         task: &Task,
         handler_context: &HandlerContext,
-    );
+    ) -> Result<TrackedCost>;
 }
 
 #[derive(Debug)]
@@ -650,12 +652,11 @@ pub struct DefaultTaskHandler;
 
 impl TaskHandler for DefaultTaskHandler {
     fn handle(
-        result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
         task: &Task,
         handler_context: &HandlerContext,
-    ) {
+    ) -> Result<TrackedCost> {
         let bank = scheduling_context.bank();
         let transaction = task.transaction();
         let task_id = task.task_id();
@@ -668,7 +669,7 @@ impl TaskHandler for DefaultTaskHandler {
             transaction_indexes,
         };
 
-        *result = execute_batch(
+        let result = execute_batch(
             &batch_with_indexes,
             bank,
             handler_context.transaction_status_sender.as_ref(),
@@ -680,24 +681,20 @@ impl TaskHandler for DefaultTaskHandler {
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
-        );
+        )
+        .map(|tx_costs| tx_costs[0].tracked_cost());
         sleepless_testing::at(CheckPoint::TaskHandled(task_id));
+        result
     }
 }
 
 struct ExecutedTask {
     task: Task,
-    result_with_timings: ResultWithTimings,
+    result: Result<TrackedCost>,
+    timings: ExecuteTimings,
 }
 
 impl ExecutedTask {
-    fn new_boxed(task: Task) -> Box<Self> {
-        Box::new(Self {
-            task,
-            result_with_timings: initialized_result_with_timings(),
-        })
-    }
-
     fn consumed_block_size(&self) -> BlockSize {
         self.task.consumed_block_size()
     }
@@ -1115,17 +1112,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
     fn execute_task_with_handler(
         scheduling_context: &SchedulingContext,
-        executed_task: &mut Box<ExecutedTask>,
+        task: Task,
         handler_context: &HandlerContext,
-    ) {
+    ) -> Box<ExecutedTask> {
         debug!("handling task at {:?}", thread::current());
-        TH::handle(
-            &mut executed_task.result_with_timings.0,
-            &mut executed_task.result_with_timings.1,
-            scheduling_context,
-            &executed_task.task,
-            handler_context,
-        );
+        let mut timings = ExecuteTimings::default();
+        let result = TH::handle(&mut timings, scheduling_context, &task, handler_context);
+        Box::new(ExecutedTask {
+            task,
+            result,
+            timings,
+        })
     }
 
     fn max_running_task_count() -> Option<usize> {
@@ -1159,19 +1156,39 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         session_ending && state_machine.has_no_active_task()
     }
 
+    /// Dispatches the tasks unblocked by `executed_task` before checking its cost, so the check
+    /// overlaps with their execution.
+    fn dispatch_unblocked_then_check_block_cost_limits(
+        state_machine: &mut SchedulingStateMachine,
+        runnable_task_sender: &chained_channel::ChainedChannelSender<Task, SchedulingContext>,
+        executed_task: &ExecutedTask,
+        bank: &Bank,
+    ) -> Result<()> {
+        let tracked_cost = executed_task.result.clone()?;
+        while let Some(task) = state_machine.schedule_next_unblocked_task() {
+            runnable_task_sender.send_payload(task).unwrap();
+        }
+        check_block_cost_limits(
+            &mut bank.write_cost_tracker().unwrap(),
+            executed_task.task.transaction(),
+            tracked_cost,
+        )
+    }
+
     /// Returns `true` if the caller should abort.
     #[must_use]
     fn abort_or_accumulate_result_with_timings(
         (result, timings): &mut ResultWithTimings,
         executed_task: Box<ExecutedTask>,
+        task_result: Result<()>,
     ) -> bool {
         sleepless_testing::at(CheckPoint::TaskAccumulated(
             executed_task.task.task_id(),
-            &executed_task.result_with_timings.0,
+            &task_result,
         ));
-        timings.accumulate(&executed_task.result_with_timings.1);
+        timings.accumulate(&executed_task.timings);
 
-        match executed_task.result_with_timings.0 {
+        match task_result {
             Ok(()) => {
                 // The most normal case
                 // This is only for block production.
@@ -1296,6 +1313,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // another blocking new task is arriving to finalize the tentatively extended
         // prioritization further. Consequently, this also contributes to alleviate the known
         // heuristic's caveat for the first task of linearized runs, which is described above.
+        let mut session_bank = context.bank().clone();
         let (mut runnable_task_sender, runnable_task_receiver) =
             chained_channel::unbounded::<Task, SchedulingContext>(context);
         // Create two handler-to-scheduler channels to prioritize the finishing of blocked tasks,
@@ -1410,10 +1428,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
+                                let task_result =
+                                    Self::dispatch_unblocked_then_check_block_cost_limits(
+                                        &mut state_machine,
+                                        &runnable_task_sender,
+                                        &executed_task,
+                                        &session_bank,
+                                    );
 
                                 if Self::abort_or_accumulate_result_with_timings(
                                     &mut result_with_timings,
                                     executed_task,
+                                    task_result,
                                 ) {
                                     break 'nonaborted_main_loop;
                                 }
@@ -1464,10 +1490,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
+                                let task_result =
+                                    Self::dispatch_unblocked_then_check_block_cost_limits(
+                                        &mut state_machine,
+                                        &runnable_task_sender,
+                                        &executed_task,
+                                        &session_bank,
+                                    );
 
                                 if Self::abort_or_accumulate_result_with_timings(
                                     &mut result_with_timings,
                                     executed_task,
+                                    task_result,
                                 ) {
                                     break 'nonaborted_main_loop;
                                 }
@@ -1525,6 +1559,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
                                 // Before that, propagate new SchedulingContext to handler threads
                                 current_slot = new_context.slot();
+                                session_bank = new_context.bank().clone();
                                 runnable_task_sender
                                     .send_chained_channel(
                                         &new_context,
@@ -1656,13 +1691,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             warn!("failed to notify a panic from {current_thread:?}");
                         }
                     }
-                    let mut task = ExecutedTask::new_boxed(task);
-                    Self::execute_task_with_handler(
+                    let executed_task = Self::execute_task_with_handler(
                         runnable_task_receiver.context(),
-                        &mut task,
+                        task,
                         &handler_context,
                     );
-                    if sender.send(Ok(task)).is_err() {
+                    if sender.send(Ok(executed_task)).is_err() {
                         warn!("handler_thread: scheduler thread aborted...");
                         break;
                     }
@@ -2006,6 +2040,7 @@ mod tests {
         agave_jemalloc::jemalloc::{Decay, Jemalloc},
         assert_matches::assert_matches,
         solana_clock::Slot,
+        solana_cost_model::cost_tracker::CostTrackerLimits,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
@@ -2171,12 +2206,11 @@ mod tests {
 
         impl TaskHandler for ArenaCheckingHandler {
             fn handle(
-                _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<TrackedCost> {
                 let task_id = task.task_id();
                 sleepless_testing::at((ArenaCheckPoint::Started, task_id));
                 sleepless_testing::at((ArenaCheckPoint::Released, task_id));
@@ -2193,6 +2227,7 @@ mod tests {
                     u128::from(Jemalloc::current_thread_arena().unwrap().as_raw()),
                     expected_arena_id
                 );
+                Ok(TrackedCost::default())
             }
         }
 
@@ -2478,13 +2513,13 @@ mod tests {
         struct ExecuteTimingCounter;
         impl TaskHandler for ExecuteTimingCounter {
             fn handle(
-                _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 _task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<TrackedCost> {
                 timings.metrics[ExecuteTimingType::CheckUs] += 123;
+                Ok(TrackedCost::default())
             }
         }
         let pool = pool_raw.clone();
@@ -2654,13 +2689,12 @@ mod tests {
     struct FaultyHandler;
     impl TaskHandler for FaultyHandler {
         fn handle(
-            result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
             _scheduling_context: &SchedulingContext,
             _task: &Task,
             _handler_context: &HandlerContext,
-        ) {
-            *result = Err(TransactionError::AccountNotFound);
+        ) -> Result<TrackedCost> {
+            Err(TransactionError::AccountNotFound)
         }
     }
 
@@ -2675,14 +2709,13 @@ mod tests {
         struct CommitCancelledHandler;
         impl TaskHandler for CommitCancelledHandler {
             fn handle(
-                result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<TrackedCost> {
                 assert_eq!(task.task_id(), 0);
-                *result = Err(TransactionError::CommitCancelled);
+                Err(TransactionError::CommitCancelled)
             }
         }
 
@@ -2821,13 +2854,13 @@ mod tests {
         struct CountingHandler;
         impl TaskHandler for CountingHandler {
             fn handle(
-                _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 _task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<TrackedCost> {
                 *TASK_COUNT.lock().unwrap() += 1;
+                Ok(TrackedCost::default())
             }
         }
 
@@ -3020,6 +3053,101 @@ mod tests {
         assert_eq!(bank.transaction_count(), 1);
     }
 
+    fn do_test_scheduler_cost_limits(
+        limits: CostTrackerLimits,
+        tx_count: usize,
+        bank_count: usize,
+    ) -> Vec<(Arc<Bank>, SchedulerId, Result<()>)> {
+        agave_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+
+        (0..bank_count)
+            .map(|_| {
+                let bank = Bank::new_for_tests(&genesis_config);
+                let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+                bank.write_cost_tracker().unwrap().set_limits(limits);
+                let scheduler = pool
+                    .take_scheduler(SchedulingContext::new(bank.clone()))
+                    .unwrap();
+                let scheduler_id = scheduler.id();
+
+                for task_id in 0..tx_count {
+                    let tx = ReplayTransaction::from(system_transaction::transfer(
+                        &mint_keypair,
+                        &solana_pubkey::new_rand(),
+                        2,
+                        genesis_config.hash(),
+                    ));
+                    scheduler
+                        .schedule_execution(tx, task_id as OrderedTaskId)
+                        .unwrap();
+                }
+                let (result, _timings) = BankWithScheduler::new(bank.clone(), Some(scheduler))
+                    .wait_for_completed_scheduler()
+                    .unwrap();
+                (bank, scheduler_id, result)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_scheduler_tracks_costs_per_bank() {
+        let results = do_test_scheduler_cost_limits(
+            CostTrackerLimits::new(u64::MAX, u64::MAX, u64::MAX),
+            1,
+            2,
+        );
+
+        // The second bank reuses the pooled scheduler, so it covers the subsequent session path.
+        assert_eq!(results[0].1, results[1].1);
+        for (bank, _scheduler_id, result) in results {
+            assert_matches!(result, Ok(()));
+            let cost_tracker = bank.read_cost_tracker().unwrap();
+            assert_eq!(cost_tracker.transaction_count(), 1);
+            assert!(cost_tracker.block_cost() > 0);
+            assert_eq!(cost_tracker.get_block_limit(), u64::MAX);
+        }
+    }
+
+    #[test]
+    fn test_scheduler_block_cost_limit_exceeded() {
+        let limits = CostTrackerLimits::new(u64::MAX, 1, u64::MAX);
+        let [(bank, _scheduler_id, result)] = do_test_scheduler_cost_limits(limits, 1, 1)
+            .try_into()
+            .unwrap();
+        assert_matches!(result, Err(TransactionError::WouldExceedMaxBlockCostLimit));
+        assert_eq!(bank.read_cost_tracker().unwrap().get_limits(), limits);
+    }
+
+    #[test]
+    fn test_scheduler_account_cost_limit_exceeded() {
+        let [(bank, _scheduler_id, _result)] = do_test_scheduler_cost_limits(
+            CostTrackerLimits::new(u64::MAX, u64::MAX, u64::MAX),
+            1,
+            1,
+        )
+        .try_into()
+        .unwrap();
+        let tx_cost = bank.read_cost_tracker().unwrap().block_cost();
+
+        // Both transfers write the mint account, so the second one exceeds the account limit.
+        let limits = CostTrackerLimits::new(tx_cost, u64::MAX, u64::MAX);
+        let [(bank, _scheduler_id, result)] = do_test_scheduler_cost_limits(limits, 2, 1)
+            .try_into()
+            .unwrap();
+        assert_matches!(
+            result,
+            Err(TransactionError::WouldExceedMaxAccountCostLimit)
+        );
+        assert_eq!(bank.read_cost_tracker().unwrap().get_limits(), limits);
+    }
+
     fn do_test_scheduler_schedule_execution_failure(extra_tx_after_failure: bool) {
         agave_logger::setup();
 
@@ -3144,12 +3272,11 @@ mod tests {
         struct PanickingHandler;
         impl TaskHandler for PanickingHandler {
             fn handle(
-                _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<TrackedCost> {
                 let task_id = task.task_id();
                 if task_id == 0 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
@@ -3223,18 +3350,20 @@ mod tests {
         struct CountingFaultyHandler;
         impl TaskHandler for CountingFaultyHandler {
             fn handle(
-                result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<TrackedCost> {
                 let task_id = task.task_id();
                 *TASK_COUNT.lock().unwrap() += 1;
-                if task_id == 1 {
-                    *result = Err(TransactionError::AccountNotFound);
-                }
+                let result = if task_id == 1 {
+                    Err(TransactionError::AccountNotFound)
+                } else {
+                    Ok(TrackedCost::default())
+                };
                 sleepless_testing::at(CheckPoint::TaskHandled(task_id));
+                result
             }
         }
 
@@ -3307,12 +3436,11 @@ mod tests {
         struct StallingHandler;
         impl TaskHandler for StallingHandler {
             fn handle(
-                result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
                 scheduling_context: &SchedulingContext,
                 task: &Task,
                 handler_context: &HandlerContext,
-            ) {
+            ) -> Result<TrackedCost> {
                 let task_id = task.task_id();
                 match task_id {
                     STALLED_TRANSACTION_INDEX => {
@@ -3322,13 +3450,7 @@ mod tests {
                     _ => unreachable!(),
                 };
 
-                DefaultTaskHandler::handle(
-                    result,
-                    timings,
-                    scheduling_context,
-                    task,
-                    handler_context,
-                );
+                DefaultTaskHandler::handle(timings, scheduling_context, task, handler_context)
             }
         }
 
@@ -3414,14 +3536,14 @@ mod tests {
         struct TaskAndContextChecker;
         impl TaskHandler for TaskAndContextChecker {
             fn handle(
-                _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
-            ) {
+            ) -> Result<TrackedCost> {
                 // The task task_id must always be matched to the slot.
                 assert_eq!(task.task_id() as Slot, scheduling_context.slot());
+                Ok(TrackedCost::default())
             }
         }
 
@@ -3520,21 +3642,19 @@ mod tests {
                 // is handle before finishing executing scheduled transactions
                 std::thread::sleep(std::time::Duration::from_secs(1));
 
-                let mut result = Ok(());
                 let mut timings = ExecuteTimings::default();
 
                 let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |_| {
                     UsageQueue::new(&Capability::FifoQueueing)
                 });
 
-                <DefaultTaskHandler as TaskHandler>::handle(
-                    &mut result,
+                let result = <DefaultTaskHandler as TaskHandler>::handle(
                     &mut timings,
                     &context,
                     &task,
                     &pool.create_handler_context(),
                 );
-                (result, timings)
+                (result.map(|_| ()), timings)
             }));
 
             Ok(())
@@ -3738,7 +3858,6 @@ mod tests {
 
         // this internally should call validate_account_locks() via
         // Bank::prepare_unlocked_batch_from_single_tx().
-        let result = &mut Ok(());
         let timings = &mut ExecuteTimings::default();
         let scheduling_context = &SchedulingContext::new(bank.clone());
         let handler_context = &HandlerContext {
@@ -3752,7 +3871,8 @@ mod tests {
         let task = SchedulingStateMachine::create_task(ReplayTransaction::from(tx), 0, &mut |_| {
             UsageQueue::new(&Capability::FifoQueueing)
         });
-        DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
+        let result =
+            DefaultTaskHandler::handle(timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
 }

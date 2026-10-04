@@ -102,24 +102,36 @@ pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// Interval between pull requests (in gossip rounds)
 const PULL_REQUEST_PERIOD: usize = 5;
 
-/// Capacity for the [`ClusterInfo::run_socket_consume`] and [`ClusterInfo::run_listen`]
-/// intermediate packet batch buffers.
+/// Max number of packet batches sigverified in one [`ClusterInfo::run_socket_consume`] iteration.
 ///
-/// To avoid the overhead of dropping large sets of packet batches in each processing loop,
-/// we limit the number of packet batches that are pulled from the corresponding channel on each iteration.
-/// This ensures that the number of `madvise` system calls is minimized and, as such, that large interruptions
-/// to the processing loop are avoided.
-const CHANNEL_CONSUME_CAPACITY: usize = 1024;
-/// Channel capacity for gossip channels.
+/// Bounds sigverify latency per iteration:
+/// 64 batches * 64 packets * ~150us per packet / 8 threads = 80ms.
+/// Here 150us is rough estimate of time to sigverify 1 Protocol instance.
+const SIGVERIFY_BATCH_CAPACITY: usize = 64;
+
+/// Channel capacity for the gossip sigverify -> listen channel, and max number of
+/// sigverified message sets processed per [`ClusterInfo::run_listen`] iteration.
 ///
-/// A hard limit on incoming gossip messages.
+/// Each message set is the output of one [`ClusterInfo::run_socket_consume`] iteration,
+/// i.e. up to [`SIGVERIFY_BATCH_CAPACITY`] packet batches. [`ClusterInfo::run_listen`]
+/// drains the whole channel in one iteration.
 ///
-/// 262,144 packets with saturated packet batches (64 packets).
+/// Value chosen empirically to allow slack to absorb small sets without evicting sigverified
+/// packets, while under max load keeping listen queue latency to ~200ms.
+pub(crate) const CHANNEL_CONSUME_CAPACITY: usize = 4;
+
+/// Channel capacity for the gossip socket -> sigverify channel.
 ///
-/// 114,688 packets with observed average packet batch size (28 packets),
-/// putting this within reasonable range of previous hard limit
-/// of `MAX_GOSSIP_TRAFFIC` (103,896).
-pub(crate) const GOSSIP_CHANNEL_CAPACITY: usize = 4096; // 2^12
+/// Holds enough packet batches for 2 sigverify iterations, bounding queueing
+/// latency ahead of sigverify to ~200ms (2 rounds of 80-100ms).
+pub(crate) const GOSSIP_INGRESS_CHANNEL_CAPACITY: usize = 2 * SIGVERIFY_BATCH_CAPACITY;
+
+/// Channel capacity for the gossip egress channel.
+///
+/// Each element is the entire output of one producer iteration, but we do not
+/// want to ever drop anything here, so this is deliberately overprovisioned.
+pub(crate) const GOSSIP_CHANNEL_CAPACITY: usize = 4096;
+
 const GOSSIP_PING_CACHE_CAPACITY: usize = 126976;
 pub(crate) const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
 /// Per-entry Pong wait timeout is drawn uniformly from this range (in milliseconds).
@@ -2123,7 +2135,7 @@ impl ClusterInfo {
         {
             num_packets += packet_batch.len();
             packet_buf.push(packet_batch);
-            if packet_buf.len() == CHANNEL_CONSUME_CAPACITY {
+            if packet_buf.len() == SIGVERIFY_BATCH_CAPACITY {
                 break;
             }
         }
@@ -2200,7 +2212,9 @@ impl ClusterInfo {
                 }
             })
         };
-        if let Err(TrySendError::Full(_)) = sender.try_send(packets_verified) {
+        if !packets_verified.is_empty()
+            && let Err(TrySendError::Full(_)) = sender.try_send(packets_verified)
+        {
             self.stats.gossip_packets_dropped_count.add_relaxed(
                 packet_buf
                     .iter()
@@ -2262,7 +2276,7 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipCons{i:02}"))
             .build()
             .unwrap();
-        let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
+        let mut packet_buf = Vec::with_capacity(SIGVERIFY_BATCH_CAPACITY);
         let run_consume = move || {
             while !exit.load(Ordering::Relaxed) {
                 let result = self.run_socket_consume(

@@ -22,6 +22,7 @@ pub(super) struct ConsensusPoolServiceStats {
     pub(super) vote_aggregates_received: Saturating<u64>,
     pub(super) certs_received: Saturating<u64>,
     pub(super) own_message_receive_limit_reached: Saturating<u64>,
+    pub(super) footer_message_receive_limit_reached: Saturating<u64>,
     pub(super) consensus_message_batch_receive_limit_reached: Saturating<u64>,
     pub(super) standstill: bool,
     pub(crate) pending_safe_to_notar_repair_sent: Saturating<usize>,
@@ -41,6 +42,7 @@ impl ConsensusPoolServiceStats {
             parent_ready_missed_window: Saturating(0),
             parent_ready_produce_window: Saturating(0),
             own_message_receive_limit_reached: Saturating(0),
+            footer_message_receive_limit_reached: Saturating(0),
             consensus_message_batch_receive_limit_reached: Saturating(0),
             own_votes_received: Saturating(0),
             vote_aggregates_received: Saturating(0),
@@ -67,6 +69,7 @@ impl ConsensusPoolServiceStats {
             vote_aggregates_received,
             certs_received,
             own_message_receive_limit_reached,
+            footer_message_receive_limit_reached,
             consensus_message_batch_receive_limit_reached,
             standstill,
             pending_safe_to_notar_repair_sent,
@@ -100,6 +103,11 @@ impl ConsensusPoolServiceStats {
             (
                 "own_message_receive_limit_reached",
                 own_message_receive_limit_reached.0,
+                i64
+            ),
+            (
+                "footer_message_receive_limit_reached",
+                footer_message_receive_limit_reached.0,
                 i64
             ),
             (

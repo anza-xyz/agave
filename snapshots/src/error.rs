@@ -18,9 +18,6 @@ pub enum SnapshotError {
     #[error("AccountsFile error: {0}")]
     AccountsFileError(#[from] AccountsFileError),
 
-    #[error("serialization error: {0}")]
-    Serialize(#[from] bincode::Error),
-
     #[error("deserialization error: {0}")]
     DeserializeWincode(#[from] wincode::ReadError),
 

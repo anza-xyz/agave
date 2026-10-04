@@ -1356,6 +1356,13 @@ fn create_and_insert_leader_bank(
         );
     }
 
+    // Bank construction can write to shared runtime state, including the program cache. Keep the
+    // parent live until construction and local initialization are complete so cleanup cannot prune
+    // that state concurrently.
+    let Some(parent_execution_guard) = parent_bank.try_enter_transaction_execution() else {
+        return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
+    };
+
     let tpu_bank = ReplayStage::new_bank_from_parent_with_notify(
         parent_bank.clone(),
         slot,
@@ -1390,6 +1397,9 @@ fn create_and_insert_leader_bank(
         .expect(
             "No feature flag could have been activated in this same slot to cause reserve to fail",
         );
+
+    // Insertion waits synchronously for ReplayStage, which may be waiting to quiesce this parent.
+    drop(parent_execution_guard);
 
     // Insert the bank
     let tpu_bank = ctx.bank_forks_controller.insert_bank(tpu_bank)?;

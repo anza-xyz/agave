@@ -1905,6 +1905,14 @@ const SLOT_SIZE: usize = size_of::<u64>();
 const OPTION_SIZE: usize = 1;
 const PUBKEY_LEN: usize = 32;
 
+fn ui_account_payload_len(ui_account: &UiAccount, metadata_len: usize) -> usize {
+    ui_account
+        .space
+        .and_then(|space| usize::try_from(space).ok())
+        .unwrap_or_default()
+        .saturating_sub(metadata_len)
+}
+
 async fn get_buffers(
     rpc_client: &RpcClient,
     authority_pubkey: Option<Pubkey>,
@@ -1944,7 +1952,10 @@ async fn get_buffers(
                 authority: authority_address
                     .map(|pubkey| pubkey.to_string())
                     .unwrap_or_else(|| "none".to_string()),
-                data_len: 0,
+                data_len: ui_account_payload_len(
+                    ui_account,
+                    UpgradeableLoaderState::size_of_buffer_metadata(),
+                ),
                 lamports: account.lamports,
                 use_lamports_unit,
             });
@@ -2016,10 +2027,10 @@ async fn get_programs(
                     .map(|pubkey| pubkey.to_string())
                     .unwrap_or_else(|| "none".to_string()),
                 last_deploy_slot: slot,
-                data_len: programdata_account
-                    .data
-                    .len()
-                    .saturating_sub(UpgradeableLoaderState::size_of_programdata_metadata()),
+                data_len: ui_account_payload_len(
+                    programdata_ui_account,
+                    UpgradeableLoaderState::size_of_programdata_metadata(),
+                ),
                 lamports: programdata_account.lamports,
                 use_lamports_unit,
             });

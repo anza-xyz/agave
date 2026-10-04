@@ -3149,6 +3149,36 @@ async fn test_cli_program_show() {
         .unwrap();
     assert_eq!(max_len, data_len as usize);
 
+    // Verify show --buffers
+    config.command = CliCommand::Program(ProgramCliCommand::Show {
+        account_pubkey: None,
+        authority_pubkey: authority_keypair.pubkey(),
+        get_programs: false,
+        get_buffers: true,
+        all: false,
+        use_lamports_unit: false,
+    });
+    let response = process_command(&config).await.unwrap();
+    let json: Value = serde_json::from_str(&response).unwrap();
+    let buffers = json
+        .as_object()
+        .unwrap()
+        .get("buffers")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let buffer_address = buffer_keypair.pubkey().to_string();
+    let buffer = buffers
+        .iter()
+        .find(|buffer| {
+            buffer.get("address").and_then(Value::as_str) == Some(buffer_address.as_str())
+        })
+        .unwrap();
+    assert_eq!(
+        buffer.get("dataLen").unwrap().as_u64().unwrap(),
+        max_len as u64
+    );
+
     // Deploy
     let program_keypair = Keypair::new();
     config.signers = vec![&keypair, &authority_keypair, &program_keypair];
@@ -3240,6 +3270,36 @@ async fn test_cli_program_show() {
         .as_u64()
         .unwrap();
     assert_eq!(max_len, data_len as usize);
+
+    // Verify show --programs
+    config.command = CliCommand::Program(ProgramCliCommand::Show {
+        account_pubkey: None,
+        authority_pubkey: authority_keypair.pubkey(),
+        get_programs: true,
+        get_buffers: false,
+        all: false,
+        use_lamports_unit: false,
+    });
+    let response = process_command(&config).await.unwrap();
+    let json: Value = serde_json::from_str(&response).unwrap();
+    let programs = json
+        .as_object()
+        .unwrap()
+        .get("programs")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let program_id = program_keypair.pubkey().to_string();
+    let program = programs
+        .iter()
+        .find(|program| {
+            program.get("programId").and_then(Value::as_str) == Some(program_id.as_str())
+        })
+        .unwrap();
+    assert_eq!(
+        program.get("dataLen").unwrap().as_u64().unwrap(),
+        max_len as u64
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

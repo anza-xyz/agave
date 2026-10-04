@@ -1,11 +1,16 @@
 //! Accounts-db test suite.
 #![cfg(test)]
+#![allow(clippy::duplicate_mod)]
 
 use super::*;
 
 mod append_vec;
+mod split_file;
 
-pub use append_vec::DEFAULT_ACCOUNTS_DB_CONFIG as ACCOUNTS_DB_CONFIG_APPEND_VEC;
+pub use {
+    append_vec::DEFAULT_ACCOUNTS_DB_CONFIG as ACCOUNTS_DB_CONFIG_APPEND_VEC,
+    split_file::DEFAULT_ACCOUNTS_DB_CONFIG as ACCOUNTS_DB_CONFIG_SPLIT_FILE,
+};
 
 const NO_LOAD_FILTER: Option<fn(u64, &Pubkey, usize) -> bool> = None;
 

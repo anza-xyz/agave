@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 mod as_bytes;
 mod common;
 mod data;
@@ -6,10 +5,9 @@ mod error;
 mod meta;
 mod utils;
 
-pub use error::Error as SplitFileError;
 use {
     self::{
-        common::{DataLen, DataRef, ExternalDataOffset, FileOffset, LoadedData, LogicalOffset},
+        common::{DataLen, DataRef, ExternalDataOffset, FileOffset, LoadedData},
         data::{
             DATA_ENTRY_FIXED_SIZE, DATA_HEADER_SIZE, calculate_data_entry_stored_size,
             create_data_file, parse_data_entry, read_data_entry, read_data_header,
@@ -46,6 +44,7 @@ use {
         },
     },
 };
+pub use {common::LogicalOffset, error::Error as SplitFileError};
 
 pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
     num_open: AtomicU64::new(0),
@@ -59,6 +58,7 @@ pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
 const META_SCAN_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Creates a reusable buffered reader tuned for scanning external account data.
+#[allow(dead_code)]
 pub fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
     // 128KiB covers a reasonably large distribution of typical account sizes.
     // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
@@ -243,6 +243,24 @@ impl SplitFile {
         }
 
         Ok(Some(new))
+    }
+
+    /// Returns the path to the meta file.
+    pub fn meta_path(&self) -> &Path {
+        &self.meta_path
+    }
+
+    /// Returns the path to the data file.
+    pub fn data_path(&self) -> &Path {
+        &self.data_path
+    }
+
+    /// Returns the data File.
+    pub fn data_file(&self) -> &File {
+        match &self.inner {
+            InnerState::ReadOnly(inner) => &inner.data_file,
+            InnerState::Writable(inner) => &inner.data_file,
+        }
     }
 
     /// Returns size, in bytes, of meta file.

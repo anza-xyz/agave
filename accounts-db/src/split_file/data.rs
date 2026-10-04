@@ -401,7 +401,9 @@ unsafe impl AsBytesMut for DataHeaderSerde {}
 /// Header for the data file.
 #[derive(Debug)]
 pub struct DataHeader {
+    #[allow(dead_code)] // field currently never read
     pub size: usize,
+    #[allow(dead_code)] // field currently never read
     pub format_version: Version,
     pub uid: u64,
 }

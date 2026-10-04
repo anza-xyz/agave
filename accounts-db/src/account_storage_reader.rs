@@ -128,11 +128,15 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
             excluded_accounts.extend(tombstone_offsets.iter().map(|offset| (*offset, 0)));
         }
 
-        let len_for_archive = storage.accounts.len_for_archive(
-            excluded_accounts
-                .iter()
-                .map(|(_offset, data_len)| *data_len),
-        );
+        let excluded_size: usize = excluded_accounts
+            .iter()
+            .map(|(_offset, data_len)| AppendVec::calculate_stored_size(*data_len))
+            .sum();
+        let len_for_archive = storage
+            .num_stored_bytes()
+            .checked_sub(excluded_size as u64)
+            .expect("stored bytes shall be at least the excluded size")
+            as usize;
 
         let mut excluded_offsets: Vec<_> = excluded_accounts
             .into_iter()
@@ -232,6 +236,7 @@ mod tests {
     };
 
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_account_storage_reader_no_obsolete_accounts(provider: AccountsFileProvider) {
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
@@ -600,7 +605,7 @@ mod tests {
     /// * excluded accounts
     /// * exceeding the file reader's stack buffer
     #[test_matrix(
-        [AccountsFileProvider::AppendVec],
+        [AccountsFileProvider::AppendVec, AccountsFileProvider::Split],
         [false, true],
         [0, 1, 2, 3, 4, 5, 6, 7])
     ]
