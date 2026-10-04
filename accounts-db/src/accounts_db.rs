@@ -810,6 +810,12 @@ pub struct AccountsDb {
 
     pub scan_tracker: ScanTracker,
 
+    /// Highest supermajority root reported by `BankForks::set_root`. Banks at
+    /// or above it are kept alive to serve RPC at lower commitments, so flush
+    /// cleaning and `clean_accounts` must stay at or below it: the newest
+    /// version stored there is the one those banks read.
+    highest_super_majority_root: AtomicU64,
+
     pub account_indexes: AccountSecondaryIndexes,
 
     /// Set of unique keys per slot which is used
@@ -962,6 +968,7 @@ impl AccountsDb {
                 .max_ancient_storages
                 .unwrap_or(DEFAULT_MAX_ANCIENT_STORAGES),
             scan_tracker: ScanTracker::default(),
+            highest_super_majority_root: AtomicU64::new(Slot::MAX),
             account_indexes: accounts_db_config.account_indexes.unwrap_or_default(),
             shrink_ratio: accounts_db_config.shrink_ratio,
             accounts_update_notifier,
@@ -1240,6 +1247,11 @@ impl AccountsDb {
     }
 
     fn max_clean_root(&self, proposed_clean_root: Option<Slot>) -> Option<Slot> {
+        // Cleaning may not advance past the highest supermajority root: banks
+        // at or above it are kept alive to serve RPC, and the versions above
+        // it are the ones those banks still read.
+        let supermajority_bound = self.highest_super_majority_root.load(Ordering::Acquire);
+        let proposed_clean_root = proposed_clean_root.map(|root| root.min(supermajority_bound));
         match (
             self.scan_tracker.min_ongoing_scan_root(),
             proposed_clean_root,
@@ -4799,6 +4811,14 @@ impl AccountsDb {
         *self.latest_full_snapshot_slot.lock_write() = Some(slot);
         self.latest_full_snapshot_slot_advanced_since_clean
             .store(true, Ordering::Release);
+    }
+
+    /// Bounds flush cleaning and `clean_accounts` at the highest supermajority
+    /// root: banks at or above it are kept alive to serve RPC, and the newest
+    /// version at or below it is visible to every one of them.
+    pub fn set_highest_super_majority_root(&self, slot: Slot) {
+        self.highest_super_majority_root
+            .store(slot, Ordering::Release);
     }
 
     /// Marks slots <= slot as already swept for zero-lamport-single-ref shrink eligibility

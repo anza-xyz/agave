@@ -511,6 +511,9 @@ impl BankForks {
         }
         let new_tx_count = root_bank.transaction_count();
         let accounts_data_len = root_bank.load_accounts_data_size() as i64;
+        // Cleaning may not advance past the supermajority root, mirroring the
+        // prune rule below: banks at or above it stay alive to serve RPC.
+        root_bank.set_highest_super_majority_root(highest_super_majority_root.unwrap_or(root));
         let mut prune_time = Measure::start("set_root::prune");
         let (removed_banks, prune_slots_ms, prune_remove_ms) =
             self.prune_non_rooted(root, highest_super_majority_root);

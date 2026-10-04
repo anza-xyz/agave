@@ -5067,6 +5067,14 @@ impl Bank {
             .flush_accounts_cache(true, Some(self.slot()))
     }
 
+    /// See `AccountsDb::set_highest_super_majority_root`.
+    pub fn set_highest_super_majority_root(&self, slot: Slot) {
+        self.rc
+            .accounts
+            .accounts_db
+            .set_highest_super_majority_root(slot)
+    }
+
     /// Technically this issues (or even burns!) new lamports,
     /// so be extra careful for its usage
     pub(crate) fn store_account_and_update_capitalization(

@@ -6740,6 +6740,60 @@ fn test_load_does_not_return_data_from_non_ancestor_root() {
     assert_eq!(account.lamports(), 100);
 }
 
+/// A snapshot flush must not drop the versions the banks kept alive for RPC
+/// still read.
+///
+/// Scenario
+///   - Bank at slot 17 is the supermajority root, so it is kept alive to serve
+///     finalized reads while slot 18 is rooted
+///   - Account exists at slot 16, rooted and flushed in an earlier batch
+///   - Account updated at slot 17 (rooted) and at slot 18 (rooted)
+///   - A snapshot flush is forced for slot 18, the batch is {17, 18}
+///
+/// Cleaning the batch up to slot 18 stores only the version at slot 18 and
+/// reclaims every older one. Slot 18 is not an ancestor of bank 17, so the
+/// load through bank 17 has no version left to see and the account vanishes
+/// from its finalized view. With cleaning bounded at the supermajority root
+/// the flush stores the versions at both 17 and 18, and bank 17 keeps
+/// reading its own version.
+#[test]
+fn test_flush_keeps_versions_visible_to_supermajority_banks() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let pubkey = Pubkey::new_unique();
+
+    // Earlier batch: version at slot 16 is rooted and flushed to storage
+    let account_v1 = AccountSharedData::new(100, 0, &Pubkey::default());
+    db.store_for_tests((16, &[(&pubkey, &account_v1)][..]));
+    db.add_root(16);
+    db.flush_root_write_cache(16);
+
+    // New batch: versions at slots 17 and 18, both rooted
+    let account_v2 = AccountSharedData::new(200, 0, &Pubkey::default());
+    db.store_for_tests((17, &[(&pubkey, &account_v2)][..]));
+    db.add_root(17);
+    let account_v3 = AccountSharedData::new(300, 0, &Pubkey::default());
+    db.store_for_tests((18, &[(&pubkey, &account_v3)][..]));
+    db.add_root(18);
+
+    // set_root(18) with the supermajority root at 17: bank 17 stays alive
+    db.set_highest_super_majority_root(17);
+
+    // Snapshot flush: every root up to slot 18 must reach storage
+    db.flush_accounts_cache(true, Some(18));
+
+    // The finalized bank at 17 reads through ancestors {17}
+    let ancestors = Ancestors::from(vec![17]);
+    let (account, slot) = db
+        .do_load_for_tests(&ancestors, &pubkey)
+        .expect("bank 17 must still see the account after the snapshot flush");
+
+    assert_eq!(
+        slot, 17,
+        "bank 17 must see its own version, not the non-ancestor root at slot 18"
+    );
+    assert_eq!(account.lamports(), 200);
+}
+
 /// Verifies that `index_scan_accounts` does not surface accounts whose slot was
 /// rooted *after* the scan guard was created.
 #[test]
