@@ -655,11 +655,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                             Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                         }
-                        // If it bailed out then this transaction will be dropped from the batch.
+                        // Bail-out is a leader-side condition; a follower
+                        // replaying a block should never see it.
                         (
                             Err(TransactionError::InstructionError(_, InstructionError::BailOut)),
                             _,
-                        ) => Err(TransactionError::BailOut),
+                        ) => {
+                            debug_assert!(config.drop_bail_out_transactions);
+                            Err(TransactionError::BailOut)
+                        }
                         // If the transaction failed & drop on failure is set then we don't want to
                         // update the accounts as this transaction will be dropped from the batch.
                         (Err(err), true) => Err(err.clone()),
