@@ -770,6 +770,7 @@ impl AppendVec {
         reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
+        let self_len = self.len();
         let mut min_buf_len = STORE_META_OVERHEAD;
         loop {
             let offset = reader.get_file_offset();
@@ -788,6 +789,28 @@ impl AppendVec {
             }
             let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(bytes, next).unwrap();
             let data_len = meta.data_len as usize;
+            // Guard against a corrupt `data_len` before using it to size the read
+            // buffer, mirroring `scan_stored_accounts_no_data()` and the no-data
+            // callbacks: account data cannot exceed `MAX_PERMITTED_DATA_LENGTH`, and a
+            // record whose stored size overflows `usize` or extends past the written
+            // portion of the file indicates corruption or truncation. Without these
+            // checks an oversized `data_len` makes the required buffer exceed the
+            // reader's capacity (surfacing as an error that aborts index generation),
+            // and a near-`usize::MAX` `data_len` wraps `STORE_META_OVERHEAD + data_len`
+            // so the scan never advances.
+            if meta.data_len > MAX_PERMITTED_DATA_LENGTH {
+                break;
+            }
+            let Some(unaligned_stored_size) = Self::calculate_unaligned_stored_size_checked(data_len)
+            else {
+                break;
+            };
+            if offset
+                .checked_add(unaligned_stored_size as FileOffset)
+                .is_none_or(|end| end > self_len as FileOffset)
+            {
+                break;
+            }
             let leftover = bytes.len() - next;
             if leftover >= data_len {
                 // we already read enough data to load this account
@@ -806,7 +829,7 @@ impl AppendVec {
                 min_buf_len = STORE_META_OVERHEAD;
             } else {
                 // repeat loop with required buffer size holding whole account data
-                min_buf_len = STORE_META_OVERHEAD + data_len;
+                min_buf_len = unaligned_stored_size;
             }
         }
         Ok(())
@@ -2252,6 +2275,99 @@ mod tests {
 
             size + mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>()
         });
+    }
+
+    /// Builds a storage whose single account declares `data_len` bytes of data but is
+    /// followed by no data at all: just the full STORE_META_OVERHEAD metadata block
+    /// (StoredMeta + AccountMeta + 32-byte ObsoleteAccountHash). Used to exercise
+    /// `scan_accounts_stored_meta`'s handling of a corrupt/oversized `data_len`, as
+    /// could appear in an untrusted snapshot. Mirrors the record layout of
+    /// `test_scan_accounts_stored_meta_missing_account_data`, which only ever uses a
+    /// small `data_len`.
+    fn append_vec_with_corrupt_data_len(data_len: u64) -> PathBuf {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("corrupt_data_len");
+        let stored_meta = StoredMeta {
+            write_version_obsolete: 0,
+            data_len,
+            pubkey: solana_pubkey::new_rand(),
+        };
+        // lamports != 0 so the scan does not treat this as the "last useful account".
+        let account_meta = AccountMeta {
+            lamports: 1,
+            rent_epoch: 0,
+            owner: Pubkey::default(),
+            executable: false,
+        };
+        let stored_meta_slice: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                (&stored_meta as *const StoredMeta) as *const u8,
+                mem::size_of::<StoredMeta>(),
+            )
+        };
+        let account_meta_slice: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                (&account_meta as *const AccountMeta) as *const u8,
+                mem::size_of::<AccountMeta>(),
+            )
+        };
+        // 32-byte ObsoleteAccountHash completes the STORE_META_OVERHEAD block.
+        let hash_pad = [0u8; STORE_META_OVERHEAD
+            - mem::size_of::<StoredMeta>()
+            - mem::size_of::<AccountMeta>()];
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(stored_meta_slice).unwrap();
+        file.write_all(account_meta_slice).unwrap();
+        file.write_all(&hash_pad).unwrap();
+        file.flush().unwrap();
+        temp_dir.into_path().join("corrupt_data_len")
+    }
+
+    /// Scans a storage with `scan_accounts_stored_meta_with` and returns how many
+    /// accounts the callback saw. The reader is wired up the same way the
+    /// `scan_accounts_stored_meta` wrapper does it. `ManuallyDrop` because these
+    /// storages are built by hand and are not owned by an `AccountsFile`.
+    fn count_scan_accounts_stored_meta(path: &Path) -> usize {
+        let file_info = FileInfo::new_from_path(path).unwrap();
+        let append_vec = ManuallyDrop::new(
+            AppendVec::new_from_file_info_unchecked(file_info, STORE_META_OVERHEAD).unwrap(),
+        );
+        let mut reader = new_scan_accounts_reader();
+        reader
+            .set_file(&append_vec.file, append_vec.len() as FileSize)
+            .unwrap();
+        let mut count = 0;
+        append_vec
+            .scan_accounts_stored_meta_with(&mut reader, |_| count += 1)
+            .unwrap();
+        count
+    }
+
+    /// A `data_len` larger than `MAX_PERMITTED_DATA_LENGTH` must not make
+    /// `scan_accounts_stored_meta` request a read buffer beyond the reader's capacity,
+    /// which would surface as an `Err` and abort index generation while loading a
+    /// snapshot. The corrupt record is skipped and the scan completes successfully.
+    /// Matches the guards `scan_stored_accounts_no_data()` and the no-data callbacks
+    /// already have.
+    #[test]
+    fn test_scan_accounts_stored_meta_oversized_data_len() {
+        let path = append_vec_with_corrupt_data_len(MAX_PERMITTED_DATA_LENGTH + 1);
+        assert_eq!(count_scan_accounts_stored_meta(&path), 0);
+    }
+
+    /// A `data_len` near `usize::MAX` must not overflow `STORE_META_OVERHEAD + data_len`
+    /// and leave the scan spinning without ever advancing the file offset. The corrupt
+    /// record is skipped and the scan returns.
+    #[test]
+    fn test_scan_accounts_stored_meta_overflowing_data_len() {
+        let path = append_vec_with_corrupt_data_len(u64::MAX);
+        assert_eq!(count_scan_accounts_stored_meta(&path), 0);
     }
 
     // Test to make sure that `is_dirty` is tracked properly
