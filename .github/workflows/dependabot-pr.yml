@@ -7,7 +7,7 @@ on:
 
 jobs:
   metadata:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: github.actor == 'dependabot[bot]'
     outputs:
       crate_name: ${{ steps.dependabot-metadata.outputs.dependency-names }}
@@ -23,7 +23,7 @@ jobs:
     needs: metadata
     if: needs.metadata.outputs.package_ecosystem == 'cargo'
     timeout-minutes: 10
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Create github app token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

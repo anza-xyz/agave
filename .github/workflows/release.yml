@@ -8,7 +8,7 @@ on:
 jobs:
   trigger-buildkite-pipeline:
     if: github.repository_owner == 'anza-xyz'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Trigger a Buildkite Build
         uses: "buildkite/trigger-pipeline-action@41fd38b69189bf186cf69cf10ec807a850cae593"  # v2.5.0
@@ -22,7 +22,7 @@ jobs:
 
   draft-release:
     if: github.repository_owner == 'anza-xyz'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:

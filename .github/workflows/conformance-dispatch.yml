@@ -19,7 +19,7 @@ jobs:
   detect:
     name: detect affected fixture sets
     if: github.repository_owner == 'anza-xyz'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       entries: ${{ steps.table.outputs.entries }}
     steps:
@@ -46,7 +46,7 @@ jobs:
     name: "stub: ${{ matrix.entry.harness }}"
     needs: detect
     if: needs.detect.outputs.entries != '[]'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       matrix:
         entry: ${{ fromJSON(needs.detect.outputs.entries) }}

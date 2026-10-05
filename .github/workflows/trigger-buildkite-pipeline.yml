@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   member_check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: github.repository_owner == 'anza-xyz' && github.event.action != 'labeled'
     outputs:
       should_trigger: ${{ steps.check.outputs.should_trigger }}
@@ -68,7 +68,7 @@ jobs:
           esac
 
   label_check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: github.repository_owner == 'anza-xyz' && github.event.action == 'labeled' && github.event.label.name == 'CI'
     outputs:
       should_trigger: ${{ steps.check.outputs.should_trigger }}
@@ -92,7 +92,7 @@ jobs:
             || echo "CI label was already removed."
 
   trigger:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs:
       - member_check
       - label_check

@@ -36,7 +36,7 @@ jobs:
         os:
           - os: macos-15
           # musl with dynamic linking
-          - os: ubuntu-24.04
+          - os: ubuntu-26.04
             container: docker.io/rust:1-alpine3.23
             rustflags: -C target-feature=-crt-static
     runs-on: ${{ matrix.os.os }}
