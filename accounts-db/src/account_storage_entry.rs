@@ -212,6 +212,11 @@ impl AccountStorageEntry {
         self.id
     }
 
+    /// True if the storage's accounts file is a split file.
+    pub fn is_split(&self) -> bool {
+        matches!(self.accounts, AccountsFile::Split(_))
+    }
+
     pub fn flush(&self) -> Result<(), AccountsFileError> {
         self.accounts.flush()
     }

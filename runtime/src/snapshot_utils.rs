@@ -564,12 +564,14 @@ pub fn serialize_snapshot(
             if should_finalize {
                 let flush_measure = Measure::start("");
                 for storage in snapshot_storages {
+                    // We're about to mark this snapshot fastboot-loadable. Pin the storage
+                    // file so it outlives the validator-exit Drop chain. This must happen
+                    // before the flush: SplitFile::flush() refuses storages still marked
+                    // remove-on-drop.
+                    storage.disable_remove_on_drop();
                     storage.flush().map_err(|err| {
                         AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
                     })?;
-                    // We're about to mark this snapshot fastboot-loadable. Pin the storage
-                    // file so it outlives the validator-exit Drop chain.
-                    storage.disable_remove_on_drop();
                 }
                 let flush_us = flush_measure.end_as_us();
 
@@ -595,8 +597,15 @@ pub fn serialize_snapshot(
                 write_startup_hints_to_snapshot(&bank_snapshot_dir, startup_hints, io_setup)
                     .map_err(|err| AddBankSnapshotError::WriteStartupHints(Box::new(err)))?;
 
-                mark_bank_snapshot_as_loadable(&bank_snapshot_dir)
-                    .map_err(AddBankSnapshotError::MarkSnapshotLoadable)?;
+                if snapshot_storages.iter().any(|storage| storage.is_split()) {
+                    warn!(
+                        "bank snapshot for slot {slot} has split storages; not marking as \
+                         fastboot-loadable"
+                    );
+                } else {
+                    mark_bank_snapshot_as_loadable(&bank_snapshot_dir)
+                        .map_err(AddBankSnapshotError::MarkSnapshotLoadable)?;
+                }
 
                 (
                     Some(flush_us),

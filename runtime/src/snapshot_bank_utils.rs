@@ -2451,6 +2451,57 @@ mod tests {
         assert_eq!(max_id, next_id - 1);
     }
 
+    /// Split storages cannot be restored by the fastboot dir path: the rebuilder only
+    /// recognizes `<slot>.<id>` files, so split `<slot>.<id>.meta`/`.data` files are silently
+    /// skipped. Finalizing a bank snapshot with split storages must still succeed, and it
+    /// must not be marked fastboot-loadable, so startup falls back to snapshot archives.
+    #[test_case(AccountsFileProvider::Split)]
+    fn test_bank_snapshot_finalize_with_split_storages(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            1_000_000 * LAMPORTS_PER_SOL,
+        );
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let bank = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        );
+        bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
+
+        // Finalize must succeed: flushing used to fail with FlushButRemoveOnDrop because
+        // remove-on-drop was disabled only after the flush.
+        create_bank_snapshot_from_bank(
+            &bank_snapshots_dir,
+            &bank,
+            SnapshotVersion::default(),
+            true,
+        )
+        .unwrap();
+
+        // The snapshot must not be offered for fastboot: the dir rebuilder would silently
+        // skip every split storage and panic on the empty storage map.
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
+        );
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+    }
+
     /// Drop a stale `<slot>.<id>` file into the account_paths run dir before calling
     /// `bank_from_snapshot_dir`, and verify that the fastboot rebuild path removes it (because
     /// the `(slot, id)` pair isn't in the storages list) while keeping the snapshot's own

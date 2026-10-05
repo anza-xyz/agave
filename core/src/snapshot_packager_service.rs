@@ -354,9 +354,16 @@ impl SnapshotPackagerService {
         }
         info!("Writing startup hints... Done in {:?}", start.elapsed());
 
-        let result = snapshot_utils::mark_bank_snapshot_as_loadable(&bank_snapshot_dir);
-        if let Err(err) = result {
-            warn!("Failed to mark bank snapshot as loadable: {err}");
+        if snapshot_storages.iter().any(|storage| storage.is_split()) {
+            warn!(
+                "bank snapshot for slot {snapshot_slot} has split storages; not marking as \
+                 fastboot-loadable"
+            );
+        } else {
+            let result = snapshot_utils::mark_bank_snapshot_as_loadable(&bank_snapshot_dir);
+            if let Err(err) = result {
+                warn!("Failed to mark bank snapshot as loadable: {err}");
+            }
         }
     }
 }
