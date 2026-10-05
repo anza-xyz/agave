@@ -2606,26 +2606,16 @@ pub async fn get_epoch_boundary_timestamps(
     reward: &RpcInflationReward,
     epoch_schedule: &EpochSchedule,
 ) -> Result<(UnixTimestamp, UnixTimestamp), Box<dyn std::error::Error>> {
+    let first_epoch_slot = epoch_schedule.get_first_slot_in_epoch(reward.epoch);
+    let epoch_start_slot = rpc_client
+        .get_blocks_with_limit(first_epoch_slot, 1)
+        .await?
+        .into_iter()
+        .next()
+        .filter(|slot| *slot < reward.effective_slot)
+        .ok_or("epoch_start_time not found")?;
+    let epoch_start_time = rpc_client.get_block_time(epoch_start_slot).await?;
     let epoch_end_time = rpc_client.get_block_time(reward.effective_slot).await?;
-    let mut epoch_start_slot = epoch_schedule.get_first_slot_in_epoch(reward.epoch);
-    let epoch_start_time = loop {
-        if epoch_start_slot >= reward.effective_slot {
-            return Err("epoch_start_time not found".to_string().into());
-        }
-        match rpc_client.get_block_time(epoch_start_slot).await {
-            Ok(block_time) => {
-                break block_time;
-            }
-            Err(_) => {
-                // TODO This is wrong.  We should not just increase the slot index if the RPC
-                // request failed.  It could have failed for a number of reasons, including, for
-                // example a network failure.
-                epoch_start_slot = epoch_start_slot
-                    .checked_add(1)
-                    .ok_or("Reached last slot that fits into u64")?;
-            }
-        }
-    };
     Ok((epoch_start_time, epoch_end_time))
 }
 
@@ -2685,9 +2675,8 @@ pub(crate) async fn fetch_epoch_rewards(
             if let Some(reward) = &rewards[0] {
                 let (epoch_start_time, epoch_end_time) =
                     get_epoch_boundary_timestamps(rpc_client, reward, &epoch_schedule).await?;
-                let block_time = rpc_client.get_block_time(reward.effective_slot).await?;
                 if let Some(cli_reward) =
-                    make_cli_reward(reward, block_time, epoch_start_time, epoch_end_time)
+                    make_cli_reward(reward, epoch_end_time, epoch_start_time, epoch_end_time)
                 {
                     all_epoch_rewards.push(cli_reward);
                 }
@@ -3036,10 +3025,104 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::{Keypair, keypair_from_seed, read_keypair_file, write_keypair},
         solana_presigner::Presigner,
+        solana_rpc_client::mock_sender::MocksMap,
+        solana_rpc_client_api::request::RpcRequest,
         solana_rpc_client_nonce_utils::nonblocking::blockhash_query::Source,
         solana_signer::Signer,
         tempfile::NamedTempFile,
     };
+
+    fn test_inflation_reward() -> RpcInflationReward {
+        RpcInflationReward {
+            epoch: 0,
+            effective_slot: 224,
+            amount: 2_500,
+            post_balance: 499_999_442_500,
+            commission: None,
+            commission_bps: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_epoch_boundary_timestamps_skipped_first_slot() {
+        let epoch_schedule = EpochSchedule::default();
+        let first_epoch_slot = epoch_schedule.get_first_slot_in_epoch(0);
+        let first_block_slot = first_epoch_slot + 2;
+        let mut mocks = MocksMap::default();
+        mocks.insert(
+            RpcRequest::GetBlocksWithLimit,
+            serde_json::json!([first_block_slot]),
+        );
+        mocks.insert(RpcRequest::GetBlockTime, serde_json::json!(1_000));
+        mocks.insert(RpcRequest::GetBlockTime, serde_json::json!(2_000));
+        let rpc_client = RpcClient::new_mock_with_mocks_map("succeeds", mocks);
+
+        assert_eq!(
+            get_epoch_boundary_timestamps(&rpc_client, &test_inflation_reward(), &epoch_schedule)
+                .await
+                .unwrap(),
+            (1_000, 2_000)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_epoch_boundary_timestamps_propagates_rpc_failure() {
+        let mut mocks = MocksMap::default();
+        mocks.insert(RpcRequest::GetBlocksWithLimit, serde_json::Value::Null);
+        let rpc_client = RpcClient::new_mock_with_mocks_map("succeeds", mocks);
+
+        assert!(
+            get_epoch_boundary_timestamps(
+                &rpc_client,
+                &test_inflation_reward(),
+                &EpochSchedule::default()
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_epoch_boundary_timestamps_no_block_before_effective_slot() {
+        let reward = test_inflation_reward();
+        let mut mocks = MocksMap::default();
+        mocks.insert(
+            RpcRequest::GetBlocksWithLimit,
+            serde_json::json!([reward.effective_slot]),
+        );
+        let rpc_client = RpcClient::new_mock_with_mocks_map("succeeds", mocks);
+
+        let err = get_epoch_boundary_timestamps(&rpc_client, &reward, &EpochSchedule::default())
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "epoch_start_time not found");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_epoch_rewards_reuses_effective_slot_timestamp() {
+        let reward = test_inflation_reward();
+        let epoch_schedule = EpochSchedule::default();
+        let first_epoch_slot = epoch_schedule.get_first_slot_in_epoch(reward.epoch);
+        let mut mocks = MocksMap::default();
+        mocks.insert(
+            RpcRequest::GetEpochSchedule,
+            serde_json::to_value(epoch_schedule).unwrap(),
+        );
+        mocks.insert(RpcRequest::GetInflationReward, serde_json::json!([reward]));
+        mocks.insert(
+            RpcRequest::GetBlocksWithLimit,
+            serde_json::json!([first_epoch_slot + 1]),
+        );
+        mocks.insert(RpcRequest::GetBlockTime, serde_json::json!(1_000));
+        mocks.insert(RpcRequest::GetBlockTime, serde_json::json!(2_000));
+        let rpc_client = RpcClient::new_mock_with_mocks_map("succeeds", mocks);
+
+        let rewards = fetch_epoch_rewards(&rpc_client, &Pubkey::new_unique(), 1, Some(0))
+            .await
+            .unwrap();
+        assert_eq!(rewards.len(), 1);
+        assert_eq!(rewards[0].block_time, 2_000);
+    }
 
     fn make_tmp_file() -> (String, NamedTempFile) {
         let tmp_file = NamedTempFile::new().unwrap();
