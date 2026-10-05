@@ -4779,7 +4779,7 @@ fn test_recovery() {
             false, // is_trusted
             Some(&mut ShredRecoveryContext::new(
                 ReedSolomonCache::default(),
-                dummy_retransmit_sender,
+                Box::new(dummy_retransmit_sender),
                 root_bank,
                 0, // shred_version
             )),
@@ -4853,7 +4853,7 @@ fn test_skip_alt_recovery() {
             false, // is_trusted
             Some(&mut ShredRecoveryContext::new(
                 ReedSolomonCache::default(),
-                dummy_retransmit_sender,
+                Box::new(dummy_retransmit_sender),
                 root_bank,
                 0, // shred_version
             )),
@@ -4953,7 +4953,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
             false, // is_trusted
             Some(&mut ShredRecoveryContext::new(
                 reed_solomon_cache,
-                dummy_retransmit_sender,
+                Box::new(dummy_retransmit_sender),
                 root_bank,
                 0, // shred_version
             )),

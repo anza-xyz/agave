@@ -13,7 +13,7 @@ use {
     solana_perf::packet::BytesPacket,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
+    solana_streamer::streamer::ChannelSend,
     std::{
         sync::{
             Arc,
@@ -502,7 +502,7 @@ pub struct ShredRecoveryContext {
     /// Used to perform RS erasure code recovery
     pub reed_solomon_cache: ReedSolomonCache,
     /// Sender to retransmit the recovered shreds
-    retransmit_sender: EvictingSender<Vec<Payload>>,
+    retransmit_sender: Box<dyn ChannelSend<Vec<Payload>>>,
     /// Used for filtering recovered shreds
     shred_filter_ctx: ShredFilterContext,
 }
@@ -510,7 +510,7 @@ pub struct ShredRecoveryContext {
 impl ShredRecoveryContext {
     pub fn new(
         reed_solomon_cache: ReedSolomonCache,
-        retransmit_sender: EvictingSender<Vec<Payload>>,
+        retransmit_sender: Box<dyn ChannelSend<Vec<Payload>>>,
         root_bank: Arc<Bank>,
         shred_version: u16,
     ) -> Self {
@@ -611,6 +611,7 @@ mod tests {
             bank::Bank,
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},
         },
+        solana_streamer::evicting_sender::EvictingSender,
         std::{
             io::{Cursor, Seek, SeekFrom, Write},
             sync::Arc,
@@ -852,7 +853,7 @@ mod tests {
         let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
         let mut shred_recovery_context = ShredRecoveryContext::new(
             ReedSolomonCache::default(),
-            dummy_retransmit_sender,
+            Box::new(dummy_retransmit_sender),
             new_test_bank(0),
             shred_version,
         );

@@ -46,7 +46,7 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     ShredRecoveryContext::new(
         ReedSolomonCache::default(),
-        dummy_retransmit_sender,
+        Box::new(dummy_retransmit_sender),
         root_bank,
         shreds.first().map(Shred::version).unwrap_or_default(),
     )

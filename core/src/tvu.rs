@@ -99,14 +99,6 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// Sets the upper bound on the number of batches stored in the retransmit
-/// stage ingress channel.
-/// Allows for a max of 16k batches of up to 64 packets each
-/// (PACKETS_PER_BATCH).
-/// This translates to about 1 GB of RAM for packet storage in the worst case.
-/// In reality this means about 200K shreds since most batches are not full.
-const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
-
 /// The maximum number of alpenglow packets that can be processed in a single batch
 pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 /// The maximum number of distinct bls messages that can be sent in a single batch.
@@ -401,8 +393,17 @@ impl Tvu {
 
         let (verified_sender, verified_receiver) = unbounded();
 
-        let (retransmit_sender, retransmit_receiver) =
-            EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
+        let (retransmit_sender, retransmit_stage) = RetransmitStage::new(
+            bank_forks.clone(),
+            leader_schedule_cache.clone(),
+            cluster_info.clone(),
+            Arc::new(retransmit_sockets),
+            max_slots.clone(),
+            rpc_subscriptions.clone(),
+            slot_status_notifier.clone(),
+            tvu_config.turbine_xdp_sender,
+            votor_event_sender.clone(),
+        );
 
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
@@ -421,19 +422,6 @@ impl Tvu {
                 }
             }),
             tvu_config.shred_sigverify_threads,
-        );
-
-        let retransmit_stage = RetransmitStage::new(
-            bank_forks.clone(),
-            leader_schedule_cache.clone(),
-            cluster_info.clone(),
-            Arc::new(retransmit_sockets),
-            retransmit_receiver,
-            max_slots.clone(),
-            rpc_subscriptions.clone(),
-            slot_status_notifier.clone(),
-            tvu_config.turbine_xdp_sender,
-            votor_event_sender.clone(),
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
