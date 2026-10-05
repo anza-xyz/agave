@@ -876,6 +876,14 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
+            if invoke_context
+                .get_feature_set()
+                .loader_v3_remove_extend_program
+            {
+                // SIMD-0685: Remove ExtendProgram
+                ic_logger_msg!(log_collector, "ExtendProgram has been disabled");
+                return Err(InstructionError::InvalidInstructionData);
+            }
             common_extend_program(invoke_context, additional_bytes, false)?;
         }
     }

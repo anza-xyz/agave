@@ -3,7 +3,8 @@
 use {
     agave_feature_set::{
         disable_sbpf_v0_v1_v2_deployment, enable_alt_bn128_syscall,
-        loader_v3_allow_prefunded_programdata, loader_v3_set_program_data_to_elf_length,
+        loader_v3_allow_prefunded_programdata, loader_v3_remove_extend_program,
+        loader_v3_set_program_data_to_elf_length,
     },
     serde_json::Value,
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
@@ -89,6 +90,8 @@ fn test_validator_genesis(
     if !allow_prefunded_programdata {
         genesis.deactivate_features(&[loader_v3_allow_prefunded_programdata::id()]);
     }
+    // SIMD-0685 removes ExtendProgram, which the CLI still issues.
+    genesis.deactivate_features(&[loader_v3_remove_extend_program::id()]);
 
     genesis
 }

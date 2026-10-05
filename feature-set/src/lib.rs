@@ -81,6 +81,7 @@ pub struct FeatureSnapshot {
     pub single_program_runtime_environment: bool,
     pub loader_v3_allow_prefunded_programdata: bool,
     pub core_bpf_hash_validation: bool,
+    pub loader_v3_remove_extend_program: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -185,6 +186,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &loader_v3_allow_prefunded_programdata::ID,
             ),
             core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
+            loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
         }
     }
 }
@@ -347,6 +349,7 @@ impl FeatureSet {
             pass_input_metadata_in_vm_r3_r5: snapshot.pass_input_metadata_in_vm_r3_r5,
             secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
             loader_v3_allow_prefunded_programdata: snapshot.loader_v3_allow_prefunded_programdata,
+            loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
         }
     }
 }
@@ -1568,6 +1571,10 @@ pub mod core_bpf_hash_validation {
     solana_pubkey::declare_id!("FCsQnd4V52NESBhVURWYSWBbmLFzgxEZVC2WngzHzp1u");
 }
 
+pub mod loader_v3_remove_extend_program {
+    solana_pubkey::declare_id!("5Ach9H8V5NCNDQg7Md6HnJmVttF3tzHwiWWucnnFd4jz");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2689,6 +2696,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             core_bpf_hash_validation::id(),
             "SIMD-0690: Hash validation in Core BPF program migrations and upgrades",
+        ),
+        (
+            loader_v3_remove_extend_program::id(),
+            "SIMD-0685: Loader V3 Remove ExtendProgram",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

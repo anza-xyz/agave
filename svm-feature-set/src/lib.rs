@@ -51,6 +51,7 @@ pub struct SVMFeatureSet {
     pub pass_input_metadata_in_vm_r3_r5: bool,
     pub secp256r1_syscall_enabled: bool,
     pub loader_v3_allow_prefunded_programdata: bool,
+    pub loader_v3_remove_extend_program: bool,
 }
 
 impl SVMFeatureSet {
@@ -106,6 +107,7 @@ impl SVMFeatureSet {
             pass_input_metadata_in_vm_r3_r5: true,
             secp256r1_syscall_enabled: true,
             loader_v3_allow_prefunded_programdata: true,
+            loader_v3_remove_extend_program: true,
         }
     }
 }
