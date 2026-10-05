@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use {
-    agave_feature_set::loader_v3_minimum_extend_program_size,
+    agave_feature_set::{loader_v3_minimum_extend_program_size, loader_v3_remove_extend_program},
     solana_account::{AccountSharedData, WritableAccount},
     solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
@@ -33,6 +33,8 @@ pub async fn setup_test_context(features: LoaderV3Features) -> ProgramTestContex
     if !minimum_extend_program_size {
         program_test.deactivate_feature(loader_v3_minimum_extend_program_size::id());
     }
+    // SIMD-0685 removes ExtendProgram, which these tests exercise.
+    program_test.deactivate_feature(loader_v3_remove_extend_program::id());
 
     program_test.start_with_context().await
 }

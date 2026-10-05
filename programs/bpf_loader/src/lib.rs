@@ -846,6 +846,14 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
+            if invoke_context
+                .get_feature_set()
+                .loader_v3_remove_extend_program
+            {
+                // SIMD-0685: Remove ExtendProgram
+                ic_logger_msg!(log_collector, "ExtendProgram has been removed");
+                return Err(InstructionError::InvalidInstructionData);
+            }
             common_extend_program(invoke_context, additional_bytes, false)?;
         }
     }
@@ -1187,12 +1195,15 @@ mod tests {
     struct LoaderV3Features {
         /// SIMD-0433
         pub set_programdata_to_elf_length: bool,
+        /// SIMD-0685
+        pub remove_extend_program: bool,
     }
 
     impl LoaderV3Features {
         fn all_enabled() -> Self {
             Self {
                 set_programdata_to_elf_length: true,
+                remove_extend_program: true,
             }
         }
     }
@@ -1200,8 +1211,10 @@ mod tests {
     fn setup_features(feature_set: &mut SVMFeatureSet, loader_v3_features: LoaderV3Features) {
         let LoaderV3Features {
             set_programdata_to_elf_length,
+            remove_extend_program,
         } = loader_v3_features;
         feature_set.loader_v3_set_program_data_to_elf_length = set_programdata_to_elf_length;
+        feature_set.loader_v3_remove_extend_program = remove_extend_program;
     }
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
@@ -2071,6 +2084,7 @@ mod tests {
                     instruction_accounts,
                     LoaderV3Features {
                         set_programdata_to_elf_length,
+                        ..LoaderV3Features::all_enabled()
                     },
                     expected_result,
                     |_invoke_context| {},
@@ -2243,6 +2257,7 @@ mod tests {
             instruction_accounts.clone(),
             LoaderV3Features {
                 set_programdata_to_elf_length,
+                ..LoaderV3Features::all_enabled()
             },
             Err(InstructionError::InvalidAccountData),
             |invoke_context| {
@@ -2731,9 +2746,7 @@ mod tests {
                     &instruction_data,
                     transaction_accounts,
                     instruction_accounts,
-                    LoaderV3Features {
-                        set_programdata_to_elf_length: true,
-                    },
+                    LoaderV3Features::all_enabled(),
                     expected_result,
                     |_invoke_context| {},
                 )
@@ -4932,5 +4945,29 @@ mod tests {
 
         assert_eq!(program2.deployment_slot, 2);
         assert_eq!(program2.stats.uses.load(Ordering::Relaxed), 0);
+    }
+
+    #[test_case(true, Err(InstructionError::InvalidInstructionData); "simd_0685_enabled")]
+    #[test_case(false, Err(InstructionError::MissingAccount); "simd_0685_disabled")]
+    fn test_bpf_loader_upgradeable_extend_program_simd_0685(
+        remove_extend_program: bool,
+        expected_result: Result<(), InstructionError>,
+    ) {
+        let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::ExtendProgram {
+            additional_bytes: MINIMUM_EXTEND_PROGRAM_BYTES,
+        })
+        .unwrap();
+        process_instruction_with_setup(
+            &bpf_loader_upgradeable::id(),
+            &instruction_data,
+            Vec::new(),
+            Vec::new(),
+            LoaderV3Features {
+                remove_extend_program,
+                ..LoaderV3Features::all_enabled()
+            },
+            expected_result,
+            |_invoke_context| {},
+        );
     }
 }

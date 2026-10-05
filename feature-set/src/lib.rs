@@ -81,6 +81,7 @@ pub struct FeatureSnapshot {
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
+    pub loader_v3_remove_extend_program: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -183,6 +184,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             loader_v3_set_program_data_to_elf_length: is_active(
                 &loader_v3_set_program_data_to_elf_length::ID,
             ),
+            loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
         }
     }
 }
@@ -344,6 +346,7 @@ impl FeatureSet {
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
             loader_v3_set_program_data_to_elf_length: snapshot
                 .loader_v3_set_program_data_to_elf_length,
+            loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
         }
     }
 }
@@ -1541,6 +1544,10 @@ pub mod loader_v3_set_program_data_to_elf_length {
     solana_pubkey::declare_id!("EhisBfVtGvEA8bVCVN5VMaYEaX6iTfoUrmcDi8LY7Kxy");
 }
 
+pub mod loader_v3_remove_extend_program {
+    solana_pubkey::declare_id!("5Ach9H8V5NCNDQg7Md6HnJmVttF3tzHwiWWucnnFd4jz");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2634,6 +2641,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loader_v3_set_program_data_to_elf_length::id(),
             "SIMD-0433: Loader V3 Set Program Data to ELF Length",
+        ),
+        (
+            loader_v3_remove_extend_program::id(),
+            "SIMD-0685: Loader V3 Remove ExtendProgram",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

@@ -3,7 +3,7 @@
 use {
     agave_feature_set::{
         enable_alt_bn128_syscall, loader_v3_minimum_extend_program_size,
-        loader_v3_set_program_data_to_elf_length,
+        loader_v3_remove_extend_program, loader_v3_set_program_data_to_elf_length,
     },
     assert_matches::assert_matches,
     serde_json::Value,
@@ -84,6 +84,8 @@ fn test_validator_genesis(
     if !set_programdata_to_elf_length {
         genesis.deactivate_features(&[loader_v3_set_program_data_to_elf_length::id()]);
     }
+    // SIMD-0685 removes ExtendProgram, which the CLI still issues.
+    genesis.deactivate_features(&[loader_v3_remove_extend_program::id()]);
 
     genesis
 }
