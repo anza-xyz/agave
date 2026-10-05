@@ -10,8 +10,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shredder,
-        max_entries_per_n_shred,
+        DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shredder, max_entries_per_n_shred,
     },
     solana_signer::Signer,
     std::{mem::MaybeUninit, sync::Arc},
@@ -75,7 +74,6 @@ fn make_recoverable_fec_set_at(slot: u64, parent: u64) -> (Vec<Vec<u8>>, Vec<u8>
         Hash::default(),
         0,
         0,
-        &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
     assert_eq!(data_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);

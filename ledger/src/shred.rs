@@ -85,7 +85,7 @@ pub use {
         payload::Payload,
         stats::{ProcessShredsStats, ShredFetchStats},
     },
-    crate::shredder::{ReedSolomonCache, Shredder},
+    crate::shredder::Shredder,
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
@@ -867,7 +867,6 @@ pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
         is_last_in_slot,
         fec_set_index, // next_shred_index
         fec_set_index, // next_code_index
-        &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     )
 }
@@ -1203,7 +1202,6 @@ mod tests {
         let keypair = keypair_from_seed(&seed).unwrap();
         let slot = 142076266;
         let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 42).unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let mut shred = shredder
             .make_shreds_from_data_slice(
                 &keypair,
@@ -1212,7 +1210,6 @@ mod tests {
                 Hash::default(),
                 64,
                 64,
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             )
             .unwrap()
@@ -1278,7 +1275,6 @@ mod tests {
             Hash::default(),
             0,
             0,
-            &ReedSolomonCache::default(),
         );
         let mut shred = shreds.pop().unwrap();
         shred.sign(&keypair);

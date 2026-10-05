@@ -24,7 +24,7 @@ use {
         },
         blockstore_db::{DBPinnableSlice, WriteBatch},
         blockstore_meta::BlockLocation,
-        shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
+        shred::{self, Shred, filter::ShredRecoveryContext},
     },
     solana_measure::measure::Measure,
     solana_net_utils::PinnedXdpSender,
@@ -379,7 +379,6 @@ impl WindowService {
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         retransmit_sender: EvictingSender<Vec<shred::Payload>>,
     ) -> JoinHandle<()> {
-        let reed_solomon_cache = ReedSolomonCache::default();
         Builder::new()
             .name("solWinInsert".to_string())
             .spawn(move || {
@@ -401,7 +400,6 @@ impl WindowService {
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
                 let mut shred_recovery_context = ShredRecoveryContext::new(
-                    reed_solomon_cache,
                     retransmit_sender,
                     sharable_banks.root(),
                     shred_version,
@@ -507,7 +505,6 @@ mod test {
             Hash::new_from_array(rand::rng().random()),
             0, // next_shred_index
             0, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         data_shreds
@@ -628,7 +625,6 @@ mod test {
                     shreds,
                     false, // is_trusted
                     &mut ShredRecoveryContext::new(
-                        ReedSolomonCache::default(),
                         dummy_retransmit_sender,
                         bank_forks.read().unwrap().root_bank(),
                         0, // shred_version

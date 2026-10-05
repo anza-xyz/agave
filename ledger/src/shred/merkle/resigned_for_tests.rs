@@ -15,7 +15,6 @@ pub(crate) fn make_shreds_from_data(
     is_last_in_slot: bool,
     next_shred_index: u32,
     next_code_index: u32,
-    reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
 ) -> Result<Vec<Shred>, Error> {
     let now = Instant::now();
@@ -163,7 +162,7 @@ pub(crate) fn make_shreds_from_data(
     // (and so the signature) cannot be computed without the Merkle root of
     // the previous erasure batch.
     batches.try_fold(chained_merkle_root, |chained_merkle_root, batch| {
-        finish_erasure_batch(keypair, batch, chained_merkle_root, reed_solomon_cache)
+        finish_erasure_batch(keypair, batch, chained_merkle_root)
     })?;
     stats.gen_coding_elapsed += now.elapsed().as_micros() as u64;
     Ok(shreds)

@@ -3,8 +3,8 @@
 
 use {
     super::{
-        DATA_SHREDS_PER_FEC_BLOCK, Error, Payload, ReedSolomonCache, Shred, ShredFetchStats,
-        ShredFlags, ShredType, ShredVariant, layout, merkle,
+        DATA_SHREDS_PER_FEC_BLOCK, Error, Payload, Shred, ShredFetchStats, ShredFlags, ShredType,
+        ShredVariant, layout, merkle,
     },
     crate::blockstore,
     agave_feature_set as feature_set,
@@ -499,8 +499,6 @@ fn check_last_data_shred_index(index: u32) -> bool {
 
 /// Holds the context to perform filtering on shred recovery
 pub struct ShredRecoveryContext {
-    /// Used to perform RS erasure code recovery
-    pub reed_solomon_cache: ReedSolomonCache,
     /// Sender to retransmit the recovered shreds
     retransmit_sender: EvictingSender<Vec<Payload>>,
     /// Used for filtering recovered shreds
@@ -509,14 +507,12 @@ pub struct ShredRecoveryContext {
 
 impl ShredRecoveryContext {
     pub fn new(
-        reed_solomon_cache: ReedSolomonCache,
         retransmit_sender: EvictingSender<Vec<Payload>>,
         root_bank: Arc<Bank>,
         shred_version: u16,
     ) -> Self {
         let shred_filter_ctx = ShredFilterContext::new(root_bank, shred_version);
         Self {
-            reed_solomon_cache,
             retransmit_sender,
             shred_filter_ctx,
         }
@@ -554,7 +550,7 @@ impl ShredRecoveryContext {
         // The same signature also verifies for recovered shreds because when
         // reconstructing the Merkle tree for the erasure batch, we will obtain the
         // same Merkle root.
-        let shreds = merkle::recover(shreds, &self.reed_solomon_cache)?;
+        let shreds = merkle::recover(shreds)?;
         shreds
             .filter_map(|shred| shred.ok())
             .filter(|shred| !self.should_discard_shred(shred))
@@ -850,12 +846,8 @@ mod tests {
         // is enough parity to recover the missing data shreds.
         let max_code_shreds_per_slot = coding_shreds[0].index();
         let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
-        let mut shred_recovery_context = ShredRecoveryContext::new(
-            ReedSolomonCache::default(),
-            dummy_retransmit_sender,
-            new_test_bank(0),
-            shred_version,
-        );
+        let mut shred_recovery_context =
+            ShredRecoveryContext::new(dummy_retransmit_sender, new_test_bank(0), shred_version);
         shred_recovery_context
             .shred_filter_ctx
             .set_shred_limits_for_tests(ShredLimits::new(

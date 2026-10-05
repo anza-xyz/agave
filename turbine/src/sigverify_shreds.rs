@@ -600,7 +600,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::{
             genesis_utils::create_genesis_config_with_leader,
-            shred::{Nonce, ProcessShredsStats, ReedSolomonCache, Shredder},
+            shred::{Nonce, ProcessShredsStats, Shredder},
         },
         solana_net_utils::SocketAddrSpace,
         solana_perf::packet::{BytesPacketBatch, PacketFlags},
@@ -629,7 +629,6 @@ mod tests {
             Hash::new_unique(),
             0,
             0,
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         let (shreds_data_wrong, _shreds_code_wrong) = shredder.entries_to_merkle_shreds_for_tests(
@@ -639,7 +638,6 @@ mod tests {
             Hash::new_unique(),
             0,
             0,
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
 
@@ -699,7 +697,6 @@ mod tests {
             chained_merkle_root,
             0,
             0,
-            &ReedSolomonCache::default(),
         );
         let mut shreds: Vec<_> = data_shreds.into_iter().chain(coding_shreds).collect();
 

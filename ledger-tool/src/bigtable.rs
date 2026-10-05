@@ -37,7 +37,7 @@ use {
         bigtable_upload::ConfirmedBlockUploadConfig,
         blockstore::Blockstore,
         blockstore_options::AccessType,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{ProcessShredsStats, Shred, Shredder},
     },
     solana_pubkey::Pubkey,
     solana_shred_version::compute_shred_version,
@@ -379,7 +379,6 @@ fn append_component_shreds(
     next_shred_index: &mut u32,
     next_code_index: &mut u32,
     chained_merkle_root: &mut Hash,
-    reed_solomon_cache: &ReedSolomonCache,
 ) {
     let shreds = shredder.make_merkle_shreds_from_component(
         keypair,
@@ -388,7 +387,6 @@ fn append_component_shreds(
         *chained_merkle_root,
         *next_shred_index,
         *next_code_index,
-        reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
     if let Some(last_data_shred) = shreds.iter().filter(|shred| shred.is_data()).last() {
@@ -414,7 +412,6 @@ fn make_alpenglow_shreds(
 ) -> Result<Vec<Shred>, Box<dyn Error>> {
     let shredder = Shredder::new(slot, block.parent_slot, 0, shred_config.shred_version)?;
     let mut chained_merkle_root = Hash::default();
-    let reed_solomon_cache = ReedSolomonCache::default();
     let mut data_shreds = Vec::new();
     let mut next_shred_index = 0;
     let mut next_code_index = 0;
@@ -438,7 +435,6 @@ fn make_alpenglow_shreds(
             &mut next_shred_index,
             &mut next_code_index,
             &mut chained_merkle_root,
-            &reed_solomon_cache,
         );
     }
 
@@ -587,7 +583,6 @@ async fn shreds(
                 Hash::default(), // chained_merkle_root
                 0,               // next_shred_index
                 0,               // next_code_index
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .into_iter()

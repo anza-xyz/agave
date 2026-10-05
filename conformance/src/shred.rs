@@ -26,8 +26,7 @@ use {
         },
         blockstore_processor::verify_ticks,
         shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, ReedSolomonCache,
-            Shred,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, Shred,
             filter::{ShredFilterContext, ShredRecoveryContext},
             wire,
         },
@@ -168,12 +167,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         }
     };
     let (retransmit_sender, _retransmit_rx) = EvictingSender::<Vec<Payload>>::new_bounded(0);
-    let mut recovery = ShredRecoveryContext::new(
-        ReedSolomonCache::default(),
-        retransmit_sender,
-        bank.clone(),
-        shred_version,
-    );
+    let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
     let handle_duplicate = |duplicate: PossibleDuplicateShred| {
         let _duplicate_proof = handle_duplicate_shred(
