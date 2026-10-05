@@ -355,7 +355,7 @@ pub struct RpcContextConfig {
 pub struct RpcRankMapConfig {
     /// Filter by validator identity, as a base-58 encoded string.
     pub identity: Option<String>,
-    /// Bank commitment to query; defaults to finalized when omitted.
+    /// Only finalized commitment is supported; defaults to finalized when omitted.
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
     /// Minimum bank context slot; no minimum is enforced when omitted.

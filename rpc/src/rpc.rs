@@ -9,7 +9,7 @@ use {
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*,
-        rpc_cache::{CachedRankMap, LargestAccountsCache, RankMapCache},
+        rpc_cache::{LargestAccountsCache, RankMapCache, rank_map_response},
         rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
@@ -953,26 +953,30 @@ impl JsonRpcRequestProcessor {
         slot: Slot,
         config: RpcRankMapConfig,
     ) -> Result<RpcResponse<Option<Arc<RpcRankMap>>>> {
-        let identity = config.identity.as_deref().map(verify_pubkey).transpose()?;
+        if !config.commitment.unwrap_or_default().is_finalized() {
+            return Err(Error::invalid_params(
+                "getRankMap only supports finalized commitment",
+            ));
+        }
+        let identity = config.identity.as_deref();
+        if let Some(identity) = identity {
+            verify_pubkey(identity)?;
+        }
         let bank = self.get_bank_with_config(RpcContextConfig {
-            commitment: config.commitment,
+            commitment: Some(CommitmentConfig::finalized()),
             min_context_slot: config.min_context_slot,
         })?;
         let epoch = bank.epoch_schedule().get_epoch(slot);
-        let Some(epoch_stakes) = bank.epoch_stakes_from_slot(slot) else {
+        if bank.epoch_stakes_from_slot(slot).is_none() {
             return Ok(new_response(&bank, None));
-        };
-        let cell = self
-            .rank_map_cache
-            .write()
-            .unwrap()
-            .get_or_insert(epoch, epoch_stakes.stakes().vote_accounts());
+        }
+        let cell = self.rank_map_cache.write().unwrap().get_or_insert(epoch);
         let cached = cell
             .get_or_try_init(|| async {
                 let bank = Arc::clone(&bank);
                 self.runtime
                     .spawn_blocking(move || {
-                        CachedRankMap::new(
+                        rank_map_response(
                             epoch,
                             bank.epoch_stakes_from_slot(slot)
                                 .expect("epoch stakes were found in this bank before spawning"),
@@ -982,12 +986,21 @@ impl JsonRpcRequestProcessor {
                     .map_err(|_| Error::internal_error())
             })
             .await?;
-        Ok(new_response(
-            &bank,
-            cached
-                .as_ref()
-                .map(|cached| cached.response(identity.as_ref())),
-        ))
+        let value = cached.as_ref().map(|map| match identity {
+            None => Arc::clone(map),
+            Some(identity) => Arc::new(RpcRankMap {
+                epoch: map.epoch,
+                total_stake: map.total_stake,
+                validators: map
+                    .validators
+                    .iter()
+                    .find(|validator| validator.node_pubkey == identity)
+                    .cloned()
+                    .into_iter()
+                    .collect(),
+            }),
+        });
+        Ok(new_response(&bank, value))
     }
 
     pub fn get_balance(
@@ -5481,17 +5494,33 @@ pub mod tests {
         solana_runtime::epoch_stakes::VersionedEpochStakes::new_for_tests(accounts, 0)
     }
 
+    fn root_rank_map_bank(rpc: &RpcHandler, bank: Bank) -> Arc<Bank> {
+        let slot = bank.slot();
+        bank.freeze();
+        let mut forks = rpc.bank_forks.write().unwrap();
+        let bank = forks.insert(bank).clone_without_scheduler();
+        forks.set_root(slot, None, None);
+        rpc.block_commitment_cache
+            .write()
+            .unwrap()
+            .set_highest_super_majority_root(slot);
+        bank
+    }
+
     #[test]
     fn test_rpc_rank_map_cache_and_filter() {
         let rpc = RpcHandler::start();
         let stakes = rank_map_test_stakes(&[100, 300, 200]);
-        let original_bank = rpc.working_bank();
-        let mut bank = Bank::new_from_parent(original_bank.clone(), SlotLeader::default(), 1);
+        let mut bank = Bank::new_from_parent(rpc.working_bank(), SlotLeader::default(), 1);
         bank.set_epoch_stakes_for_test(0, stakes);
-        let bank = Arc::new(bank);
-        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = bank.clone();
+        let bank = root_rank_map_bank(&rpc, bank);
+        let epoch_stakes = bank.epoch_stakes_from_slot(0).unwrap();
+        let accounts: Arc<solana_vote::vote_account::VoteAccountsHashMap> =
+            Arc::from(epoch_stakes.stakes().vote_accounts());
+        let runtime_map = Arc::clone(epoch_stakes.bls_pubkey_to_rank_map());
+        let account_refs = Arc::strong_count(&accounts);
+        let map_refs = Arc::strong_count(&runtime_map);
         let config = RpcRankMapConfig {
-            commitment: Some(CommitmentConfig::confirmed()),
             min_context_slot: Some(1),
             ..RpcRankMapConfig::default()
         };
@@ -5500,7 +5529,11 @@ pub mod tests {
             .runtime
             .block_on(rpc.meta.get_rank_map(0, config.clone()))
             .unwrap();
+        assert_eq!(first.context.slot, 1);
         let first = first.value.unwrap();
+        // The response cache must not retain vote accounts or the runtime's rank map.
+        assert_eq!(Arc::strong_count(&accounts), account_refs);
+        assert_eq!(Arc::strong_count(&runtime_map), map_refs);
         assert_eq!(
             first
                 .validators
@@ -5510,21 +5543,37 @@ pub mod tests {
             [300, 200, 100]
         );
 
-        // Slots in the same epoch reuse the response, while the context follows the selected bank.
-        let child = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), 2));
-        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = child;
+        // An unrooted fork with different stakes cannot populate or change the cached response.
+        let mut fork = Bank::new_from_parent(Arc::clone(&bank), SlotLeader::default(), 2);
+        fork.set_epoch_stakes_for_test(0, rank_map_test_stakes(&[400]));
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = rpc
+            .bank_forks
+            .write()
+            .unwrap()
+            .insert(fork)
+            .clone_without_scheduler();
+        let rooted = rpc
+            .meta
+            .runtime
+            .block_on(rpc.meta.get_rank_map(0, config.clone()))
+            .unwrap();
+        assert_eq!(rooted.context.slot, 1);
+        assert!(Arc::ptr_eq(&first, &rooted.value.unwrap()));
+
+        // Slots in the same epoch reuse the map while context advances with the finalized bank.
+        root_rank_map_bank(&rpc, Bank::new_from_parent(bank, SlotLeader::default(), 3));
         let second = rpc
             .meta
             .runtime
-            .block_on(rpc.meta.get_rank_map(1, config.clone()))
+            .block_on(rpc.meta.get_rank_map(1, config))
             .unwrap();
-        assert_eq!(second.context.slot, 2);
+        assert_eq!(second.context.slot, 3);
         assert!(Arc::ptr_eq(&first, &second.value.unwrap()));
         for validator in &first.validators {
             let request = create_test_request(
                 "getRankMap",
                 Some(json!([0, {
-                    "identity": validator.node_pubkey, "commitment": "confirmed", "minContextSlot": 1
+                    "identity": validator.node_pubkey, "commitment": "finalized", "minContextSlot": 1
                 }])),
             );
             let response: RpcResponse<Option<RpcRankMap>> =
@@ -5535,59 +5584,38 @@ pub mod tests {
         }
         let request = create_test_request(
             "getRankMap",
-            Some(json!([0, {
-                "identity": Pubkey::new_unique().to_string(), "commitment": "confirmed"
-            }])),
+            Some(json!([0, {"identity": Pubkey::new_unique().to_string()}])),
         );
         let response: RpcResponse<Option<RpcRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert!(response.value.unwrap().validators.is_empty());
-
-        // A different fork in the same epoch must not reuse the cached map.
-        let mut fork = Bank::new_from_parent(original_bank, SlotLeader::default(), 3);
-        fork.set_epoch_stakes_for_test(0, rank_map_test_stakes(&[400]));
-        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = Arc::new(fork);
-        let fork = rpc
-            .meta
-            .runtime
-            .block_on(rpc.meta.get_rank_map(0, config))
-            .unwrap();
-        assert_eq!(fork.context.slot, 3);
-        assert_eq!(fork.value.unwrap().total_stake.get(), 400);
-        let finalized = rpc
-            .meta
-            .runtime
-            .block_on(rpc.meta.get_rank_map(0, RpcRankMapConfig::default()))
-            .unwrap();
-        assert_eq!(finalized.context.slot, 0);
-        assert_eq!(
-            finalized.value.unwrap().validators[0].node_pubkey,
-            rpc.leader_pubkey().to_string()
-        );
     }
 
     #[test]
     fn test_rpc_rank_map_errors_and_empty_epochs() {
         let rpc = RpcHandler::start();
         for slot in [0, TEST_SLOTS_PER_EPOCH * 2] {
-            let request = create_test_request(
-                "getRankMap",
-                Some(json!([slot, {
-                    "minContextSlot": 1
-                }])),
-            );
+            let request =
+                create_test_request("getRankMap", Some(json!([slot, {"minContextSlot": 1}])));
             let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
             assert_eq!(code, JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED);
+        }
+        for commitment in ["processed", "confirmed"] {
+            let request =
+                create_test_request("getRankMap", Some(json!([0, {"commitment": commitment}])));
+            let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+            assert_eq!(code, -32602);
+            assert!(message.contains("only supports finalized commitment"));
         }
         let request = create_test_request("getRankMap", Some(json!([0, {"identity": "invalid"}])));
         let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
         assert_eq!(code, -32602);
         for stakes in [&[][..], &[0, 0][..]] {
+            let rpc = RpcHandler::start();
             let mut bank = Bank::new_from_parent(rpc.working_bank(), SlotLeader::default(), 1);
             bank.set_epoch_stakes_for_test(0, rank_map_test_stakes(stakes));
-            rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = Arc::new(bank);
-            let request =
-                create_test_request("getRankMap", Some(json!([0, {"commitment": "confirmed"}])));
+            root_rank_map_bank(&rpc, bank);
+            let request = create_test_request("getRankMap", Some(json!([0])));
             let response: RpcResponse<Option<RpcRankMap>> =
                 parse_success_result(rpc.handle_request_sync(request));
             assert!(response.value.is_none());

@@ -1,16 +1,14 @@
 use {
     lru::LruCache,
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         config::RpcLargestAccountsFilter,
         response::{RpcAccountBalance, RpcRankMap, RpcRankMapEntry},
     },
     solana_runtime::{
         bank::MAX_LEADER_SCHEDULE_STAKES,
-        epoch_stakes::{BLSPubkeyStakeEntry, BLSPubkeyToRankMap, VersionedEpochStakes},
+        epoch_stakes::{BLSPubkeyStakeEntry, VersionedEpochStakes},
     },
-    solana_vote::vote_account::{VoteAccounts, VoteAccountsHashMap},
     std::{
         collections::HashMap,
         num::NonZeroUsize,
@@ -20,11 +18,11 @@ use {
     tokio::sync::OnceCell,
 };
 
-type RankMapCell = Arc<OnceCell<Option<CachedRankMap>>>;
+type RankMapCell = Arc<OnceCell<Option<Arc<RpcRankMap>>>>;
 
 pub struct RankMapCache {
-    // Retain the accounts so the pointer used as a key cannot be reused while cached.
-    entries: LruCache<(Epoch, usize), (Arc<VoteAccountsHashMap>, RankMapCell)>,
+    // Only maps from finalized banks may be inserted.
+    entries: LruCache<Epoch, RankMapCell>,
 }
 
 impl Default for RankMapCache {
@@ -39,71 +37,43 @@ impl Default for RankMapCache {
 }
 
 impl RankMapCache {
-    pub(crate) fn get_or_insert(&mut self, epoch: Epoch, accounts: &VoteAccounts) -> RankMapCell {
-        let accounts = Arc::from(accounts);
-        // Epoch alone is insufficient: processed and confirmed banks can be on different forks.
-        let key = (epoch, Arc::as_ptr(&accounts) as usize);
-        let (_, cell) = self
-            .entries
-            .get_or_insert(key, || (accounts, Arc::new(OnceCell::new())));
-        Arc::clone(cell)
+    pub(crate) fn get_or_insert(&mut self, epoch: Epoch) -> RankMapCell {
+        Arc::clone(
+            self.entries
+                .get_or_insert(epoch, || Arc::new(OnceCell::new())),
+        )
     }
 }
 
-pub(crate) struct CachedRankMap {
-    rank_map: Arc<BLSPubkeyToRankMap>,
-    response: Arc<RpcRankMap>,
-}
-
-impl CachedRankMap {
-    pub(crate) fn new(epoch: Epoch, stakes: &VersionedEpochStakes) -> Option<Self> {
-        let rank_map = Arc::clone(stakes.try_bls_pubkey_to_rank_map()?);
-        let validators = rank_map
-            .iter()
-            .map(|(rank, entry)| {
-                // Keep the wire format explicit, and require a decision when the runtime adds fields.
-                let BLSPubkeyStakeEntry {
-                    vote_account_pubkey,
-                    node_pubkey,
-                    bls_pubkey,
-                    stake,
-                } = entry;
-                RpcRankMapEntry {
-                    rank,
-                    vote_pubkey: vote_account_pubkey.to_string(),
-                    node_pubkey: node_pubkey.to_string(),
-                    bls_pubkey_compressed: bs58::encode(bls_pubkey.to_bytes_compressed())
-                        .into_string(),
-                    stake: *stake,
-                }
-            })
-            .collect();
-        let response = Arc::new(RpcRankMap {
-            epoch,
-            total_stake: rank_map.total_stake(),
-            validators,
-        });
-        Some(Self { rank_map, response })
-    }
-
-    pub(crate) fn response(&self, identity: Option<&Pubkey>) -> Arc<RpcRankMap> {
-        match identity {
-            None => Arc::clone(&self.response),
-            Some(identity) => {
-                let validators = self
-                    .rank_map
-                    .get_ranked_entry_for_node(identity)
-                    .map(|(rank, _)| self.response.validators[usize::from(rank)].clone())
-                    .into_iter()
-                    .collect();
-                Arc::new(RpcRankMap {
-                    epoch: self.response.epoch,
-                    total_stake: self.response.total_stake,
-                    validators,
-                })
+pub(crate) fn rank_map_response(
+    epoch: Epoch,
+    stakes: &VersionedEpochStakes,
+) -> Option<Arc<RpcRankMap>> {
+    let rank_map = stakes.try_bls_pubkey_to_rank_map()?;
+    let validators = rank_map
+        .iter()
+        .map(|(rank, entry)| {
+            // Keep the wire format explicit, and require a decision when the runtime adds fields.
+            let BLSPubkeyStakeEntry {
+                vote_account_pubkey,
+                node_pubkey,
+                bls_pubkey,
+                stake,
+            } = entry;
+            RpcRankMapEntry {
+                rank,
+                vote_pubkey: vote_account_pubkey.to_string(),
+                node_pubkey: node_pubkey.to_string(),
+                bls_pubkey_compressed: bs58::encode(bls_pubkey.to_bytes_compressed()).into_string(),
+                stake: *stake,
             }
-        }
-    }
+        })
+        .collect();
+    Some(Arc::new(RpcRankMap {
+        epoch,
+        total_stake: rank_map.total_stake(),
+        validators,
+    }))
 }
 
 #[derive(Debug, Clone)]
@@ -163,38 +133,27 @@ pub mod test {
     use super::*;
 
     #[test]
-    fn test_rank_map_cache_forks_and_eviction() {
+    fn test_rank_map_cache_epochs_and_eviction() {
         let mut cache = RankMapCache::default();
-        let accounts = VoteAccounts::default();
-        let first = cache.get_or_insert(0, &accounts);
-        assert!(Arc::ptr_eq(
-            &first,
-            &cache.get_or_insert(0, &accounts.clone())
-        ));
-        let other_fork = cache.get_or_insert(0, &VoteAccounts::default());
-        assert!(!Arc::ptr_eq(&first, &other_fork));
-        let next_epoch = cache.get_or_insert(1, &accounts);
-        assert!(!Arc::ptr_eq(&first, &next_epoch));
-        for epoch in 2..MAX_LEADER_SCHEDULE_STAKES - 1 {
-            cache.get_or_insert(epoch, &accounts);
+        let first = cache.get_or_insert(0);
+        assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
+        let second = cache.get_or_insert(1);
+        assert!(!Arc::ptr_eq(&first, &second));
+        for epoch in 2..MAX_LEADER_SCHEDULE_STAKES {
+            cache.get_or_insert(epoch);
         }
-        // A hit keeps the first map resident while the least recently used fork is evicted.
-        assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0, &accounts)));
-        cache.get_or_insert(MAX_LEADER_SCHEDULE_STAKES, &accounts);
+        // A hit keeps the first map resident while the least recently used epoch is evicted.
+        assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
+        cache.get_or_insert(MAX_LEADER_SCHEDULE_STAKES);
         assert_eq!(cache.entries.len(), MAX_LEADER_SCHEDULE_STAKES as usize);
-        assert!(
-            !cache
-                .entries
-                .iter()
-                .any(|(_, (_, cell))| Arc::ptr_eq(cell, &other_fork))
-        );
-        assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0, &accounts)));
+        assert!(!cache.entries.contains(&1));
+        assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
     }
 
     #[tokio::test]
     async fn test_rank_map_cache_initializes_once() {
         let mut cache = RankMapCache::default();
-        let cell = cache.get_or_insert(0, &VoteAccounts::default());
+        let cell = cache.get_or_insert(0);
         let (first, second) = tokio::join!(
             cell.get_or_init(|| async {
                 tokio::task::yield_now().await;

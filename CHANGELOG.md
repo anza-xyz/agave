@@ -26,7 +26,8 @@ Release channels have their own copy of this changelog:
   below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
   `getBlocks` behavior.
 * Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
-  for the epoch containing a requested slot, with an optional identity filter.
+  for the epoch containing a requested slot, with an optional identity filter. Only finalized
+  commitment is supported.
 * Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
 
 ### Validator
