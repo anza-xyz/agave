@@ -44,7 +44,10 @@ const WRITE_INSTRUCTION_TAG: [u8; 4] = 1u32.to_le_bytes();
 // u32 tag, u32 offset, u64 payload length
 const WRITE_INSTRUCTION_HEADER_LEN: usize = 16;
 
-fn parse_write_instruction(instruction_data: &[u8]) -> Result<(u32, &[u8]), InstructionError> {
+fn parse_write_instruction(
+    instruction_data: &[u8],
+    unbound_loader_v3_instruction_data: bool,
+) -> Result<(u32, &[u8]), InstructionError> {
     #[derive(SchemaRead)]
     struct WriteInstruction<'a> {
         tag: u32,
@@ -60,7 +63,10 @@ fn parse_write_instruction(instruction_data: &[u8]) -> Result<(u32, &[u8]), Inst
         return Err(InstructionError::InvalidInstructionData);
     }
 
-    if WRITE_INSTRUCTION_HEADER_LEN.saturating_add(bytes.len()) > solana_packet::PACKET_DATA_SIZE {
+    if !unbound_loader_v3_instruction_data
+        && WRITE_INSTRUCTION_HEADER_LEN.saturating_add(bytes.len())
+            > solana_packet::PACKET_DATA_SIZE
+    {
         return Err(InstructionError::InvalidInstructionData);
     }
 
@@ -183,6 +189,9 @@ fn process_loader_upgradeable_instruction(
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_program_key()?;
+    let unbound_loader_v3_instruction_data = invoke_context
+        .get_feature_set()
+        .unbound_loader_v3_instruction_data;
 
     let instruction = if instruction_data.starts_with(&WRITE_INSTRUCTION_TAG) {
         // `Write` is parsed in-place in the match arm
@@ -190,6 +199,9 @@ fn process_loader_upgradeable_instruction(
             offset: 0,
             bytes: Vec::new(),
         }
+    } else if unbound_loader_v3_instruction_data {
+        wincode::deserialize(instruction_data)
+            .map_err(|_| InstructionError::InvalidInstructionData)?
     } else {
         limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?
     };
@@ -211,7 +223,8 @@ fn process_loader_upgradeable_instruction(
             })?;
         }
         UpgradeableLoaderInstruction::Write { .. } => {
-            let (offset, payload) = parse_write_instruction(instruction_data)?;
+            let (offset, payload) =
+                parse_write_instruction(instruction_data, unbound_loader_v3_instruction_data)?;
             instruction_context.check_number_of_instruction_accounts(2)?;
             let buffer = instruction_context.try_borrow_instruction_account(0)?;
 
@@ -1187,12 +1200,15 @@ mod tests {
     struct LoaderV3Features {
         /// SIMD-0433
         pub set_programdata_to_elf_length: bool,
+        /// SIMD-0648
+        pub unbound_loader_v3_instruction_data: bool,
     }
 
     impl LoaderV3Features {
         fn all_enabled() -> Self {
             Self {
                 set_programdata_to_elf_length: true,
+                unbound_loader_v3_instruction_data: true,
             }
         }
     }
@@ -1200,8 +1216,10 @@ mod tests {
     fn setup_features(feature_set: &mut SVMFeatureSet, loader_v3_features: LoaderV3Features) {
         let LoaderV3Features {
             set_programdata_to_elf_length,
+            unbound_loader_v3_instruction_data,
         } = loader_v3_features;
         feature_set.loader_v3_set_program_data_to_elf_length = set_programdata_to_elf_length;
+        feature_set.unbound_loader_v3_instruction_data = unbound_loader_v3_instruction_data;
     }
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
@@ -1810,8 +1828,9 @@ mod tests {
         account.set_data_from_slice(&data);
     }
 
-    #[test]
-    fn test_write_instruction_matches_sdk() {
+    #[test_case(false; "legacy")]
+    #[test_case(true; "SIMD-0648")]
+    fn test_write_instruction_matches_sdk(unbound_loader_v3_instruction_data: bool) {
         let instruction = UpgradeableLoaderInstruction::Write {
             offset: 7,
             bytes: vec![1, 2, 3],
@@ -1824,14 +1843,19 @@ mod tests {
         let serialized = bincode::serialize(&instruction).unwrap();
         assert!(serialized.starts_with(&WRITE_INSTRUCTION_TAG));
         assert_eq!(
-            parse_write_instruction(&serialized).unwrap(),
+            parse_write_instruction(&serialized, unbound_loader_v3_instruction_data).unwrap(),
             (*offset, bytes.as_slice())
         );
     }
 
-    #[test]
-    fn test_bpf_loader_upgradeable_write_parsing() {
+    #[test_case(false; "legacy")]
+    #[test_case(true; "SIMD-0648")]
+    fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data: bool) {
         let loader_id = bpf_loader_upgradeable::id();
+        let features = LoaderV3Features {
+            unbound_loader_v3_instruction_data,
+            ..LoaderV3Features::all_enabled()
+        };
         let buffer_address = Pubkey::new_unique();
         let max_bytes = solana_packet::PACKET_DATA_SIZE - WRITE_INSTRUCTION_HEADER_LEN;
         let mut buffer_account = AccountSharedData::new(
@@ -1868,12 +1892,16 @@ mod tests {
         };
 
         // Case: Trailing bytes are ignored, only the declared payload is written
-        let accounts = process_instruction(
+        let accounts = process_instruction_with_setup(
             &loader_id,
             &write(9, 9, 100),
             vec![(buffer_address, buffer_account.clone())],
             instruction_accounts.clone(),
+            features,
             Ok(()),
+            |invoke_context| {
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
         );
         let (written, untouched) = accounts
             .first()
@@ -1885,51 +1913,115 @@ mod tests {
         assert_eq!(written, &[42; 9]);
         assert!(untouched.iter().all(|byte| *byte == 0));
 
-        // Case: Largest payload that fits under the limit
-        process_instruction(
+        // Case: Largest payload that fits under the legacy limit
+        process_instruction_with_setup(
             &loader_id,
             &write(max_bytes as u64, max_bytes, 0),
             vec![(buffer_address, buffer_account.clone())],
             instruction_accounts.clone(),
+            features,
             Ok(()),
+            |invoke_context| {
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
         );
 
-        // Case: One byte over the limit
-        process_instruction(
+        // Case: One byte over the legacy limit; passes with SIMD-0648 feature
+        process_instruction_with_setup(
             &loader_id,
-            &write(max_bytes as u64 + 1, max_bytes + 1, 0),
+            &write((max_bytes + 1) as u64, max_bytes + 1, 0),
             vec![(buffer_address, buffer_account.clone())],
             instruction_accounts.clone(),
-            Err(InstructionError::InvalidInstructionData),
+            features,
+            if unbound_loader_v3_instruction_data {
+                Ok(())
+            } else {
+                Err(InstructionError::InvalidInstructionData)
+            },
+            |invoke_context| {
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
         );
 
+        // Case: Largest payload the runtime can deliver via CPI; passes with SIMD-0648 feature
+        let max_ixn_bytes =
+            solana_transaction_context::MAX_INSTRUCTION_DATA_LEN - WRITE_INSTRUCTION_HEADER_LEN;
+        let mut big_buffer_account = AccountSharedData::new(
+            1,
+            UpgradeableLoaderState::size_of_buffer(max_ixn_bytes),
+            &loader_id,
+        );
+        big_buffer_account
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(buffer_address),
+            })
+            .unwrap();
+        let accounts = process_instruction_with_setup(
+            &loader_id,
+            &write(max_ixn_bytes as u64, max_ixn_bytes, 0),
+            vec![(buffer_address, big_buffer_account)],
+            instruction_accounts.clone(),
+            features,
+            if unbound_loader_v3_instruction_data {
+                Ok(())
+            } else {
+                Err(InstructionError::InvalidInstructionData)
+            },
+            |invoke_context| {
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
+        );
+        if unbound_loader_v3_instruction_data {
+            assert_eq!(
+                accounts
+                    .first()
+                    .unwrap()
+                    .data()
+                    .get(UpgradeableLoaderState::size_of_buffer_metadata()..)
+                    .unwrap(),
+                &vec![42u8; max_ixn_bytes]
+            );
+        }
+
         // Case: Declared length exceeds the bytes present
-        process_instruction(
+        process_instruction_with_setup(
             &loader_id,
             &write(600, 512, 0),
             vec![(buffer_address, buffer_account.clone())],
             instruction_accounts.clone(),
+            features,
             Err(InstructionError::InvalidInstructionData),
+            |invoke_context| {
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
         );
 
         // Case: Absurd declared length
-        process_instruction(
+        process_instruction_with_setup(
             &loader_id,
             &write(u64::MAX, 512, 0),
             vec![(buffer_address, buffer_account.clone())],
             instruction_accounts.clone(),
+            features,
             Err(InstructionError::InvalidInstructionData),
+            |invoke_context| {
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
         );
 
         // Case: Truncated header
-        process_instruction(
+        process_instruction_with_setup(
             &loader_id,
             write(0, 0, 0)
-                .get(..WRITE_INSTRUCTION_HEADER_LEN - 1)
+                .get(..WRITE_INSTRUCTION_HEADER_LEN.saturating_sub(1))
                 .unwrap(),
             vec![(buffer_address, buffer_account)],
             instruction_accounts,
+            features,
             Err(InstructionError::InvalidInstructionData),
+            |invoke_context| {
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
         );
     }
 
@@ -2071,6 +2163,7 @@ mod tests {
                     instruction_accounts,
                     LoaderV3Features {
                         set_programdata_to_elf_length,
+                        ..LoaderV3Features::all_enabled()
                     },
                     expected_result,
                     |_invoke_context| {},
@@ -2243,6 +2336,7 @@ mod tests {
             instruction_accounts.clone(),
             LoaderV3Features {
                 set_programdata_to_elf_length,
+                ..LoaderV3Features::all_enabled()
             },
             Err(InstructionError::InvalidAccountData),
             |invoke_context| {
@@ -2733,6 +2827,7 @@ mod tests {
                     instruction_accounts,
                     LoaderV3Features {
                         set_programdata_to_elf_length: true,
+                        ..LoaderV3Features::all_enabled()
                     },
                     expected_result,
                     |_invoke_context| {},
