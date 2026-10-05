@@ -317,13 +317,25 @@ impl AccountsFile {
         if use_direct_io {
             let path = match self {
                 Self::AppendVec(av) => av.path(),
-                Self::Split(split) => split.data_path(),
+                Self::Split(split) => split.data_path().unwrap_or_else(|| {
+                    // We're opening a file here to use with AccountStorageReader for archiving
+                    // snapshots.  However, this SplitFile doesn't have a data file, so there's
+                    // nothing to actually read...  Since we need to return something, using
+                    // the meta file here is fine; the AccountStorageReader will never use it.
+                    // Ideal? No.  Safe? Yes.
+                    split.meta_path()
+                }),
             };
             open_for_reading(path, true).map(OpenFileForArchive::Owned)
         } else {
             Ok(match self {
                 Self::AppendVec(av) => av.open_file_for_archive(),
-                Self::Split(split) => OpenFileForArchive::Borrowed(split.data_file()),
+                Self::Split(split) => {
+                    OpenFileForArchive::Borrowed(split.data_file().unwrap_or_else(|| {
+                        // See the comment above w.r.t. the Split variant.
+                        split.meta_file()
+                    }))
+                }
             })
         }
     }

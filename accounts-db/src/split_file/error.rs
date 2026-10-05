@@ -20,6 +20,9 @@ pub enum Error {
     #[error("not writable")]
     NotWritable,
 
+    #[error("external account data requires a data file")]
+    MissingDataFile,
+
     #[error("invalid data len: {0}")]
     DataLen(#[from] DataLenError),
 
