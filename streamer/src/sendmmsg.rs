@@ -276,7 +276,7 @@ mod tests {
     use {crate::sendmmsg::SendPktsError, std::net::UdpSocket};
     use {
         crate::{
-            packet::{BytesPacketBatch, Packet},
+            packet::BytesPacketBatch,
             recvmmsg::{PacketBufferPool, recv_mmsg},
             sendmmsg::{batch_send, multi_target_send},
         },
@@ -354,14 +354,10 @@ mod tests {
 
         let sender = bind_to_localhost_unique().expect("should bind - reader 5");
 
-        let packet = Packet::default();
+        let packet = [1u8; 64];
 
-        let num_sent = multi_target_send(
-            &sender,
-            packet.data(..).unwrap(),
-            &[&addr, &addr2, &addr3, &addr4],
-        )
-        .expect("socket should be usable");
+        let num_sent = multi_target_send(&sender, &packet[..], &[&addr, &addr2, &addr3, &addr4])
+            .expect("socket should be usable");
         assert_eq!(num_sent, 4);
 
         let mut packets = BytesPacketBatch::with_capacity(32);
