@@ -992,6 +992,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSecp256k1Recove
 /// Currently, the following curves are supported:
 /// - Curve25519 Edwards and Ristretto representations
 /// - BLS12-381
+/// - secp256r1
 pub struct SyscallCurvePointValidation {}
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValidation {
     type Error = Error;
@@ -1006,6 +1007,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
         use {
             solana_curve25519::{edwards, ristretto},
             solana_define_syscall::curve_constants::*,
+            solana_secp256r1::{Endianness, group::AffinePoint},
         };
 
         // SIMD-0388: BLS12-381 syscalls
@@ -1014,6 +1016,12 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
                 curve_id,
                 BLS12_381_G1_BE | BLS12_381_G1_LE | BLS12_381_G2_BE | BLS12_381_G2_LE
             )
+        {
+            return Err(SyscallError::InvalidAttribute.into());
+        }
+
+        if !invoke_context.get_feature_set().secp256r1_syscall_enabled
+            && matches!(curve_id, SECP256R1_LE | SECP256R1_BE)
         {
             return Err(SyscallError::InvalidAttribute.into());
         }
@@ -1113,6 +1121,24 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
                     Ok(1)
                 }
             }
+            SECP256R1_LE | SECP256R1_BE => {
+                let cost = invoke_context.get_execution_cost().secp256r1_validate_cost;
+                invoke_context.compute_meter.consume_checked(cost)?;
+
+                let endianness = if curve_id == SECP256R1_LE {
+                    Endianness::Little
+                } else {
+                    Endianness::Big
+                };
+                let point_input =
+                    translate_type::<[u8; 64]>(memory_mapping, point_addr, check_aligned)?;
+
+                if AffinePoint::from_uncompressed(point_input, endianness).is_some() {
+                    Ok(SUCCESS)
+                } else {
+                    Ok(1)
+                }
+            }
             _ => {
                 if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
@@ -1128,6 +1154,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
 ///
 /// Currently, the following curves are supported:
 /// - BLS12-381
+/// - secp256r1
 pub struct SyscallCurveDecompress {}
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress {
     type Error = Error;
@@ -1145,7 +1172,14 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress
                 PodG2Compressed as PodBLSG2Compressed, PodG2Point as PodBLSG2Point,
             },
             solana_define_syscall::curve_constants::*,
+            solana_secp256r1::{Endianness, group::AffinePoint},
         };
+
+        if !invoke_context.get_feature_set().secp256r1_syscall_enabled
+            && matches!(curve_id, SECP256R1_LE | SECP256R1_BE)
+        {
+            return Err(SyscallError::InvalidAttribute.into());
+        }
 
         let check_aligned = invoke_context.get_check_aligned();
         match curve_id {
@@ -1219,6 +1253,36 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress
                     Ok(1)
                 }
             }
+            SECP256R1_LE | SECP256R1_BE => {
+                let cost = invoke_context
+                    .get_execution_cost()
+                    .secp256r1_decompress_cost;
+                invoke_context.compute_meter.consume_checked(cost)?;
+
+                let endianness = if curve_id == SECP256R1_LE {
+                    Endianness::Little
+                } else {
+                    Endianness::Big
+                };
+                let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+
+                let compressed_input =
+                    translate_type::<[u8; 33]>(memory_mapping, point_addr, check_aligned)?;
+
+                if let Some(affine_point) =
+                    AffinePoint::from_compressed(compressed_input, endianness)
+                {
+                    translate_mut!(
+                        memory_mapping,
+                        check_aligned,
+                        let result_ref_mut: (&mut MaybeUninit<[u8; 64]>) = map(result_addr)?;
+                    );
+                    result_ref_mut.write(affine_point.to_uncompressed(endianness));
+                    Ok(SUCCESS)
+                } else {
+                    Ok(1)
+                }
+            }
             _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
@@ -1229,6 +1293,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress
 /// Currently, the following curves are supported:
 /// - Curve25519 Edwards and Ristretto representations
 /// - BLS12-381
+/// - secp256r1
 pub struct SyscallCurveGroupOps {}
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
     type Error = Error;
@@ -1250,6 +1315,8 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                 scalar,
             },
             solana_define_syscall::curve_constants::*,
+            solana_secp256r1::{Endianness, group::AffinePoint, scalar::Scalar},
+            std::ops::Neg,
         };
 
         if !invoke_context.get_feature_set().enable_bls12_381_syscall
@@ -1257,6 +1324,12 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                 curve_id,
                 BLS12_381_G1_BE | BLS12_381_G1_LE | BLS12_381_G2_BE | BLS12_381_G2_LE
             )
+        {
+            return Err(SyscallError::InvalidAttribute.into());
+        }
+
+        if !invoke_context.get_feature_set().secp256r1_syscall_enabled
+            && matches!(curve_id, SECP256R1_LE | SECP256R1_BE)
         {
             return Err(SyscallError::InvalidAttribute.into());
         }
@@ -1708,6 +1781,103 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                 }
             }
 
+            SECP256R1_LE | SECP256R1_BE => {
+                let endianness = if curve_id == SECP256R1_LE {
+                    Endianness::Little
+                } else {
+                    Endianness::Big
+                };
+                match group_op {
+                    GROUP_OP_ADD | GROUP_OP_SUB => {
+                        let cost = if group_op == GROUP_OP_ADD {
+                            invoke_context.get_execution_cost().secp256r1_add_cost
+                        } else {
+                            invoke_context.get_execution_cost().secp256r1_subtract_cost
+                        };
+                        invoke_context.compute_meter.consume_checked(cost)?;
+
+                        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+                        let left_input = translate_type::<[u8; 64]>(
+                            memory_mapping,
+                            left_input_addr,
+                            check_aligned,
+                        )?;
+                        let right_input = translate_type::<[u8; 64]>(
+                            memory_mapping,
+                            right_input_addr,
+                            check_aligned,
+                        )?;
+
+                        let left_point = AffinePoint::from_uncompressed(left_input, endianness);
+                        let right_point = AffinePoint::from_uncompressed(right_input, endianness);
+
+                        if let (Some(left), Some(right)) = (left_point, right_point) {
+                            let right = if group_op == GROUP_OP_SUB {
+                                right.neg()
+                            } else {
+                                right
+                            };
+                            let result_point = left.to_projective().add_mixed(right);
+
+                            translate_mut!(
+                                memory_mapping,
+                                check_aligned,
+                                let result_point_ref_mut:
+                                    (&mut MaybeUninit<[u8; 64]>) = map(result_point_addr)?;
+                            );
+                            result_point_ref_mut.write(result_point.to_uncompressed(endianness));
+                            Ok(SUCCESS)
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                    GROUP_OP_MUL => {
+                        let cost = invoke_context.get_execution_cost().secp256r1_multiply_cost;
+                        invoke_context.compute_meter.consume_checked(cost)?;
+
+                        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+                        let scalar_input = translate_type::<[u8; 32]>(
+                            memory_mapping,
+                            left_input_addr,
+                            check_aligned,
+                        )?;
+                        let point_input = translate_type::<[u8; 64]>(
+                            memory_mapping,
+                            right_input_addr,
+                            check_aligned,
+                        )?;
+
+                        let result_point = Scalar::from_bytes(scalar_input, endianness)
+                            .zip(AffinePoint::from_uncompressed(point_input, endianness))
+                            .and_then(|(scalar, point)| {
+                                point
+                                    .to_projective()
+                                    .mul_scalar_vartime(scalar.to_be_bytes())
+                            });
+
+                        if let Some(result_point) = result_point {
+                            translate_mut!(
+                                memory_mapping,
+                                check_aligned,
+                                let result_point_ref_mut:
+                                    (&mut MaybeUninit<[u8; 64]>) = map(result_point_addr)?;
+                            );
+                            result_point_ref_mut.write(result_point.to_uncompressed(endianness));
+                            Ok(SUCCESS)
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                    _ => {
+                        if invoke_context.get_feature_set().abort_on_invalid_curve {
+                            Err(SyscallError::InvalidAttribute.into())
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                }
+            }
+
             _ => {
                 if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
@@ -1723,6 +1893,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
 ///
 /// Currently, the following curves are supported:
 /// - Curve25519 Edwards and Ristretto representations
+/// - secp256r1
 pub struct SyscallCurveMultiscalarMultiplication {}
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscalarMultiplication {
     type Error = Error;
@@ -1741,10 +1912,21 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscala
                 scalar,
             },
             solana_define_syscall::curve_constants::*,
+            solana_secp256r1::{
+                Endianness,
+                group::{AffinePoint, ProjectivePoint},
+                scalar::Scalar,
+            },
         };
 
         if points_len > 512 {
             return Err(Box::new(SyscallError::InvalidLength));
+        }
+
+        if !invoke_context.get_feature_set().secp256r1_syscall_enabled
+            && matches!(curve_id, SECP256R1_LE | SECP256R1_BE)
+        {
+            return Err(SyscallError::InvalidAttribute.into());
         }
 
         let check_aligned = invoke_context.get_check_aligned();
@@ -1826,6 +2008,69 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscala
                     );
                     result_point_ref_mut.write(result_point);
                     Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+
+            SECP256R1_LE | SECP256R1_BE => {
+                let cost = invoke_context
+                    .get_execution_cost()
+                    .secp256r1_msm_base_cost
+                    .saturating_add(
+                        invoke_context
+                            .get_execution_cost()
+                            .secp256r1_msm_incremental_cost
+                            .saturating_mul(points_len.saturating_sub(1)),
+                    );
+                invoke_context.compute_meter.consume_checked(cost)?;
+
+                let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+                let endianness = if curve_id == SECP256R1_LE {
+                    Endianness::Little
+                } else {
+                    Endianness::Big
+                };
+
+                let scalars_input = translate_slice::<[u8; 32]>(
+                    memory_mapping,
+                    scalars_addr,
+                    points_len,
+                    check_aligned,
+                )?;
+
+                let points_input = translate_slice::<[u8; 64]>(
+                    memory_mapping,
+                    points_addr,
+                    points_len,
+                    check_aligned,
+                )?;
+
+                let mut scalars = Vec::with_capacity(points_len as usize);
+                let mut points = Vec::with_capacity(points_len as usize);
+
+                for (scalar_input, point_input) in scalars_input.iter().zip(points_input) {
+                    let scalar = Scalar::from_bytes(scalar_input, endianness);
+                    let point = AffinePoint::from_uncompressed(point_input, endianness);
+
+                    if let (Some(s), Some(p)) = (scalar, point) {
+                        scalars.push(s.to_be_bytes());
+                        points.push(p);
+                    } else {
+                        return Ok(1); // Invalid point or scalar fails immediately
+                    }
+                }
+
+                if let Some(result_point) =
+                    ProjectivePoint::multi_scalar_mul_vartime(&points, &scalars)
+                {
+                    translate_mut!(
+                        memory_mapping,
+                        check_aligned,
+                        let result_point_ref_mut: (&mut MaybeUninit<[u8; 64]>) = map(result_point_addr)?;
+                    );
+                    result_point_ref_mut.write(result_point.to_uncompressed(endianness));
+                    Ok(SUCCESS)
                 } else {
                     Ok(1)
                 }
