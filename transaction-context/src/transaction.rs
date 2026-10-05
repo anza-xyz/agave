@@ -506,6 +506,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
             // level instructions than expected, since `total_number_of_instructions_in_trace` is
             // with the number of top level instructions when TransactionContext is created
             // and only updated for CPIs afterward.
+            //
+            // Having more top-level instructions than TransactionContext was created with
+            // should be impossible to happen with the current code configuration, so the extra
+            // check serves as a failsafe guard.
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
 

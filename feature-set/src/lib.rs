@@ -81,7 +81,7 @@ pub struct FeatureSnapshot {
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
-    pub early_instruction_trace_overlflow_detection: bool,
+    pub early_instruction_trace_overflow_detection: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -184,7 +184,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             loader_v3_set_program_data_to_elf_length: is_active(
                 &loader_v3_set_program_data_to_elf_length::ID,
             ),
-            early_instruction_trace_overlflow_detection: is_active(
+            early_instruction_trace_overflow_detection: is_active(
                 &early_instruction_trace_overflow_detection::ID,
             ),
         }
@@ -349,7 +349,7 @@ impl FeatureSet {
             loader_v3_set_program_data_to_elf_length: snapshot
                 .loader_v3_set_program_data_to_elf_length,
             early_instruction_trace_overflow_detection: snapshot
-                .early_instruction_trace_overlflow_detection,
+                .early_instruction_trace_overflow_detection,
         }
     }
 }
