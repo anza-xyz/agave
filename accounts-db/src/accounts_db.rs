@@ -60,6 +60,7 @@ use {
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
+        split_file,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         utils::{self, create_account_shared_data},
     },
@@ -3886,6 +3887,41 @@ impl AccountsDb {
                 "append_vecs_dirty",
                 append_vec::APPEND_VEC_STATS
                     .files_dirty
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_open",
+                split_file::SPLIT_FILE_STATS
+                    .num_open
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_dirty",
+                split_file::SPLIT_FILE_STATS
+                    .num_dirty
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_empty",
+                split_file::SPLIT_FILE_STATS
+                    .num_empty
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_stored_bytes_meta",
+                split_file::SPLIT_FILE_STATS
+                    .num_stored_bytes_meta
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_stored_bytes_data",
+                split_file::SPLIT_FILE_STATS
+                    .num_stored_bytes_data
                     .load(Ordering::Relaxed),
                 i64
             ),
