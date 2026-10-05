@@ -144,6 +144,7 @@ struct PullRequestPipelineFlags {
     shellcheck: bool,
     checks: bool,
     feature_check: bool,
+    minimal_version_check: bool,
     miri: bool,
     stable_abi: bool,
     stable: bool,
@@ -194,6 +195,11 @@ impl PullRequestPipelineFlags {
                 || changed_files
                     .iter()
                     .any(|file| file.starts_with("ci/feature-check/")),
+            minimal_version_check: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.starts_with("ci/minimal-version-check/")),
             miri: trigger_all
                 || rust_changed
                 || changed_files
@@ -292,6 +298,9 @@ async fn generate_pull_request_pipeline(
     if flags.feature_check {
         pipeline.add_step(default_feature_check_step(5));
     }
+    if flags.minimal_version_check {
+        pipeline.add_step(default_minimal_version_check_step(5));
+    }
     if flags.miri {
         pipeline.add_step(default_miri_step());
     }
@@ -342,6 +351,7 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
 
     pipeline.add_step(default_checks_step());
     pipeline.add_step(default_feature_check_step(5));
+    pipeline.add_step(default_minimal_version_check_step(5));
     pipeline.add_step(default_miri_step());
     pipeline.add_step(default_stable_abi_step());
 
@@ -436,6 +446,43 @@ fn default_feature_check_step(parallel: u64) -> buildkite::Step {
                 ..Default::default()
             }));
     }
+
+    buildkite::Step::Group(group)
+}
+
+fn default_minimal_version_check_step(parallel: u64) -> buildkite::Step {
+    let mut group = buildkite::GroupStep {
+        name: String::from("minimal-version-checks"),
+        steps: vec![],
+    };
+
+    for i in 1..=parallel {
+        group
+            .steps
+            .push(buildkite::Step::Command(buildkite::CommandStep {
+                name: format!("minimal-version-check-part-{i}"),
+                command: format!(
+                    "ci/docker-run-default-image.sh \
+                     ci/minimal-version-check/test-minimal-version.sh {i}/{parallel}"
+                ),
+                agents: Some(queue_agents()),
+                timeout_in_minutes: Some(20),
+                ..Default::default()
+            }));
+    }
+
+    group
+        .steps
+        .push(buildkite::Step::Command(buildkite::CommandStep {
+            name: String::from("minimal-version-check-other"),
+            command: String::from(
+                "ci/docker-run-default-image.sh \
+                 ci/minimal-version-check/test-minimal-version-other.sh",
+            ),
+            agents: Some(queue_agents()),
+            timeout_in_minutes: Some(20),
+            ..Default::default()
+        }));
 
     buildkite::Step::Group(group)
 }
@@ -658,6 +705,7 @@ mod tests {
         assert!(!f.shellcheck);
         assert!(!f.checks);
         assert!(!f.feature_check);
+        assert!(!f.minimal_version_check);
         assert!(!f.miri);
         assert!(!f.stable_abi);
         assert!(!f.stable);
@@ -692,6 +740,7 @@ mod tests {
         let f = flags(&["ci/docker/Dockerfile"]);
         assert!(f.checks);
         assert!(f.feature_check);
+        assert!(f.minimal_version_check);
         assert!(f.miri);
         assert!(f.stable_abi);
         assert!(f.stable);
@@ -709,6 +758,7 @@ mod tests {
         let f = flags(&["core/src/lib.rs"]);
         assert!(f.checks);
         assert!(f.feature_check);
+        assert!(f.minimal_version_check);
         assert!(f.miri);
         assert!(f.stable_abi);
         assert!(f.stable);
@@ -740,6 +790,26 @@ mod tests {
         assert!(f.shellcheck);
         assert!(!f.checks);
         assert!(!f.feature_check);
+        assert!(!f.minimal_version_check);
+        assert!(!f.miri);
+        assert!(!f.frozen_abi);
+        assert!(!f.stable);
+        assert!(!f.local_cluster);
+        assert!(!f.docs);
+        assert!(!f.localnet);
+        assert!(!f.stable_sbf);
+        assert!(!f.shuttle);
+        assert!(!f.coverage);
+        assert!(!f.xdp_tests);
+    }
+
+    #[test]
+    fn test_minimal_version_script_triggers_minimal_version_check_and_shellcheck() {
+        let f = flags(&["ci/minimal-version-check/test-minimal-version.sh"]);
+        assert!(f.shellcheck);
+        assert!(f.minimal_version_check);
+        assert!(!f.checks);
+        assert!(!f.feature_check);
         assert!(!f.miri);
         assert!(!f.stable_abi);
         assert!(!f.stable);
@@ -759,6 +829,7 @@ mod tests {
         assert!(f.docs);
         assert!(!f.checks);
         assert!(!f.feature_check);
+        assert!(!f.minimal_version_check);
         assert!(!f.miri);
         assert!(!f.stable_abi);
         assert!(!f.stable);
