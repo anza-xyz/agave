@@ -62,7 +62,7 @@ pub(super) fn verify_and_send_certificates(
         return Ok(stats);
     }
 
-    let messages = verify_cert_groups(
+    let verified_certs = verify_cert_groups(
         cert_groups,
         root_bank,
         verified_certs_set,
@@ -70,8 +70,13 @@ pub(super) fn verify_and_send_certificates(
         ban_sender,
         thread_pool,
     );
-    stats.sig_verified_certs += messages.len() as u64;
-    send_certs_to_pool(my_pubkey, messages, channel_to_pool, &mut stats.pool_sender)?;
+    stats.sig_verified_certs += verified_certs.len() as u64;
+    send_certs_to_pool(
+        my_pubkey,
+        verified_certs,
+        channel_to_pool,
+        &mut stats.pool_sender,
+    )?;
 
     measure.stop();
     stats
@@ -84,7 +89,7 @@ pub(super) fn verify_and_send_certificates(
 ///
 /// The valid certs are inserted into the [`verified_certs_set`].
 /// Invalid cert senders are banlisted.
-/// Returns a [`SigVerifiedBatch`] constructed from the valid certs.
+/// Returns a list of [`Certificate`]s constructed from the valid certs.
 fn verify_cert_groups(
     cert_groups: HashMap<CertificateType, Vec<CertPayload>>,
     root_bank: &Bank,
@@ -92,7 +97,7 @@ fn verify_cert_groups(
     stats: &mut SigVerifyCertStats,
     ban_sender: &BanSender,
     thread_pool: &ThreadPool,
-) -> SigVerifiedBatch {
+) -> Vec<Certificate> {
     let results = thread_pool.install(|| {
         cert_groups
             .into_par_iter()
@@ -129,7 +134,7 @@ fn verify_cert_groups(
         }
     }
 
-    SigVerifiedBatch::Certificates(certs)
+    certs
 }
 
 fn verify_cert_group(certs: Vec<CertPayload>, root_bank: &Bank) -> CertVerifyOutcome {

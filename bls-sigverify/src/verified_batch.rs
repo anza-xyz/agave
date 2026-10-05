@@ -5,7 +5,7 @@ use {
         bls_sigverifier::SigVerifierChannels,
         errors::SigVerifyVoteError,
         rewards::rewards_wants_vote,
-        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
+        sig_verified_messages::VoteAggregate,
         stats::VoteSenderStats,
         utils::{
             send_sig_verified_batch_to_pool, send_votes_to_metrics, send_votes_to_repair,
@@ -61,7 +61,7 @@ impl VerifiedBatch {
         }
         send_sig_verified_batch_to_pool(
             my_pubkey,
-            SigVerifiedBatch::Votes(self.aggregates),
+            self.aggregates,
             &channels.channel_to_pool,
             stats,
         )?;
