@@ -8,3 +8,10 @@ pub mod pubkeys_ptr;
 pub mod responses_region;
 pub mod transaction_priority_queue;
 pub mod transaction_ptr;
+
+/// Serialized entry overhead, excluding transaction bytes.
+pub const ENTRY_OVERHEAD_BYTES: u64 = {
+    8 // num_hashes
+    + 32 // hash
+    + 8 // transaction count
+};

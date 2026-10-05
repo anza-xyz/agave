@@ -11,6 +11,7 @@ use {
     rts_alloc::Allocator,
     solana_message::v0::LoadedAddressesView,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_svm_transaction::svm_message::SVMMessage,
     std::collections::HashSet,
 };
 
@@ -38,6 +39,32 @@ pub(super) struct ResolvedTransaction {
 }
 
 impl ResolvedTransaction {
+    pub(super) fn writable_accounts(&self) -> impl Iterator<Item = &Pubkey> + Clone {
+        self.view
+            .account_keys()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, key)| self.view.is_writable(index).then_some(key))
+    }
+
+    pub(super) fn readonly_accounts(&self) -> impl Iterator<Item = &Pubkey> + Clone {
+        self.view
+            .account_keys()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, key)| (!self.view.is_writable(index)).then_some(key))
+    }
+
+    /// # Safety
+    /// The transaction must belong to `allocator` and remain alive while the region is used.
+    pub(super) unsafe fn to_region(
+        &self,
+        allocator: &Allocator,
+    ) -> agave_scheduler_bindings::SharableTransactionRegion {
+        // SAFETY: the caller guarantees the allocator and lifetime of the allocation.
+        unsafe { self.transaction.to_sharable_transaction_region(allocator) }
+    }
+
     /// Consumes both allocations, freeing them if construction fails.
     ///
     /// # Safety

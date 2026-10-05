@@ -16,6 +16,9 @@ fn config(path: &Path) -> Config {
         tpu_to_pack_capacity: 16,
         progress_tracker_capacity: 32,
         pack_to_worker_capacity: 64,
+        max_cost_units_per_worker: 1_000_000,
+        max_cost_units_per_batch: 1_000_000,
+        target_entry_bytes_per_batch: 4_622,
         worker_to_pack_capacity: 128,
         pack_to_check_worker_capacity: 256,
         check_worker_to_pack_capacity: 512,
@@ -25,8 +28,15 @@ fn config(path: &Path) -> Config {
 }
 
 pub(super) fn setup(check_capacity: usize) -> (Scheduler, AgaveSession) {
+    setup_with_workers(check_capacity, 1)
+}
+
+pub(super) fn setup_with_workers(
+    check_capacity: usize,
+    worker_count: usize,
+) -> (Scheduler, AgaveSession) {
     let (agave, client) = setup_local_session(ClientLogon {
-        worker_count: 1,
+        worker_count,
         check_worker_count: 1,
         simulate_worker_count: 0,
         allocator_size: 16 * 1024 * 1024,
@@ -45,7 +55,15 @@ pub(super) fn setup(check_capacity: usize) -> (Scheduler, AgaveSession) {
         simulate_worker_to_pack_capacity: 0,
     })
     .unwrap();
-    let mut scheduler = Scheduler::new(client, 512, Duration::from_millis(10)).unwrap();
+    let mut scheduler = Scheduler::new(
+        client,
+        512,
+        Duration::from_millis(10),
+        1_000_000,
+        1_000_000,
+        4_622,
+    )
+    .unwrap();
     scheduler.state = SchedulerState::LeaderReady {
         slot: 100,
         remaining_cost_units: 0,

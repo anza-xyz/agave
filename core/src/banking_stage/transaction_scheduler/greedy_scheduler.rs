@@ -9,10 +9,11 @@ use {
         transaction_state_container::StateContainer,
     },
     crate::banking_stage::{
-        consumer::{ENTRY_OVERHEAD_BYTES, TARGET_NUM_TRANSACTIONS_PER_BATCH},
+        consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     agave_scheduling_utils::{
+        ENTRY_OVERHEAD_BYTES,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
         transaction_priority_queue::TransactionPriorityId,
     },

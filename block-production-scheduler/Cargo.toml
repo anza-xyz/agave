@@ -30,11 +30,11 @@ slab = { workspace = true }
 solana-clock = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-svm-transaction = { workspace = true }
 
 [dev-dependencies]
 solana-hash = { workspace = true }
 solana-signature = { workspace = true }
-solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode"] }
 tempfile = { workspace = true }
 wincode = { workspace = true }

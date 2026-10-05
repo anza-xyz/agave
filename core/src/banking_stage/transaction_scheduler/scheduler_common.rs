@@ -3,14 +3,12 @@ use {
         in_flight_tracker::InFlightTracker, scheduler_error::SchedulerError,
         transaction_state_container::StateContainer,
     },
-    crate::banking_stage::{
-        consumer::ENTRY_OVERHEAD_BYTES,
-        scheduler_messages::{
-            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
-        },
+    crate::banking_stage::scheduler_messages::{
+        ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
     },
-    agave_scheduling_utils::thread_aware_account_locks::{
-        MAX_THREADS, ThreadAwareAccountLocks, ThreadId, ThreadSet,
+    agave_scheduling_utils::{
+        ENTRY_OVERHEAD_BYTES,
+        thread_aware_account_locks::{MAX_THREADS, ThreadAwareAccountLocks, ThreadId, ThreadSet},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     itertools::izip,

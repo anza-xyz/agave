@@ -86,6 +86,16 @@ impl<T> TransactionContainer<T> {
             .map(|entry| &mut entry.transaction)
     }
 
+    /// Visits queued IDs from highest to lowest priority without removing them.
+    pub(crate) fn iter_by_priority(&self) -> impl Iterator<Item = &TransactionPriorityId> {
+        self.queue.iter().rev()
+    }
+
+    /// Dequeues a transaction while retaining its state and capacity reservation.
+    pub(crate) fn dequeue(&mut self, id: &TransactionPriorityId) -> bool {
+        self.queue.remove(id)
+    }
+
     /// Pops the highest priority ID while retaining its transaction and capacity reservation.
     pub(crate) fn pop_highest(&mut self) -> Option<usize> {
         self.queue.pop_last().map(|id| id.id)

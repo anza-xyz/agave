@@ -30,6 +30,7 @@ pub(super) struct TransactionState {
     pub(super) metadata: TpuTransactionMeta,
     pub(super) cost: u64,
     pub(super) allocated_accounts_data_size: u64,
+    pub(super) execution_worker: Option<usize>,
 }
 
 impl Scheduler {
@@ -97,6 +98,7 @@ impl Scheduler {
             };
             let priority = calculate_priority(response, metadata.flags);
             let transaction = TransactionState {
+                execution_worker: None,
                 transaction,
                 metadata,
                 cost: response.estimated_cost_units,
