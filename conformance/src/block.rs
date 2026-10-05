@@ -105,12 +105,6 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         None,
         &Ancestors::default(),
     );
-    accounts.store_accounts(
-        (current_slot, &accounts_to_store[..]),
-        BankId::default(),
-        None,
-        &Ancestors::default(),
-    );
     accounts.accounts_db.add_root(parent_slot);
     let accounts_data_size_initial = accounts_to_store
         .iter()
