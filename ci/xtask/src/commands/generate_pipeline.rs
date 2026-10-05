@@ -144,6 +144,7 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
 struct PullRequestPipelineFlags {
     shellcheck: bool,
     checks: bool,
+    release_check: bool,
     feature_check: bool,
     miri: bool,
     stable_abi: bool,
@@ -190,6 +191,11 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("scripts/spl-token-cli-version.sh")
                         || file.ends_with("scripts/cargo-build-sbf-version.sh")
                 }),
+            release_check: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file == ".cargo/config.toml"),
             feature_check: trigger_all
                 || rust_changed
                 || changed_files
@@ -289,6 +295,9 @@ async fn generate_pull_request_pipeline(
 
     if flags.checks {
         pipeline.add_step(default_checks_step());
+    }
+    if flags.release_check {
+        pipeline.add_step(default_release_check_step());
     }
     if flags.feature_check {
         pipeline.add_step(default_feature_check_step(5));
@@ -667,6 +676,7 @@ mod tests {
         let f = flags(&["README.md"]);
         assert!(!f.shellcheck);
         assert!(!f.checks);
+        assert!(!f.release_check);
         assert!(!f.feature_check);
         assert!(!f.miri);
         assert!(!f.stable_abi);
@@ -684,6 +694,7 @@ mod tests {
     fn test_rust_nightly_version_toml_triggers_all() {
         let f = flags(&["ci/rust-nightly-version.toml"]);
         assert!(f.checks);
+        assert!(f.release_check);
         assert!(f.feature_check);
         assert!(f.miri);
         assert!(f.stable_abi);
@@ -701,6 +712,7 @@ mod tests {
     fn test_docker_change_triggers_all() {
         let f = flags(&["ci/docker/Dockerfile"]);
         assert!(f.checks);
+        assert!(f.release_check);
         assert!(f.feature_check);
         assert!(f.miri);
         assert!(f.stable_abi);
@@ -718,6 +730,7 @@ mod tests {
     fn test_rust_change_triggers_all() {
         let f = flags(&["core/src/lib.rs"]);
         assert!(f.checks);
+        assert!(f.release_check);
         assert!(f.feature_check);
         assert!(f.miri);
         assert!(f.stable_abi);
@@ -749,6 +762,7 @@ mod tests {
         let f = flags(&["some/random/script.sh"]);
         assert!(f.shellcheck);
         assert!(!f.checks);
+        assert!(!f.release_check);
         assert!(!f.feature_check);
         assert!(!f.miri);
         assert!(!f.stable_abi);
@@ -768,6 +782,7 @@ mod tests {
         assert!(f.shellcheck);
         assert!(f.docs);
         assert!(!f.checks);
+        assert!(!f.release_check);
         assert!(!f.feature_check);
         assert!(!f.miri);
         assert!(!f.stable_abi);
@@ -778,5 +793,12 @@ mod tests {
         assert!(!f.shuttle);
         assert!(!f.coverage);
         assert!(!f.xdp_tests);
+    }
+
+    #[test]
+    fn test_cargo_config_triggers_release_check() {
+        let f = flags(&[".cargo/config.toml"]);
+        assert!(f.release_check);
+        assert!(!f.checks);
     }
 }
