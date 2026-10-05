@@ -803,7 +803,7 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
 
 #[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
-    use {super::*, test_case::test_case};
+    use {super::*, crate::MAX_INSTRUCTION_TRACE_LENGTH, test_case::test_case};
 
     #[test]
     fn test_instructions_sysvar_store_index_checked() {
@@ -1829,6 +1829,56 @@ mod tests {
                 }
                 transaction_context.pop().unwrap();
             }
+        }
+    }
+
+    #[test_case(false; "simd_582_disabled")]
+    #[test_case(true; "simd_582_enabled")]
+    fn test_max_instruction_trace_len_exceeded_64_ixs(fail_early: bool) {
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+
+        // Simulate a trace capacity of 5
+        let mut transaction_context = TransactionContext::new(
+            transaction_accounts.clone(),
+            Rent::default(),
+            6,
+            MAX_INSTRUCTION_TRACE_LENGTH,
+            MAX_INSTRUCTION_TRACE_LENGTH,
+        );
+
+        // Configure top-level instructions
+        for idx_to_configure in 0..MAX_INSTRUCTION_TRACE_LENGTH {
+            transaction_context
+                .configure_instruction_at_index(
+                    idx_to_configure,
+                    0,
+                    vec![InstructionAccount::new(1, false, false)],
+                    vec![0; 3],
+                    Vec::new().into(),
+                    None,
+                )
+                .unwrap();
+        }
+
+        // Execute first top level instruction
+        transaction_context.push(fail_early).unwrap();
+        // It invokes a program
+        transaction_context
+            .configure_next_cpi_for_tests(
+                0,
+                vec![InstructionAccount::new(2, false, false)],
+                Vec::new(),
+            )
+            .unwrap();
+
+        let result = transaction_context.push(fail_early);
+        if fail_early {
+            assert_eq!(
+                result,
+                Err(InstructionError::MaxInstructionTraceLengthExceeded)
+            );
+        } else {
+            assert!(result.is_ok());
         }
     }
 }
