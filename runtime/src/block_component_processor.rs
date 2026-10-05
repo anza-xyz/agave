@@ -29,6 +29,7 @@ use {
         entry::EntryView,
     },
     solana_hash::Hash,
+    solana_measure::measure_us,
     solana_pubkey::Pubkey,
     std::{collections::HashSet, sync::Arc},
     thiserror::Error,
@@ -635,7 +636,7 @@ impl BlockComponentProcessor {
             }
         };
 
-        Self::update_bank_with_footer_fields(
+        let _ = Self::update_bank_with_footer_fields(
             &bank,
             block_producer_time_nanos,
             Some(bank_hash),
@@ -773,21 +774,29 @@ impl BlockComponentProcessor {
         bank_hash: Option<Hash>,
         reward_cert: Option<ValidatedRewardCert>,
         final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
-    ) -> Result<(), BankFooterError> {
+    ) -> Result<VoteAccountUpdateStats, BankFooterError> {
         bank.update_clock_from_footer(block_producer_time_nanos);
-        calc_vote_rewards_update_vote_states(
+        let (vote_accounts_updated, update_us) = measure_us!(calc_vote_rewards_update_vote_states(
             bank,
             reward_cert,
             final_cert_input,
             block_producer_time_nanos,
-        )?;
+        )?);
 
         if let Some(hash) = bank_hash {
             // Record expected bank hash from footer for later verification when the bank is frozen.
             bank.set_expected_bank_hash(hash);
         }
-        Ok(())
+        Ok(VoteAccountUpdateStats {
+            update_us,
+            vote_accounts_updated,
+        })
     }
+}
+
+pub struct VoteAccountUpdateStats {
+    pub update_us: u64,
+    pub vote_accounts_updated: usize,
 }
 
 #[cfg(test)]

@@ -854,7 +854,7 @@ fn record_and_complete_block(
         // Footer processing mutates vote accounts directly, so wait for execution to complete first.
         bank.wait_for_inflight_commits();
 
-        BlockComponentProcessor::update_bank_with_footer_fields(
+        let vote_account_update_stats = BlockComponentProcessor::update_bank_with_footer_fields(
             &bank,
             i64::try_from(footer.block_producer_time_nanos)
                 .expect("locally produced block timestamp must fit in i64"),
@@ -862,6 +862,8 @@ fn record_and_complete_block(
             reward_cert,
             final_cert_input,
         )?;
+        slot_metrics.vote_accounts_update_us = vote_account_update_stats.update_us;
+        slot_metrics.vote_accounts_updated = vote_account_update_stats.vote_accounts_updated;
         footer
     };
 
