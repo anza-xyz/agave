@@ -32,6 +32,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* The default full snapshot interval is now 200,000 slots.
+
 ### CLI
 
 #### Breaking
