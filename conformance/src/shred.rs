@@ -17,7 +17,7 @@ use {
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
         ancestors::Ancestors,
     },
-    solana_clock::{BankId, DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Slot},
+    solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
         blockstore::{
@@ -36,7 +36,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_rent::Rent,
     solana_runtime::{
-        bank::{Bank, BankFieldsToDeserialize, BankRc},
+        bank::{Bank, BankFieldsToDeserialize, BankId, BankRc},
         epoch_stakes::VersionedEpochStakes,
     },
     solana_runtime_transaction::sanitize_config::sanitize_config,

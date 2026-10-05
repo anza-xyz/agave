@@ -2,15 +2,24 @@
 mod serde_snapshot_tests {
     use {
         crate::{
-            bank::BankHashStats,
-            serde_snapshot::{
-                AccountsDbFields, SerializableAccountsDb, SnapshotAccountsDbFields,
-                deserialize_wincode_from, reconstruct_accountsdb_from_fields,
-                remap_append_vec_file, serialize_into,
+            bank::{Bank, BankHashStats, BankId, test_utils as bank_test_utils},
+            epoch_stakes::{
+                EpochAuthorizedVoters, EpochStakes, NodeIdToVoteAccounts, VersionedEpochStakes,
             },
-            snapshot_utils::StorageAndNextAccountsFileId,
+            genesis_utils::{
+                GenesisConfigInfo, activate_all_features, create_genesis_config_with_leader,
+            },
+            runtime_config::RuntimeConfig,
+            serde_snapshot::{
+                self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountsDb,
+                SnapshotAccountsDbFields, SnapshotStreams, deserialize_wincode_from,
+                reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
+            },
+            snapshot_bank_utils,
+            snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
+        agave_snapshots::snapshot_config::SnapshotConfig,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
@@ -30,13 +39,16 @@ mod serde_snapshot_tests {
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
+        solana_hash::Hash,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         std::{
             fs::File,
-            io::{self, BufReader, Cursor, Read, Write},
+            io::{self, BufReader, BufWriter, Cursor, Read, Write},
+            mem,
             ops::RangeFull,
             path::{Path, PathBuf},
-            sync::{Arc, atomic::Ordering},
+            sync::{Arc, OnceLock, atomic::Ordering},
         },
         tempfile::TempDir,
         test_case::test_case,
@@ -213,7 +225,12 @@ mod serde_snapshot_tests {
 
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
-            accounts.store_accounts((slot, [(pubkey, &account)].as_slice()), 0, None, &ancestors);
+            accounts.store_accounts(
+                (slot, [(pubkey, &account)].as_slice()),
+                BankId::new(0),
+                None,
+                &ancestors,
+            );
         }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
@@ -253,7 +270,7 @@ mod serde_snapshot_tests {
     fn test_remove_unrooted_slot_snapshot() {
         agave_logger::setup();
         let unrooted_slot = 9;
-        let unrooted_bank_id = 9;
+        let unrooted_bank_id = BankId::new(9);
         let db = AccountsDb::default_for_tests();
         let key = solana_pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &key);
@@ -840,5 +857,247 @@ mod serde_snapshot_tests {
             &mut num_collisions,
         )
         .unwrap();
+    }
+
+    /// Test roundtrip serialize/deserialize of a bank
+    #[test]
+    fn test_serialize_bank_snapshot() {
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
+        genesis_config.epoch_schedule = EpochSchedule::custom(400, 400, false);
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let deposit_amount = bank0.get_minimum_balance_for_rent_exemption(0);
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0.clone(),
+            *bank0.leader(),
+            1,
+        );
+
+        // Create an account on a non-root fork
+        let key1 = Pubkey::new_unique();
+        bank_test_utils::deposit(&bank1, &key1, deposit_amount).unwrap();
+
+        let bank2_slot = 2;
+        let bank0_leader = *bank0.leader();
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            bank0_leader,
+            bank2_slot,
+        );
+
+        // Test new account
+        let key2 = Pubkey::new_unique();
+        bank_test_utils::deposit(&bank2, &key2, deposit_amount).unwrap();
+        assert_eq!(bank2.get_balance(&key2), deposit_amount);
+
+        let key3 = Pubkey::new_unique();
+        bank_test_utils::deposit(&bank2, &key3, 0).unwrap();
+
+        let accounts_db = &bank2.rc.accounts.accounts_db;
+
+        bank2.set_block_id(Some(Hash::default()));
+        bank2.squash();
+        bank2.force_flush_accounts_cache();
+
+        let mut buf = Vec::new();
+        let cursor = Cursor::new(&mut buf);
+        let mut writer = BufWriter::new(cursor);
+        {
+            let mut bank_fields = bank2.get_fields_to_serialize();
+            let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
+            let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
+            let block_id = Some(bank_fields.block_id);
+            serde_snapshot::serialize_bank_snapshot_into(
+                &mut writer,
+                bank_fields,
+                bank2.get_bank_hash_stats(),
+                ExtraFieldsToSerialize {
+                    lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
+                    unused_incremental_snapshot_persistence: None,
+                    unused_epoch_accounts_hash: None,
+                    versioned_epoch_stakes,
+                    accounts_lt_hash,
+                    block_id,
+                },
+            )
+            .unwrap();
+        }
+        drop(writer);
+
+        // Now deserialize the serialized bank and ensure it matches the original bank
+
+        // Create a new set of directories for this bank's accounts
+        let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
+        // Create a directory to simulate AppendVecs unpackaged from a snapshot tar
+        let copied_accounts = TempDir::new().unwrap();
+        let storage_and_next_append_vec_id =
+            copy_append_vecs(accounts_db, copied_accounts.path()).unwrap();
+
+        let cursor = Cursor::new(buf.as_slice());
+        let mut reader = BufReader::new(cursor);
+        let mut snapshot_streams = SnapshotStreams {
+            full_snapshot_stream: &mut reader,
+            incremental_snapshot_stream: None,
+        };
+        let (dbank, _) = serde_snapshot::bank_from_streams(
+            &mut snapshot_streams,
+            &dbank_paths,
+            storage_and_next_append_vec_id,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        assert_eq!(dbank.get_balance(&key1), 0);
+        assert_eq!(dbank.get_balance(&key2), deposit_amount);
+        assert_eq!(dbank.get_balance(&key3), 0);
+        assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
+        assert_eq!(&dbank, bank2.as_ref());
+    }
+
+    #[test]
+    fn test_extra_fields_eof() {
+        agave_logger::setup();
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
+
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        bank0.squash();
+        let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
+        bank.set_block_id(Some(Hash::default()));
+        bank.freeze();
+        bank.rc.accounts.add_root(bank.slot());
+        bank.force_flush_accounts_cache();
+
+        // Set extra fields
+        bank.fee_rate_governor.lamports_per_signature = 7000;
+        // Note that epoch_stakes already has two epoch stakes entries for epochs 0 and 1
+        // which will also be serialized to the versioned epoch stakes extra field, so add a
+        // third entry to exercise round-tripping the extra field.
+        bank.set_epoch_stakes_for_test(
+            42,
+            VersionedEpochStakes::Current {
+                stakes: EpochStakes::default(),
+                total_stake: 42,
+                node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
+                epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
+                bls_pubkey_to_rank_map: OnceLock::new(),
+            },
+        );
+        assert_eq!(bank.epoch_stakes_map().len(), 3);
+
+        // Serialize
+        let mut buf = vec![];
+        let mut writer = Cursor::new(&mut buf);
+
+        crate::serde_snapshot::bank_to_stream(&mut std::io::BufWriter::new(&mut writer), &bank)
+            .unwrap();
+
+        // Deserialize
+        let rdr = Cursor::new(&buf[..]);
+        let mut reader = std::io::BufReader::new(&buf[rdr.position() as usize..]);
+        let mut snapshot_streams = SnapshotStreams {
+            full_snapshot_stream: &mut reader,
+            incremental_snapshot_stream: None,
+        };
+        let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
+        let copied_accounts = TempDir::new().unwrap();
+        let storage_and_next_append_vec_id =
+            copy_append_vecs(&bank.rc.accounts.accounts_db, copied_accounts.path()).unwrap();
+        let (dbank, _) = crate::serde_snapshot::bank_from_streams(
+            &mut snapshot_streams,
+            &dbank_paths,
+            storage_and_next_append_vec_id,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        assert_eq!(bank.epoch_stakes_map(), dbank.epoch_stakes_map());
+        assert_eq!(
+            bank.fee_rate_governor.lamports_per_signature,
+            dbank.fee_rate_governor.lamports_per_signature
+        );
+    }
+
+    #[test]
+    fn test_extra_fields_full_snapshot_archive() {
+        agave_logger::setup();
+
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
+        activate_all_features(&mut genesis_config);
+
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank0_leader = *bank0.leader();
+        let mut bank = Bank::new_from_parent(bank0, bank0_leader, 1);
+        while !bank.is_complete() {
+            bank.fill_bank_with_ticks_for_tests();
+        }
+        bank.set_block_id(Some(Hash::default()));
+
+        // Set extra field
+        bank.fee_rate_governor.lamports_per_signature = 7000;
+
+        let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+        let bank_snapshots_dir = TempDir::new().unwrap();
+        let full_snapshot_archives_dir = TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = TempDir::new().unwrap();
+
+        // Serialize
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .path()
+                .to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
+        let snapshot_archive_info =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
+
+        // Deserialize
+        let dbank = snapshot_bank_utils::bank_from_snapshot_archives(
+            &[accounts_dir],
+            &snapshot_archive_info,
+            None,
+            &snapshot_config,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None, // leader_for_tests
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            bank.fee_rate_governor.lamports_per_signature,
+            dbank.fee_rate_governor.lamports_per_signature
+        );
     }
 }

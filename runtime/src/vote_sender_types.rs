@@ -1,6 +1,7 @@
 use {
+    crate::bank::BankId,
     crossbeam_channel::{Receiver, Sender},
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_vote::vote_parser::ParsedVote,
 };

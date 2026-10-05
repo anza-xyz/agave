@@ -9,6 +9,7 @@ use {
         accounts_index::IndexKey,
         accounts_scan::{ScanConfig, ScanError, ScanResult},
         ancestors::Ancestors,
+        bank_id::BankId,
         is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
     },
@@ -17,7 +18,7 @@ use {
     solana_address_lookup_table_interface::{
         self as address_lookup_table, error::AddressLookupError, state::AddressLookupTable,
     },
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_message::v0::LoadedAddresses,
     solana_pubkey::Pubkey,
     solana_slot_hashes::SlotHashes,
@@ -1308,7 +1309,7 @@ mod tests {
         let all_pubkeys: HashSet<_> = vec![pubkey0, pubkey1, pubkey2].into_iter().collect();
 
         // num == 0 should always return empty set
-        let bank_id = 0;
+        let bank_id = BankId::new(0);
         assert_eq!(
             accounts
                 .load_largest_accounts(

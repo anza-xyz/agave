@@ -1319,6 +1319,7 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
 mod tests {
     use {
         super::*,
+        solana_clock::DEFAULT_MS_PER_SLOT,
         solana_instruction::AccountMeta,
         solana_keypair::{read_keypair_file, write_keypair_file},
         solana_native_token::LAMPORTS_PER_SOL,
@@ -1327,7 +1328,7 @@ mod tests {
         solana_stake_interface::instruction::StakeInstruction,
         solana_test_validator::TestValidator,
         solana_transaction_status::TransactionConfirmationStatus,
-        std::slice,
+        std::{slice, thread::sleep, time::Duration},
     };
 
     fn one_signer_message(client: &RpcClient) -> Message {
@@ -1826,7 +1827,7 @@ mod tests {
             false,
         );
         let lockup_instruction =
-            bincode::deserialize(&instructions[SET_LOCKUP_INDEX].data).unwrap();
+            wincode::deserialize(&instructions[SET_LOCKUP_INDEX].data).unwrap();
         if let StakeInstruction::SetLockup(lockup_args) = lockup_instruction {
             assert_eq!(lockup_args.unix_timestamp, Some(lockup_date.timestamp()));
             assert_eq!(lockup_args.epoch, None); // Don't change the epoch
@@ -2071,7 +2072,19 @@ mod tests {
     }
 
     fn simple_test_validator(alice: Pubkey) -> TestValidator {
-        TestValidator::start_with_config(alice, None, SocketAddrSpace::Unspecified)
+        let test_validator =
+            TestValidator::start_with_config(alice, None, SocketAddrSpace::Unspecified);
+        // Programs deployed at genesis are not immediately available
+        let rpc_client =
+            RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+        while rpc_client
+            .get_slot_with_commitment(CommitmentConfig::processed())
+            .unwrap()
+            < 5
+        {
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
+        }
+        test_validator
     }
 
     #[test]

@@ -410,7 +410,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         if bpf_loader_upgradeable::check_id(&owner)
                             && let Ok(UpgradeableLoaderState::Program {
                                 programdata_address,
-                            }) = bincode::deserialize(account.data())
+                            }) = wincode::deserialize(account.data())
                         {
                             debug!("Program data address {programdata_address}");
                             if bank

@@ -1,5 +1,4 @@
 use {
-    bincode::{deserialize, serialize},
     crossbeam_channel::{Receiver, Sender, unbounded},
     futures::StreamExt,
     solana_account::Account,
@@ -78,7 +77,7 @@ impl BanksServer {
             }
             let transactions: Vec<_> = transaction_infos
                 .into_iter()
-                .map(|info| deserialize(&info.wire_transaction).unwrap())
+                .map(|info| wincode::deserialize(&info.wire_transaction).unwrap())
                 .collect();
             loop {
                 let bank = bank_forks.read().unwrap().working_bank();
@@ -218,7 +217,7 @@ impl Banks for BanksServer {
             message_hash,
             signature,
             *blockhash,
-            serialize(&transaction).unwrap(),
+            wincode::serialize(&transaction).unwrap(),
             last_valid_block_height,
             None,
             None,
@@ -305,7 +304,7 @@ impl Banks for BanksServer {
         commitment: CommitmentLevel,
     ) -> Option<transaction::Result<()>> {
         let blockhash = *transaction.message.recent_blockhash();
-        let wire_transaction = serialize(&transaction).unwrap();
+        let wire_transaction = wincode::serialize(&transaction).unwrap();
 
         let bank = self.bank(commitment);
         let sanitized_transaction = match SanitizedTransaction::try_create(

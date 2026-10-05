@@ -960,6 +960,7 @@ mod tests {
     /// Test roundtrip of bank to a full snapshot, then back again.  This test creates the simplest
     /// bank possible, so the contents of the snapshot archive will be quite minimal.
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_roundtrip_bank_to_and_from_full_snapshot_simple(
         accounts_file_provider: AccountsFileProvider,
     ) {
@@ -1015,6 +1016,7 @@ mod tests {
     /// This tests handling of obsolete accounts during a full snapshot with obsolete accounts
     /// marked in the accounts database. This test injects them directly
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_roundtrip_bank_to_and_from_full_snapshot_with_obsolete_account(
         accounts_file_provider: AccountsFileProvider,
     ) {
@@ -1108,6 +1110,7 @@ mod tests {
     /// than the simple version above; creating multiple banks over multiple slots and doing
     /// multiple transfers.  So this full snapshot should contain more data.
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_roundtrip_bank_to_and_from_snapshot_complex(
         accounts_file_provider: AccountsFileProvider,
     ) {
@@ -1228,6 +1231,7 @@ mod tests {
     /// accounts are modified often, which are captured by the incremental snapshot.  The majority
     /// of the accounts are not modified often, and are captured by the full snapshot.
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_roundtrip_bank_to_and_from_incremental_snapshot(
         accounts_file_provider: AccountsFileProvider,
     ) {
@@ -1346,6 +1350,7 @@ mod tests {
 
     /// Test rebuilding bank from the latest snapshot archives
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_bank_from_latest_snapshot_archives(accounts_file_provider: AccountsFileProvider) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
@@ -1527,6 +1532,7 @@ mod tests {
     /// and the account ends up deleted. If the tombstone were dropped during shrink, the rebuild
     /// would resurrect Account1 from the full snapshot and the checks below would fail.
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_incremental_snapshots_handle_tombstones(accounts_file_provider: AccountsFileProvider) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
@@ -1687,6 +1693,7 @@ mod tests {
     /// information about Account1, but the full snapshost _does_ have info for Account1, which is
     /// no longer correct!
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_incremental_snapshots_handle_zero_lamport_accounts(
         accounts_file_provider: AccountsFileProvider,
     ) {
@@ -2104,6 +2111,7 @@ mod tests {
     ///     - take a full snap shot
     ///     - verify that recovery from full snapshot does not bring account1 back to life
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_snapshots_handle_zero_lamport_accounts(accounts_file_provider: AccountsFileProvider) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();

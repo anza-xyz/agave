@@ -944,7 +944,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
             let (programdata_address, _) =
                 Pubkey::find_program_address(&[address.as_ref()], &loader);
-            let mut program_data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
+            let mut program_data = wincode::serialize(&UpgradeableLoaderState::ProgramData {
                 slot: 0,
                 upgrade_authority_address: Some(upgrade_authority_address),
             })
@@ -961,7 +961,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 }),
             );
 
-            let program_data = bincode::serialize(&UpgradeableLoaderState::Program {
+            let program_data = wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address,
             })
             .unwrap();

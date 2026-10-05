@@ -54,7 +54,7 @@ pub enum BankForksUtilsError {
 
     #[error("failed to load bank from snapshot '{path}': {source}")]
     BankFromSnapshotsDirectory {
-        source: SnapshotError,
+        source: Box<SnapshotError>,
         path: PathBuf,
     },
 
@@ -222,7 +222,7 @@ pub fn try_load_bank_forks_from_snapshot(
             exit,
         )
         .map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
-            source: err,
+            source: Box::new(err),
             path: fastboot_snapshot.snapshot_path(),
         })?
     } else {

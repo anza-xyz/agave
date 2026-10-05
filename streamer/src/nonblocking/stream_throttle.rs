@@ -15,13 +15,24 @@ use {
 
 /// Max TPS per unstaked peer while total load is below
 /// `UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO` of capacity.
-///
-/// Kept equal to `MIN_UNSTAKED_TPS` for now, so the unstaked quota is the
-/// previous fixed 200 TPS at any load. Raising it is left to a follow-up.
-pub(crate) const MAX_UNSTAKED_TPS: u64 = 200;
+pub(crate) const MAX_UNSTAKED_TPS: u64 = 400;
 /// Max TPS per unstaked peer once total load is above that threshold.
-const MIN_UNSTAKED_TPS: u64 = 200;
+const MIN_UNSTAKED_TPS: u64 = 100;
 const _: () = assert!(MIN_UNSTAKED_TPS <= MAX_UNSTAKED_TPS);
+
+/// Min TPS per staked peer while staked throttling is on. Previously, the
+/// unstaked cap was fixed at 200 TPS, and the staked floor was one stream more
+/// per 100 ms throttling interval (210 TPS). Preserve that floor independently
+/// of the unstaked min and max caps so changes to them do not affect staked peers.
+const MIN_STAKED_TPS: u64 = 210;
+/// Same, with unstaked connections disabled.
+const MIN_STAKED_WITHOUT_UNSTAKED_TPS: u64 = 10;
+// Staked throttling implies unstaked throttling, so this keeps staked peers
+// above throttled unstaked ones.
+const _: () = assert!(
+    streams_per_throttling_interval(MIN_UNSTAKED_TPS)
+        < streams_per_throttling_interval(MIN_STAKED_TPS)
+);
 
 pub const STREAM_THROTTLING_INTERVAL_MS: u64 = 100;
 pub const STREAM_THROTTLING_INTERVAL: Duration =
@@ -81,6 +92,8 @@ pub(crate) struct StreamLoadEMA {
     max_unstaked_load_in_throttling_window: u64,
     /// Unstaked quota while unstaked throttling is on.
     min_unstaked_load_in_throttling_window: u64,
+    /// Staked quota floor while staked throttling is on.
+    min_staked_load_in_throttling_window: u64,
     max_streams_per_ms: u64,
     staked_throttling_on_load_threshold: u64, // in streams/STREAM_LOAD_EMA_INTERVAL_MS
     unstaked_throttling_on_load_threshold: u64, // in streams/STREAM_LOAD_EMA_INTERVAL_MS
@@ -107,6 +120,12 @@ impl StreamLoadEMA {
             } else {
                 (0, 0)
             };
+        let min_staked_load_in_throttling_window =
+            streams_per_throttling_interval(if allow_unstaked_streams {
+                MIN_STAKED_TPS
+            } else {
+                MIN_STAKED_WITHOUT_UNSTAKED_TPS
+            });
 
         let staked_threshold_ratio = if allow_unstaked_streams {
             STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
@@ -129,6 +148,7 @@ impl StreamLoadEMA {
             max_load_in_throttling_window,
             max_unstaked_load_in_throttling_window,
             min_unstaked_load_in_throttling_window,
+            min_staked_load_in_throttling_window,
             max_streams_per_ms,
             staked_throttling_on_load_threshold,
             unstaked_throttling_on_load_threshold,
@@ -266,9 +286,7 @@ impl StreamLoadEMA {
             }
             ConnectionPeerType::Staked(stake) => {
                 if self.staked_throttling_enabled.load(Ordering::Relaxed) {
-                    // Staked throttling implies unstaked throttling, so unstaked peers are being
-                    // throttled here. +1 guarantees staked always get a bit more.
-                    let min_staked_load = self.min_unstaked_load_in_throttling_window + 1;
+                    let min_staked_load = self.min_staked_load_in_throttling_window;
                     u128::from(self.max_load_in_throttling_window)
                         .saturating_mul(u128::from(stake))
                         .checked_div(u128::from(total_stake))
@@ -402,14 +420,12 @@ pub mod test {
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         ));
-        // MAX_UNSTAKED_TPS currently equals MIN_UNSTAKED_TPS, so the quota is
-        // the same whether or not unstaked throttling is on.
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
                 ConnectionPeerType::Unstaked,
                 10000,
             ),
-            20
+            40
         );
 
         load_ema
@@ -420,7 +436,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 10000,
             ),
-            20
+            10
         );
     }
 
@@ -455,15 +471,15 @@ pub mod test {
         // Stake divisors below assume these window values.
         let full_staked_capacity = load_ema.max_load_in_throttling_window;
         assert_eq!(full_staked_capacity, 50_000);
-        assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 20);
-        assert_eq!(load_ema.min_unstaked_load_in_throttling_window, 20);
+        assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 40);
+        assert_eq!(load_ema.min_unstaked_load_in_throttling_window, 10);
 
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
                 ConnectionPeerType::Staked(1),
                 TEST_TOTAL_STAKE,
             ),
-            load_ema.min_unstaked_load_in_throttling_window + 1,
+            21,
             "any staked client gets more than throttled unstaked",
         );
 
@@ -497,7 +513,7 @@ pub mod test {
                 ConnectionPeerType::Staked(100),
                 TEST_TOTAL_STAKE,
             ),
-            load_ema.min_unstaked_load_in_throttling_window + 1,
+            1,
             "any staked client gets more than unstaked",
         );
 
@@ -710,7 +726,7 @@ pub mod test {
         assert_eq!(
             load_ema
                 .available_load_capacity_in_throttling_duration(ConnectionPeerType::Staked(10), 0),
-            load_ema.min_unstaked_load_in_throttling_window + 1
+            21
         );
     }
 }

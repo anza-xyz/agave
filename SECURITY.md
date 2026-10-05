@@ -9,10 +9,18 @@
 
 **DO NOT CREATE A GITHUB ISSUE** to report a security problem.
 
-Instead please use this [Report a Vulnerability](https://github.com/anza-xyz/agave/security/advisories/new) link.
-Provide a helpful title, detailed description of the vulnerability and an exploit
-proof-of-concept. Speculative submissions without proof-of-concept will be closed
-with no further consideration.
+Instead, submit findings through the submission portal at https://bounty.anza.xyz/.
+Sign in with your GitHub account, select the Agave program, and provide a helpful
+summary, detailed description of the vulnerability and an exploit proof-of-concept.
+Speculative submissions without proof-of-concept will be closed with no further
+consideration.
+
+- The portal requires a non-refundable SOL burn per submission and files each
+  finding as a GitHub Security Advisory (GHSA) on this repository, with you
+  credited as the reporter and added as a collaborator
+- Submissions received through any other channel are ineligible for bug bounties,
+  including advisories opened directly on this repository
+- Any attempt to cheat the submission system leads to disqualification
 
 Create one GHSA per finding. GHSAs reporting multiple findings will be closed as
 invalid. Such reports will not be eligible for bug bounties and will not hold a
@@ -28,7 +36,7 @@ Expect a response as fast as possible in the advisory, typically within 72 hours
 --
 
 If you do not receive a response in the advisory, send an email to
-security@anza.xyz with the full URL of the advisory you have created.  DO NOT
+security@anza.xyz with the full URL of the advisory the portal created.  DO NOT
 include attachments or provide detail sufficient for exploitation regarding the
 security issue in this email. **Only provide such details in the advisory**.
 
@@ -44,11 +52,11 @@ In case an incident is discovered or reported, the following process will be
 followed to contain, respond and remediate:
 
 ### 1. Accept the new report
-In response a newly reported security problem, a member of the
-`anza-xyz/admins` group will accept the report to turn it into a draft
-advisory.  The `anza-xyz/security-incident-response` group should be added to
-the draft security advisory, and create a private fork of the repository (grey
-button towards the bottom of the page) if necessary.
+Reports submitted through the portal arrive as draft advisories. In response to
+a newly reported security problem, a member of the `anza-xyz/admins` group will
+review the draft advisory.  The `anza-xyz/security-incident-response` group
+should be added to the draft security advisory, and create a private fork of the
+repository (grey button towards the bottom of the page) if necessary.
 
 If the advisory is the result of an audit finding, follow the same process as above but add the auditor's github user(s) and begin the title with "[Audit]".
 
@@ -198,6 +206,10 @@ one week in order to be eligible for a bounty
   * In the stable and beta branches, vulnerabilities are eligible for bounty
   upon merge
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible
+  * The proof-of-concept must be included inline; no attachments or external
+  links are accepted
+* Submissions _MUST_ be made through the [submission portal](#reporting) to be
+considered eligible
 * Only reports describing a [single finding](#reporting) will be considered eligible
 * The participant submitting the bug report shall follow the process outlined within this document
 * Valid exploits can be eligible even if they are not successfully executed on a public cluster

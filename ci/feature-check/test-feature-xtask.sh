@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euox pipefail
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
 if ! cargo hack --version >/dev/null 2>&1; then
 	cat >&2 <<EOF
@@ -10,21 +11,12 @@ EOF
 	exit 1
 fi
 
-partition="${1:-1/1}"
-
-exclude_features=(
-	# [agave-xdp-ebpf]
-	#     it needs aya-ebpf which is only available when target_arch = "bpf"
-	ebpf
-)
-
 export RUSTFLAGS="-D warnings"
 
 cargo hack clippy \
+	--manifest-path "$here/../xtask/Cargo.toml" \
+	--workspace \
 	--features agave-unstable-api \
 	--ignore-unknown-features \
 	--each-feature \
-	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
-	--exclude-all-features \
-	--all-targets \
-	--partition "$partition"
+	--all-targets

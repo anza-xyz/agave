@@ -2,12 +2,14 @@
 
 use {
     crate::{
-        cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
+        cluster_info::{
+            CHANNEL_CONSUME_CAPACITY, ClusterInfo, GOSSIP_CHANNEL_CAPACITY,
+            GOSSIP_INGRESS_CHANNEL_CAPACITY,
+        },
         cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
     },
-    bytes::Bytes,
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
     solana_net_utils::{
@@ -15,7 +17,7 @@ use {
         TrySendError,
         multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
     },
-    solana_perf::packet::{PacketBatch, PacketRef},
+    solana_perf::packet::PacketBatch,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
@@ -57,7 +59,7 @@ impl GossipService {
         exit: Arc<AtomicBool>,
     ) -> Self {
         let (request_sender, request_receiver) =
-            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
+            EvictingSender::new_bounded(GOSSIP_INGRESS_CHANNEL_CAPACITY);
         trace!(
             "GossipService: id: {}, listening on primary interface: {:?}, all available \
              interfaces: {:?}",
@@ -78,7 +80,7 @@ impl GossipService {
             false,
         );
         let (consume_sender, listen_receiver) =
-            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
+            EvictingSender::new_bounded(CHANNEL_CONSUME_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
             epoch_specs.as_ref().map(|es| es.clone_box()),
             request_receiver,
@@ -419,18 +421,14 @@ impl ResponseSender for GossipXdpSender {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = batch.iter().filter_map(|pkt| {
             let addr = pkt.meta().socket_addr();
-            let data = pkt.data(..)?;
 
             // For XDP, we don't support IPv6 and no private or loopback IPv4 addresses.
-            if let IpAddr::V4(ip) = addr.ip()
+            if !pkt.meta().discard()
+                && let IpAddr::V4(ip) = addr.ip()
                 && !ip.is_private()
                 && !ip.is_loopback()
             {
-                let payload = match pkt {
-                    PacketRef::Bytes(pkt) => pkt.buffer().clone(),
-                    PacketRef::Packet(_) => Bytes::copy_from_slice(data),
-                };
-                Some((payload, addr))
+                Some((pkt.buffer().clone(), addr))
             } else {
                 None
             }

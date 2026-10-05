@@ -7,7 +7,7 @@ use {
     },
     assert_matches::assert_matches,
     serde_json::Value,
-    solana_account::ReadableAccount,
+    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_borsh::v1::try_from_slice_unchecked,
     solana_cli::{
         cli::{CliCommand, CliConfig, process_command},
@@ -1357,7 +1357,7 @@ async fn test_cli_program_deploy_with_authority() {
     if let UpgradeableLoaderState::ProgramData {
         slot: _,
         upgrade_authority_address,
-    } = bincode::deserialize(&programdata_account.data).unwrap()
+    } = programdata_account.state().unwrap()
     {
         assert_eq!(upgrade_authority_address, None);
     } else {
@@ -1561,7 +1561,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     if let UpgradeableLoaderState::ProgramData {
         slot: _,
         upgrade_authority_address,
-    } = bincode::deserialize(&programdata_account.data).unwrap()
+    } = programdata_account.state().unwrap()
     {
         assert_eq!(upgrade_authority_address, None);
     } else {
@@ -2077,9 +2077,7 @@ async fn test_cli_program_write_buffer() {
     let buffer_account = rpc_client.get_account(&new_buffer_pubkey).await.unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(keypair.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -2124,9 +2122,7 @@ async fn test_cli_program_write_buffer() {
         .unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(keypair.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -2196,9 +2192,7 @@ async fn test_cli_program_write_buffer() {
         .unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(authority_keypair.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -2238,9 +2232,7 @@ async fn test_cli_program_write_buffer() {
     let buffer_account = rpc_client.get_account(&buffer_pubkey).await.unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(authority_keypair.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -2588,9 +2580,7 @@ async fn test_cli_program_set_buffer_authority() {
         .get_account(&buffer_keypair.pubkey())
         .await
         .unwrap();
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(keypair.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -2622,9 +2612,7 @@ async fn test_cli_program_set_buffer_authority() {
         .get_account(&buffer_keypair.pubkey())
         .await
         .unwrap();
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(new_buffer_authority.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -2685,9 +2673,7 @@ async fn test_cli_program_set_buffer_authority() {
         .get_account(&buffer_keypair.pubkey())
         .await
         .unwrap();
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(buffer_keypair.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -2783,9 +2769,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         .get_account(&buffer_keypair.pubkey())
         .await
         .unwrap();
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(buffer_authority.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -3165,6 +3149,36 @@ async fn test_cli_program_show() {
         .unwrap();
     assert_eq!(max_len, data_len as usize);
 
+    // Verify show --buffers
+    config.command = CliCommand::Program(ProgramCliCommand::Show {
+        account_pubkey: None,
+        authority_pubkey: authority_keypair.pubkey(),
+        get_programs: false,
+        get_buffers: true,
+        all: false,
+        use_lamports_unit: false,
+    });
+    let response = process_command(&config).await.unwrap();
+    let json: Value = serde_json::from_str(&response).unwrap();
+    let buffers = json
+        .as_object()
+        .unwrap()
+        .get("buffers")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let buffer_address = buffer_keypair.pubkey().to_string();
+    let buffer = buffers
+        .iter()
+        .find(|buffer| {
+            buffer.get("address").and_then(Value::as_str) == Some(buffer_address.as_str())
+        })
+        .unwrap();
+    assert_eq!(
+        buffer.get("dataLen").unwrap().as_u64().unwrap(),
+        max_len as u64
+    );
+
     // Deploy
     let program_keypair = Keypair::new();
     config.signers = vec![&keypair, &authority_keypair, &program_keypair];
@@ -3256,6 +3270,36 @@ async fn test_cli_program_show() {
         .as_u64()
         .unwrap();
     assert_eq!(max_len, data_len as usize);
+
+    // Verify show --programs
+    config.command = CliCommand::Program(ProgramCliCommand::Show {
+        account_pubkey: None,
+        authority_pubkey: authority_keypair.pubkey(),
+        get_programs: true,
+        get_buffers: false,
+        all: false,
+        use_lamports_unit: false,
+    });
+    let response = process_command(&config).await.unwrap();
+    let json: Value = serde_json::from_str(&response).unwrap();
+    let programs = json
+        .as_object()
+        .unwrap()
+        .get("programs")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let program_id = program_keypair.pubkey().to_string();
+    let program = programs
+        .iter()
+        .find(|program| {
+            program.get("programId").and_then(Value::as_str) == Some(program_id.as_str())
+        })
+        .unwrap();
+    assert_eq!(
+        program.get("dataLen").unwrap().as_u64().unwrap(),
+        max_len as u64
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -3375,9 +3419,7 @@ async fn create_buffer_with_offline_authority<'a>(
         .get_account(&buffer_signer.pubkey())
         .await
         .unwrap();
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(online_signer.pubkey()));
     } else {
         panic!("not a buffer account");
@@ -3396,9 +3438,7 @@ async fn create_buffer_with_offline_authority<'a>(
         .get_account(&buffer_signer.pubkey())
         .await
         .unwrap();
-    if let UpgradeableLoaderState::Buffer { authority_address } =
-        bincode::deserialize(&buffer_account.data).unwrap()
-    {
+    if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(offline_signer.pubkey()));
     } else {
         panic!("not a buffer account");

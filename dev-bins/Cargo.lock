@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "agave-banking-stage-ingress-types"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
  "solana-perf",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "agave-bls-cert-verify"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-votor-messages",
  "bitvec",
@@ -73,13 +73,13 @@ dependencies = [
  "rayon",
  "solana-bls-signatures",
  "solana-signer-store",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
 [[package]]
 name = "agave-bls-sigverify"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-bls-cert-verify",
  "agave-math-utils",
@@ -105,13 +105,13 @@ dependencies = [
  "solana-runtime",
  "solana-signer-store",
  "solana-streamer",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
 [[package]]
 name = "agave-conformance"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
@@ -173,14 +173,14 @@ dependencies = [
 
 [[package]]
 name = "agave-cpu-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "agave-feature-set"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "ahash 0.8.12",
  "solana-epoch-schedule",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "agave-fs"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-io-uring",
  "io-uring",
@@ -202,7 +202,7 @@ dependencies = [
  "slab",
  "smallvec",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -221,12 +221,12 @@ dependencies = [
  "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "agave-io-uring"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "io-uring",
  "libc",
@@ -237,11 +237,11 @@ dependencies = [
 
 [[package]]
 name = "agave-jemalloc"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "log",
  "solana-metrics",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tikv-jemalloc-ctl",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
@@ -249,14 +249,13 @@ dependencies = [
 
 [[package]]
 name = "agave-ledger-tool"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
  "assert_cmd",
- "bincode",
  "chrono",
  "clap 2.34.0",
  "crossbeam-channel",
@@ -327,7 +326,7 @@ dependencies = [
  "solana-vote-program",
  "tempfile",
  "test-case",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tikv-jemallocator",
  "tokio",
  "wincode",
@@ -335,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "agave-logger"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "env_logger",
  "libc",
@@ -345,14 +344,14 @@ dependencies = [
 
 [[package]]
 name = "agave-math-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "num-traits",
 ]
 
 [[package]]
 name = "agave-precompiles"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -371,14 +370,14 @@ dependencies = [
 
 [[package]]
 name = "agave-random"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "rand 0.9.4",
 ]
 
 [[package]]
 name = "agave-reserved-account-keys"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "solana-pubkey 4.4.0",
@@ -402,12 +401,12 @@ dependencies = [
  "nix",
  "rts-alloc",
  "shaq",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "agave-scheduling-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-scheduler-bindings",
@@ -423,10 +422,9 @@ dependencies = [
 
 [[package]]
 name = "agave-snapshots"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-fs",
- "bincode",
  "bzip2",
  "crossbeam-channel",
  "log",
@@ -445,14 +443,14 @@ dependencies = [
  "symlink",
  "tar",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
  "zstd",
 ]
 
 [[package]]
 name = "agave-store-tool"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "ahash 0.8.12",
  "clap 2.34.0",
@@ -484,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "agave-votor"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-bls-sigverify",
  "agave-logger",
@@ -521,14 +519,14 @@ dependencies = [
  "solana-tls-utils",
  "solana-transaction",
  "solana-validator-exit",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "wincode",
 ]
 
 [[package]]
 name = "agave-votor-messages"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "crossbeam-channel",
@@ -543,33 +541,33 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-short-vec",
  "solana-signer-store",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
 [[package]]
 name = "agave-votor-transport"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
+ "anza-quinn",
  "arrayvec",
  "bytes",
  "crossbeam-channel",
  "log",
  "qualifier_attr",
- "quinn",
  "solana-keypair",
  "solana-metrics",
  "solana-net-utils",
  "solana-pubkey 4.4.0",
  "solana-tls-utils",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util 0.7.19",
 ]
 
 [[package]]
 name = "agave-wake-channel"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "atomic-wait",
  "crossbeam-channel",
@@ -578,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "agave-xdp"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-cpu-utils",
  "agave-xdp-ebpf",
@@ -591,12 +589,12 @@ dependencies = [
  "crossbeam-queue",
  "libc",
  "log",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "agave-xdp-ebpf"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "aya-ebpf",
 ]
@@ -719,6 +717,50 @@ name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
+name = "anza-quinn"
+version = "0.11.12-issue2860"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "353928174300242b01d7410ac303a791114c95de64d0ea83f8f5b0781c38475a"
+dependencies = [
+ "anza-quinn-proto",
+ "bytes",
+ "cfg_aliases",
+ "pin-project-lite",
+ "quinn-udp",
+ "rustc-hash",
+ "rustls",
+ "socket2 0.5.10",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
+name = "anza-quinn-proto"
+version = "0.11.18-issue2860"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac77770e33ad5ad8d718810db9344368e7ca08729781495fb788fe9d7b43fa45"
+dependencies = [
+ "bytes",
+ "fastbloom",
+ "getrandom 0.4.3",
+ "lru-slab",
+ "rand 0.10.2",
+ "rand_pcg",
+ "ring",
+ "rustc-hash",
+ "rustls",
+ "rustls-pki-types",
+ "rustls-platform-verifier",
+ "slab",
+ "thiserror 2.0.21",
+ "tinyvec",
+ "tracing",
+ "web-time",
+]
 
 [[package]]
 name = "arc-swap"
@@ -995,7 +1037,7 @@ dependencies = [
  "object",
  "once_cell",
  "scopeguard",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1063,7 +1105,7 @@ dependencies = [
  "bytes",
  "log",
  "object",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1131,7 +1173,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -1422,7 +1464,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3433,7 +3475,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "walkdir",
  "windows-link",
 ]
@@ -4669,7 +4711,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2 0.6.5",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "web-time",
@@ -4682,7 +4724,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"
 dependencies = [
  "bytes",
- "fastbloom",
  "getrandom 0.4.3",
  "lru-slab",
  "rand 0.10.2",
@@ -4691,9 +4732,8 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "rustls-pki-types",
- "rustls-platform-verifier",
  "slab",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tinyvec",
  "tracing",
  "web-time",
@@ -5668,9 +5708,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
+checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
 name = "smpl_jwt"
@@ -5741,7 +5781,7 @@ dependencies = [
 
 [[package]]
 name = "solana-account-decoder"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "Inflector",
  "base64 0.23.1",
@@ -5778,14 +5818,14 @@ dependencies = [
  "spl-token-group-interface",
  "spl-token-interface",
  "spl-token-metadata-interface",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
  "zstd",
 ]
 
 [[package]]
 name = "solana-account-decoder-client-types"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "base64 0.23.1",
  "bs58",
@@ -5809,7 +5849,7 @@ dependencies = [
 
 [[package]]
 name = "solana-accounts-db"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-fs",
  "ahash 0.8.12",
@@ -5858,7 +5898,7 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
@@ -5958,7 +5998,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bloom"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "bv",
  "fnv",
@@ -5990,7 +6030,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "subtle",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
  "zeroize",
 ]
@@ -6020,7 +6060,7 @@ dependencies = [
  "ark-serialize",
  "bytemuck",
  "solana-define-syscall 5.2.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -6034,7 +6074,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bpf-loader-program"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "bincode",
  "qualifier_attr",
@@ -6061,7 +6101,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bucket-map"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "ahash 0.8.12",
  "bv",
@@ -6079,7 +6119,7 @@ dependencies = [
 
 [[package]]
 name = "solana-builtins"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "solana-bpf-loader-program",
@@ -6096,7 +6136,7 @@ dependencies = [
 
 [[package]]
 name = "solana-builtins-default-costs"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
@@ -6106,7 +6146,7 @@ dependencies = [
 
 [[package]]
 name = "solana-clap-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "bip39",
  "bs58",
@@ -6129,14 +6169,14 @@ dependencies = [
  "solana-seed-phrase",
  "solana-signature",
  "solana-signer",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "uriparse",
  "url 2.5.8",
 ]
 
 [[package]]
 name = "solana-cli-config"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "dirs-next",
  "serde",
@@ -6147,7 +6187,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cli-output"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
@@ -6192,10 +6232,9 @@ dependencies = [
 
 [[package]]
 name = "solana-client"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "async-trait",
- "bincode",
  "dashmap",
  "futures-util",
  "indicatif",
@@ -6224,6 +6263,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-udp-client",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -6285,7 +6325,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "solana-fee-structure",
  "solana-program-runtime",
@@ -6293,7 +6333,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget-instruction"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "solana-borsh",
@@ -6321,7 +6361,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget-program"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "solana-program-runtime",
 ]
@@ -6344,7 +6384,7 @@ dependencies = [
 
 [[package]]
 name = "solana-connection-cache"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
@@ -6357,12 +6397,12 @@ dependencies = [
  "solana-net-utils",
  "solana-time-utils",
  "solana-transaction-error",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "solana-core"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
@@ -6493,7 +6533,7 @@ dependencies = [
  "sys-info",
  "sysctl",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tikv-jemalloc-ctl",
  "tokio",
  "tokio-util 0.7.19",
@@ -6503,7 +6543,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cost-model"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
@@ -6545,7 +6585,7 @@ dependencies = [
  "curve25519-dalek 4.1.3",
  "solana-define-syscall 5.2.0",
  "subtle",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -6573,7 +6613,7 @@ dependencies = [
 
 [[package]]
 name = "solana-download-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-snapshots",
  "log",
@@ -6617,7 +6657,7 @@ dependencies = [
 
 [[package]]
 name = "solana-entry"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-transaction-view",
  "agave-votor-messages",
@@ -6641,7 +6681,7 @@ dependencies = [
  "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
@@ -6698,7 +6738,7 @@ dependencies = [
 
 [[package]]
 name = "solana-faucet"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -6716,7 +6756,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-transaction",
  "spl-memo-interface",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "wincode",
 ]
@@ -6741,7 +6781,7 @@ dependencies = [
 
 [[package]]
 name = "solana-fee"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "solana-fee-structure",
  "solana-svm-transaction",
@@ -6812,7 +6852,7 @@ dependencies = [
 
 [[package]]
 name = "solana-genesis-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-snapshots",
  "log",
@@ -6820,7 +6860,7 @@ dependencies = [
  "solana-genesis-config",
  "solana-hash",
  "solana-rpc-client",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -6836,7 +6876,7 @@ dependencies = [
 
 [[package]]
 name = "solana-geyser-plugin-manager"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-geyser-plugin-interface",
  "arc-swap",
@@ -6866,13 +6906,13 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-status",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
 [[package]]
 name = "solana-gossip"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-logger",
  "agave-random",
@@ -6922,7 +6962,7 @@ dependencies = [
  "solana-vote-program",
  "solana-wincode-varint",
  "static_assertions",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
@@ -7097,7 +7137,7 @@ dependencies = [
 
 [[package]]
 name = "solana-lattice-hash"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "base64 0.23.1",
  "blake3",
@@ -7107,7 +7147,7 @@ dependencies = [
 
 [[package]]
 name = "solana-leader-schedule"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-random",
  "itertools 0.15.0",
@@ -7119,7 +7159,7 @@ dependencies = [
 
 [[package]]
 name = "solana-ledger"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
@@ -7206,7 +7246,7 @@ dependencies = [
  "strum",
  "tar",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
  "trees",
@@ -7215,15 +7255,15 @@ dependencies = [
 
 [[package]]
 name = "solana-loader-v2-interface"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e4a6f0ad4fd9c30679bfee2ce3ea6a449cac38049f210480b751f65676dfe82"
+checksum = "88abae245ad0aedbbb1498836c1ee4ac79903d7d632c2492d5a376554ac6fe74"
 dependencies = [
  "serde",
  "serde_bytes",
  "serde_derive",
- "solana-instruction 3.5.1",
- "solana-pubkey 3.0.0",
+ "solana-instruction 4.0.0",
+ "solana-pubkey 4.4.0",
  "solana-sdk-ids",
 ]
 
@@ -7257,11 +7297,11 @@ dependencies = [
 
 [[package]]
 name = "solana-measure"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 
 [[package]]
 name = "solana-merkle-tree"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "solana-hash",
  "solana-sha256-hasher",
@@ -7288,7 +7328,7 @@ dependencies = [
 
 [[package]]
 name = "solana-metrics"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
  "gethostname",
@@ -7297,7 +7337,7 @@ dependencies = [
  "solana-cluster-type",
  "solana-sha256-hasher",
  "solana-time-utils",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7317,24 +7357,22 @@ checksum = "ae8dd4c280dca9d046139eb5b7a5ac9ad10403fbd64964c7d7571214950d758f"
 
 [[package]]
 name = "solana-net-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-xdp",
- "bincode",
+ "anza-quinn",
  "bytes",
  "dashmap",
  "itertools 0.15.0",
  "log",
  "nix",
- "quinn",
  "rand 0.9.4",
- "serde",
  "socket2 0.6.5",
- "solana-serde",
  "solana-svm-type-overrides",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "url 2.5.8",
+ "wincode",
 ]
 
 [[package]]
@@ -7401,7 +7439,6 @@ version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e376ff05aaf06d7e1900e32b8522188184628916863358a1a2a3944e2755141"
 dependencies = [
- "bincode",
  "bitflags 2.13.2",
  "cfg_eval",
  "serde",
@@ -7412,12 +7449,11 @@ dependencies = [
 
 [[package]]
 name = "solana-perf"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-transaction-view",
  "ahash 0.8.12",
  "arc-swap",
- "bincode",
  "bytes",
  "caps",
  "libc",
@@ -7431,7 +7467,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-message",
- "solana-metrics",
  "solana-packet",
  "solana-pubkey 4.4.0",
  "solana-runtime-transaction",
@@ -7451,7 +7486,7 @@ dependencies = [
 
 [[package]]
 name = "solana-poh"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-cpu-utils",
  "agave-votor-messages",
@@ -7470,7 +7505,7 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-runtime",
  "solana-transaction",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7492,7 +7527,7 @@ dependencies = [
  "ark-bn254",
  "light-poseidon",
  "solana-define-syscall 5.2.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7517,7 +7552,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-binaries"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "solana-account",
  "solana-loader-v3-interface",
@@ -7575,7 +7610,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-runtime"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "base64 0.23.1",
  "itertools 0.15.0",
@@ -7613,7 +7648,7 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-transaction-context",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
@@ -7638,7 +7673,7 @@ dependencies = [
 
 [[package]]
 name = "solana-pubsub-client"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
  "futures-util",
@@ -7650,7 +7685,7 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-rpc-client-types",
  "solana-signature",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
@@ -7660,13 +7695,13 @@ dependencies = [
 
 [[package]]
 name = "solana-quic-client"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
+ "anza-quinn",
  "async-lock",
  "async-trait",
  "futures 0.3.34",
  "log",
- "quinn",
  "solana-connection-cache",
  "solana-keypair",
  "solana-measure",
@@ -7678,13 +7713,13 @@ dependencies = [
  "solana-streamer",
  "solana-tls-utils",
  "solana-transaction-error",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
 [[package]]
 name = "solana-rayon-threadlimit"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "log",
  "num_cpus",
@@ -7692,7 +7727,7 @@ dependencies = [
 
 [[package]]
 name = "solana-remote-wallet"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "console 0.16.6",
  "dialoguer",
@@ -7706,7 +7741,7 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-signature",
  "solana-signer",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "trezor-client",
  "uriparse",
 ]
@@ -7739,7 +7774,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
@@ -7815,7 +7850,7 @@ dependencies = [
  "spl-token-2022-interface",
  "spl-token-interface",
  "stream-cancel",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util 0.7.19",
  "wincode",
@@ -7823,12 +7858,11 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-votor-messages",
  "async-trait",
  "base64 0.23.1",
- "bincode",
  "bs58",
  "futures 0.3.34",
  "indicatif",
@@ -7865,7 +7899,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-api"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
@@ -7878,12 +7912,12 @@ dependencies = [
  "solana-signer",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "solana-rpc-client-nonce-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "solana-account",
  "solana-commitment-config",
@@ -7893,13 +7927,13 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-rpc-client",
  "solana-sdk-ids",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
 [[package]]
 name = "solana-rpc-client-types"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "base64 0.23.1",
  "bs58",
@@ -7917,12 +7951,12 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-version",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "solana-runtime"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-bls-cert-verify",
  "agave-feature-set",
@@ -8048,13 +8082,13 @@ dependencies = [
  "strum",
  "strum_macros",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
 [[package]]
 name = "solana-runtime-transaction"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
@@ -8094,7 +8128,7 @@ dependencies = [
  "log",
  "rand 0.8.6",
  "rustc-demangle",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "winapi",
 ]
 
@@ -8141,7 +8175,7 @@ checksum = "ce0d2e8d53946f04e789476d6c407e4997b7fb412483df5fc10c075c65cb2edf"
 dependencies = [
  "k256",
  "solana-define-syscall 5.2.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -8178,7 +8212,7 @@ dependencies = [
 
 [[package]]
 name = "solana-send-transaction-service"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
  "itertools 0.15.0",
@@ -8381,9 +8415,9 @@ dependencies = [
 
 [[package]]
 name = "solana-stake-interface"
-version = "5.1.0"
+version = "5.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b5120d68ec674551562e20906ed202a55af23f4b532cc4c12568150eb4a8536"
+checksum = "36bba7bab030c8e7eb0150abd8db29a959924cea44b55f89a587694706ccda9b"
 dependencies = [
  "num-traits",
  "serde",
@@ -8401,7 +8435,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-bigtable"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-reserved-account-keys",
  "base64 0.23.1",
@@ -8429,7 +8463,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tonic",
  "tonic-prost",
@@ -8439,7 +8473,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-proto"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "bs58",
  "prost",
@@ -8457,15 +8491,16 @@ dependencies = [
  "solana-transaction-context",
  "solana-transaction-error",
  "solana-transaction-status",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tonic-prost-build",
  "wincode",
 ]
 
 [[package]]
 name = "solana-streamer"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
+ "anza-quinn",
  "bytes",
  "crossbeam-channel",
  "futures 0.3.34",
@@ -8476,7 +8511,6 @@ dependencies = [
  "nix",
  "num_cpus",
  "pem",
- "quinn",
  "rand 0.9.4",
  "rustls",
  "smallvec",
@@ -8491,14 +8525,14 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction-error",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util 0.7.19",
 ]
 
 [[package]]
 name = "solana-svm"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-precompiles",
@@ -8532,6 +8566,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey 4.4.0",
  "solana-rent",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-signature",
  "solana-slot-hashes",
@@ -8552,14 +8587,14 @@ dependencies = [
  "solana-vote-program",
  "solana-zk-elgamal-proof-program",
  "spl-generic-token",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
  "xxhash-rust",
 ]
 
 [[package]]
 name = "solana-svm-callback"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "solana-account",
  "solana-clock",
@@ -8569,7 +8604,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-conformance"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-precompiles",
@@ -8592,22 +8627,22 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-feature-set"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 
 [[package]]
 name = "solana-svm-log-collector"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "solana-svm-measure"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 
 [[package]]
 name = "solana-svm-timings"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "eager",
  "enum-iterator",
@@ -8630,14 +8665,14 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-type-overrides"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "rand 0.9.4",
 ]
 
 [[package]]
 name = "solana-syscalls"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "libsecp256k1",
  "num-traits",
@@ -8672,7 +8707,7 @@ dependencies = [
  "solana-svm-type-overrides",
  "solana-sysvar-id",
  "solana-transaction-context",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
@@ -8694,7 +8729,7 @@ dependencies = [
 
 [[package]]
 name = "solana-system-program"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "bincode",
  "log",
@@ -8781,9 +8816,9 @@ checksum = "0ced92c60aa76ec4780a9d93f3bd64dfa916e1b998eacc6f1c110f3f444f02c9"
 
 [[package]]
 name = "solana-tls-utils"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
- "quinn",
+ "anza-quinn",
  "rustls",
  "rustls-webpki",
  "solana-keypair",
@@ -8793,7 +8828,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tpu-client"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "futures-util",
  "indicatif",
@@ -8814,15 +8849,16 @@ dependencies = [
  "solana-signer",
  "solana-transaction",
  "solana-transaction-error",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "wincode",
 ]
 
 [[package]]
 name = "solana-tpu-client-next"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
+ "anza-quinn",
  "async-trait",
  "bytes",
  "futures 0.3.34",
@@ -8830,7 +8866,6 @@ dependencies = [
  "itertools 0.15.0",
  "log",
  "lru 0.18.4",
- "quinn",
  "rustls",
  "solana-clock",
  "solana-commitment-config",
@@ -8845,7 +8880,7 @@ dependencies = [
  "solana-streamer",
  "solana-time-utils",
  "solana-tls-utils",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util 0.7.19",
 ]
@@ -8874,7 +8909,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-context"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "bincode",
  "serde",
@@ -8904,7 +8939,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-status"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
@@ -8941,16 +8976,15 @@ dependencies = [
  "spl-token-group-interface",
  "spl-token-interface",
  "spl-token-metadata-interface",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
 [[package]]
 name = "solana-transaction-status-client-types"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "base64 0.23.1",
- "bincode",
  "bs58",
  "serde",
  "serde_json",
@@ -8964,13 +8998,13 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
 [[package]]
 name = "solana-turbine"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-votor",
@@ -9010,13 +9044,13 @@ dependencies = [
  "solana-system-transaction",
  "solana-time-utils",
  "solana-transaction-error",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
 [[package]]
 name = "solana-udp-client"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "async-trait",
  "solana-connection-cache",
@@ -9028,7 +9062,7 @@ dependencies = [
 
 [[package]]
 name = "solana-unified-scheduler-logic"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "assert_matches",
  "solana-clock",
@@ -9041,7 +9075,7 @@ dependencies = [
 
 [[package]]
 name = "solana-unified-scheduler-pool"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-jemalloc",
@@ -9074,7 +9108,7 @@ checksum = "c5d2face763df5afeaa9509b9019968860e69cc1531ec8b4a2e6c7b702204d5a"
 
 [[package]]
 name = "solana-version"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "rand 0.9.4",
@@ -9088,7 +9122,7 @@ dependencies = [
 
 [[package]]
 name = "solana-vote"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "bincode",
  "log",
@@ -9112,7 +9146,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-transaction",
  "solana-vote-interface",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode",
 ]
 
@@ -9145,7 +9179,7 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-program"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -9223,7 +9257,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-elgamal-proof-program"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "bytemuck",
  "solana-instruction 4.0.0",
@@ -9265,7 +9299,7 @@ dependencies = [
  "solana-zk-elgamal-proof-interface 1.0.0",
  "solana-zk-sdk-pod",
  "subtle",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "zeroize",
 ]
 
@@ -9279,12 +9313,12 @@ dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "solana-nullable",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "solana-zk-token-proof-program"
-version = "4.5.0-alpha.0"
+version = "4.5.0-alpha.1"
 dependencies = [
  "solana-program-runtime",
 ]
@@ -9399,7 +9433,7 @@ dependencies = [
  "spl-token-group-interface",
  "spl-token-metadata-interface",
  "spl-type-length-value",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -9419,7 +9453,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-zk-elgamal-proof-interface 0.1.3",
  "solana-zk-sdk-pod",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -9438,7 +9472,7 @@ dependencies = [
  "solana-program-error",
  "solana-zero-copy",
  "spl-discriminator",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -9458,7 +9492,7 @@ dependencies = [
  "solana-program-pack",
  "solana-pubkey 3.0.0",
  "solana-sdk-ids",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -9478,7 +9512,7 @@ dependencies = [
  "solana-program-error",
  "spl-discriminator",
  "spl-type-length-value",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -9495,7 +9529,7 @@ dependencies = [
  "solana-program-error",
  "solana-zero-copy",
  "spl-discriminator",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -9645,7 +9679,7 @@ dependencies = [
  "byteorder",
  "enum-as-inner",
  "libc",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "walkdir",
 ]
 
@@ -9687,34 +9721,34 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 
 [[package]]
 name = "test-case"
-version = "3.3.1"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb2550dd13afcd286853192af8601920d959b14c401fcece38071d53bf0768a8"
+checksum = "124953e7f67cb0b2fcfb87e899e4ae5a64fb68e2e160767933cc67b646fb0042"
 dependencies = [
  "test-case-macros",
 ]
 
 [[package]]
 name = "test-case-core"
-version = "3.3.1"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adcb7fd841cd518e279be3d5a3eb0636409487998a4aff22f3de87b81e88384f"
+checksum = "bd097615b407247e102046ba34426bb594923ab3554cf0f3cdfed050f1a5a3e8"
 dependencies = [
  "cfg-if 1.0.5",
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "test-case-macros"
-version = "3.3.1"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c89e72a01ed4c579669add59014b9a524d609c0c88c6a585ce37485879f6ffb"
+checksum = "f4ce35ece947bccac166e1ded639133827a953f69a48ba134d17f91108333082"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn 3.0.3",
  "test-case-core",
 ]
 
@@ -9738,11 +9772,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl 2.0.20",
+ "thiserror-impl 2.0.21",
 ]
 
 [[package]]
@@ -9758,9 +9792,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10163,7 +10197,7 @@ dependencies = [
  "hex",
  "protobuf",
  "rusb",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -10188,7 +10222,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha1",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "utf-8",
  "webpki-roots 0.26.11",
 ]
@@ -10579,7 +10613,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "smallvec",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wincode-derive",
 ]
 

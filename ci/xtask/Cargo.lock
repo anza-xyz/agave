@@ -1552,7 +1552,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2045,9 +2045,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
+checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
 name = "snafu"
@@ -2285,9 +2285,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.0.7+spec-1.1.0"
+version = "1.1.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd28d57d8a6f6e458bc0b8784f8fdcc4b99a437936056fa122cb234f18656a96"
+checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
 dependencies = [
  "indexmap",
  "serde_core",

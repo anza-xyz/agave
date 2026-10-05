@@ -11,6 +11,11 @@ EOF
 	exit 1
 fi
 
+export RUSTFLAGS="-D warnings"
 
-cargo hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-targets
-cargo hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-targets --all-features
+cargo hack clippy \
+	--manifest-path "$here/../../dev-bins/Cargo.toml" \
+	--features agave-unstable-api \
+	--ignore-unknown-features \
+	--each-feature \
+	--all-targets \

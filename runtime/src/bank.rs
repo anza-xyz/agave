@@ -37,7 +37,9 @@
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 pub use {
     crate::slot_params::DEFAULT_MAX_ENTRY_BYTES_PER_SLOT,
-    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_leader_schedule::SlotLeader,
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions,
+    solana_accounts_db::bank_id::{BankId, BankIdGenerator},
+    solana_leader_schedule::SlotLeader,
     solana_reward_info::RewardType,
 };
 use {
@@ -123,8 +125,8 @@ use {
     },
     solana_builtins::{BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
-        BankId, Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
-        Slot, SlotIndex, UnixTimestamp,
+        Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot,
+        SlotIndex, UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
@@ -250,7 +252,6 @@ mod fee_distribution;
 mod metrics;
 pub(crate) mod partitioned_epoch_rewards;
 mod recent_blockhashes_account;
-mod serde_snapshot;
 mod sysvar_cache;
 pub(crate) mod tests;
 
@@ -339,7 +340,7 @@ pub struct BankRc {
     /// Previous checkpoint of this bank
     pub(crate) parent: RwLock<Option<Arc<Bank>>>,
 
-    pub(crate) bank_id_generator: Arc<AtomicU64>,
+    pub(crate) bank_id_generator: Arc<BankIdGenerator>,
 }
 
 impl BankRc {
@@ -348,7 +349,7 @@ impl BankRc {
         Self {
             accounts: Arc::new(accounts),
             parent: RwLock::new(None),
-            bank_id_generator: Arc::new(AtomicU64::new(0)),
+            bank_id_generator: Arc::default(),
         }
     }
 }
@@ -1271,8 +1272,10 @@ impl Bank {
             .accounts_db
             .partitioned_epoch_rewards_config
             .stake_account_stores_per_block;
+        let rc = BankRc::new(accounts);
+        let bank_id = rc.bank_id_generator.next();
         let mut bank = Self {
-            rc: BankRc::new(accounts),
+            rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             store_transaction_signatures_in_status_cache: !RuntimeConfig::default()
                 .skip_transaction_signatures_in_status_cache,
@@ -1301,7 +1304,7 @@ impl Bank {
             slots_per_year: f64::default(),
             slot_params: SlotParamsArchive::default(),
             slot: Slot::default(),
-            bank_id: BankId::default(),
+            bank_id,
             epoch: Epoch::default(),
             block_height: u64::default(),
             leader: SlotLeader::default(),
@@ -1498,7 +1501,7 @@ impl Bank {
             FeeRateGovernor::new_derived(&parent.fee_rate_governor, parent.signature_count())
         );
 
-        let bank_id = rc.bank_id_generator.fetch_add(1, Relaxed) + 1;
+        let bank_id = rc.bank_id_generator.next();
         let (blockhash_queue, blockhash_queue_time_us) =
             measure_us!(RwLock::new(parent.blockhash_queue.read().unwrap().clone()));
 
@@ -2245,6 +2248,7 @@ impl Bank {
             .accounts_db
             .partitioned_epoch_rewards_config
             .stake_account_stores_per_block;
+        let bank_id = bank_rc.bank_id_generator.next();
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
@@ -2275,7 +2279,7 @@ impl Bank {
             slots_per_year: fields.slots_per_year,
             slot_params: SlotParamsArchive::default(),
             slot,
-            bank_id: 0,
+            bank_id,
             epoch,
             block_height: fields.block_height,
             leader,
@@ -4720,7 +4724,7 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
-                            fee_payer_post_balance,
+                            fee_payer_post_balance: Some(fee_payer_post_balance),
                         })
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
@@ -4734,11 +4738,9 @@ impl Bank {
                             loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
                             loaded_accounts_data_size,
                         },
-                        fee_payer_post_balance: fees_only_tx
-                            .rollback_accounts
-                            .fee_payer()
-                            .1
-                            .lamports(),
+                        fee_payer_post_balance: Some(
+                            fees_only_tx.rollback_accounts.fee_payer().1.lamports(),
+                        ),
                     }),
                     ProcessedTransaction::NoOp(no_op_tx) => Ok(CommittedTransaction {
                         status: Err(no_op_tx.validation_error),
@@ -4751,7 +4753,7 @@ impl Bank {
                             loaded_accounts_count: 0,
                             loaded_accounts_data_size,
                         },
-                        fee_payer_post_balance: no_op_tx.fee_payer_balance.unwrap_or(0),
+                        fee_payer_post_balance: no_op_tx.fee_payer_balance,
                     }),
                 }
             })
@@ -7321,6 +7323,10 @@ impl Bank {
 
     pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
         &self.transaction_processor
+    }
+
+    pub fn bank_id_generator(&self) -> &BankIdGenerator {
+        &self.rc.bank_id_generator
     }
 
     pub fn set_fee_structure(&mut self, fee_structure: &FeeStructure) {

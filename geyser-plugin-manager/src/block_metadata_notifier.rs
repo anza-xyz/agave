@@ -9,8 +9,8 @@ use {
     },
     arc_swap::ArcSwap,
     log::*,
-    solana_clock::{BankId, UnixTimestamp},
-    solana_runtime::bank::KeyedRewardsAndNumPartitions,
+    solana_clock::UnixTimestamp,
+    solana_runtime::bank::{BankId, KeyedRewardsAndNumPartitions},
     std::sync::Arc,
 };
 
@@ -66,7 +66,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
 
         for plugin in plugin_manager.plugins.iter() {
             let block_info = ReplicaBlockInfoVersions::V0_0_5(&block_info);
-            match plugin.notify_block_metadata_for_bank(block_info, bank_id) {
+            match plugin.notify_block_metadata_for_bank(block_info, bank_id.into()) {
                 Err(err) => {
                     error!(
                         "Failed to update block metadata at slot {}, error: {} to plugin {}",
@@ -162,7 +162,7 @@ mod tests {
         std::sync::{Arc, Mutex},
     };
 
-    type BlockMetadataUpdate = (u64, BankId, u64, u64);
+    type BlockMetadataUpdate = (u64, u64, u64, u64);
 
     #[derive(Debug)]
     struct TestBlockMetadataPlugin {
@@ -179,7 +179,7 @@ mod tests {
         fn notify_block_metadata_for_bank(
             &self,
             blockinfo: ReplicaBlockInfoVersions,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> Result<()> {
             let ReplicaBlockInfoVersions::V0_0_5(blockinfo) = blockinfo;
             self.updates.lock().unwrap().push((
@@ -234,7 +234,7 @@ mod tests {
             41,
             "parent-blockhash",
             42,
-            9,
+            BankId::new(9),
             "blockhash",
             &rewards,
             Some(123),
@@ -258,7 +258,19 @@ mod tests {
             keyed_rewards: vec![],
             num_partitions: None,
         };
-        notifier.notify_block_metadata(0, "p", 1, 1, "b", &no_rewards, None, None, 0, 0, false);
+        notifier.notify_block_metadata(
+            0,
+            "p",
+            1,
+            BankId::new(1),
+            "b",
+            &no_rewards,
+            None,
+            None,
+            0,
+            0,
+            false,
+        );
 
         // A failing plugin first, a recording plugin second: the error is
         // logged and must not stop delivery to the second plugin.
@@ -299,8 +311,32 @@ mod tests {
             }
             .into(),
         ));
-        notifier.notify_block_metadata(41, "ph", 42, 9, "bh", &keyed, None, None, 7, 3, false);
-        notifier.notify_block_metadata(42, "ph", 43, 9, "bh", &keyed, None, None, 7, 3, true);
+        notifier.notify_block_metadata(
+            41,
+            "ph",
+            42,
+            BankId::new(9),
+            "bh",
+            &keyed,
+            None,
+            None,
+            7,
+            3,
+            false,
+        );
+        notifier.notify_block_metadata(
+            42,
+            "ph",
+            43,
+            BankId::new(9),
+            "bh",
+            &keyed,
+            None,
+            None,
+            7,
+            3,
+            true,
+        );
 
         let pk_s = pk.to_string();
         let expected_pct = format!(

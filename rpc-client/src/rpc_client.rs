@@ -4344,7 +4344,7 @@ impl RpcClient {
                 maybe_feature_account
                     .value
                     .map(|feature_account| {
-                        bincode::deserialize(feature_account.data()).map_err(|_| {
+                        wincode::deserialize(feature_account.data()).map_err(|_| {
                             ClientError::from(ErrorKind::Custom(
                                 "Failed to deserialize feature account".to_string(),
                             ))

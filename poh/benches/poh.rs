@@ -153,7 +153,7 @@ fn bench_poh_recorder_record(bencher: &mut Bencher) {
     let txs: Vec<_> = txs.iter().map(|tx| tx.to_versioned_transaction()).collect();
     bencher.iter(|| {
         let _record_result = poh_recorder
-            .record(bank.slot(), black_box(h1), black_box(txs.clone()))
+            .record(bank.bank_id(), black_box(h1), black_box(txs.clone()))
             .unwrap();
     });
     poh_recorder.tick();

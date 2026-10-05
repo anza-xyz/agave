@@ -10,8 +10,9 @@ use {
     solana_accounts_db::accounts_update_notifier_interface::{
         AccountForGeyser, AccountsUpdateNotifierInterface,
     },
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
+    solana_runtime::bank::BankId,
     solana_transaction::sanitized::SanitizedTransaction,
     std::sync::Arc,
 };
@@ -179,7 +180,7 @@ impl AccountsUpdateNotifierImpl {
             match plugin.update_account_for_bank(
                 ReplicaAccountInfoVersions::V0_0_3(&account),
                 slot,
-                bank_id,
+                bank_id.into(),
             ) {
                 Err(err) => {
                     error!(
@@ -225,7 +226,7 @@ mod tests {
         name: &'static str,
         account_updates_enabled: bool,
         account_update_count: Arc<AtomicUsize>,
-        account_update_bank_ids: Arc<Mutex<Vec<BankId>>>,
+        account_update_bank_ids: Arc<Mutex<Vec<u64>>>,
     }
 
     impl GeyserPlugin for TestAccountPlugin {
@@ -237,7 +238,7 @@ mod tests {
             &self,
             account: ReplicaAccountInfoVersions,
             _slot: Slot,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
             let ReplicaAccountInfoVersions::V0_0_3(_account) = account else {
                 panic!("expected V0_0_3 account info");
@@ -302,13 +303,13 @@ mod tests {
         let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false);
         let account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
         let pubkey = Pubkey::new_unique();
-        let bank_id = 9;
+        let bank_id = BankId::new(9);
 
         notifier.notify_account_update(42, bank_id, &account, &None, &pubkey, 7);
 
         assert_eq!(enabled_count.load(Ordering::Relaxed), 1);
         assert_eq!(disabled_count.load(Ordering::Relaxed), 0);
-        assert_eq!(*enabled_bank_ids.lock().unwrap(), vec![bank_id]);
+        assert_eq!(*enabled_bank_ids.lock().unwrap(), vec![u64::from(bank_id)]);
         assert!(disabled_bank_ids.lock().unwrap().is_empty());
     }
 
@@ -340,9 +341,6 @@ mod tests {
         notifier.notify_account_restore_from_snapshot(42, 7, &account);
 
         assert_eq!(account_update_count.load(Ordering::Relaxed), 1);
-        assert_eq!(
-            *account_update_bank_ids.lock().unwrap(),
-            Vec::<BankId>::new()
-        );
+        assert_eq!(*account_update_bank_ids.lock().unwrap(), Vec::<u64>::new());
     }
 }

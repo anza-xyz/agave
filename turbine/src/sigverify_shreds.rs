@@ -23,7 +23,7 @@ use {
     solana_perf::{
         self,
         deduper::Deduper,
-        packet::{PacketBatch, PacketRef, PacketRefMut},
+        packet::{BytesPacket, PacketBatch},
     },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -190,12 +190,12 @@ fn run_shred_sigverify<const K: usize>(
             .flatten()
             .filter(|packet| {
                 !packet.meta().discard()
-                    && shred::wire::get_shred(packet.as_ref())
+                    && shred::wire::get_shred(packet)
                         .map(|shred| deduper.dedup(shred))
                         .unwrap_or(true)
                     && !packet.meta().repair()
             })
-            .map(|mut packet| packet.meta_mut().set_discard(true))
+            .map(|packet| packet.meta_mut().set_discard(true))
             .count()
     });
     let (working_bank, root_bank) = {
@@ -220,9 +220,9 @@ fn run_shred_sigverify<const K: usize>(
             .par_iter_mut()
             .flatten()
             .filter(|packet| !packet.meta().discard())
-            .for_each(|mut packet| {
+            .for_each(|packet| {
                 if maybe_verify_and_resign_packet(
-                    &mut packet,
+                    packet,
                     &root_bank,
                     &working_bank,
                     cluster_info,
@@ -285,7 +285,7 @@ fn run_shred_sigverify<const K: usize>(
 /// Extracts shred bytes and, for repaired shreds, the location where the shred
 /// should be inserted into blockstore.
 fn extract_shred_and_location(
-    packet: PacketRef,
+    packet: &BytesPacket,
     repair_nonce_location_lookup: &RepairNonceLocationLookup,
     stats: &mut ShredSigVerifyStats,
 ) -> Option<(Vec<u8>, Option<BlockLocation>)> {
@@ -308,7 +308,7 @@ fn extract_shred_and_location(
 /// Checks whether the shred in the given `packet` is of resigned variant. If
 /// yes, it calls [`verify_and_resign_shred`].
 fn maybe_verify_and_resign_packet(
-    packet: &mut PacketRefMut,
+    packet: &mut BytesPacket,
     root_bank: &Bank,
     working_bank: &Bank,
     cluster_info: &ClusterInfo,
@@ -318,7 +318,7 @@ fn maybe_verify_and_resign_packet(
     keypair: &Keypair,
 ) -> Result<(), ResignError> {
     let repair = packet.meta().repair();
-    let shred = get_shred(packet.as_ref()).ok_or(shred::Error::InvalidPacketSize)?;
+    let shred = get_shred(packet).ok_or(shred::Error::InvalidPacketSize)?;
     let is_signed = is_retransmitter_signed_variant(shred)?;
     if is_signed {
         // Repair packets do not follow turbine tree and
@@ -445,8 +445,8 @@ fn get_slot_leaders<'a>(
         .iter_mut()
         .flat_map(|batch| batch.iter_mut())
         .filter(|packet| !packet.meta().discard())
-        .filter_map(move |mut packet| {
-            let shred = shred::layout::get_shred(packet.as_ref());
+        .filter_map(move |packet| {
+            let shred = shred::layout::get_shred(packet);
             let slot = shred.and_then(shred::layout::get_slot)?;
             let leader = leader_schedule_cache
                 .slot_leader_at(slot, Some(bank))
@@ -665,7 +665,7 @@ mod tests {
                 &cache,
             )
         });
-        assert!(!batches[0].get(0).unwrap().meta().discard());
+        assert!(!batches[0].first().unwrap().meta().discard());
         assert!(batches[0].get(1).unwrap().meta().discard());
     }
 
@@ -718,34 +718,13 @@ mod tests {
             let keypair = Keypair::new();
             let nonce = repaired.then(|| rng.random::<Nonce>());
             if is_last_in_slot {
-                let packet = &mut shred.payload().to_packet(nonce);
-                let buf_before = packet.buffer_mut().to_vec();
-                if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
-                }
-                maybe_verify_and_resign_packet(
-                    &mut packet.into(),
-                    &root_bank,
-                    &working_bank,
-                    &cluster_info,
-                    &leader_schedule_cache,
-                    &cluster_nodes_cache,
-                    &stats,
-                    &keypair,
-                )
-                .expect("packet should pass the verification");
-                assert!(!packet.meta().discard());
-
-                // Check whether the packet was modified.
-                assert_ne!(&buf_before, &packet.data(..).unwrap());
-
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
                 let buf_addr = bytes_packet.buffer().as_ptr().addr();
                 maybe_verify_and_resign_packet(
-                    &mut bytes_packet.as_mut(),
+                    &mut bytes_packet,
                     &root_bank,
                     &working_bank,
                     &cluster_info,
@@ -761,30 +740,13 @@ mod tests {
                 let buf_addr_after = bytes_packet.buffer().as_ptr().addr();
                 assert_ne!(buf_addr, buf_addr_after);
             } else {
-                let packet = &mut shred.payload().to_packet(nonce);
-                if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
-                }
-                maybe_verify_and_resign_packet(
-                    &mut packet.into(),
-                    &root_bank,
-                    &working_bank,
-                    &cluster_info,
-                    &leader_schedule_cache,
-                    &cluster_nodes_cache,
-                    &stats,
-                    &keypair,
-                )
-                .expect("packet should pass the verification");
-                assert!(!packet.meta().discard());
-
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
                 let buf_addr = bytes_packet.buffer().as_ptr().addr();
                 maybe_verify_and_resign_packet(
-                    &mut bytes_packet.as_mut(),
+                    &mut bytes_packet,
                     &root_bank,
                     &working_bank,
                     &cluster_info,
@@ -794,7 +756,7 @@ mod tests {
                     &keypair,
                 )
                 .expect("packet should pass the verification");
-                assert!(!packet.meta().discard());
+                assert!(!bytes_packet.meta().discard());
 
                 // Packet should not be modified.
                 let buf_addr_after = bytes_packet.buffer().as_ptr().addr();

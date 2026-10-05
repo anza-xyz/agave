@@ -73,21 +73,6 @@ impl Payload {
         packet.meta_mut().size = size;
     }
 
-    pub fn to_packet(&self, nonce: Option<Nonce>) -> Packet {
-        let mut packet = Packet::default();
-        let size = self.len();
-        packet.buffer_mut()[..size].copy_from_slice(self);
-        let size = if let Some(nonce) = nonce {
-            let full_size = size + mem::size_of::<Nonce>();
-            packet.buffer_mut()[size..full_size].copy_from_slice(&nonce.to_le_bytes());
-            full_size
-        } else {
-            size
-        };
-        packet.meta_mut().size = size;
-        packet
-    }
-
     pub fn to_bytes_packet(&self, nonce: Option<Nonce>) -> BytesPacket {
         let cap = self.len() + nonce.map(|_| mem::size_of::<Nonce>()).unwrap_or(0);
         let mut buffer = BytesMut::with_capacity(cap);
@@ -292,8 +277,8 @@ mod test {
         );
 
         // Ensure wire::get_shred_and_repair_nonce reads the same nonce (LE).
-        let (bytes, got) = wire::get_shred_and_repair_nonce(bytes_packet.as_ref())
-            .expect("valid packet and nonce");
+        let (bytes, got) =
+            wire::get_shred_and_repair_nonce(&bytes_packet).expect("valid packet and nonce");
         assert_eq!(bytes, shred.payload().as_ref());
         assert_eq!(got, Some(nonce));
     }

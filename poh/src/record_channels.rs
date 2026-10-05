@@ -11,7 +11,7 @@ use std::sync::{
 use {
     crate::poh_recorder::Record,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, bounded},
-    solana_clock::BankId,
+    solana_runtime::bank::BankId,
     std::time::Duration,
 };
 
@@ -112,10 +112,10 @@ impl RecordSender {
                 BankIdAllowedInsertions::allowed_insertions(current_bank_id_allowed_insertions),
             );
 
-            if bank_id == BankIdAllowedInsertions::DISABLED_BANK_ID {
+            if bank_id == EncodedBankId::DISABLED {
                 return Err(RecordSenderError::Shutdown);
             }
-            if bank_id != record.bank_id {
+            if bank_id != EncodedBankId::new(record.bank_id) {
                 return Err(RecordSenderError::InactiveBankId);
             }
             if allowed_insertions == 0 {
@@ -203,12 +203,12 @@ impl RecordReceiver {
     /// Check if the channel is shutdown.
     pub fn is_shutdown(&self) -> bool {
         BankIdAllowedInsertions::bank_id(self.bank_id_allowed_insertions.0.load(Ordering::Acquire))
-            == BankIdAllowedInsertions::DISABLED_BANK_ID
+            == EncodedBankId::DISABLED
     }
 
     /// Re-enable the channel after a shutdown.
     pub fn restart(&mut self, bank_id: BankId) {
-        assert!(bank_id <= BankIdAllowedInsertions::MAX_BANK_ID);
+        let bank_id = EncodedBankId::new(bank_id);
         assert!(self.receiver.is_empty()); // Should be empty before restarting.
 
         // Reset transaction indexes if tracking them - BEFORE allowing new insertions.
@@ -313,6 +313,25 @@ impl RecordReceiver {
     }
 }
 
+/// The bank_id field of [`BankIdAllowedInsertions`]: a [`BankId`], or
+/// [`Self::DISABLED`] while shutdown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EncodedBankId(u64);
+
+impl EncodedBankId {
+    const BITS: u64 =
+        BankIdAllowedInsertions::NUM_BITS - BankIdAllowedInsertions::ALLOWED_INSERTIONS_BITS;
+
+    const DISABLED: Self = Self((1 << Self::BITS) - 1);
+    const MAX: Self = Self(Self::DISABLED.0 - 1);
+
+    fn new(bank_id: BankId) -> Self {
+        let bank_id = u64::from(bank_id);
+        assert!(bank_id <= Self::MAX.0);
+        Self(bank_id)
+    }
+}
+
 /// Encoded u64 where the upper 54 bits are the bank_id and the lower 10 bits are
 /// the number of allowed insertions at the current time.
 /// Each [`Record`] is a separate hash in the PoH stream, so the number of allowed
@@ -330,17 +349,14 @@ impl BankIdAllowedInsertions {
     const NUM_BITS: u64 = 64;
     /// Number of bits used to track allowed insertions.
     const ALLOWED_INSERTIONS_BITS: u64 = 10;
-    const BANK_ID_BITS: u64 = Self::NUM_BITS - Self::ALLOWED_INSERTIONS_BITS;
 
-    const DISABLED_BANK_ID: BankId = (1 << Self::BANK_ID_BITS) - 1;
-    const MAX_BANK_ID: BankId = Self::DISABLED_BANK_ID - 1;
     const MAX_ALLOWED_INSERTIONS: u64 = (1 << Self::ALLOWED_INSERTIONS_BITS) - 1;
 
-    const SHUTDOWN: u64 = Self::encoded_value(Self::DISABLED_BANK_ID, 0);
+    const SHUTDOWN: u64 = Self::encoded_value(EncodedBankId::DISABLED, 0);
 
     /// Create a new `BankIdAllowedInsertions` with state consistent with a
     /// shutdown state:
-    /// - bank_id = `DISABLED_BANK_ID`
+    /// - bank_id = `EncodedBankId::DISABLED`
     /// - allowed_insertions = 0
     fn new_shutdown() -> Self {
         Self(Arc::new(AtomicU64::new(Self::SHUTDOWN)))
@@ -351,15 +367,14 @@ impl BankIdAllowedInsertions {
         self.0.store(Self::SHUTDOWN, Ordering::Release);
     }
 
-    const fn encoded_value(bank_id: BankId, allowed_insertions: u64) -> u64 {
-        assert!(bank_id <= Self::DISABLED_BANK_ID);
+    const fn encoded_value(bank_id: EncodedBankId, allowed_insertions: u64) -> u64 {
         assert!(allowed_insertions <= Self::MAX_ALLOWED_INSERTIONS);
-        (bank_id << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
+        (bank_id.0 << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
     }
 
-    /// The current bank_id, or [`Self::DISABLED_BANK_ID`] if shutdown.
-    fn bank_id(value: u64) -> BankId {
-        (value >> Self::ALLOWED_INSERTIONS_BITS) & Self::DISABLED_BANK_ID
+    /// The current bank_id, or [`EncodedBankId::DISABLED`] if shutdown.
+    fn bank_id(value: u64) -> EncodedBankId {
+        EncodedBankId(value >> Self::ALLOWED_INSERTIONS_BITS)
     }
 
     /// How many insertions/sends are allowed at this time.
@@ -386,30 +401,36 @@ mod tests {
 
         // Initially shutdown.
         assert!(matches!(
-            sender.try_send(test_record(0, 1)),
+            sender.try_send(test_record(BankId::new(0), 1)),
             Err(RecordSenderError::Shutdown)
         ));
 
         // Restart for bank_id 1.
-        receiver.restart(1);
+        receiver.restart(BankId::new(1));
 
         // Record for bank_id 0 fails.
         assert!(matches!(
-            sender.try_send(test_record(0, 1)),
+            sender.try_send(test_record(BankId::new(0), 1)),
             Err(RecordSenderError::InactiveBankId)
         ));
 
         // Record for bank_id 1 succeeds.
-        assert!(matches!(sender.try_send(test_record(1, 1)), Ok(None)));
+        assert!(matches!(
+            sender.try_send(test_record(BankId::new(1), 1)),
+            Ok(None)
+        ));
 
         // Fill the rest of the channel.
         for _ in 1..BankIdAllowedInsertions::MAX_ALLOWED_INSERTIONS {
-            assert!(matches!(sender.try_send(test_record(1, 1)), Ok(None)));
+            assert!(matches!(
+                sender.try_send(test_record(BankId::new(1), 1)),
+                Ok(None)
+            ));
         }
 
         // Another record for bank_id 1 fails because the channel is full.
         assert!(matches!(
-            sender.try_send(test_record(1, 1)),
+            sender.try_send(test_record(BankId::new(1), 1)),
             Err(RecordSenderError::Full)
         ));
 
@@ -426,24 +447,30 @@ mod tests {
 
         // Initially shutdown.
         assert!(matches!(
-            sender.try_send(test_record(0, 1)),
+            sender.try_send(test_record(BankId::new(0), 1)),
             Err(RecordSenderError::Shutdown)
         ));
 
         // Restart for bank_id 1.
-        receiver.restart(1);
+        receiver.restart(BankId::new(1));
 
         // Record for bank_id 0 fails.
         assert!(matches!(
-            sender.try_send(test_record(0, 1)),
+            sender.try_send(test_record(BankId::new(0), 1)),
             Err(RecordSenderError::InactiveBankId)
         ));
 
         // Record for bank_id 1 with 1 transaction succeeds.
-        assert!(matches!(sender.try_send(test_record(1, 1)), Ok(Some(0))));
+        assert!(matches!(
+            sender.try_send(test_record(BankId::new(1), 1)),
+            Ok(Some(0))
+        ));
 
         // Record for bank_id 1 with 3 transactions succeeds.
-        assert!(matches!(sender.try_send(test_record(1, 3)), Ok(Some(1))));
+        assert!(matches!(
+            sender.try_send(test_record(BankId::new(1), 3)),
+            Ok(Some(1))
+        ));
 
         assert!(*sender.transaction_indexes.as_ref().unwrap().lock().unwrap() == 4);
     }
@@ -451,7 +478,10 @@ mod tests {
 
 #[cfg(all(test, feature = "shuttle-test"))]
 mod shuttle_tests {
-    use super::{tests::test_record, *};
+    use {
+        super::{tests::test_record, *},
+        solana_runtime::bank::BankIdGenerator,
+    };
 
     #[test]
     fn test_sender_shutdown_safety_race() {
@@ -464,14 +494,15 @@ mod shuttle_tests {
 
                 shuttle::thread::spawn(move || {
                     let mut successful_sends = 0;
-                    let mut bank_id = 0;
+                    let bank_ids = BankIdGenerator::default();
+                    let mut bank_id = bank_ids.next();
                     let mut had_successful_send = false;
                     while successful_sends < ITERATIONS_PER_RUN {
                         if sender.try_send(test_record(bank_id, 1)).is_ok() {
                             had_successful_send = true;
                             successful_sends += 1;
                         } else if had_successful_send {
-                            bank_id += 1;
+                            bank_id = bank_ids.next();
                             had_successful_send = false;
                         }
                     }
@@ -481,12 +512,13 @@ mod shuttle_tests {
                 // the receiver can receive a record after shutdown is called.
                 // This can cause PoH to panic because it may receive a record
                 // for a bank_id that has already been completed.
-                let mut current_bank_id = 0;
+                let bank_ids = BankIdGenerator::default();
+                let mut current_bank_id = bank_ids.next();
                 receiver.restart(current_bank_id);
                 let mut receives = 0;
                 while receives < ITERATIONS_PER_RUN {
                     if receiver.is_shutdown() && receiver.is_safe_to_restart() {
-                        current_bank_id += 1;
+                        current_bank_id = bank_ids.next();
                         receiver.restart(current_bank_id);
                     }
 
@@ -507,12 +539,12 @@ mod shuttle_tests {
         shuttle::check_random(
             || {
                 let (sender, mut receiver) = record_channels(false);
-                receiver.restart(0);
+                receiver.restart(BankId::new(0));
 
                 {
                     let sender = sender.clone();
                     shuttle::thread::spawn(move || {
-                        let _ = sender.try_send(test_record(0, 1));
+                        let _ = sender.try_send(test_record(BankId::new(0), 1));
                     });
                 }
 
@@ -535,7 +567,7 @@ mod shuttle_tests {
         shuttle::check_random(
             || {
                 let (sender, mut receiver) = record_channels(false);
-                receiver.restart(0);
+                receiver.restart(BankId::new(0));
 
                 // Model a sender that reserved capacity before shutdown but
                 // has not yet enqueued its record on the inner channel.
@@ -543,14 +575,16 @@ mod shuttle_tests {
                 let active_senders = sender.active_senders.clone();
                 let inner_sender = sender.sender.clone();
                 shuttle::thread::spawn(move || {
-                    inner_sender.try_send(test_record(0, 1)).unwrap();
+                    inner_sender
+                        .try_send(test_record(BankId::new(0), 1))
+                        .unwrap();
                     active_senders.fetch_sub(1, Ordering::AcqRel);
                 });
 
                 receiver.shutdown();
                 let records: Vec<_> = receiver.drain_after_shutdown().collect();
                 assert_eq!(records.len(), 1);
-                assert_eq!(records[0].bank_id, 0);
+                assert_eq!(records[0].bank_id, BankId::new(0));
                 assert!(receiver.is_safe_to_restart());
             },
             NUM_TEST_RUNS,

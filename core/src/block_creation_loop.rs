@@ -206,6 +206,14 @@ pub struct ReplayHighestFrozen {
 
 #[derive(Debug, Error)]
 enum StartLeaderError {
+    /// The cached identity can differ from the scheduled leader after set-identity.
+    #[error("Identity {identity} is not the scheduled leader {leader} for slot {slot}")]
+    LeaderIdentityMismatch {
+        slot: Slot,
+        identity: Pubkey,
+        leader: Pubkey,
+    },
+
     /// Replay has not yet frozen the parent slot
     #[error("Replay is behind for parent slot {0} for leader slot {1}")]
     ReplayIsBehind(/* parent slot */ Slot, /* leader slot */ Slot),
@@ -1324,11 +1332,11 @@ fn create_and_insert_leader_bank(
     };
 
     if ctx.my_pubkey != leader.id {
-        panic!(
-            "{}: Attempting to produce a block for {slot}, however the leader is {}. Something \
-             has gone wrong with the block creation loop. exiting",
-            ctx.my_pubkey, leader.id,
-        );
+        return Err(StartLeaderError::LeaderIdentityMismatch {
+            slot,
+            identity: ctx.my_pubkey,
+            leader: leader.id,
+        });
     }
 
     if ctx.poh_recorder.read().unwrap().start_bank_id() != parent_bank.bank_id() {
@@ -1347,6 +1355,13 @@ fn create_and_insert_leader_bank(
             bank.slot(),
         );
     }
+
+    // Bank construction can write to shared runtime state, including the program cache. Keep the
+    // parent live until construction and local initialization are complete so cleanup cannot prune
+    // that state concurrently.
+    let Some(parent_execution_guard) = parent_bank.try_enter_transaction_execution() else {
+        return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
+    };
 
     let tpu_bank = ReplayStage::new_bank_from_parent_with_notify(
         parent_bank.clone(),
@@ -1382,6 +1397,9 @@ fn create_and_insert_leader_bank(
         .expect(
             "No feature flag could have been activated in this same slot to cause reserve to fail",
         );
+
+    // Insertion waits synchronously for ReplayStage, which may be waiting to quiesce this parent.
+    drop(parent_execution_guard);
 
     // Insert the bank
     let tpu_bank = ctx.bank_forks_controller.insert_bank(tpu_bank)?;
@@ -1614,6 +1632,127 @@ mod tests {
                 .unwrap()
             })
             .collect()
+    }
+
+    #[test]
+    fn test_leader_bank_skips_stale_identity_and_recovers() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let old_identity = Pubkey::new_unique();
+        let new_identity = Pubkey::new_unique();
+        let genesis = create_genesis_config_with_leader(10_000, &old_identity, 1_000);
+        let root_bank = Bank::new_for_tests(&genesis.genesis_config);
+        let parent_block_id = Hash::new_unique();
+        root_bank.set_block_id(Some(parent_block_id));
+        root_bank.freeze();
+        let bank_forks = BankForks::new_rw_arc(root_bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let leader_schedule_cache = fixed_leader_schedule(new_identity, &root_bank);
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let poh_config = PohConfig::default();
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            root_bank.tick_height(),
+            root_bank.last_blockhash(),
+            root_bank.clone(),
+            Some((1, 1)),
+            root_bank.ticks_per_slot(),
+            blockstore.clone(),
+            &leader_schedule_cache,
+            &poh_config,
+            exit.clone(),
+        );
+        poh_recorder.enable_alpenglow();
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+
+        let (_record_sender, record_receiver) = record_channels(false);
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
+        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
+        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
+
+        let mut ctx = LeaderContext {
+            exit,
+            my_pubkey: old_identity,
+            leader_window_info_receiver,
+            pending_parent_ready: None,
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
+            highest_finalized: Arc::new(RwLock::new(None)),
+            blockstore,
+            record_receiver,
+            poh_recorder,
+            leader_schedule_cache,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
+            bank_forks_controller,
+            rpc_subscriptions: None,
+            slot_status_notifier: None,
+            entry_notification_sender: None,
+            banking_tracer: BankingTracer::new_disabled(),
+            replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
+            reward_certs_requestor,
+            banking_stage_sender,
+            metrics: LoopMetrics::default(),
+            genesis_cert_block_marker: test_genesis_cert_block_marker(),
+        };
+        // A window for the new identity can arrive before the loop refreshes its cached identity.
+        let mut slot_metrics = SlotMetrics::new(1, false);
+        let err = produce_window(
+            false,
+            1,
+            3,
+            Block {
+                slot: 0,
+                block_id: BlockId::from(parent_block_id),
+            },
+            Instant::now(),
+            &mut ctx,
+            &mut slot_metrics,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            StartLeaderError::LeaderIdentityMismatch { slot: 1, identity, leader }
+                if identity == old_identity && leader == new_identity
+        ));
+        assert_eq!(slot_metrics.attempt_start_leader_count, 1);
+        assert!(!ctx.poh_recorder.read().unwrap().has_bank());
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            root_bank.bank_id()
+        );
+        assert!(ctx.bank_forks.read().unwrap().get(1).is_none());
+        assert!(entry_receiver.is_empty());
+        assert!(ctx.record_receiver.is_shutdown());
+        assert!(ctx.record_receiver.is_safe_to_restart());
+        assert!(!ctx.exit.load(Ordering::Relaxed));
+
+        // After refreshing the identity, a later window can still start a bank.
+        ctx.my_pubkey = new_identity;
+        let bank = start_leader_wait_for_parent_replay(
+            &mut ctx,
+            &mut SlotMetrics::new(4, false),
+            4,
+            0,
+            Some(parent_block_id),
+            Instant::now(),
+        )
+        .unwrap();
+        assert_eq!(bank.slot(), 4);
+        assert_eq!(bank.leader_id(), &new_identity);
+        assert_eq!(
+            ctx.bank_forks.read().unwrap().get(4).unwrap().bank_id(),
+            bank.bank_id()
+        );
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id(),
+            bank.bank_id()
+        );
+        assert!(!ctx.record_receiver.is_shutdown());
+        let (announced_bank, (message, _)) = entry_receiver.try_recv().unwrap();
+        assert_eq!(announced_bank.bank_id(), bank.bank_id());
+        assert!(matches!(message, RecorderMessage::SlotStart));
     }
 
     #[test]

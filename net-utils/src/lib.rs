@@ -330,7 +330,7 @@ mod tests {
             address: IpAddr::from([u16::MAX; 8]), // IPv6 variant
             shred_version: Some(u16::MAX),
         };
-        let resp_size = bincode::serialized_size(&resp).unwrap();
+        let resp_size = wincode::serialized_size(&resp).unwrap();
         assert_eq!(
             IP_ECHO_SERVER_RESPONSE_LENGTH,
             HEADER_LENGTH + resp_size as usize
@@ -348,10 +348,10 @@ mod tests {
             shred_version: Some(42),
         };
         let mut data = vec![0u8; IP_ECHO_SERVER_RESPONSE_LENGTH];
-        bincode::serialize_into(&mut data[HEADER_LENGTH..], &response).unwrap();
+        wincode::serialize_into(&mut data[HEADER_LENGTH..], &response).unwrap();
         data.truncate(HEADER_LENGTH + 20);
         assert_eq!(
-            bincode::deserialize::<IpAddr>(&data[HEADER_LENGTH..]).unwrap(),
+            wincode::deserialize::<IpAddr>(&data[HEADER_LENGTH..]).unwrap(),
             address
         );
     }
@@ -363,11 +363,20 @@ mod tests {
             525u16, 524u16, 523u16, 522u16, 521u16, 520u16, 519u16, 518u16,
         ]);
         let mut data = [0u8; IP_ECHO_SERVER_RESPONSE_LENGTH];
-        bincode::serialize_into(&mut data[HEADER_LENGTH..], &address).unwrap();
+        wincode::serialize_into(&mut data[HEADER_LENGTH..], &address).unwrap();
         let response: Result<IpEchoServerResponse, _> =
-            bincode::deserialize(&data[HEADER_LENGTH..]);
+            wincode::deserialize(&data[HEADER_LENGTH..]);
         assert_eq!(
             response.unwrap(),
+            IpEchoServerResponse {
+                address,
+                shred_version: None,
+            }
+        );
+
+        let unpadded = wincode::serialize(&address).unwrap();
+        assert_eq!(
+            wincode::deserialize::<IpEchoServerResponse>(&unpadded).unwrap(),
             IpEchoServerResponse {
                 address,
                 shred_version: None,
