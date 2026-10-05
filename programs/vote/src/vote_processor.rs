@@ -388,23 +388,8 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &rent,
             )
         }
-        VoteInstruction::DepositDelegatorRewards { deposit } => {
-            // SIMD-0123: Deposit delegator rewards.
-            // Requires:
-            // * SIMD-0185: Vote State V4
-            // * SIMD-0291: Commission in Basis Points
-            // * SIMD-0232: Custom Commission Collector
-            let feature_set = invoke_context.get_feature_set();
-            if !feature_set.commission_rate_in_basis_points
-                || !feature_set.custom_commission_collector
-                || !feature_set.block_revenue_sharing
-            {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-
-            instruction_context.check_number_of_instruction_accounts(2)?;
-            drop(me);
-            vote_state::deposit_delegator_rewards(invoke_context, 0, 1, deposit, &signers)
+        VoteInstruction::DepositDelegatorRewards { .. } => {
+            return Err(InstructionError::InvalidInstructionData);
         }
     }
 });
@@ -4854,7 +4839,62 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_deposit_delegator_rewards_fails() {
+        let (vote_pubkey, _authorized_voter, _authorized_withdrawer, vote_account_v4) =
+            create_test_account_with_authorized();
+
+        // Create source account with enough lamports to transfer.
+        let source_pubkey = Pubkey::new_unique();
+        let source_lamports = 1_000_000;
+        let source_account =
+            AccountSharedData::new(source_lamports, 0, &solana_sdk_ids::system_program::id());
+
+        let deposit_amount = 100_000;
+
+        let instruction_data = serialize(&VoteInstruction::DepositDelegatorRewards {
+            deposit: deposit_amount,
+        })
+        .unwrap();
+
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: source_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: solana_sdk_ids::system_program::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account_v4.clone()),
+            (source_pubkey, source_account.clone()),
+            (
+                solana_sdk_ids::system_program::id(),
+                AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+            ),
+        ];
+
+        process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+    }
+
     // Test DepositDelegatorRewards instruction (SIMD-0123).
+    #[ignore]
     #[test]
     fn test_deposit_delegator_rewards() {
         const DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS: u64 =
