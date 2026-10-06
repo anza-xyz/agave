@@ -352,7 +352,7 @@ mod tests {
     #[test_case(
         VersionedBlockMarker::from_update_parent(UpdateParentV1 {
             new_parent_slot: 43,
-            new_parent_block_id: Hash::new_unique(),
+            new_parent_block_id: BlockId::new_unique(),
         });
         "update_parent"
     )]

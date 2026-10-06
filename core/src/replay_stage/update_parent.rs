@@ -420,7 +420,7 @@ pub(super) fn handle_abandoned_bank(
             slot: bank_slot,
             cleared_bank_id: bank.bank_id(),
             parent_slot: new_parent_slot,
-            parent_block_id: new_parent_block_id,
+            parent_block_id: new_parent_block_id.to_hash(),
         },
     );
 }

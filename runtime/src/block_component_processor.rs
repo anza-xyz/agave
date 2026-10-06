@@ -1323,7 +1323,7 @@ mod tests {
             marker_step(
                 VersionedBlockMarker::from_update_parent(UpdateParentV1 {
                     new_parent_slot: 0,
-                    new_parent_block_id: Hash::default(),
+                    new_parent_block_id: BlockId::default(),
                 }),
                 allow_initial_update_parent,
             )
@@ -1341,7 +1341,7 @@ mod tests {
                         shred_version,
                         VersionedBlockMarker::from_update_parent(UpdateParentV1 {
                             new_parent_slot: 0,
-                            new_parent_block_id: Hash::default(),
+                            new_parent_block_id: BlockId::default(),
                         }),
                         allow_initial_update_parent,
                         None,
@@ -1401,7 +1401,7 @@ mod tests {
         let abandoned = || {
             E::AbandonedBank(VersionedUpdateParent::V1(UpdateParentV1 {
                 new_parent_slot: 0,
-                new_parent_block_id: Hash::default(),
+                new_parent_block_id: BlockId::default(),
             }))
         };
 
@@ -1552,7 +1552,7 @@ mod tests {
 
         let update_parent_marker = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
-            new_parent_block_id: Hash::default(),
+            new_parent_block_id: BlockId::default(),
         });
         let abandoned =
             || BlockComponentProcessorError::AbandonedBank(update_parent_marker.clone());

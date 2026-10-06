@@ -56,7 +56,7 @@ fn maybe_convert_update_parent_to_block_header(
     // so UpdateParent becomes the effective header in Bigtable.
     VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: update_parent.new_parent_slot,
-        parent_block_id: update_parent.new_parent_block_id,
+        parent_block_id: update_parent.new_parent_block_id.to_hash(),
     })
 }
 
@@ -346,6 +346,7 @@ pub async fn upload_confirmed_blocks(
 mod tests {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         solana_entry::block_component::{BlockFooterV1, UpdateParentV1},
         solana_hash::Hash,
     };
@@ -353,7 +354,7 @@ mod tests {
     #[test]
     fn test_split_components_converts_update_parent_to_block_header() {
         let new_parent_slot = 42;
-        let new_parent_block_id = Hash::new_unique();
+        let new_parent_block_id = BlockId::new_unique();
         let first_entry = EntrySummary {
             num_hashes: 1,
             hash: Hash::new_unique(),
@@ -391,7 +392,7 @@ mod tests {
             vec![
                 VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                     parent_slot: new_parent_slot,
-                    parent_block_id: new_parent_block_id,
+                    parent_block_id: new_parent_block_id.to_hash(),
                 }),
                 footer,
             ]

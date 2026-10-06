@@ -297,7 +297,7 @@ impl StandardBroadcastRun {
         let parent_for_double_merkle = match update_parent {
             VersionedUpdateParent::V1(update_parent) => Block {
                 slot: update_parent.new_parent_slot,
-                block_id: BlockId::from(update_parent.new_parent_block_id),
+                block_id: update_parent.new_parent_block_id,
             },
         };
         self.parent_for_double_merkle = parent_for_double_merkle;
@@ -1495,7 +1495,7 @@ mod test {
         let component = BlockComponent::new_block_marker(VersionedBlockMarker::from_update_parent(
             solana_entry::block_component::UpdateParentV1 {
                 new_parent_slot,
-                new_parent_block_id: new_parent_block_id.to_hash(),
+                new_parent_block_id,
             },
         ));
         let mut stats = ProcessShredsStats::default();

@@ -951,7 +951,7 @@ fn send_update_parent(
 ) -> Result<(), PohRecorderError> {
     let update_parent = UpdateParentV1 {
         new_parent_slot: new_parent_block.slot,
-        new_parent_block_id: new_parent_block.block_id.to_hash(),
+        new_parent_block_id: new_parent_block.block_id,
     };
     let marker = VersionedBlockMarker::from_update_parent(update_parent);
     poh_recorder.write().unwrap().send_marker(marker)?;
@@ -2052,7 +2052,7 @@ mod tests {
         let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
 
         let new_parent_slot = 1;
-        let new_parent_hash = Hash::new_unique();
+        let new_parent_block_id = BlockId::new_unique();
         let new_parent = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             root_bank.clone(),
@@ -2061,7 +2061,7 @@ mod tests {
         );
         new_parent.register_unique_recent_blockhash_for_test();
         new_parent.freeze();
-        new_parent.set_block_id(Some(new_parent_hash));
+        new_parent.set_block_id(Some(new_parent_block_id.to_hash()));
         let new_parent_bank_id = new_parent.bank_id();
 
         let optimistic_parent_hash = Hash::new_unique();
@@ -2121,7 +2121,7 @@ mod tests {
                 4,
                 Block {
                     slot: new_parent_slot,
-                    block_id: BlockId::from(new_parent_hash),
+                    block_id: new_parent_block_id,
                 },
             ))),
             highest_finalized: Arc::new(RwLock::new(None)),
@@ -2174,7 +2174,7 @@ mod tests {
             end_slot: 7,
             parent_block: Block {
                 slot: new_parent_slot,
-                block_id: BlockId::from(new_parent_hash),
+                block_id: new_parent_block_id,
             },
             block_timer: parent_ready_started_at,
         };
@@ -2221,7 +2221,7 @@ mod tests {
                 slot: leader_slot,
                 cleared_bank_id: optimistic_bank_id,
                 parent_slot: new_parent_slot,
-                parent_block_id: new_parent_hash,
+                parent_block_id: new_parent_block_id.to_hash(),
             }
         );
         assert_eq!(
@@ -2249,7 +2249,7 @@ mod tests {
 
         let update_parent = recv_update_parent_marker(&entry_receiver);
         assert_eq!(update_parent.new_parent_slot, new_parent_slot);
-        assert_eq!(update_parent.new_parent_block_id, new_parent_hash);
+        assert_eq!(update_parent.new_parent_block_id, new_parent_block_id);
 
         let rescheduled = recv_rescheduled_transactions(&banking_stage_receiver);
         assert_eq!(rescheduled.len(), 2);

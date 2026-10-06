@@ -12,6 +12,7 @@ use {
             },
         },
     },
+    agave_votor_messages::consensus_message::BlockId,
     assert_matches::assert_matches,
     rand::{Rng, rng, seq::SliceRandom},
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
@@ -72,7 +73,7 @@ fn create_update_parent_shreds_with_shred_parent(
     slot: Slot,
     shred_parent_slot: Slot,
     parent_slot: Slot,
-    parent_block_id: Hash,
+    parent_block_id: BlockId,
     shred_index: u32,
     is_last_in_slot: bool,
 ) -> Vec<Shred> {
@@ -6987,14 +6988,15 @@ fn test_invalid_parent_info_marks_dead(block_header_first: bool, case: (u64, u64
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-    let bh_block_id = Hash::new_unique();
+    let bh_block_id = BlockId::new_unique();
     let up_block_id = if same_block_id {
         bh_block_id
     } else {
-        Hash::new_unique()
+        BlockId::new_unique()
     };
 
-    let block_header_shreds = create_block_header_shreds(slot, bh_parent_slot, bh_block_id);
+    let block_header_shreds =
+        create_block_header_shreds(slot, bh_parent_slot, bh_block_id.to_hash());
     let update_parent_shreds = create_update_parent_shreds_with_shred_parent(
         slot,
         bh_parent_slot,
@@ -7083,7 +7085,7 @@ fn test_invalid_update_parent_parent_info_marks_dead() {
             slot,
             shred_parent_slot,
             update_parent_slot,
-            Hash::new_unique(),
+            BlockId::new_unique(),
             32,
             false,
         );
@@ -7119,7 +7121,7 @@ fn test_update_parent_non_first_leader_window_marks_dead() {
         slot,
         shred_parent_slot,
         update_parent_slot,
-        Hash::new_unique(),
+        BlockId::new_unique(),
         32,
         true,
     ));
@@ -7146,7 +7148,7 @@ fn test_block_header_followed_by_update_parent() {
     assert_eq!(blockstore.meta(slot).unwrap().unwrap().parent_slot, Some(5));
     verify_next_slots(&blockstore, 5, &[slot]);
 
-    let parent_3_id = Hash::new_unique();
+    let parent_3_id = BlockId::new_unique();
     blockstore
         .insert_shreds(
             create_update_parent_shreds_with_shred_parent(slot, 5, 3, parent_3_id, 32, true),
@@ -7161,7 +7163,7 @@ fn test_block_header_followed_by_update_parent() {
         .unwrap()
         .unwrap();
     assert_eq!(parent_info.parent_slot, 3);
-    assert_eq!(parent_info.parent_block_id, parent_3_id);
+    assert_eq!(parent_info.parent_block_id, parent_3_id.to_hash());
     assert!(parent_info.has_update_parent());
 
     verify_next_slots(&blockstore, 5, &[]);
@@ -7187,7 +7189,7 @@ fn test_post_update_orig_after() {
         )
         .unwrap();
 
-    let update_parent_block_id = Hash::new_unique();
+    let update_parent_block_id = BlockId::new_unique();
     blockstore
         .insert_shreds(
             data_shreds(create_update_parent_shreds_with_shred_parent(
@@ -7204,7 +7206,7 @@ fn test_post_update_orig_after() {
 
     let meta = blockstore.meta(slot).unwrap().unwrap();
     assert_eq!(meta.parent_slot, Some(update_parent));
-    assert_eq!(meta.parent_block_id, update_parent_block_id);
+    assert_eq!(meta.parent_block_id, update_parent_block_id.to_hash());
     assert_eq!(meta.replay_fec_set_index, 32);
     assert!(!blockstore.is_dead(slot));
 
@@ -7337,7 +7339,7 @@ pub(crate) fn insert_complete_update_parent_slot(
         slot,
         original_parent,
         update_parent,
-        Hash::new_unique(),
+        BlockId::new_unique(),
         update_parent_fec_set_index,
         false,
     ));
@@ -7429,7 +7431,7 @@ fn test_purge_exact_recovers_malformed_update_parent_slot(
         slot,
         original_parent,
         update_parent,
-        Hash::new_unique(),
+        BlockId::new_unique(),
         update_parent_fec_set_index,
         false,
     ));
@@ -7642,7 +7644,7 @@ fn test_update_parent_shred_parent(update_parent_first: bool) {
         slot,
         original_parent,
         update_parent,
-        Hash::new_unique(),
+        BlockId::new_unique(),
         32,
         false,
     ));
@@ -7720,7 +7722,7 @@ fn test_marker_boundary_ooo() {
     assert_eq!(meta.parent_slot, Some(original_parent));
     assert_eq!(meta.replay_fec_set_index, 0);
 
-    let update_parent_block_id = Hash::new_unique();
+    let update_parent_block_id = BlockId::new_unique();
     blockstore
         .insert_shreds(
             data_shreds(create_update_parent_shreds_with_shred_parent(
@@ -7737,7 +7739,7 @@ fn test_marker_boundary_ooo() {
 
     let meta = blockstore.meta(slot).unwrap().unwrap();
     assert_eq!(meta.parent_slot, Some(update_parent));
-    assert_eq!(meta.parent_block_id, update_parent_block_id);
+    assert_eq!(meta.parent_block_id, update_parent_block_id.to_hash());
     assert_eq!(meta.replay_fec_set_index, 32);
     for shred_index in [64, 96, 128] {
         assert!(
@@ -7766,7 +7768,14 @@ fn test_multiple_children_reparenting() {
 
     blockstore
         .insert_shreds(
-            create_update_parent_shreds_with_shred_parent(44, 35, 32, Hash::new_unique(), 32, true),
+            create_update_parent_shreds_with_shred_parent(
+                44,
+                35,
+                32,
+                BlockId::new_unique(),
+                32,
+                true,
+            ),
             true,
         )
         .unwrap();
@@ -7780,7 +7789,14 @@ fn test_multiple_children_reparenting() {
 
     blockstore
         .insert_shreds(
-            create_update_parent_shreds_with_shred_parent(40, 35, 33, Hash::new_unique(), 32, true),
+            create_update_parent_shreds_with_shred_parent(
+                40,
+                35,
+                33,
+                BlockId::new_unique(),
+                32,
+                true,
+            ),
             true,
         )
         .unwrap();
@@ -7804,7 +7820,7 @@ fn test_interleaved_shred_arrival() {
 
     // Split update parent shreds across two batches
     let mut update_shreds =
-        create_update_parent_shreds_with_shred_parent(52, 48, 45, Hash::new_unique(), 32, true);
+        create_update_parent_shreds_with_shred_parent(52, 48, 45, BlockId::new_unique(), 32, true);
     let mid = update_shreds.len() / 2;
     let first_half: Vec<_> = update_shreds.drain(..mid).collect();
 
@@ -7828,7 +7844,7 @@ fn test_same_batch_block_header_then_update_parent() {
         60,
         55,
         52,
-        Hash::new_unique(),
+        BlockId::new_unique(),
         32,
         true,
     ));
@@ -7849,7 +7865,7 @@ fn test_same_batch_update_parent_then_block_header() {
     // Insert both UpdateParent and BlockHeader in the same batch,
     // with UpdateParent shreds first (but BlockHeader is at index 0)
     let mut shreds =
-        create_update_parent_shreds_with_shred_parent(72, 68, 65, Hash::new_unique(), 32, true);
+        create_update_parent_shreds_with_shred_parent(72, 68, 65, BlockId::new_unique(), 32, true);
     shreds.extend(create_block_header_shreds(72, 68, Hash::new_unique()));
 
     blockstore.insert_shreds(shreds, true).unwrap();
@@ -7879,7 +7895,7 @@ fn test_multiple_update_parents_out_of_order_marks_dead() {
             slot,
             75,
             first_update_parent_slot,
-            Hash::new_unique(),
+            BlockId::new_unique(),
             32,
             false,
         ));
@@ -7899,7 +7915,7 @@ fn test_multiple_update_parents_out_of_order_marks_dead() {
                 slot,
                 75,
                 second_update_parent_slot,
-                Hash::new_unique(),
+                BlockId::new_unique(),
                 64,
                 false,
             )),
@@ -7940,7 +7956,7 @@ fn test_update_parent_propagates_connectivity() {
     // UpdateParent switches to connected parent, slot becomes connected
     blockstore
         .insert_shreds(
-            create_update_parent_shreds_with_shred_parent(8, 5, 0, Hash::new_unique(), 32, true),
+            create_update_parent_shreds_with_shred_parent(8, 5, 0, BlockId::new_unique(), 32, true),
             true,
         )
         .unwrap();
@@ -7979,7 +7995,14 @@ fn test_update_parent_propagates_connectivity_to_descendants() {
     // Reparent 100 to connected slot 0; connectivity propagates to 200 and 300
     blockstore
         .insert_shreds(
-            create_update_parent_shreds_with_shred_parent(100, 50, 0, Hash::new_unique(), 32, true),
+            create_update_parent_shreds_with_shred_parent(
+                100,
+                50,
+                0,
+                BlockId::new_unique(),
+                32,
+                true,
+            ),
             true,
         )
         .unwrap();
@@ -8018,7 +8041,7 @@ fn test_update_parent_clears_connectivity() {
     // UpdateParent switches slot 8 to disconnected parent 3 (lower, doesn't exist)
     blockstore
         .insert_shreds(
-            create_update_parent_shreds_with_shred_parent(8, 5, 3, Hash::new_unique(), 32, true),
+            create_update_parent_shreds_with_shred_parent(8, 5, 3, BlockId::new_unique(), 32, true),
             true,
         )
         .unwrap();
@@ -8059,7 +8082,14 @@ fn test_connectivity_does_not_propagate_through_incomplete_slot() {
     // Reparent slot 48 to connected slot 0, keeping it incomplete
     blockstore
         .insert_shreds(
-            create_update_parent_shreds_with_shred_parent(48, 40, 0, Hash::new_unique(), 32, false),
+            create_update_parent_shreds_with_shred_parent(
+                48,
+                40,
+                0,
+                BlockId::new_unique(),
+                32,
+                false,
+            ),
             true,
         )
         .unwrap();

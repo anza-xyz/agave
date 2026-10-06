@@ -257,7 +257,7 @@ pub struct BlockHeaderV1 {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct UpdateParentV1 {
     pub new_parent_slot: Slot,
-    pub new_parent_block_id: Hash,
+    pub new_parent_block_id: BlockId,
 }
 
 /// Attests to genesis block finalization with a BLS aggregate signature.

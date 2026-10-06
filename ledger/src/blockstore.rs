@@ -1318,7 +1318,7 @@ impl Blockstore {
 
         Some(ParentInfo {
             parent_slot: update_parent.new_parent_slot,
-            parent_block_id: update_parent.new_parent_block_id,
+            parent_block_id: update_parent.new_parent_block_id.to_hash(),
             replay_fec_set_index: target_fec_set_index,
         })
     }
