@@ -349,3 +349,12 @@ pub struct RpcContextConfig {
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
 }
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RpcRankMapConfig {
+    /// Filter by validator identity, as a base-58 encoded string.
+    pub identity: Option<String>,
+    /// Minimum finalized bank context slot; no minimum is enforced when omitted.
+    pub min_context_slot: Option<Slot>,
+}

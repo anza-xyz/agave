@@ -6,7 +6,7 @@ use {
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         rpc::{rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
-        rpc_cache::LargestAccountsCache,
+        rpc_cache::{LargestAccountsCache, RankMapCache},
         rpc_health::*,
     },
     agave_snapshots::{
@@ -687,6 +687,7 @@ impl JsonRpcService {
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
             largest_accounts_cache,
+            Arc::new(RwLock::new(RankMapCache::default())),
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
