@@ -768,8 +768,9 @@ mod tests {
                 AccountsDbConfig,
                 tests::{ACCOUNTS_DB_CONFIG_APPEND_VEC, ACCOUNTS_DB_CONFIG_SPLIT_FILE},
             },
+            accounts_file,
             accounts_index::{AccountsIndex, ReclaimsSlotList, UpsertReclaim},
-            append_vec::{self, AppendVec},
+            append_vec::AppendVec,
             is_zero_lamport::IsZeroLamport as _,
             storable_accounts::StorableAccountsBySlot,
             utils::create_account_shared_data,
@@ -842,7 +843,7 @@ mod tests {
     fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
         slots.into_iter().for_each(|slot| {
             if let Some(storage) = db.storage.get_slot_storage_entry(slot) {
-                let mut reader = crate::append_vec::new_scan_accounts_reader();
+                let mut reader = accounts_file::new_scan_accounts_reader();
                 storage
                     .scan_accounts(&mut reader, None, |offset, account| {
                         let info = AccountInfo::new(
@@ -963,7 +964,7 @@ mod tests {
     fn get_all_accounts_from_storages<'a>(
         storages: impl Iterator<Item = &'a Arc<AccountStorageEntry>>,
     ) -> Vec<(Pubkey, AccountSharedData)> {
-        let mut reader = crate::append_vec::new_scan_accounts_reader();
+        let mut reader = accounts_file::new_scan_accounts_reader();
         storages
             .flat_map(|storage| {
                 let mut vec = Vec::default();
@@ -2283,7 +2284,7 @@ mod tests {
                                 one.first().unwrap().1.old_storage().id(),
                                 storages[combine_into].id()
                             );
-                            let mut reader = append_vec::new_scan_accounts_reader();
+                            let mut reader = accounts_file::new_scan_accounts_reader();
 
                             // make sure the single new append vec contains all the same accounts
                             let mut two = Vec::default();

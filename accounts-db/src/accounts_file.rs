@@ -7,10 +7,15 @@ use {
         split_file::{self, SplitFile, SplitFileError},
         storable_accounts::StorableAccounts,
     },
-    agave_fs::{FileInfo, buffered_reader::RequiredLenBufFileRead, file_io::open_for_reading},
+    agave_fs::{
+        FileInfo,
+        buffered_reader::{BufReaderWithOverflow, BufferedReader, RequiredLenBufFileRead},
+        file_io::open_for_reading,
+    },
     solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
         fs::File,
         io,
@@ -367,4 +372,25 @@ pub struct StoredAccountsInfo {
     pub offsets: Vec<Offset>,
     /// total size of all the stored accounts
     pub size: usize,
+}
+
+/// Creates a reusable buffered reader tuned for scanning storages.
+pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
+    // 128KiB covers a reasonably large distribution of typical account sizes.
+    // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+    const MIN_CAPACITY: usize = 128 * 1024;
+
+    // The max capacity is sized for the largest account plus the maximum metadata
+    // from any of the account storage file formats.  Rounded up to the next page
+    // size, since we're not gonna read less than a page anyway.  Both AppendVec
+    // and SplitFile metadata is less than a page, so use 4KiB as the size.
+    const MAX_CAPACITY: usize = 4096 + MAX_PERMITTED_DATA_LENGTH as usize;
+    const _: () = assert!(MAX_CAPACITY.is_multiple_of(4096));
+
+    const BUFFER_SIZE: usize = 32 * 1024;
+    BufReaderWithOverflow::new(
+        BufferedReader::<BUFFER_SIZE>::new(),
+        MIN_CAPACITY,
+        MAX_CAPACITY,
+    )
 }

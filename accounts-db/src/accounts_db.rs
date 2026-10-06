@@ -43,7 +43,7 @@ use {
             StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsForSquashStats,
             StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
         },
-        accounts_file::AccountsFileProvider,
+        accounts_file::{self, AccountsFileProvider},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
@@ -1430,7 +1430,7 @@ impl AccountsDb {
         storages.retain(|s| s.slot() <= max_slot_inclusive);
         // populate
         storages.par_iter().for_each_init(
-            || Box::new(append_vec::new_scan_accounts_reader()),
+            || Box::new(accounts_file::new_scan_accounts_reader()),
             |reader, storage| {
                 let slot = storage.slot();
                 storage
@@ -2655,7 +2655,7 @@ impl AccountsDb {
                     })
                 }
                 ScanAccountStorageData::DataRefForStorage => {
-                    let mut reader = append_vec::new_scan_accounts_reader();
+                    let mut reader = accounts_file::new_scan_accounts_reader();
                     storage.scan_accounts(&mut reader, None, |_offset, account| {
                         let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
                         storage_scan_func(retval, &account_without_data, Some(account.data));
@@ -5030,7 +5030,7 @@ impl AccountsDb {
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
                             let mut thread_accum = IndexGenerationAccumulator::new();
-                            let mut reader = append_vec::new_scan_accounts_reader();
+                            let mut reader = accounts_file::new_scan_accounts_reader();
                             for next_item in storages_orderer.iter() {
                                 let storage = next_item.storage;
                                 self.generate_index_for_slot(

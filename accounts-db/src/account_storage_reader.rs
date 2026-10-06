@@ -56,7 +56,7 @@ pub fn storage_file_buf_reader<'a>(
         let _ = (max_buf_size, use_page_cache, io_setup);
         buffered_reader::BufferedReader::<READER_STACK_BUFFER_SIZE>::new()
     };
-    // Refer to append vec/split file new_scan_accounts_reader()
+    // Refer to accounts_file::new_scan_accounts_reader()
     // for documentation/comments w.r.t. the minimum capacity.
     const MIN_CAPACITY: usize = 128 * 1024;
     // The max capacity needed is based on the max permitted account data size
@@ -213,8 +213,7 @@ mod tests {
         crate::{
             ObsoleteAccounts,
             account_storage_entry::AccountStorageEntry,
-            accounts_file::{AccountsFile, AccountsFileProvider},
-            append_vec,
+            accounts_file::{self, AccountsFile, AccountsFileProvider},
             utils::create_account_shared_data,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
@@ -432,7 +431,7 @@ mod tests {
                         .then(|| (*pubkey, account.clone()))
                 })
                 .collect();
-            let mut reader_for_scan_accounts = append_vec::new_scan_accounts_reader();
+            let mut reader_for_scan_accounts = accounts_file::new_scan_accounts_reader();
             let accounts_in_new_storage = {
                 let mut accounts = HashMap::new();
                 new_storage
@@ -563,7 +562,7 @@ mod tests {
             assert_eq!(new_storage.accounts.len(), reader_len);
 
             // Verify that the new storage has all the expected accounts
-            let mut reader_for_scan_accounts = append_vec::new_scan_accounts_reader();
+            let mut reader_for_scan_accounts = accounts_file::new_scan_accounts_reader();
             let accounts_in_old_storage = {
                 let mut accounts = HashMap::new();
                 storage
@@ -684,16 +683,19 @@ mod tests {
         let mut archived_num_accounts = 0;
         let mut expected_accounts_iter = included_accounts.iter();
         archived_storage
-            .scan_accounts(&mut append_vec::new_scan_accounts_reader(), |_, account| {
-                let (_, (pubkey, original)) = expected_accounts_iter.next().unwrap();
-                assert_eq!(account.pubkey, pubkey);
-                assert_eq!(account.lamports, original.lamports());
-                assert_eq!(account.owner, original.owner());
-                assert_eq!(account.data, original.data());
-                assert_eq!(account.executable, original.executable());
-                assert_eq!(account.rent_epoch, original.rent_epoch());
-                archived_num_accounts += 1;
-            })
+            .scan_accounts(
+                &mut accounts_file::new_scan_accounts_reader(),
+                |_, account| {
+                    let (_, (pubkey, original)) = expected_accounts_iter.next().unwrap();
+                    assert_eq!(account.pubkey, pubkey);
+                    assert_eq!(account.lamports, original.lamports());
+                    assert_eq!(account.owner, original.owner());
+                    assert_eq!(account.data, original.data());
+                    assert_eq!(account.executable, original.executable());
+                    assert_eq!(account.rent_epoch, original.rent_epoch());
+                    archived_num_accounts += 1;
+                },
+            )
             .unwrap();
         assert!(expected_accounts_iter.next().is_none());
         assert_eq!(archived_num_accounts, included_accounts.len());

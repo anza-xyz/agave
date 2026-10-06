@@ -336,8 +336,9 @@ impl AccountStorageEntry {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::append_vec::new_scan_accounts_reader, solana_account::AccountSharedData,
-        solana_pubkey::Pubkey, std::iter, tempfile::TempDir, test_case::test_case,
+        super::*, crate::accounts_file::new_scan_accounts_reader,
+        solana_account::AccountSharedData, solana_pubkey::Pubkey, std::iter, tempfile::TempDir,
+        test_case::test_case,
     };
 
     /// scan_accounts and scan_accounts_without_data each visit every account except those marked

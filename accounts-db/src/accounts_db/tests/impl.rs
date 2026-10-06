@@ -1,7 +1,7 @@
 use {
     super::*,
     crate::{
-        accounts_file::AccountsFileProvider,
+        accounts_file::{self, AccountsFileProvider},
         accounts_index::{
             ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
@@ -121,7 +121,7 @@ fn test_generate_index_duplicates_within_slot() {
 
     assert!(!db.accounts_index.contains(&pubkey));
     let storage = db.get_storage_for_slot(slot0).unwrap();
-    let mut reader = crate::append_vec::new_scan_accounts_reader();
+    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
     db.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
 }
@@ -5337,7 +5337,7 @@ fn test_calculate_storage_count_and_alive_bytes() {
     accounts.storage.insert(Arc::new(storage));
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
-    let mut reader = crate::append_vec::new_scan_accounts_reader();
+    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 1);
@@ -5355,7 +5355,7 @@ fn test_calculate_storage_count_and_alive_bytes_0_accounts() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     // empty store
     let storage = accounts.create_store(0, 1);
-    let mut reader = crate::append_vec::new_scan_accounts_reader();
+    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 0);
@@ -5392,7 +5392,7 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
         .write_accounts(&(slot0, &[(&keys[0], &account1), (&keys[1], &account2)][..]))
         .unwrap();
 
-    let mut reader = crate::append_vec::new_scan_accounts_reader();
+    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 2);
@@ -5456,7 +5456,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         .unwrap()
         .mark_accounts_obsolete(accounts_to_mark_obsolete.iter().cloned(), slot0 + 1);
 
-    let mut reader = crate::append_vec::new_scan_accounts_reader();
+    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(
