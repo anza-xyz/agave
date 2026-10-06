@@ -278,6 +278,7 @@ mod tests {
         agave_geyser_plugin_interface::geyser_plugin_interface::{
             GeyserPlugin, ReplicaContactInfoVersions,
         },
+        crossbeam_channel::Sender,
         libloading::Library,
         std::{
             net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -293,7 +294,7 @@ mod tests {
     struct RecordingPlugin {
         name: &'static str,
         enabled: bool,
-        notification_sender: Option<crossbeam_channel::Sender<u64>>,
+        notification_sender: Option<Sender<u64>>,
         live_count: Arc<AtomicUsize>,
         startup_count: Arc<AtomicUsize>,
         removed_count: Arc<AtomicUsize>,
