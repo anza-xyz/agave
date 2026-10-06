@@ -69,6 +69,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         )
         .subcommand(commands::monitor::command())
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
+        .subcommand(
+            SubCommand::with_name("print-default-config")
+                .about("Print the built-in default configuration file and exit")
+                .setting(AppSettings::Hidden),
+        )
         .subcommand(commands::plugin::command())
         .subcommand(commands::set_identity::command())
         .subcommand(commands::set_log_filter::command())
