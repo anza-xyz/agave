@@ -35,13 +35,13 @@ pub(super) struct ResolvedXdp {
 
 #[cfg(target_os = "linux")]
 impl ResolvedXdp {
-    pub(super) fn zero_copy(&self) -> bool {
+    pub(super) fn is_zero_copy_enabled(&self) -> bool {
         self.policy.zero_copy
     }
 }
 
 #[cfg(target_os = "linux")]
-fn bind_address_conflict(count: usize, address: IpAddr) -> Option<&'static str> {
+fn check_bind_address_conflict(count: usize, address: IpAddr) -> Option<&'static str> {
     if count > 1 {
         Some("XDP does not support multiple --bind-address values; select one IPv4 address")
     } else if address.is_ipv6() {
@@ -58,10 +58,10 @@ fn resolve_xdp_configuration(
     bind_address: IpAddr,
     poh_core: Option<usize>,
 ) -> Result<(Option<ResolvedXdp>, Vec<String>), String> {
-    if !config.xdp_active() {
+    if !config.is_xdp_active() {
         return Ok((None, config::validate_policy(config)?));
     }
-    if let Some(conflict) = bind_address_conflict(bind_address_count, bind_address) {
+    if let Some(conflict) = check_bind_address_conflict(bind_address_count, bind_address) {
         return Err(format!("{conflict}, or pass --no-xdp"));
     }
     let allowed_cpus: BTreeSet<_> = cpu_affinity(None)
@@ -196,7 +196,7 @@ fn load_xdp_policy(
     operation: &Operation,
 ) -> Result<Option<config::EffectiveConfig>, String> {
     let effective = config::load(matches.value_of("config_file").map(Path::new))?;
-    let overrides = cli_xdp_overrides(matches)?;
+    let overrides = parse_xdp_cli_overrides(matches)?;
     if *operation == Operation::Initialize {
         info!("ledger initialization does not start XDP; skipping XDP policy validation");
         return Ok(None);
@@ -221,7 +221,7 @@ pub(super) fn validate_config_file_without_xdp(
     }
     // Only report inactivity the operator can act on. The built-in policy enables
     // XDP everywhere, so warning about it unprompted would fire on every startup.
-    if matches.is_present("config_file") && config.xdp_active() {
+    if matches.is_present("config_file") && config.is_xdp_active() {
         warn!(
             "XDP transmit is unavailable on this platform; the configured XDP policy is valid but \
              inactive"
@@ -272,7 +272,7 @@ pub(super) fn build_xdp_config(
     Ok(resolved)
 }
 
-fn cli_xdp_overrides(matches: &ArgMatches) -> Result<config::CliOverrides, String> {
+fn parse_xdp_cli_overrides(matches: &ArgMatches) -> Result<config::CliOverrides, String> {
     let zero_copy = if matches.is_present("xdp_zero_copy") {
         Some(true)
     } else if matches.is_present("no_xdp_zero_copy") {
@@ -304,8 +304,10 @@ mod versioned_xdp_tests {
     };
 
     fn write_config(contents: &[u8]) -> tempfile::NamedTempFile {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(contents).unwrap();
+        let mut file =
+            tempfile::NamedTempFile::new().expect("create temporary XDP config for test");
+        file.write_all(contents)
+            .expect("write test XDP config to temporary file");
         file
     }
 
@@ -319,9 +321,12 @@ mod versioned_xdp_tests {
         let matches = app.get_matches_from(vec![
             "agave-validator",
             "--experimental-config-file",
-            file.path().to_str().unwrap(),
+            file.path()
+                .to_str()
+                .expect("temporary config path should be UTF-8 for CLI test arguments"),
         ]);
-        let binds = BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap();
+        let binds = BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()])
+            .expect("single unspecified IPv4 address should be a valid bind fixture");
         let without_xdp = validate_config_file_without_xdp(&matches, &operation);
         let with_xdp = build_xdp_config(&matches, &operation, &binds);
         assert_eq!(
@@ -355,7 +360,9 @@ workers.cpus = [4294967295]
             let mut args = vec![
                 "agave-validator",
                 "--experimental-config-file",
-                file.path().to_str().unwrap(),
+                file.path()
+                    .to_str()
+                    .expect("temporary config path should be UTF-8 for CLI test arguments"),
             ];
             args.extend(flags);
             let matches = app.clone().get_matches_from(args);
@@ -370,10 +377,11 @@ workers.cpus = [4294967295]
                 ),
                 ("IPv6", vec![Ipv6Addr::LOCALHOST.into()]),
             ] {
-                let binds = BindIpAddrs::new(addresses).unwrap();
+                let binds = BindIpAddrs::new(addresses)
+                    .expect("nonempty bind fixture should be valid before XDP validation");
                 assert!(
                     build_xdp_config(&matches, &Operation::Run, &binds)
-                        .unwrap()
+                        .expect("disabled XDP should skip host resolution for every bind fixture")
                         .is_none(),
                     "{case}/{bind_case}"
                 );
@@ -415,7 +423,12 @@ tx.interface = "other"
             let file = contents.map(|contents| write_config(contents.as_bytes()));
             let mut args = vec!["agave-validator"];
             if let Some(file) = &file {
-                args.extend(["--experimental-config-file", file.path().to_str().unwrap()]);
+                args.extend([
+                    "--experimental-config-file",
+                    file.path()
+                        .to_str()
+                        .expect("temporary config path should be UTF-8 for CLI test arguments"),
+                ]);
             }
             let matches = app.clone().get_matches_from(args);
             let result = validate_config_file_without_xdp(&matches, &Operation::Run);
@@ -424,7 +437,7 @@ tx.interface = "other"
                     let error = result.unwrap_err();
                     assert!(error.contains(expected), "{contents:?}: {error}");
                 }
-                None => result.unwrap(),
+                None => result.expect("valid or dormant XDP policy should pass validation"),
             }
         }
     }
@@ -453,7 +466,11 @@ tx.interface = "other"
                 .get_matches_from_safe(
                     std::iter::once("agave-validator").chain(flags.iter().copied()),
                 )
-                .map(|matches| cli_xdp_overrides(&matches).unwrap().zero_copy)
+                .map(|matches| {
+                    parse_xdp_cli_overrides(&matches)
+                        .expect("accepted zero-copy flags should parse as CLI overrides")
+                        .zero_copy
+                })
                 .map_err(|error| error.kind);
             assert_eq!(result, expected, "{flags:?}");
         }
@@ -479,7 +496,8 @@ tx.interface = "other"
                 "XDP transmit supports IPv4 only; supply an IPv4 --bind-address",
             ),
         ] {
-            let binds = BindIpAddrs::new(addresses).unwrap();
+            let binds = BindIpAddrs::new(addresses)
+                .expect("nonempty bind fixture should be valid before XDP validation");
             let Err(error) = build_xdp_config(&matches, &Operation::Run, &binds) else {
                 panic!("{case} unexpectedly accepted")
             };
@@ -492,7 +510,8 @@ tx.interface = "other"
         let defaults = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &defaults);
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
-        let binds = BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap();
+        let binds = BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()])
+            .expect("single unspecified IPv4 address should be a valid bind fixture");
         let Err(error) = build_xdp_config(&matches, &Operation::Run, &binds) else {
             panic!("empty CPU selection unexpectedly accepted")
         };
@@ -522,7 +541,9 @@ workers.auto.count = 1
 
         assert!(
             build_and_validate_config(config, Operation::Initialize)
-                .unwrap()
+                .expect(
+                    "ledger initialization should validate the file without applying XDP policy"
+                )
                 .is_none()
         );
         let Err(error) = build_and_validate_config(config, Operation::Run) else {
@@ -555,7 +576,7 @@ schema_version = "one"
 
     #[test]
     fn test_source_ipv4_respects_bind_address() {
-        let device = NetworkDevice::new("lo").unwrap();
+        let device = NetworkDevice::new("lo").expect("open Linux loopback device for IPv4 test");
         let explicit = Ipv4Addr::new(192, 0, 2, 1);
         for (bind, expected) in [
             (IpAddr::V4(explicit), Ok(explicit)),
@@ -564,7 +585,11 @@ schema_version = "one"
         ] {
             let result = resolve_xdp_source_ipv4("primary", &device, bind);
             match expected {
-                Ok(expected) => assert_eq!(result.unwrap(), expected, "{bind}"),
+                Ok(expected) => assert_eq!(
+                    result.expect("IPv4 bind fixture should resolve a source address"),
+                    expected,
+                    "{bind}"
+                ),
                 Err(expected) => {
                     let error = result.unwrap_err();
                     assert!(error.contains(expected), "{bind}: {error}");

@@ -16,7 +16,7 @@ pub use {
     xdp::{QueueCpuBinding, RuntimeXdpConfig, resolve_runtime, validate_policy},
 };
 use {
-    interface::{EffectiveInterface, interface_path},
+    interface::{EffectiveInterface, format_interface_path},
     serde::Deserialize,
     std::collections::BTreeMap,
     xdp::{ComponentXdp, GlobalXdp, WorkerPolicy},
@@ -52,7 +52,7 @@ pub struct Components<T> {
 }
 
 impl<T> Components<T> {
-    fn values(&self) -> [&T; 5] {
+    fn get_values(&self) -> [&T; 5] {
         [
             &self.gossip,
             &self.repair,
@@ -83,7 +83,7 @@ pub struct EffectiveConfig {
 }
 
 impl EffectiveConfig {
-    pub fn xdp_active(&self) -> bool {
+    pub fn is_xdp_active(&self) -> bool {
         self.xdp.enabled
     }
 
@@ -92,22 +92,20 @@ impl EffectiveConfig {
     pub fn validate_structural(&self) -> Result<(), String> {
         validate_schema_version(self.schema_version)?;
         for (label, interface) in &self.interfaces {
-            interface
-                .xdp
-                .workers
-                .validate()
-                .map_err(|error| format!("{}.xdp.workers: {error}", interface_path(label)))?;
+            interface.xdp.workers.validate().map_err(|error| {
+                format!("{}.xdp.workers: {error}", format_interface_path(label))
+            })?;
             if matches!(interface.xdp.workers, WorkerPolicy::Bindings(_))
                 && !matches!(interface.device, DeviceSelector::Name(_))
             {
                 return Err(format!(
                     "{}.xdp.workers.bindings requires device.name; use workers.auto/workers.cpus \
                      with device.route, or name the device",
-                    interface_path(label)
+                    format_interface_path(label)
                 ));
             }
         }
-        for (name, component) in self.named_components() {
+        for (name, component) in self.get_named_components() {
             component
                 .tx
                 .queues
@@ -117,7 +115,7 @@ impl EffectiveConfig {
         Ok(())
     }
 
-    fn named_components(&self) -> [(&'static str, &ComponentXdp); 5] {
+    fn get_named_components(&self) -> [(&'static str, &ComponentXdp); 5] {
         [
             ("gossip", &self.gossip.xdp),
             ("repair", &self.repair.xdp),

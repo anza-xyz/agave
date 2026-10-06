@@ -2,7 +2,7 @@
 
 use crate::{
     DeviceSelector, EffectiveConfig, Source,
-    interface::interface_path,
+    interface::format_interface_path,
     xdp::{WorkerPolicy, validate_pool_len, validate_unique_cpus},
 };
 
@@ -28,7 +28,7 @@ pub fn apply_cli(
         config.xdp.enabled = false;
     }
     let mut warnings = Vec::new();
-    if !config.xdp_active() {
+    if !config.is_xdp_active() {
         if let Some(interface) = overrides.interface {
             warnings.push(format!(
                 "runtime XDP is inactive; ignoring --xdp-interface={interface}"
@@ -106,7 +106,7 @@ pub fn apply_cli(
                 } else {
                     "--no-xdp-zero-copy"
                 },
-                interface_path(label)
+                format_interface_path(label)
             ));
         }
         interface.xdp.zero_copy = zero_copy;

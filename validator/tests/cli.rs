@@ -7,14 +7,16 @@ use {
 
 #[test]
 fn test_print_default_config_exits_without_startup_side_effects() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("create isolated directory for default-config CLI test");
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!(env!("CARGO_PKG_NAME")));
     cmd.current_dir(temp_dir.path())
         .args(["--ledger", "ledger", "print-default-config"]);
     cmd.assert()
         .success()
         .stdout(agave_validator_config::DEFAULT_CONFIG);
-    let created_file = std::fs::read_dir(temp_dir.path()).unwrap().next();
+    let created_file = std::fs::read_dir(temp_dir.path())
+        .expect("inspect CLI test directory for startup side effects")
+        .next();
     assert!(
         created_file.is_none(),
         "printing config created a file: {created_file:?}"

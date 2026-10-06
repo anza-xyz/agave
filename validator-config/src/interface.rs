@@ -27,7 +27,7 @@ pub(crate) struct EffectiveInterface {
     pub(crate) device_source: Source,
 }
 
-pub(crate) fn interface_path(label: &str) -> String {
+pub(crate) fn format_interface_path(label: &str) -> String {
     let key = if !label.is_empty()
         && label
             .bytes()

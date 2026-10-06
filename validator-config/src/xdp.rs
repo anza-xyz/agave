@@ -1,7 +1,9 @@
 //! XDP worker and queue policies, validation, and CPU assignment.
 
 use {
-    crate::{Components, DeviceSelector, EffectiveConfig, Source, interface::interface_path},
+    crate::{
+        Components, DeviceSelector, EffectiveConfig, Source, interface::format_interface_path,
+    },
     serde::Deserialize,
     std::collections::{BTreeMap, BTreeSet},
 };
@@ -140,14 +142,14 @@ impl QueueSelection {
 }
 
 /// Queue ids a component transmits over, in its own sender order.
-fn component_queue_ids<'a>(component: &'a ComponentXdp, pool: &'a [u32]) -> &'a [u32] {
+fn select_component_queue_ids<'a>(component: &'a ComponentXdp, pool: &'a [u32]) -> &'a [u32] {
     match &component.tx.queues {
         QueueSelection::All => pool,
         QueueSelection::Explicit(queues) => queues,
     }
 }
 
-fn worker_queue_ids(policy: &WorkerPolicy) -> Vec<u32> {
+fn collect_worker_queue_ids(policy: &WorkerPolicy) -> Vec<u32> {
     match policy {
         WorkerPolicy::Auto { count } => (0..*count as u32).collect(),
         WorkerPolicy::Cpus(cpus) => (0..cpus.len() as u32).collect(),
@@ -160,14 +162,14 @@ fn worker_queue_ids(policy: &WorkerPolicy) -> Vec<u32> {
 pub fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, String> {
     config.validate_structural()?;
     let mut warnings = Vec::new();
-    let active = config.xdp_active();
+    let active = config.is_xdp_active();
     if active && config.interfaces.len() != 1 {
         return Err(format!(
             "XDP version 1 supports exactly one effective interface; found {}",
             config.interfaces.len()
         ));
     }
-    for (name, component) in config.named_components() {
+    for (name, component) in config.get_named_components() {
         let label = &component.tx.interface;
         let Some(interface) = config.interfaces.get(label) else {
             let message = format!(
@@ -182,7 +184,7 @@ pub fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, String> 
             continue;
         };
         if let QueueSelection::Explicit(queues) = &component.tx.queues {
-            let pool: BTreeSet<_> = worker_queue_ids(&interface.xdp.workers)
+            let pool: BTreeSet<_> = collect_worker_queue_ids(&interface.xdp.workers)
                 .into_iter()
                 .collect();
             let missing: Vec<_> = queues
@@ -197,7 +199,7 @@ pub fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, String> 
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(", "),
-                    interface_path(label)
+                    format_interface_path(label)
                 );
                 if active {
                     return Err(message);
@@ -214,10 +216,10 @@ pub fn validate_policy(config: &EffectiveConfig) -> Result<Vec<String>, String> 
         .iter()
         .next()
         .expect("XDP config should contain exactly one interface after validation");
-    let pool = worker_queue_ids(&interface.xdp.workers);
+    let pool = collect_worker_queue_ids(&interface.xdp.workers);
     let selections = config
-        .named_components()
-        .map(|(_, component)| component_queue_ids(component, &pool));
+        .get_named_components()
+        .map(|(_, component)| select_component_queue_ids(component, &pool));
     for queue in &pool {
         if selections.iter().any(|queues| queues.contains(queue)) {
             continue;
@@ -251,7 +253,7 @@ fn resolve_declared_workers(
         }
         Ok(())
     };
-    // Each mode contributes only the CPU order; worker_queue_ids owns the queue-id
+    // Each mode contributes only the CPU order; collect_worker_queue_ids owns the queue-id
     // rule so validation and resolution cannot disagree about the declared pool.
     let cpus: Vec<usize> = match policy {
         WorkerPolicy::Auto { count } => {
@@ -284,7 +286,7 @@ fn resolve_declared_workers(
             bindings.iter().map(|binding| binding.cpu).collect()
         }
     };
-    Ok(worker_queue_ids(policy)
+    Ok(collect_worker_queue_ids(policy)
         .into_iter()
         .zip(cpus)
         .map(|(queue, cpu)| QueueCpuBinding { queue, cpu })
@@ -297,7 +299,7 @@ pub fn resolve_runtime(
     poh_core: Option<usize>,
 ) -> Result<(RuntimeXdpConfig, Vec<String>), String> {
     let warnings = validate_policy(config)?;
-    if !config.xdp_active() {
+    if !config.is_xdp_active() {
         return Err("cannot resolve an inactive XDP policy".to_string());
     }
     let (label, interface) = config
@@ -308,14 +310,14 @@ pub fn resolve_runtime(
     let declared = resolve_declared_workers(&interface.xdp.workers, allowed_cpus, poh_core)?;
     let pool: Vec<u32> = declared.iter().map(|binding| binding.queue).collect();
     let selected = Components {
-        gossip: component_queue_ids(&config.gossip.xdp, &pool),
-        repair: component_queue_ids(&config.repair.xdp, &pool),
-        tpu: component_queue_ids(&config.tpu.xdp, &pool),
-        turbine: component_queue_ids(&config.turbine.xdp, &pool),
-        votor: component_queue_ids(&config.votor.xdp, &pool),
+        gossip: select_component_queue_ids(&config.gossip.xdp, &pool),
+        repair: select_component_queue_ids(&config.repair.xdp, &pool),
+        tpu: select_component_queue_ids(&config.tpu.xdp, &pool),
+        turbine: select_component_queue_ids(&config.turbine.xdp, &pool),
+        votor: select_component_queue_ids(&config.votor.xdp, &pool),
     };
     let active_ids: BTreeSet<_> = selected
-        .values()
+        .get_values()
         .into_iter()
         .flat_map(|queues| queues.iter())
         .copied()

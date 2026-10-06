@@ -151,7 +151,7 @@ pub fn execute(
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
     solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
 
-    let bind_addresses = BindIpAddrs::new(parsed_bind_addresses(matches)?)
+    let bind_addresses = BindIpAddrs::new(parse_bind_addresses(matches)?)
         .map_err(|err| format!("invalid bind_addresses: {err}"))?;
 
     let entrypoint_addrs = run_args.entrypoints;
@@ -305,7 +305,7 @@ pub fn execute(
         if let Some(resolved) = xdp_transmit_config.as_ref() {
             required_caps.insert(CAP_NET_ADMIN);
             required_caps.insert(CAP_NET_RAW);
-            if resolved.zero_copy() {
+            if resolved.is_zero_copy_enabled() {
                 required_caps.insert(CAP_BPF);
                 required_caps.insert(CAP_PERFMON);
             }
@@ -1356,7 +1356,7 @@ fn new_snapshot_config(
     Ok(snapshot_config)
 }
 
-fn parsed_bind_addresses(matches: &ArgMatches) -> Result<Vec<IpAddr>, String> {
+fn parse_bind_addresses(matches: &ArgMatches) -> Result<Vec<IpAddr>, String> {
     matches
         .values_of("bind_address")
         .expect("bind_address has a clap default")

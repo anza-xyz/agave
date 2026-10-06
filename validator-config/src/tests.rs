@@ -14,8 +14,9 @@ votor.xdp.tx.queues = [0]
 "#;
 
 fn load_config(contents: &str) -> Result<EffectiveConfig, String> {
-    let mut file = tempfile::NamedTempFile::new().unwrap();
-    file.write_all(contents.as_bytes()).unwrap();
+    let mut file = tempfile::NamedTempFile::new().expect("create temporary config file for test");
+    file.write_all(contents.as_bytes())
+        .expect("write test config to temporary file");
     load(Some(file.path()))
 }
 
@@ -53,7 +54,7 @@ fn assert_warnings_contain(warnings: &[String], expected: &[&[&str]], case: &str
 
 #[test]
 fn test_embedded_default_resolves_from_policy_without_fallbacks() {
-    let config = load(None).unwrap();
+    let config = load(None).expect("embedded default config should pass structural validation");
     assert!(config.xdp.enabled);
     assert_eq!(config.interfaces.len(), 1);
     let interface = &config.interfaces["primary"];
@@ -63,10 +64,11 @@ fn test_embedded_default_resolves_from_policy_without_fallbacks() {
     );
     assert_eq!(interface.xdp.workers, WorkerPolicy::Auto { count: 1 });
     let allowed = BTreeSet::from([1, 3, 5]);
-    let (runtime, warnings) = resolve_runtime(&config, &allowed, Some(5)).unwrap();
+    let (runtime, warnings) = resolve_runtime(&config, &allowed, Some(5))
+        .expect("default worker should resolve using an eligible CPU distinct from PoH");
     assert!(warnings.is_empty());
     assert_eq!(runtime.queues, vec![QueueCpuBinding { queue: 0, cpu: 3 }]);
-    for component in runtime.components.values() {
+    for component in runtime.components.get_values() {
         assert_eq!(component.as_ref(), &[0][..]);
     }
 }
@@ -248,7 +250,8 @@ xdp.workers.bindings = [{ queue = 3, cpu = 8 }]
     ];
     for (contents, expected_fields, active_error) in cases {
         let mut config = load_valid_config(contents);
-        let warnings = validate_policy(&config).unwrap();
+        let warnings = validate_policy(&config)
+            .expect("dormant cross-reference errors should produce warnings instead of failing");
         assert_eq!(
             warnings.len(),
             expected_fields.len(),
@@ -289,7 +292,10 @@ fn test_every_worker_mode_enforces_the_same_cardinality_limit() {
             ("cpus", toml::toml! { cpus = (cpus) }),
             ("bindings", toml::toml! { bindings = (bindings) }),
         ] {
-            let result = policy.try_into::<WorkerPolicy>().unwrap().validate();
+            let result = policy
+                .try_into::<WorkerPolicy>()
+                .expect("worker fixture should deserialize before cardinality validation")
+                .validate();
             if should_succeed {
                 result.unwrap_or_else(|error| panic!("{field}/{count}: {error}"));
             } else {
@@ -337,9 +343,10 @@ tx.interface = "fast"
 tx.interface = "fast"
 "#,
     );
-    let (runtime, _) = resolve_runtime(&updated_references, &BTreeSet::from([8, 9]), None).unwrap();
+    let (runtime, _) = resolve_runtime(&updated_references, &BTreeSet::from([8, 9]), None)
+        .expect("updated component references should resolve on the renamed interface");
     assert_eq!(runtime.interface_label, "fast");
-    for component in runtime.components.values() {
+    for component in runtime.components.get_values() {
         assert_eq!(component.as_ref(), &[0][..]);
     }
 }
@@ -386,14 +393,14 @@ tx.queues = [1]
                 ..CliOverrides::default()
             },
         )
-        .unwrap();
+        .expect("valid CLI worker override should apply before runtime queue validation");
         let result = resolve_runtime(
             &application.config,
             &BTreeSet::from([8, 9, 10, 11, 12]),
             None,
         );
         if valid {
-            let (runtime, _) = result.unwrap();
+            let (runtime, _) = result.expect("CLI worker pool should include every selected queue");
             let actual_cpus: Vec<_> = runtime.queues.iter().map(|binding| binding.cpu).collect();
             assert_eq!(actual_cpus, cpus);
             assert_eq!(runtime.components.tpu.as_ref(), &[1]);
@@ -439,9 +446,9 @@ tx.queues = [0]
             ..CliOverrides::default()
         },
     )
-    .unwrap();
-    let (runtime, _) =
-        resolve_runtime(&application.config, &BTreeSet::from([8, 9, 10]), None).unwrap();
+    .expect("CLI CPU override should replace the default worker pool");
+    let (runtime, _) = resolve_runtime(&application.config, &BTreeSet::from([8, 9, 10]), None)
+        .expect("selected queues should resolve in the overridden worker pool");
     assert_eq!(runtime.components.tpu.as_ref(), &[0][..]);
     assert_eq!(runtime.components.turbine.as_ref(), &[0, 1][..]);
 }
@@ -504,7 +511,7 @@ workers.bindings = [
             &BTreeSet::from([8, 9, 10, 11, 12]),
             None,
         )
-        .unwrap();
+        .expect("valid sparse bindings should resolve while preserving sender order");
         let expected_workers: Vec<_> = expected_workers
             .into_iter()
             .map(|(queue, cpu)| QueueCpuBinding { queue, cpu })
@@ -630,7 +637,7 @@ fn test_cli_zero_copy_overrides_file_and_default_values() {
         (Some(true), Some(true), true, Cli),
     ] {
         let config = match file_value {
-            None => load(None).unwrap(),
+            None => load(None).expect("embedded default config should pass structural validation"),
             Some(value) => load_valid_config(&format!(
                 r#"
 schema_version = 1
@@ -646,7 +653,7 @@ zero_copy = {value}
                 ..CliOverrides::default()
             },
         )
-        .unwrap();
+        .expect("zero-copy override should apply to the valid test policy");
         let case = format!("file={file_value:?}, CLI={cli_value:?}");
         let interface = &application.config.interfaces["primary"];
         assert_eq!(interface.xdp.zero_copy, expected_value, "{case}");
@@ -685,8 +692,8 @@ zero_copy = {value}
                 application.warnings
             ),
         }
-        let (runtime, _) =
-            resolve_runtime(&application.config, &BTreeSet::from([8, 9]), None).unwrap();
+        let (runtime, _) = resolve_runtime(&application.config, &BTreeSet::from([8, 9]), None)
+            .expect("zero-copy policy should resolve with an eligible worker CPU");
         assert_eq!(runtime.zero_copy, expected_value, "{case}");
     }
 }
@@ -694,7 +701,7 @@ zero_copy = {value}
 #[test]
 fn test_cli_cpu_workers_reject_duplicate_cpus() {
     let error = apply_cli(
-        load(None).unwrap(),
+        load(None).expect("embedded default config should pass structural validation"),
         CliOverrides {
             cpu_cores: Some(vec![8, 9, 8]),
             ..CliOverrides::default()
@@ -707,21 +714,26 @@ fn test_cli_cpu_workers_reject_duplicate_cpus() {
 #[test]
 fn test_explicit_workers_reject_invalid_cpus() {
     for (case, config) in [
-        ("cpus", load_worker_config("{ cpus = [9] }").unwrap()),
+        (
+            "cpus",
+            load_worker_config("{ cpus = [9] }")
+                .expect("CPU fixture should pass host-independent structural validation"),
+        ),
         (
             "bindings",
-            load_worker_config("{ bindings = [{ queue = 0, cpu = 9 }] }").unwrap(),
+            load_worker_config("{ bindings = [{ queue = 0, cpu = 9 }] }")
+                .expect("binding fixture should pass host-independent structural validation"),
         ),
         (
             "CLI override",
             apply_cli(
-                load(None).unwrap(),
+                load(None).expect("embedded default config should pass structural validation"),
                 CliOverrides {
                     cpu_cores: Some(vec![9]),
                     ..CliOverrides::default()
                 },
             )
-            .unwrap()
+            .expect("CLI CPU fixture should apply before host-affinity validation")
             .config,
         ),
     ] {
@@ -745,7 +757,8 @@ fn test_explicit_workers_reject_invalid_cpus() {
 
 #[test]
 fn test_auto_workers_require_enough_cpus_after_excluding_poh() {
-    let config = load_worker_config("{ auto = { count = 2 } }").unwrap();
+    let config = load_worker_config("{ auto = { count = 2 } }")
+        .expect("two-worker fixture should pass host-independent structural validation");
     let error = resolve_runtime(&config, &BTreeSet::from([8, 9]), Some(9)).unwrap_err();
     assert_eq!(
         error,
@@ -760,7 +773,8 @@ fn test_every_worker_mode_must_leave_a_cpu_unreserved() {
         "{ cpus = [8, 9] }",
         "{ bindings = [{ queue = 0, cpu = 8 }, { queue = 1, cpu = 9 }] }",
     ] {
-        let config = load_worker_config(workers).unwrap();
+        let config = load_worker_config(workers)
+            .expect("worker fixture should pass validation before checking CPU reservations");
         let error = resolve_runtime(&config, &BTreeSet::from([8, 9]), None).unwrap_err();
         assert!(error.contains("leave at least one"), "{workers}: {error}");
     }
@@ -817,7 +831,8 @@ workers.auto.count = 1
             "--no-xdp-zero-copy",
         ),
     ] {
-        let application = apply_cli(config.clone(), overrides).unwrap();
+        let application = apply_cli(config.clone(), overrides)
+            .expect("CLI overrides should be ignored successfully when XDP is inactive");
         assert_warnings_contain(
             &application.warnings,
             &[&[flag, "inactive", "ignoring"]],
@@ -836,7 +851,7 @@ workers.auto.count = 1
                 "{flag}/{label}"
             );
         }
-        assert!(!application.config.xdp_active());
+        assert!(!application.config.is_xdp_active());
         assert!(validate_policy(&application.config).is_ok());
     }
 }
@@ -848,7 +863,7 @@ fn test_unreferenced_workers_warn_and_release_cpus_for_every_source() {
     built_in_workers
         .interfaces
         .get_mut("primary")
-        .unwrap()
+        .expect("embedded default should declare the primary interface")
         .xdp
         .workers = WorkerPolicy::Cpus(vec![8, 9]);
     let user_workers = load_valid_config(
@@ -869,14 +884,15 @@ votor.xdp.tx.queues = [0]
             ..CliOverrides::default()
         },
     )
-    .unwrap()
+    .expect("valid CLI worker override should apply to the queue-zero policy")
     .config;
     for (source, config) in [
         ("built-in", built_in_workers),
         ("user-authored", user_workers),
         ("CLI-authored", cli_workers),
     ] {
-        let (runtime, warnings) = resolve_runtime(&config, &BTreeSet::from([8, 9]), None).unwrap();
+        let (runtime, warnings) = resolve_runtime(&config, &BTreeSet::from([8, 9]), None)
+            .expect("discarding the unreferenced worker should leave a CPU unreserved");
         assert_eq!(
             runtime.queues,
             [QueueCpuBinding { queue: 0, cpu: 8 }],

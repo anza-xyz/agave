@@ -47,7 +47,8 @@ interface = "primary"
 queues = "all"
 "#
             );
-            let config: EffectiveConfig = toml::from_str(&contents).unwrap();
+            let config: EffectiveConfig = toml::from_str(&contents)
+                .expect("test fixture should deserialize before structural validation");
             for result in [
                 config.validate_structural(),
                 validate_policy(&config).map(|_| ()),
