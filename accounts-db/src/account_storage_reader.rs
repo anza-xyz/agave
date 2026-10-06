@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[test_matrix(
-        [AccountsFileProvider::AppendVec],
+        [AccountsFileProvider::AppendVec, AccountsFileProvider::Split],
         [
             (0, 0, 0, TombstonesFilter::Include),
             (1, 0, 0, TombstonesFilter::Include),
@@ -452,6 +452,7 @@ mod tests {
     }
 
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_account_storage_reader_filter_by_slot(accounts_file_provider: AccountsFileProvider) {
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
