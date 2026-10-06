@@ -1713,12 +1713,7 @@ impl Bank {
             .write()
             .unwrap();
 
-        if *current_env != *upcoming_env
-            && ebpp
-                .upcoming_environment
-                .as_ref()
-                .is_none_or(|e| **e != *upcoming_env)
-        {
+        if *current_env != *upcoming_env && ebpp.upcoming_environment.as_ref().is_none() {
             // A different environment is upcoming and we are not preparing for
             // it yet. Initiate or restart EBPP.
             let pc = self
