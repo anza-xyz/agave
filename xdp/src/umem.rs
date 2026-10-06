@@ -336,7 +336,6 @@ impl PageAlignedMemory {
         huge: bool,
     ) -> Result<Self, AllocError> {
         debug_assert!(frame_size.is_power_of_two());
-        debug_assert!(frame_count.is_power_of_two());
         debug_assert!(page_size.is_power_of_two());
         let memory_size = frame_count * frame_size;
         let aligned_size = (memory_size + page_size - 1) & !(page_size - 1);
@@ -397,9 +396,53 @@ impl DerefMut for PageAlignedMemory {
 #[cfg(test)]
 mod tests {
     use {
-        crate::umem::{CompletedFrameOffset, Frame, SliceUmem, Umem},
+        crate::umem::{
+            CompletedFrameOffset, Frame, OwnedUmem, PageAlignedMemory, SliceUmem, Umem,
+        },
         std::slice,
     };
+
+    #[test]
+    fn test_page_aligned_memory_allocates_asymmetric_ring_frame_counts() {
+        // Asymmetric ring sizes yield (rx + tx) * 2 frame counts that are not
+        // powers of two, e.g. (1024 + 4096) * 2 = 10240.
+        for frame_count in [10_240, 6_144, 3_072] {
+            let memory =
+                PageAlignedMemory::alloc_with_page_size(4_096, frame_count, 4_096, false)
+                    .unwrap();
+            assert!(memory.len() >= frame_count * 4_096);
+        }
+    }
+
+    #[test]
+    fn test_page_aligned_memory_rounds_up_to_page_size() {
+        // 3 * 512 = 1536 bytes rounds up to a single page; 9 * 512 = 4608 to two.
+        let memory = PageAlignedMemory::alloc_with_page_size(512, 3, 4_096, false).unwrap();
+        assert_eq!(memory.len(), 4_096);
+        let memory = PageAlignedMemory::alloc_with_page_size(512, 9, 4_096, false).unwrap();
+        assert_eq!(memory.len(), 8_192);
+    }
+
+    #[test]
+    fn test_owned_umem_reserves_and_recycles_non_power_of_two_frame_counts() {
+        // Page rounding grants frames beyond the requested count, so capacity
+        // derives from the mapped length; reserve/release must work regardless.
+        let memory = PageAlignedMemory::alloc_with_page_size(512, 3, 4_096, false).unwrap();
+        let umem = OwnedUmem::new(memory, 512).unwrap();
+        assert_eq!(umem.capacity(), 8); // 4096 / 512
+
+        let mut frames = Vec::new();
+        while let Some(frame) = umem.reserve() {
+            frames.push(frame);
+        }
+        assert_eq!(frames.len(), umem.capacity());
+        assert_eq!(umem.available(), 0);
+
+        for frame in frames {
+            umem.release(frame);
+        }
+        assert_eq!(umem.available(), umem.capacity());
+    }
 
     #[test]
     fn test_map_frame() {
