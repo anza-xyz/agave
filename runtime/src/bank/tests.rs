@@ -13607,7 +13607,7 @@ fn test_new_for_txn_tests_system_transfer() {
     let recent_blockhash = Hash::new_unique();
     blockhash_queue.register_hash(&recent_blockhash, lamports_per_signature);
 
-    let accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
+    let bank_rc = BankRc::new(Accounts::new(Arc::new(AccountsDb::default_for_tests())));
 
     let clock = solana_clock::Clock {
         slot,
@@ -13656,16 +13656,12 @@ fn test_new_for_txn_tests_system_transfer() {
     ];
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
+    let bank_id = bank_rc.next_bank_id();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts(
-        (parent_slot, refs.as_slice()),
-        BankId::new(0),
-        None,
-        &ancestors,
-    );
-    accounts.accounts_db.add_root(parent_slot);
-
-    let bank_rc = BankRc::new(accounts);
+    bank_rc
+        .accounts
+        .store_accounts((parent_slot, refs.as_slice()), bank_id, None, &ancestors);
+    bank_rc.accounts.accounts_db.add_root(parent_slot);
 
     let mut epoch_stakes = HashMap::new();
     for key in [epoch, epoch.saturating_add(1)] {
@@ -13722,6 +13718,7 @@ fn test_new_for_txn_tests_system_transfer() {
     let bank = bank_forks.read().unwrap().root_bank();
 
     assert_eq!(bank.slot(), slot);
+    assert_eq!(bank.bank_id(), BankId::new(1));
     assert_eq!(bank.epoch(), epoch);
     assert_eq!(bank.last_blockhash(), recent_blockhash);
 
@@ -13796,7 +13793,7 @@ fn test_new_for_block_tests_with_vote_account() {
     let mut blockhash_queue = BlockhashQueue::default();
     blockhash_queue.register_hash(&recent_blockhash, lamports_per_signature);
 
-    let accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
+    let bank_rc = BankRc::new(Accounts::new(Arc::new(AccountsDb::default_for_tests())));
 
     let owned_accounts = vec![
         (vote_pubkey, vote_account),
@@ -13840,16 +13837,12 @@ fn test_new_for_block_tests_with_vote_account() {
     let total_lamports = owned_accounts.iter().map(|(_, a)| a.lamports()).sum();
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
+    let bank_id = bank_rc.next_bank_id();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts(
-        (parent_slot, refs.as_slice()),
-        BankId::new(0),
-        None,
-        &ancestors,
-    );
-    accounts.accounts_db.add_root(parent_slot);
-
-    let bank_rc = BankRc::new(accounts);
+    bank_rc
+        .accounts
+        .store_accounts((parent_slot, refs.as_slice()), bank_id, None, &ancestors);
+    bank_rc.accounts.accounts_db.add_root(parent_slot);
 
     let vote_accounts_map = HashMap::from([(vote_pubkey, (1_000_000, vote_acct))]);
     let mut epoch_stakes = HashMap::new();
@@ -13911,6 +13904,7 @@ fn test_new_for_block_tests_with_vote_account() {
     let bank = bank_forks.read().unwrap().root_bank();
 
     assert_eq!(bank.slot(), slot);
+    assert_eq!(bank.bank_id(), BankId::new(1));
     assert_eq!(bank.epoch(), epoch);
     assert!(bank.capitalization() > 0);
     assert_eq!(bank.last_blockhash(), recent_blockhash);

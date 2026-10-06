@@ -31,7 +31,7 @@ use {
     solana_message::SanitizedMessage,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, BankFieldsToDeserialize, BankId, BankRc},
+        bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
         stake_history::StakeHistory,
         stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
@@ -102,16 +102,13 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     let epoch = epoch_schedule.get_epoch(slot);
 
     // Populate the accounts DB with the input accounts at the parent slot.
-    let bank_accounts = new_accounts_for_tests_single_threaded();
+    let bank_rc = BankRc::new(new_accounts_for_tests_single_threaded());
+    let bank_id = bank_rc.next_bank_id();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    bank_accounts.store_accounts(
-        (parent_slot, &accounts[..]),
-        BankId::default(),
-        None,
-        &ancestors,
-    );
-    bank_accounts.accounts_db.add_root(parent_slot);
-    let bank_rc = BankRc::new(bank_accounts);
+    bank_rc
+        .accounts
+        .store_accounts((parent_slot, &accounts[..]), bank_id, None, &ancestors);
+    bank_rc.accounts.accounts_db.add_root(parent_slot);
 
     // Dummy epoch stakes with the provided total stake at the current and next epoch.
     let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();

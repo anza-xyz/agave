@@ -36,7 +36,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_rent::Rent,
     solana_runtime::{
-        bank::{Bank, BankFieldsToDeserialize, BankId, BankRc},
+        bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
     },
     solana_runtime_transaction::sanitize_config::sanitize_config,
@@ -328,16 +328,16 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
     let epoch = epoch_schedule.get_epoch(root_slot);
     let parent_slot = root_slot.saturating_sub(1);
 
-    let accounts = create_accounts_db();
+    let bank_rc = BankRc::new(create_accounts_db());
+    let bank_id = bank_rc.next_bank_id();
     let rent_account = AccountSharedData::new_data(1, &Rent::default(), &sysvar::id()).unwrap();
-    accounts.store_accounts(
+    bank_rc.accounts.store_accounts(
         (parent_slot, &[(sysvar::rent::id(), rent_account)][..]),
-        BankId::default(),
+        bank_id,
         None,
         &Ancestors::default(),
     );
-    accounts.accounts_db.add_root(parent_slot);
-    let bank_rc = BankRc::new(accounts);
+    bank_rc.accounts.accounts_db.add_root(parent_slot);
 
     let epoch_stakes = [epoch, epoch.saturating_add(1)]
         .into_iter()

@@ -24,7 +24,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{
-            Bank, BankFieldsToDeserialize, BankId, BankRc,
+            Bank, BankFieldsToDeserialize, BankRc,
             bank_hash_details::{
                 AccountsDetails, BankHashComponents, BankHashDetails, SlotDetails,
             },
@@ -84,7 +84,7 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
     let blockhash_queue = restore_blockhash_queue(&bank_ctx.blockhash_queue);
 
     // Accounts DB config and initialization
-    let accounts = new_accounts_for_tests_single_threaded();
+    let bank_rc = BankRc::new(new_accounts_for_tests_single_threaded());
 
     // Create feature gate accounts for all feature gates that are present in the protobuf
     // feature set.
@@ -99,13 +99,14 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         .chain(acct_states_from_proto.iter().cloned())
         .collect();
 
-    accounts.store_accounts(
+    let bank_id = bank_rc.next_bank_id();
+    bank_rc.accounts.store_accounts(
         (parent_slot, &accounts_to_store[..]),
-        BankId::default(),
+        bank_id,
         None,
         &Ancestors::default(),
     );
-    accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(parent_slot);
     let accounts_data_size_initial = accounts_to_store
         .iter()
         .map(|(_, account)| account.data().len() as u64)
@@ -206,7 +207,6 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         ..BankFieldsToDeserialize::default()
     };
 
-    let bank_rc = BankRc::new(accounts);
     let bank = Bank::new_for_block_tests(
         bank_rc,
         bank_fields,

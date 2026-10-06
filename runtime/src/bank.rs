@@ -352,6 +352,11 @@ impl BankRc {
             bank_id_generator: Arc::default(),
         }
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn next_bank_id(&self) -> BankId {
+        self.bank_id_generator.next()
+    }
 }
 
 pub struct LoadAndExecuteTransactionsOutput {
@@ -1267,12 +1272,12 @@ struct NewEpochBundle {
 }
 
 impl Bank {
-    fn default_with_accounts(accounts: Accounts) -> Self {
-        let partitioned_rewards_stake_account_stores_per_block = accounts
+    fn default_with_bank_rc(rc: BankRc) -> Self {
+        let partitioned_rewards_stake_account_stores_per_block = rc
+            .accounts
             .accounts_db
             .partitioned_epoch_rewards_config
             .stake_account_stores_per_block;
-        let rc = BankRc::new(accounts);
         let bank_id = rc.bank_id_generator.next();
         let mut bank = Self {
             rc,
@@ -1382,7 +1387,7 @@ impl Bank {
         let accounts_db =
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
         let accounts = Accounts::new(Arc::new(accounts_db));
-        let mut bank = Self::default_with_accounts(accounts);
+        let mut bank = Self::default_with_bank_rc(BankRc::new(accounts));
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
         bank.compute_budget = runtime_config.compute_budget;
         bank.store_transaction_signatures_in_status_cache =
@@ -6981,10 +6986,7 @@ impl Bank {
         let ancestors = Ancestors::from(vec![slot]);
         let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc.accounts, &ancestors);
 
-        let accounts = Accounts::new(Arc::clone(&bank_rc.accounts.accounts_db));
-        let mut bank = Self::default_with_accounts(accounts);
-
-        bank.rc = bank_rc;
+        let mut bank = Self::default_with_bank_rc(bank_rc);
         bank.blockhash_queue = RwLock::new(fields.blockhash_queue);
         bank.ancestors = ancestors;
         bank.hash = RwLock::new(fields.hash);
@@ -7142,7 +7144,7 @@ impl Bank {
     pub fn default_for_tests() -> Self {
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
-        Self::default_with_accounts(accounts)
+        Self::default_with_bank_rc(BankRc::new(accounts))
     }
 
     pub fn new_with_bank_forks_for_tests(
