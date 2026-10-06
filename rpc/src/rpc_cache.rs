@@ -18,7 +18,7 @@ use {
     tokio::sync::OnceCell,
 };
 
-type RankMapCell = Arc<OnceCell<Option<Arc<RpcRankMap>>>>;
+type RankMapCell = Arc<OnceCell<Arc<RpcRankMap>>>;
 
 pub struct RankMapCache {
     // Only maps from finalized banks may be inserted.
@@ -45,11 +45,8 @@ impl RankMapCache {
     }
 }
 
-pub(crate) fn rank_map_response(
-    epoch: Epoch,
-    stakes: &VersionedEpochStakes,
-) -> Option<Arc<RpcRankMap>> {
-    let rank_map = stakes.try_bls_pubkey_to_rank_map()?;
+pub(crate) fn rank_map_response(epoch: Epoch, stakes: &VersionedEpochStakes) -> Arc<RpcRankMap> {
+    let rank_map = stakes.bls_pubkey_to_rank_map();
     let validators = rank_map
         .iter()
         .map(|(rank, entry)| {
@@ -69,11 +66,11 @@ pub(crate) fn rank_map_response(
             }
         })
         .collect();
-    Some(Arc::new(RpcRankMap {
+    Arc::new(RpcRankMap {
         epoch,
         total_stake: rank_map.total_stake(),
         validators,
-    }))
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -154,20 +151,25 @@ pub mod test {
     async fn test_rank_map_cache_initializes_once() {
         let mut cache = RankMapCache::default();
         let cell = cache.get_or_insert(0);
+        let response = Arc::new(RpcRankMap {
+            epoch: 0,
+            total_stake: 1.try_into().unwrap(),
+            validators: Vec::new(),
+        });
         let (first, second) = tokio::join!(
             cell.get_or_init(|| async {
                 tokio::task::yield_now().await;
-                None
+                Arc::clone(&response)
             }),
             cell.get_or_init(|| async { panic!("map should already be initialized") }),
         );
-        assert!(first.is_none());
-        assert!(second.is_none());
-        assert!(
-            cell.get_or_init(|| async { panic!("null should be cached") })
-                .await
-                .is_none()
-        );
+        assert!(Arc::ptr_eq(first, &response));
+        assert!(Arc::ptr_eq(second, &response));
+        assert!(Arc::ptr_eq(
+            cell.get_or_init(|| async { panic!("map should be cached") })
+                .await,
+            &response,
+        ));
     }
 
     #[test]

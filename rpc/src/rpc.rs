@@ -953,11 +953,6 @@ impl JsonRpcRequestProcessor {
         slot: Slot,
         config: RpcRankMapConfig,
     ) -> Result<RpcResponse<Option<Arc<RpcRankMap>>>> {
-        if !config.commitment.unwrap_or_default().is_finalized() {
-            return Err(Error::invalid_params(
-                "getRankMap only supports finalized commitment",
-            ));
-        }
         let identity = config.identity.as_deref();
         if let Some(identity) = identity {
             verify_pubkey(identity)?;
@@ -986,12 +981,12 @@ impl JsonRpcRequestProcessor {
                     .map_err(|_| Error::internal_error())
             })
             .await?;
-        let value = cached.as_ref().map(|map| match identity {
-            None => Arc::clone(map),
+        let value = match identity {
+            None => Arc::clone(cached),
             Some(identity) => Arc::new(RpcRankMap {
-                epoch: map.epoch,
-                total_stake: map.total_stake,
-                validators: map
+                epoch: cached.epoch,
+                total_stake: cached.total_stake,
+                validators: cached
                     .validators
                     .iter()
                     .find(|validator| validator.node_pubkey == identity)
@@ -999,8 +994,8 @@ impl JsonRpcRequestProcessor {
                     .into_iter()
                     .collect(),
             }),
-        });
-        Ok(new_response(&bank, value))
+        };
+        Ok(new_response(&bank, Some(value)))
     }
 
     pub fn get_balance(
@@ -5573,7 +5568,7 @@ pub mod tests {
             let request = create_test_request(
                 "getRankMap",
                 Some(json!([0, {
-                    "identity": validator.node_pubkey, "commitment": "finalized", "minContextSlot": 1
+                    "identity": validator.node_pubkey, "minContextSlot": 1
                 }])),
             );
             let response: RpcResponse<Option<RpcRankMap>> =
@@ -5592,7 +5587,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_rank_map_errors_and_empty_epochs() {
+    fn test_rpc_rank_map_errors() {
         let rpc = RpcHandler::start();
         for slot in [0, TEST_SLOTS_PER_EPOCH * 2] {
             let request =
@@ -5600,26 +5595,16 @@ pub mod tests {
             let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
             assert_eq!(code, JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED);
         }
-        for commitment in ["processed", "confirmed"] {
+        for commitment in ["processed", "confirmed", "finalized"] {
             let request =
                 create_test_request("getRankMap", Some(json!([0, {"commitment": commitment}])));
             let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
             assert_eq!(code, -32602);
-            assert!(message.contains("only supports finalized commitment"));
+            assert!(message.contains("unknown field `commitment`"));
         }
         let request = create_test_request("getRankMap", Some(json!([0, {"identity": "invalid"}])));
         let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
         assert_eq!(code, -32602);
-        for stakes in [&[][..], &[0, 0][..]] {
-            let rpc = RpcHandler::start();
-            let mut bank = Bank::new_from_parent(rpc.working_bank(), SlotLeader::default(), 1);
-            bank.set_epoch_stakes_for_test(0, rank_map_test_stakes(stakes));
-            root_rank_map_bank(&rpc, bank);
-            let request = create_test_request("getRankMap", Some(json!([0])));
-            let response: RpcResponse<Option<RpcRankMap>> =
-                parse_success_result(rpc.handle_request_sync(request));
-            assert!(response.value.is_none());
-        }
     }
 
     #[test]

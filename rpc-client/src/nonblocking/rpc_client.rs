@@ -2145,7 +2145,7 @@ impl RpcClient {
     ///
     /// Always queries finalized state, regardless of the client's default commitment.
     ///
-    /// Returns `None` if the epoch is unavailable or has no eligible BLS validators.
+    /// Returns `None` if the epoch is unavailable.
     ///
     /// # RPC Reference
     ///
@@ -2178,7 +2178,7 @@ impl RpcClient {
 
     /// Returns the Alpenglow validator rank map with an optional identity filter.
     ///
-    /// Only finalized commitment is supported; processed and confirmed return an error.
+    /// Always queries finalized state. There is no commitment parameter.
     ///
     /// The filter preserves the validator's rank and the full map's total stake.
     /// An unknown identity returns an empty validator list when the map is available.

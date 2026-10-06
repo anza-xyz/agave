@@ -69,11 +69,6 @@ pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
 
 impl BLSPubkeyToRankMap {
     pub fn new(epoch_vote_accounts_hash_map: &VoteAccountsHashMap) -> Self {
-        Self::try_new(epoch_vote_accounts_hash_map).expect("total stakes should not be 0")
-    }
-
-    /// Returns `None` if no validators are eligible for an Alpenglow rank.
-    pub fn try_new(epoch_vote_accounts_hash_map: &VoteAccountsHashMap) -> Option<Self> {
         let mut candidates = Vec::with_capacity(epoch_vote_accounts_hash_map.len());
         let mut bls_pubkey_counts = HashMap::new();
         let mut node_pubkey_counts = HashMap::new();
@@ -113,7 +108,7 @@ impl BLSPubkeyToRankMap {
             .fold(0u64, |stake, (entry, _)| {
                 stake.saturating_add(entry.stake.get())
             });
-        let total_stake = NonZero::new(total_stake)?;
+        let total_stake = NonZero::new(total_stake).expect("total stakes should not be 0");
         keys_stake_entry_with_compressed.sort_by(
             |(a_entry, a_pubkey_compressed), (b_entry, b_pubkey_compressed)| {
                 b_entry
@@ -135,12 +130,12 @@ impl BLSPubkeyToRankMap {
             node_pubkey_to_rank.insert(entry.node_pubkey, rank);
             sorted_pubkeys.push(entry);
         }
-        Some(Self {
+        Self {
             vote_pubkey_to_rank: vote_pubkey_to_rank_map,
             sorted_pubkeys,
             total_stake,
             node_pubkey_to_rank,
-        })
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -355,20 +350,6 @@ impl VersionedEpochStakes {
                 ))
             }),
         }
-    }
-
-    /// Returns `None` if the epoch has no validators eligible for an Alpenglow rank.
-    pub fn try_bls_pubkey_to_rank_map(&self) -> Option<&Arc<BLSPubkeyToRankMap>> {
-        let Self::Current {
-            bls_pubkey_to_rank_map,
-            ..
-        } = self;
-        if bls_pubkey_to_rank_map.get().is_none() {
-            let rank_map = BLSPubkeyToRankMap::try_new(self.stakes().vote_accounts().as_ref())?;
-            // Another caller may have initialized the same immutable map.
-            let _ = bls_pubkey_to_rank_map.set(Arc::new(rank_map));
-        }
-        bls_pubkey_to_rank_map.get()
     }
 
     /// Returns the stake in Lamports for the given vote_account.
@@ -718,10 +699,6 @@ pub(crate) mod tests {
         });
         let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
         let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        assert!(Arc::ptr_eq(
-            bls_pubkey_to_rank_map,
-            epoch_stakes.try_bls_pubkey_to_rank_map().unwrap(),
-        ));
         for (rank, entry) in bls_pubkey_to_rank_map.iter() {
             assert_eq!(
                 bls_pubkey_to_rank_map.get_rank_for_vote_pubkey(&entry.vote_account_pubkey),
@@ -783,26 +760,7 @@ pub(crate) mod tests {
             *node_id_to_stake_map.get(node_id).unwrap()
         });
         let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
-        assert!(epoch_stakes.try_bls_pubkey_to_rank_map().is_none());
         epoch_stakes.bls_pubkey_to_rank_map();
-    }
-
-    #[test_case(0, true, 100; "no vote accounts")]
-    #[test_case(3, true, 0; "zero stake")]
-    #[test_case(3, false, 100; "invalid BLS keys")]
-    #[test_case(3, true, 100; "eligible validators")]
-    fn test_try_bls_pubkey_rank_map(num_nodes: usize, is_alpenglow: bool, stake: u64) {
-        let accounts = new_vote_accounts(num_nodes, 1, is_alpenglow);
-        let accounts = new_epoch_vote_accounts(&accounts, |_| stake);
-        let epoch_stakes = VersionedEpochStakes::new_for_tests(accounts, 0);
-        let rank_map = epoch_stakes.try_bls_pubkey_to_rank_map();
-        assert_eq!(
-            rank_map.is_some(),
-            num_nodes > 0 && is_alpenglow && stake > 0
-        );
-        if let Some(rank_map) = rank_map {
-            assert!(Arc::ptr_eq(rank_map, epoch_stakes.bls_pubkey_to_rank_map()));
-        }
     }
 
     #[test]
