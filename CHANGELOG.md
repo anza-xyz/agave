@@ -45,6 +45,16 @@ Release channels have their own copy of this changelog:
 * `airdrop` now prints a link to <https://faucet.solana.com>, pre-populated with the recipient address,
   when the request fails on devnet or testnet.
 
+### Geyser
+
+#### Changes
+
+* Contact info notifications now include unchanged gossip republishes. Plugins that subscribe to
+  contact info should be prepared for thousands of callbacks per second, many carrying duplicates.
+  Deduplicate locally if only field changes are needed. Keep callbacks short: a blocked callback
+  can fill the shared channel and cause updates to be dropped for all subscribed plugins.
+  Plugins loaded later can learn about unchanged nodes from subsequent republishes.
+
 ## 4.4.0
 
 ### RPC

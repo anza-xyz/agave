@@ -6940,7 +6940,6 @@ dependencies = [
  "crossbeam-channel",
  "json5",
  "jsonrpc-core",
- "lazy-lru",
  "libloading",
  "log",
  "serde_json",
