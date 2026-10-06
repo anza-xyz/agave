@@ -525,8 +525,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 entries.retain(|_id, second_level| {
                     // Clean up tombstones and unloaded entries
                     if let [candidate] = &second_level[..]
-                        && (matches!(candidate.program, ProgramCacheEntryType::Unloaded(_))
-                            || candidate.is_tombstone())
+                        && (candidate.is_unloaded() || candidate.is_tombstone())
                         && candidate.deployment_slot <= self.latest_root_slot
                         && candidate.latest_access_slot.load(Ordering::Relaxed)
                             < tombstone_slot_cutoff
@@ -672,9 +671,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                         // sibling compiled against that environment may follow.
                                         continue;
                                     }
-                                    if let ProgramCacheEntryType::Unloaded(_environment) =
-                                        &entry.program
-                                    {
+                                    if entry.is_unloaded() {
                                         break;
                                     }
                                     entry.clone()
@@ -1308,7 +1305,8 @@ pub(crate) mod tests {
         let unloaded = entries
             .iter()
             .filter_map(|(key, program)| {
-                matches!(program.program, ProgramCacheEntryType::Unloaded(_))
+                program
+                    .is_unloaded()
                     .then_some((*key, program.stats.uses.load(Ordering::Relaxed)))
             })
             .collect::<Vec<(Pubkey, u64)>>();
@@ -1373,7 +1371,7 @@ pub(crate) mod tests {
             .get_flattened_entries_for_tests()
             .iter()
             .for_each(|(_key, program)| {
-                if matches!(program.program, ProgramCacheEntryType::Unloaded(_)) {
+                if program.is_unloaded() {
                     // Test that the usage counter is retained for the unloaded program
                     assert_eq!(program.stats.uses.load(Ordering::Relaxed), 10);
                     assert_eq!(program.deployment_slot, 0);
@@ -1394,7 +1392,7 @@ pub(crate) mod tests {
             .get_flattened_entries_for_tests()
             .iter()
             .for_each(|(_key, program)| {
-                if matches!(program.program, ProgramCacheEntryType::Unloaded(_))
+                if program.is_unloaded()
                     && program.deployment_slot == 0
                     && program.effective_slot() == 1
                 {
@@ -3453,7 +3451,7 @@ pub(crate) mod tests {
             // with the batch.
             assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), batch_slot);
             assert_eq!(tombstone.latest_access_slot.load(Ordering::Relaxed), 0);
-        } else if matches!(entry.program, ProgramCacheEntryType::Unloaded(_)) {
+        } else if entry.is_unloaded() {
             // The entry was effective, but there is no binary behind it, so
             // the search breaks off and the caller is left to reload. Nothing
             // is recorded against the entry.

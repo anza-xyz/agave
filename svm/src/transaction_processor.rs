@@ -3714,10 +3714,7 @@ mod tests {
         if already_cached {
             // If the program was already cached as unloaded, we did not waste
             // a load here, and it remains unloaded until effective.
-            assert!(matches!(
-                slot_versions[0].program,
-                ProgramCacheEntryType::Unloaded(_)
-            ));
+            assert!(slot_versions[0].is_unloaded());
             assert!(!program_cache_for_tx_batch.loaded_missing);
             assert_eq!(global_program_cache.stats.hits.load(Ordering::Relaxed), 1);
             assert_eq!(global_program_cache.stats.misses.load(Ordering::Relaxed), 0);

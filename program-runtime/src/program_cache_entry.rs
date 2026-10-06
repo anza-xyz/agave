@@ -347,6 +347,10 @@ impl ProgramCacheEntry {
         slot >= self.deployment_slot && slot < self.effective_slot()
     }
 
+    pub fn is_unloaded(&self) -> bool {
+        matches!(self.program, ProgramCacheEntryType::Unloaded(_))
+    }
+
     pub fn effective_slot(&self) -> Slot {
         match self.program {
             ProgramCacheEntryType::Closed
