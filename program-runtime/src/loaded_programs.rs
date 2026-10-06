@@ -525,8 +525,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 entries.retain(|_id, second_level| {
                     // Clean up tombstones and unloaded entries
                     if let [candidate] = &second_level[..]
-                        && (matches!(candidate.program, ProgramCacheEntryType::Unloaded(_))
-                            || candidate.is_tombstone())
+                        && (candidate.is_unloaded() || candidate.is_tombstone())
                         && candidate.deployment_slot <= self.latest_root_slot
                         && candidate.latest_access_slot.load(Ordering::Relaxed)
                             < tombstone_slot_cutoff
@@ -628,6 +627,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
         let entries_in_batch = loaded_programs_for_tx_batch.entries.len();
+        let batch_slot = loaded_programs_for_tx_batch.slot;
         let mut cooperative_loading_task = None;
         match &self.index {
             IndexImplementation::V1 {
@@ -653,15 +653,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             let entry_in_same_branch = entry.deployment_slot
                                 <= self.latest_root_slot
                                 || matches!(
-                                    locked_fork_graph.relationship(
-                                        entry.deployment_slot,
-                                        loaded_programs_for_tx_batch.slot
-                                    ),
+                                    locked_fork_graph
+                                        .relationship(entry.deployment_slot, batch_slot),
                                     BlockRelation::Equal | BlockRelation::Ancestor
                                 );
                             if entry_in_same_branch {
-                                let entry_is_effective =
-                                    loaded_programs_for_tx_batch.slot >= entry.effective_slot();
+                                let entry_is_effective = batch_slot >= entry.effective_slot();
                                 let entry_to_return = if entry_is_effective {
                                     if !Self::matches_environment(
                                         entry,
@@ -672,15 +669,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                         // sibling compiled against that environment may follow.
                                         continue;
                                     }
-                                    if let ProgramCacheEntryType::Unloaded(_environment) =
-                                        &entry.program
-                                    {
+                                    if entry.is_unloaded() {
                                         break;
                                     }
                                     entry.clone()
-                                } else if entry.is_implicit_delay_visibility_tombstone(
-                                    loaded_programs_for_tx_batch.slot,
-                                ) {
+                                } else if entry.is_implicit_delay_visibility_tombstone(batch_slot) {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
@@ -692,7 +685,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 } else {
                                     continue;
                                 };
-                                entry.update_access_slot(loaded_programs_for_tx_batch.slot);
+                                entry.update_access_slot(batch_slot);
                                 if increment_usage_counter {
                                     entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                                 }
@@ -707,10 +700,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         let mut loading_entries = loading_entries.lock().unwrap();
                         let entry = loading_entries.entry(*program_to_load.program_id);
                         if let Entry::Vacant(entry) = entry {
-                            entry.insert((
-                                loaded_programs_for_tx_batch.slot,
-                                thread::current().id(),
-                            ));
+                            entry.insert((batch_slot, thread::current().id()));
                             cooperative_loading_task = Some(*program_to_load.program_id);
                         }
                     }
@@ -1308,7 +1298,8 @@ pub(crate) mod tests {
         let unloaded = entries
             .iter()
             .filter_map(|(key, program)| {
-                matches!(program.program, ProgramCacheEntryType::Unloaded(_))
+                program
+                    .is_unloaded()
                     .then_some((*key, program.stats.uses.load(Ordering::Relaxed)))
             })
             .collect::<Vec<(Pubkey, u64)>>();
@@ -1373,7 +1364,7 @@ pub(crate) mod tests {
             .get_flattened_entries_for_tests()
             .iter()
             .for_each(|(_key, program)| {
-                if matches!(program.program, ProgramCacheEntryType::Unloaded(_)) {
+                if program.is_unloaded() {
                     // Test that the usage counter is retained for the unloaded program
                     assert_eq!(program.stats.uses.load(Ordering::Relaxed), 10);
                     assert_eq!(program.deployment_slot, 0);
@@ -1394,7 +1385,7 @@ pub(crate) mod tests {
             .get_flattened_entries_for_tests()
             .iter()
             .for_each(|(_key, program)| {
-                if matches!(program.program, ProgramCacheEntryType::Unloaded(_))
+                if program.is_unloaded()
                     && program.deployment_slot == 0
                     && program.effective_slot() == 1
                 {
@@ -3453,7 +3444,7 @@ pub(crate) mod tests {
             // with the batch.
             assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), batch_slot);
             assert_eq!(tombstone.latest_access_slot.load(Ordering::Relaxed), 0);
-        } else if matches!(entry.program, ProgramCacheEntryType::Unloaded(_)) {
+        } else if entry.is_unloaded() {
             // The entry was effective, but there is no binary behind it, so
             // the search breaks off and the caller is left to reload. Nothing
             // is recorded against the entry.

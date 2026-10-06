@@ -140,6 +140,43 @@ impl Shredder {
         )
     }
 
+    /// Shreds entries the way older leaders did, resigning the trailing
+    /// FEC set(s) of the slot if is_last_in_slot.
+    #[cfg(feature = "dev-context-only-utils")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn entries_to_resigned_merkle_shreds_for_tests(
+        &self,
+        keypair: &Keypair,
+        entries: &[Entry],
+        is_last_in_slot: bool,
+        chained_merkle_root: Hash,
+        next_shred_index: u32,
+        next_code_index: u32,
+        reed_solomon_cache: &ReedSolomonCache,
+    ) -> (
+        Vec<Shred>, // data shreds
+        Vec<Shred>, // coding shreds
+    ) {
+        let entries = wincode::serialize(entries).unwrap();
+        shred::merkle::resigned_for_tests::make_shreds_from_data(
+            keypair,
+            chained_merkle_root,
+            &entries,
+            self.slot,
+            self.parent_slot,
+            self.version,
+            self.reference_tick,
+            is_last_in_slot,
+            next_shred_index,
+            next_code_index,
+            reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        )
+        .unwrap()
+        .into_iter()
+        .partition(Shred::is_data)
+    }
+
     pub fn entries_to_merkle_shreds_for_tests(
         &self,
         keypair: &Keypair,

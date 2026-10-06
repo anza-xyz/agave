@@ -37,6 +37,8 @@ enum Commands {
     XdpTest(commands::xdp_test::CommandArgs),
     #[command(about = "Emit conformance fixture dispatch table as JSON")]
     ConformanceTable(commands::conformance_table::CommandArgs),
+    #[command(about = "Check the workspace against a release profile")]
+    ReleaseCheck(commands::release_check::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -96,6 +98,9 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         }
         Commands::ConformanceTable(args) => {
             commands::conformance_table::run(args).await?;
+        }
+        Commands::ReleaseCheck(args) => {
+            commands::release_check::run(args)?;
         }
     }
 

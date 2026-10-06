@@ -1442,11 +1442,11 @@ pub mod limit_instruction_accounts {
 }
 
 pub mod block_revenue_sharing {
-    solana_pubkey::declare_id!("DSroRTaL5zozFw5yRYpaCTjeND1mSxxsnAeSi5vhELUv");
+    solana_pubkey::declare_id!("Crbnc267wkJvFhYakqwWWX57sx5bkrftJLekzy6yWKLT");
 }
 
 pub mod vote_account_initialize_v2 {
-    solana_pubkey::declare_id!("VoteAccount1nitia1izeV211111111111111111111");
+    solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
 }
 
 pub mod validate_chained_block_id {

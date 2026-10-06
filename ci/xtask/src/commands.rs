@@ -3,4 +3,5 @@ pub mod check_msrv;
 pub mod conformance_table;
 pub mod generate_pipeline;
 pub mod hello;
+pub mod release_check;
 pub mod xdp_test;

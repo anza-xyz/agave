@@ -810,18 +810,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         match fee_payer_result {
             Ok(details) => TransactionValidationResult::Loadable(details),
             Err(e) if allow_noop => {
-                // We correctly report the fee-payer balance if the account exists but is invalid.
-                let fee_payer_balance = account_loader
-                    .load_account(message.fee_payer())
-                    .map(|account| account.lamports());
-
                 // Per SIMD-0290, we report the maximum allowed compute and data usage.
                 // In essence the intent is if you pack a block with n non-paying transactions,
                 // you could have packed n or more of the same paying transactions, rather than
                 // being able to pack some multiple more non-paying than paying.
                 TransactionValidationResult::NoOp(NoOpTransaction {
                     validation_error: e,
-                    fee_payer_balance,
+                    fee_payer_balance: None,
                     compute_unit_limit: compute_budget_and_limits.budget.compute_unit_limit,
                     loaded_accounts_bytes_limit: compute_budget_and_limits
                         .loaded_accounts_data_size_limit,
@@ -2664,7 +2659,7 @@ mod tests {
         let expected_result = if relax_fee_payer_constraint {
             TransactionValidationResult::NoOp(NoOpTransaction {
                 validation_error: expected_error,
-                fee_payer_balance: Some(fee_payer_balance),
+                fee_payer_balance: None,
                 compute_unit_limit: fee_and_limits.budget.compute_unit_limit,
                 loaded_accounts_bytes_limit: fee_and_limits.loaded_accounts_data_size_limit,
                 nonce_address: None,
@@ -2720,7 +2715,7 @@ mod tests {
         let expected_result = if relax_fee_payer_constraint {
             TransactionValidationResult::NoOp(NoOpTransaction {
                 validation_error: expected_error,
-                fee_payer_balance: Some(starting_balance),
+                fee_payer_balance: None,
                 compute_unit_limit: fee_and_limits.budget.compute_unit_limit,
                 loaded_accounts_bytes_limit: fee_and_limits.loaded_accounts_data_size_limit,
                 nonce_address: None,
@@ -2772,7 +2767,7 @@ mod tests {
         let expected_result = if relax_fee_payer_constraint {
             TransactionValidationResult::NoOp(NoOpTransaction {
                 validation_error: expected_error,
-                fee_payer_balance: Some(fee_payer_balance),
+                fee_payer_balance: None,
                 compute_unit_limit: fee_and_limits.budget.compute_unit_limit,
                 loaded_accounts_bytes_limit: fee_and_limits.loaded_accounts_data_size_limit,
                 nonce_address: None,
@@ -3714,10 +3709,7 @@ mod tests {
         if already_cached {
             // If the program was already cached as unloaded, we did not waste
             // a load here, and it remains unloaded until effective.
-            assert!(matches!(
-                slot_versions[0].program,
-                ProgramCacheEntryType::Unloaded(_)
-            ));
+            assert!(slot_versions[0].is_unloaded());
             assert!(!program_cache_for_tx_batch.loaded_missing);
             assert_eq!(global_program_cache.stats.hits.load(Ordering::Relaxed), 1);
             assert_eq!(global_program_cache.stats.misses.load(Ordering::Relaxed), 0);

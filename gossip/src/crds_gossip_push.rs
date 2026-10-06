@@ -24,6 +24,8 @@ use {
     },
     itertools::Itertools,
     parking_lot::RwLock,
+    rand::SeedableRng,
+    rand_chacha::ChaCha8Rng,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -277,7 +279,7 @@ impl CrdsGossipPush {
         let cluster_size = crds.read().num_pubkeys().max(stakes.len());
         let mut active_set = self.active_set.write();
         active_set.rotate(
-            &mut rng,
+            &mut ChaCha8Rng::from_rng(&mut rng),
             CRDS_GOSSIP_PUSH_ACTIVE_SET_SIZE,
             cluster_size,
             nodes,

@@ -18,15 +18,10 @@ use {
 fn make_cluster_nodes<R: Rng>(
     rng: &mut R,
     unstaked_ratio: Option<(u32, u32)>,
-    use_cha_cha_8: bool,
 ) -> (Vec<ContactInfo>, ClusterNodes<RetransmitStage>) {
     let (nodes, stakes, cluster_info) = make_test_cluster(rng, 5_000, unstaked_ratio);
-    let cluster_nodes = new_cluster_nodes::<RetransmitStage>(
-        &cluster_info,
-        ClusterType::Development,
-        &stakes,
-        use_cha_cha_8,
-    );
+    let cluster_nodes =
+        new_cluster_nodes::<RetransmitStage>(&cluster_info, ClusterType::Development, &stakes);
     (nodes, cluster_nodes)
 }
 
@@ -63,39 +58,25 @@ fn get_retransmit_peers_deterministic(
     }
 }
 
-fn get_retransmit_peers_deterministic_wrapper(
-    b: &mut Bencher,
-    unstaked_ratio: Option<(u32, u32)>,
-    use_cha_cha_8: bool,
-) {
+fn get_retransmit_peers_deterministic_wrapper(b: &mut Bencher, unstaked_ratio: Option<(u32, u32)>) {
     let mut rng = rand::rng();
-    let (nodes, cluster_nodes) = make_cluster_nodes(&mut rng, unstaked_ratio, use_cha_cha_8);
+    let (nodes, cluster_nodes) = make_cluster_nodes(&mut rng, unstaked_ratio);
     let slot_leader = *nodes[1..].choose(&mut rng).unwrap().pubkey();
     let slot = rand::random::<u64>();
     b.iter(|| get_retransmit_peers_deterministic(&cluster_nodes, slot, &slot_leader));
 }
 
-fn bench_get_retransmit_peers_deterministic_unstaked_ratio_1_2_20(b: &mut Bencher) {
-    get_retransmit_peers_deterministic_wrapper(b, Some((1, 2)), false);
+fn bench_get_retransmit_peers_deterministic_unstaked_ratio_1_2(b: &mut Bencher) {
+    get_retransmit_peers_deterministic_wrapper(b, Some((1, 2)));
 }
 
-fn bench_get_retransmit_peers_deterministic_unstaked_ratio_1_32_20(b: &mut Bencher) {
-    get_retransmit_peers_deterministic_wrapper(b, Some((1, 32)), false);
-}
-
-fn bench_get_retransmit_peers_deterministic_unstaked_ratio_1_2_8(b: &mut Bencher) {
-    get_retransmit_peers_deterministic_wrapper(b, Some((1, 2)), true);
-}
-
-fn bench_get_retransmit_peers_deterministic_unstaked_ratio_1_32_8(b: &mut Bencher) {
-    get_retransmit_peers_deterministic_wrapper(b, Some((1, 32)), true);
+fn bench_get_retransmit_peers_deterministic_unstaked_ratio_1_32(b: &mut Bencher) {
+    get_retransmit_peers_deterministic_wrapper(b, Some((1, 32)));
 }
 
 benchmark_group!(
     benches,
-    bench_get_retransmit_peers_deterministic_unstaked_ratio_1_2_20,
-    bench_get_retransmit_peers_deterministic_unstaked_ratio_1_32_20,
-    bench_get_retransmit_peers_deterministic_unstaked_ratio_1_2_8,
-    bench_get_retransmit_peers_deterministic_unstaked_ratio_1_32_8
+    bench_get_retransmit_peers_deterministic_unstaked_ratio_1_2,
+    bench_get_retransmit_peers_deterministic_unstaked_ratio_1_32
 );
 benchmark_main!(benches);
