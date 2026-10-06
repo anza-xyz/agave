@@ -152,16 +152,17 @@ mod xdp_tests {
         std::net::{IpAddr, Ipv4Addr},
     };
 
-    fn single_ip_bind() -> BindIpAddrs {
-        BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap()
+    fn build_single_ip_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()])
+            .expect("a single unspecified IPv4 bind address should be valid")
     }
 
-    fn multihoming_bind() -> BindIpAddrs {
+    fn build_multihoming_bind() -> BindIpAddrs {
         BindIpAddrs::new(vec![
             IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
             IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
         ])
-        .unwrap()
+        .expect("two distinct specified IPv4 bind addresses should be valid")
     }
 
     #[test]
@@ -169,8 +170,13 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
-        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
-        assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+        let result = build_xdp_config(&matches, &Operation::Run, &build_single_ip_bind());
+        assert!(
+            result
+                .expect("--no-xdp should bypass XDP configuration validation")
+                .is_none(),
+            "--no-xdp must disable XDP"
+        );
     }
 
     #[test]
@@ -178,7 +184,7 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
-        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        let result = build_xdp_config(&matches, &Operation::Run, &build_single_ip_bind());
         assert!(
             result.unwrap_err().contains("selects no CPUs"),
             "empty XDP CPU core selection must produce an error"
@@ -190,8 +196,13 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let matches = app.get_matches_from(vec!["agave-validator"]);
-        let result = build_xdp_config(&matches, &Operation::Initialize, &single_ip_bind());
-        assert!(result.unwrap().is_none(), "init operation must disable XDP");
+        let result = build_xdp_config(&matches, &Operation::Initialize, &build_single_ip_bind());
+        assert!(
+            result
+                .expect("initialization should bypass XDP configuration validation")
+                .is_none(),
+            "init operation must disable XDP"
+        );
     }
 
     #[test]
@@ -199,7 +210,7 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let matches = app.get_matches_from(vec!["agave-validator"]);
-        let result = build_xdp_config(&matches, &Operation::Run, &multihoming_bind());
+        let result = build_xdp_config(&matches, &Operation::Run, &build_multihoming_bind());
         assert!(
             result.unwrap_err().contains("multihoming"),
             "multihoming context must produce an error"
@@ -214,7 +225,7 @@ mod xdp_tests {
             .unwrap_or(0)
             .to_string();
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", &poh_core]);
-        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        let result = build_xdp_config(&matches, &Operation::Run, &build_single_ip_bind());
         assert!(
             result.unwrap_err().contains("PoH core"),
             "XDP core overlapping PoH core must produce an error"
