@@ -685,7 +685,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 } else {
                                     continue;
                                 };
-                                entry.update_access_slot(batch_slot);
+                                entry.update_access_slot(batch_slot.min(self.latest_root_slot));
                                 if increment_usage_counter {
                                     entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                                 }
@@ -3414,6 +3414,7 @@ pub(crate) mod tests {
             new_program(env.clone()),
         );
         cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+        cache.latest_root_slot = batch_slot;
 
         let slot_versions = cache.get_slot_versions_for_tests(&program_id);
         assert_eq!(slot_versions.len(), 1);
@@ -3693,6 +3694,7 @@ pub(crate) mod tests {
             new_loaded_entry(env.clone()),
         );
         cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+        cache.latest_root_slot = 200;
 
         let mut search_for = vec![ProgramToLoad {
             program_id: &program_id,
@@ -3727,6 +3729,7 @@ pub(crate) mod tests {
             new_loaded_entry(env.clone()),
         );
         cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+        cache.latest_root_slot = 100;
 
         // Extract at the deployment slot itself, which is inside the delay
         // visibility window, so a `DelayVisibility` tombstone stands in for
@@ -4273,6 +4276,35 @@ pub(crate) mod tests {
             extracted.entries.get(&program_id).unwrap(),
             &entry
         ));
+    }
+
+    #[test]
+    fn test_extract_access_slot_clamped_to_root() {
+        let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
+        let env = get_mock_program_runtime_environment();
+        let program_id = Pubkey::new_unique();
+        let entry = new_test_entry_with_owner(
+            100,
+            ProgramCacheEntryOwner::LoaderV3,
+            new_loaded_entry(env.clone()),
+        );
+        cache.assign_program(&env, program_id, 100, Arc::clone(&entry));
+
+        let batch_slot = 200;
+        for root_slot in [0, 150, batch_slot] {
+            cache.latest_root_slot = root_slot;
+
+            let mut search_for = vec![ProgramToLoad {
+                program_id: &program_id,
+                loader: ProgramCacheEntryOwner::LoaderV3,
+                deployment_slot: 100,
+            }];
+            let mut extracted = ProgramCacheForTxBatch::new(batch_slot);
+            cache.extract(&mut search_for, &mut extracted, &env, true, true);
+
+            assert!(search_for.is_empty());
+            assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), root_slot);
+        }
     }
 
     #[test]
