@@ -7,6 +7,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
+<<<<<<< HEAD
+=======
+Release channels have their own copy of this changelog:
+
+* [edge - v4.5](#450-unreleased)
+* [beta - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
+* [stable - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
+
+## 4.5.0-Unreleased
+
+### RPC
+
+#### Breaking
+
+#### Changes
+
+* `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns
+  `MinContextSlotNotReached` (-32016) when the node's context slot at the finalized commitment is
+  below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
+  `getBlocks` behavior.
+* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
+  for the epoch containing a requested slot, with an optional identity filter. Always queries
+  finalized state; there is no commitment parameter.
+* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+
+### Validator
+
+#### Breaking
+
+#### Changes
+
+* The default full snapshot interval is now 200,000 slots.
+
+### CLI
+
+#### Breaking
+
+* Prebuilt Windows releases are no longer provided.
+
+#### Changes
+
+* `airdrop` now prints a link to <https://faucet.solana.com>, pre-populated with the recipient address,
+  when the request fails on devnet or testnet.
+
+## 4.4.0
+
+### RPC
+
+#### Breaking
+
+#### Changes
+
+* `getTransaction` now accepts `minContextSlot`, and `getSignatureStatuses` now accepts `commitment`
+  and `minContextSlot`, in their config objects. Both return `MinContextSlotNotReached` (-32016) when
+  the node's context slot at the requested commitment is below the minimum. `getSignatureStatuses`
+  still defaults to `processed` when no commitment is given.
+* Added `RpcClient::get_signature_statuses_with_config`.
+* `accountSubscribe` and `programSubscribe` now honor `dataSlice` for binary account data.
+  A zero-length slice returns empty data; omitting `dataSlice` returns the full account data.
+* `getLeaderSchedule` now returns a new error code `-32022` if the specified
+  `identity` does not appear in the leader schedule
+
+### Validator
+
+#### Breaking
+
+* scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
+* Previously deprecated `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`
+  and `--experimental-retransmit-xdp-zero-copy` have been removed. Use `--xdp-interface`, `--xdp-cpu-cores`
+  and `--xdp-zero-copy` instead.
+
+#### Changes
+
+### CLI
+
+#### Breaking
+
+#### Changes
+
+* Added `vote-update-commission-bps` to set a vote account's commission in basis points. The
+  `--commission-kind` argument selects which commission to update: `inflation-rewards` or
+  `block-revenue`.
+* Added `vote-update-commission-collector` to set the account that collects a vote account's
+  commission. The `COMMISSION_KIND` argument selects which collector to update:
+  `inflation-rewards` or `block-revenue`.
+* `leader-schedule` now accepts `--key-by-vote-account` to show each slot's leader by vote
+  account instead of validator identity.
+
+>>>>>>> 0cc6cf3 (rpc: add getRankMap (#15654))
 ## 4.3.0
 ### RPC
 #### Breaking

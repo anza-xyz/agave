@@ -175,6 +175,12 @@ impl BLSPubkeyToRankMap {
         self.sorted_pubkeys.get(index)
     }
 
+    /// Iterates over validators in rank order.
+    pub fn iter(&self) -> impl Iterator<Item = (u16, &BLSPubkeyStakeEntry)> {
+        // Construction checks that every rank fits in a u16.
+        (0..=u16::MAX).zip(&self.sorted_pubkeys)
+    }
+
     /// Returns a node's rank and its canonical stake entry.
     #[inline]
     pub fn get_ranked_entry_for_node(
@@ -757,6 +763,12 @@ pub(crate) mod tests {
         });
         let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
         let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+        for (rank, entry) in bls_pubkey_to_rank_map.iter() {
+            assert_eq!(
+                bls_pubkey_to_rank_map.get_rank_for_vote_pubkey(&entry.vote_account_pubkey),
+                Some(&rank),
+            );
+        }
         let expected_num_vote_accounts = num_vote_accounts;
         assert_eq!(bls_pubkey_to_rank_map.len(), expected_num_vote_accounts);
         let expected_total_stake = epoch_stakes.total_stake();
