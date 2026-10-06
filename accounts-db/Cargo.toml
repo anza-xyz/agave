@@ -138,6 +138,10 @@ harness = false
 bench = false
 
 [[bench]]
+name = "bench_cache_evict_accounts"
+harness = false
+
+[[bench]]
 name = "bench_serde"
 harness = false
 
