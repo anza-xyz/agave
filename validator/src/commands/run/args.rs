@@ -1259,6 +1259,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("no_xdp")
             .long("no-xdp")
             .takes_value(false)
+            .conflicts_with("no_xdp_zero_copy")
             .help("Disable XDP transmit and fall back to UDP sockets"),
     )
     .arg(
@@ -1289,7 +1290,16 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("xdp-zero-copy")
             .takes_value(false)
             .conflicts_with("no_xdp")
+            .conflicts_with("no_xdp_zero_copy")
             .help("Enable XDP zero copy mode. Requires hardware and driver support"),
+    )
+    .arg(
+        Arg::with_name("no_xdp_zero_copy")
+            .long("no-xdp-zero-copy")
+            .takes_value(false)
+            .conflicts_with("xdp_zero_copy")
+            .conflicts_with("no_xdp")
+            .help("Use XDP copy mode"),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())

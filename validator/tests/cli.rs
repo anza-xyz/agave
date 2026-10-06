@@ -35,3 +35,20 @@ fn test_use_the_same_path_for_accounts_and_snapshots() {
         "the --accounts and --snapshots paths must be unique",
     ));
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_conflicting_xdp_copy_mode_flags() {
+    for flags in [
+        ["--xdp-zero-copy", "--no-xdp-zero-copy"],
+        ["--no-xdp-zero-copy", "--xdp-zero-copy"],
+        ["--no-xdp", "--no-xdp-zero-copy"],
+        ["--no-xdp-zero-copy", "--no-xdp"],
+    ] {
+        let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!(env!("CARGO_PKG_NAME")));
+        cmd.args(flags);
+        cmd.assert()
+            .failure()
+            .stderr(predicates::str::contains("cannot be used with"));
+    }
+}

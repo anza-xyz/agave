@@ -180,6 +180,36 @@ mod xdp_tests {
     }
 
     #[test]
+    fn test_xdp_copy_mode_selection() {
+        for (flag, zero_copy) in [
+            (None, false),
+            (Some("--xdp-zero-copy"), true),
+            (Some("--no-xdp-zero-copy"), false),
+        ] {
+            let default_args = DefaultArgs::default();
+            let app = add_args(clap::App::new("agave-validator"), &default_args);
+            let mut args = vec![
+                "agave-validator",
+                "--xdp-cpu-cores",
+                "1",
+                "--poh-pinned-cpu-core",
+                "0",
+            ];
+            args.extend(flag);
+            let matches = app
+                .get_matches_from_safe(args)
+                .expect("valid XDP copy mode selection should be accepted");
+            let config = build_xdp_config(&matches, &Operation::Run, &build_single_ip_bind())
+                .expect("distinct XDP and PoH cores should be valid")
+                .expect("copy mode selection should keep XDP enabled");
+            assert_eq!(
+                config.zero_copy, zero_copy,
+                "XDP copy mode must match the selection {flag:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_empty_xdp_cpu_cores_is_error() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
