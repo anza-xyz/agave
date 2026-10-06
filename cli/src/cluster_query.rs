@@ -2196,9 +2196,43 @@ mod tests {
     use {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
+        async_trait::async_trait,
+        serde_json::{Value, json},
         solana_keypair::{Keypair, write_keypair},
+        solana_rpc_client::{
+            mock_sender::MockSender,
+            rpc_client::RpcClientConfig,
+            rpc_sender::{RpcSender, RpcTransportStats},
+        },
+        solana_rpc_client_api::{client_error::Result as ClientResult, request::RpcRequest},
+        std::sync::Mutex,
         tempfile::NamedTempFile,
     };
+
+    /// Records the params of every request while answering from `MockSender`.
+    struct RecordingSender {
+        inner: MockSender,
+        requests: Arc<Mutex<Vec<(RpcRequest, Value)>>>,
+    }
+
+    #[async_trait]
+    impl RpcSender for RecordingSender {
+        async fn send(&self, request: RpcRequest, params: Value) -> ClientResult<Value> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((request, params.clone()));
+            self.inner.send(request, params).await
+        }
+
+        fn get_transport_stats(&self) -> RpcTransportStats {
+            self.inner.get_transport_stats()
+        }
+
+        fn url(&self) -> String {
+            self.inner.url()
+        }
+    }
 
     fn make_tmp_file() -> (String, NamedTempFile) {
         let tmp_file = NamedTempFile::new().unwrap();
@@ -2311,5 +2345,57 @@ mod tests {
             parse_command(&test_transaction_count, &default_signer, &mut None).unwrap(),
             CliCommandInfo::without_signers(CliCommand::GetTransactionCount)
         );
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_process_leader_schedule_request() {
+        // `MockSender` answers getEpochInfo with epoch 1 and getEpochSchedule
+        // with the default warmup schedule, so epoch 1 starts at slot 32.
+        let first_slot_in_epoch = 32;
+        let leader_schedule = json!({ Pubkey::new_unique().to_string(): [0, 1, 2] });
+
+        for (key_by_vote_account, expected) in [(false, Value::Null), (true, json!(true))] {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let sender = RecordingSender {
+                inner: MockSender::new_with_mocks(
+                    "",
+                    [(RpcRequest::GetLeaderSchedule, leader_schedule.clone())].into(),
+                ),
+                requests: requests.clone(),
+            };
+            let rpc_client = RpcClient::new_sender(
+                sender,
+                RpcClientConfig::with_commitment(CommitmentConfig::processed()),
+            );
+
+            process_leader_schedule(
+                &rpc_client,
+                &CliConfig::default(),
+                None,
+                key_by_vote_account,
+            )
+            .await
+            .unwrap();
+
+            let params: Vec<Value> = requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(request, _)| *request == RpcRequest::GetLeaderSchedule)
+                .map(|(_, params)| params.clone())
+                .collect();
+            // Without the flag the request is the same one `get_leader_schedule`
+            // sends, so older RPC nodes see no change.
+            assert_eq!(
+                params,
+                vec![json!([
+                    first_slot_in_epoch,
+                    {
+                        "identity": null,
+                        "keyByVoteAccount": expected,
+                        "commitment": "processed",
+                    }
+                ])]
+            );
+        }
     }
 }
