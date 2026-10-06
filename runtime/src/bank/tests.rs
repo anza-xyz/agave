@@ -5826,11 +5826,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-<<<<<<< HEAD
-        "FhK44Rm28aCttSnQr5BpxBaNW526YmFW21wUNBNUNcQm",
-=======
-        "9h41kxkiYFw7VaZu5te2ZJMGsdrruWJBJoiNZDFySUvA",
->>>>>>> 70cbde8 (vote-program: Disable `DepositDelegatorRewards` (#15795))
+        "7a8DqBCzW6im48e6PTUL1qmFh1X3FdNa3eRncz98CqQ8",
     );
 }
 
