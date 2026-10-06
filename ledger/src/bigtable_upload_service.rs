@@ -4,11 +4,10 @@ use {
         blockstore::Blockstore,
     },
     solana_clock::Slot,
-    solana_runtime::commitment::BlockCommitmentCache,
     std::{
         cmp::min,
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::{self, Builder, JoinHandle},
@@ -25,7 +24,6 @@ impl BigTableUploadService {
         runtime: Arc<Runtime>,
         bigtable_ledger_storage: solana_storage_bigtable::LedgerStorage,
         blockstore: Arc<Blockstore>,
-        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         exit: Arc<AtomicBool>,
     ) -> Self {
@@ -33,7 +31,6 @@ impl BigTableUploadService {
             runtime,
             bigtable_ledger_storage,
             blockstore,
-            block_commitment_cache,
             max_complete_transaction_status_slot,
             ConfirmedBlockUploadConfig::default(),
             exit,
@@ -44,7 +41,6 @@ impl BigTableUploadService {
         runtime: Arc<Runtime>,
         bigtable_ledger_storage: solana_storage_bigtable::LedgerStorage,
         blockstore: Arc<Blockstore>,
-        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         config: ConfirmedBlockUploadConfig,
         exit: Arc<AtomicBool>,
@@ -57,7 +53,6 @@ impl BigTableUploadService {
                     runtime,
                     bigtable_ledger_storage,
                     blockstore,
-                    block_commitment_cache,
                     max_complete_transaction_status_slot,
                     config,
                     exit,
@@ -72,7 +67,6 @@ impl BigTableUploadService {
         runtime: Arc<Runtime>,
         bigtable_ledger_storage: solana_storage_bigtable::LedgerStorage,
         blockstore: Arc<Blockstore>,
-        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         config: ConfirmedBlockUploadConfig,
         exit: Arc<AtomicBool>,
@@ -86,7 +80,6 @@ impl BigTableUploadService {
             let Some(end_slot) = next_upload_end_slot(
                 start_slot,
                 &max_complete_transaction_status_slot,
-                &block_commitment_cache,
                 &blockstore,
                 &config,
             ) else {
@@ -124,25 +117,23 @@ impl BigTableUploadService {
 /// Returns the last slot of the next upload pass starting at `start_slot`, or
 /// `None` if there is nothing new to upload yet.
 ///
-/// The commitment cache root can lead the blockstore's root markers: under
-/// Alpenglow, votor publishes a new root before `Blockstore::set_roots` runs.
-/// `upload_confirmed_blocks` reports a range with no rooted slots as done, so
-/// a pass must not extend past `max_root`, which only advances once the root
-/// markers are written. Otherwise the first block after a skipped leader
-/// window can be passed over and never uploaded.
+/// The highest slot eligible for upload is the highest root that has complete
+/// block metadata. The root comes from the blockstore itself: `max_root` only
+/// advances after the root markers are written, and `upload_confirmed_blocks`
+/// treats a range with no rooted slots as done. A root taken from anywhere
+/// else, like the commitment cache (which under Alpenglow sees a new root
+/// before `Blockstore::set_roots` runs), can lead the markers, and the first
+/// block after a skipped leader window is then passed over and never uploaded.
 fn next_upload_end_slot(
     start_slot: Slot,
     max_complete_transaction_status_slot: &AtomicU64,
-    block_commitment_cache: &RwLock<BlockCommitmentCache>,
     blockstore: &Blockstore,
     config: &ConfirmedBlockUploadConfig,
 ) -> Option<Slot> {
-    // The highest slot eligible for upload is the highest root that has
-    // complete block metadata
-    let highest_complete_root = max_complete_transaction_status_slot
-        .load(Ordering::SeqCst)
-        .min(block_commitment_cache.read().unwrap().root())
-        .min(blockstore.max_root());
+    let highest_complete_root = min(
+        max_complete_transaction_status_slot.load(Ordering::SeqCst),
+        blockstore.max_root(),
+    );
     let end_slot = min(
         highest_complete_root,
         start_slot.saturating_add(config.max_num_slots_to_check as u64 * 2),
@@ -160,14 +151,12 @@ mod tests {
         bigtable: &solana_storage_bigtable::LedgerStorage,
         start_slot: Slot,
         max_complete_transaction_status_slot: &AtomicU64,
-        block_commitment_cache: &RwLock<BlockCommitmentCache>,
         blockstore: &Arc<Blockstore>,
         config: &ConfirmedBlockUploadConfig,
     ) -> Slot {
         let Some(end_slot) = next_upload_end_slot(
             start_slot,
             max_complete_transaction_status_slot,
-            block_commitment_cache,
             blockstore,
             config,
         ) else {
@@ -210,20 +199,16 @@ mod tests {
         };
 
         // Everything up to root 150 is uploaded. Slots 151..=155 were skipped,
-        // and block 156 is the new root.
+        // and block 156 is the new root. Its transaction statuses are written,
+        // but its root marker isn't yet.
         blockstore.set_roots([0, 150].iter()).unwrap();
         let start_slot = 151;
         let max_complete_transaction_status_slot = AtomicU64::new(156);
-
-        // The commitment cache sees root 156 before its root marker is written.
-        let block_commitment_cache = RwLock::new(BlockCommitmentCache::default());
-        block_commitment_cache.write().unwrap().set_root(156);
         let start_slot = run_upload_pass(
             &runtime,
             &bigtable,
             start_slot,
             &max_complete_transaction_status_slot,
-            &block_commitment_cache,
             &blockstore,
             &config,
         );
@@ -237,7 +222,6 @@ mod tests {
             next_upload_end_slot(
                 start_slot,
                 &max_complete_transaction_status_slot,
-                &block_commitment_cache,
                 &blockstore,
                 &config,
             ),
