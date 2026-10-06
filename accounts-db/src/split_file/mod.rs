@@ -61,9 +61,6 @@ const META_SCAN_BUFFER_SIZE: usize = 16 * 1024;
 /// inline in the meta entry; larger data is stored in the sibling data file.
 #[derive(Debug)]
 pub struct SplitFile {
-    meta_path: PathBuf,
-    data_path: PathBuf,
-
     /// Flags if the file is dirty or not.
     /// Since fastboot requires that all storages are flushed to disk, be smart about it.
     /// Accounts files are (almost) always write-once.
@@ -102,18 +99,19 @@ impl Drop for SplitFile {
         }
 
         if *self.remove_on_drop.get_mut() {
-            if let Err(err) = fs::remove_file(&self.meta_path) {
+            if let Err(err) = fs::remove_file(self.meta_path()) {
                 log::warn!(
                     "SplitFile::drop() failed to remove '{}': {err}",
-                    self.meta_path.display(),
+                    self.meta_path().display(),
                 );
             }
-            if self.data_file().is_some()
-                && let Err(err) = fs::remove_file(&self.data_path)
+
+            if let Some(data_path) = self.data_path()
+                && let Err(err) = fs::remove_file(data_path)
             {
                 log::warn!(
                     "SplitFile::drop() failed to remove '{}': {err}",
-                    self.data_path.display(),
+                    data_path.display(),
                 );
             }
         }
@@ -131,15 +129,15 @@ impl SplitFile {
         let data_path = base_path.as_ref().with_added_extension("data");
         SPLIT_FILE_STATS.num_open.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
-            meta_path,
-            data_path,
             is_dirty: AtomicBool::new(false),
             remove_on_drop: AtomicBool::new(true),
             inner: InnerState::Writable(WritableState {
                 write_lock: Mutex::new(()),
+                meta_path,
                 meta_file,
                 meta_len: AtomicU64::new(meta_len as u64),
                 uid,
+                data_path,
                 data_file: OnceLock::new(),
                 data_len: AtomicU64::new(0),
             }),
@@ -148,14 +146,9 @@ impl SplitFile {
 
     /// Instantiates a SplitFile, opening preexisting `meta` and optional `data`.
     pub fn open(meta: FileInfo, data: Option<FileInfo>) -> Result<Self, SplitFileError> {
-        let FileInfo {
-            file: meta_file,
-            path: meta_path,
-            size: meta_len,
-        } = meta;
-        let meta_header = read_meta_header(&meta_file, meta_len)?;
+        let meta_header = read_meta_header(&meta.file, meta.size)?;
 
-        let (data_path, data_file, data_len) = if let Some(data) = data {
+        if let Some(data) = &data {
             let data_header = read_data_header(&data.file, data.size)?;
             if meta_header.uid != data_header.uid {
                 return Err(SplitFileError::HeaderUidMismatch {
@@ -163,33 +156,22 @@ impl SplitFile {
                     data_uid: data_header.uid,
                 });
             }
-            (data.path, Some(data.file), data.size)
+            SPLIT_FILE_STATS
+                .num_stored_bytes_data
+                .fetch_add(data.size, Ordering::Relaxed);
         } else {
-            (PathBuf::new(), None, 0)
-        };
-
-        SPLIT_FILE_STATS.num_open.fetch_add(1, Ordering::Relaxed);
-        SPLIT_FILE_STATS
-            .num_stored_bytes_meta
-            .fetch_add(meta_len, Ordering::Relaxed);
-        SPLIT_FILE_STATS
-            .num_stored_bytes_data
-            .fetch_add(data_len, Ordering::Relaxed);
-        if data_file.is_none() {
             SPLIT_FILE_STATS.num_empty.fetch_add(1, Ordering::Relaxed);
         }
 
+        SPLIT_FILE_STATS
+            .num_stored_bytes_meta
+            .fetch_add(meta.size, Ordering::Relaxed);
+        SPLIT_FILE_STATS.num_open.fetch_add(1, Ordering::Relaxed);
+
         Ok(Self {
-            meta_path,
-            data_path,
             is_dirty: AtomicBool::new(false),
             remove_on_drop: AtomicBool::new(true),
-            inner: InnerState::ReadOnly(ReadOnlyState {
-                meta_file,
-                meta_len,
-                data_file,
-                data_len,
-            }),
+            inner: InnerState::ReadOnly(ReadOnlyState { meta, data }),
         })
     }
 
@@ -208,8 +190,8 @@ impl SplitFile {
         self.disable_remove_on_drop();
 
         let meta_file_info = FileInfo {
-            file: utils::open_file(&self.meta_path)?,
-            path: self.meta_path.clone(),
+            file: utils::open_file(&inner.meta_path)?,
+            path: inner.meta_path.clone(),
             size: inner.meta_len.load(Ordering::Relaxed),
         };
         let data_file_info = inner
@@ -217,8 +199,8 @@ impl SplitFile {
             .get()
             .map(|_| {
                 Ok::<_, SplitFileError>(FileInfo {
-                    file: utils::open_file(&self.data_path)?,
-                    path: self.data_path.clone(),
+                    file: utils::open_file(&inner.data_path)?,
+                    path: inner.data_path.clone(),
                     size: inner.data_len.load(Ordering::Relaxed),
                 })
             })
@@ -235,18 +217,24 @@ impl SplitFile {
 
     /// Returns the path to the meta file.
     pub fn meta_path(&self) -> &Path {
-        &self.meta_path
+        match &self.inner {
+            InnerState::ReadOnly(inner) => &inner.meta.path,
+            InnerState::Writable(inner) => &inner.meta_path,
+        }
     }
 
     /// Returns the path to the data file, if present.
     pub fn data_path(&self) -> Option<&Path> {
-        self.data_file().map(|_| self.data_path.as_path())
+        match &self.inner {
+            InnerState::ReadOnly(inner) => inner.data.as_ref().map(|data| data.path.as_path()),
+            InnerState::Writable(inner) => inner.data_file.get().map(|_| inner.data_path.as_path()),
+        }
     }
 
     /// Returns the meta file handle.
     pub fn meta_file(&self) -> &File {
         match &self.inner {
-            InnerState::ReadOnly(inner) => &inner.meta_file,
+            InnerState::ReadOnly(inner) => &inner.meta.file,
             InnerState::Writable(inner) => &inner.meta_file,
         }
     }
@@ -254,7 +242,7 @@ impl SplitFile {
     /// Returns the data file handle, if present.
     pub fn data_file(&self) -> Option<&File> {
         match &self.inner {
-            InnerState::ReadOnly(inner) => inner.data_file.as_ref(),
+            InnerState::ReadOnly(inner) => inner.data.as_ref().map(|data| &data.file),
             InnerState::Writable(inner) => inner.data_file.get(),
         }
     }
@@ -262,7 +250,7 @@ impl SplitFile {
     /// Returns size, in bytes, of meta file.
     pub fn meta_len(&self) -> FileSize {
         match &self.inner {
-            InnerState::ReadOnly(inner) => inner.meta_len,
+            InnerState::ReadOnly(inner) => inner.meta.size,
             InnerState::Writable(inner) => inner.meta_len.load(Ordering::Relaxed),
         }
     }
@@ -270,7 +258,7 @@ impl SplitFile {
     /// Returns size, in bytes, of data file.
     pub fn data_len(&self) -> FileSize {
         match &self.inner {
-            InnerState::ReadOnly(inner) => inner.data_len,
+            InnerState::ReadOnly(inner) => inner.data.as_ref().map(|data| data.size).unwrap_or(0),
             InnerState::Writable(inner) => inner.data_len.load(Ordering::Relaxed),
         }
     }
@@ -362,8 +350,9 @@ impl SplitFile {
                             // Data file doesn't exist yet, so create it now.
                             // Cannot use OnceLock::get_or_init() since create is
                             // fallible, and we want to return a Result.
-                            let (_data_path, data_file, data_len) =
-                                create_data_file(self.meta_path.with_extension(""), inner.uid)?;
+                            let (data_path, data_file, data_len) =
+                                create_data_file(inner.meta_path.with_extension(""), inner.uid)?;
+                            debug_assert_eq!(data_path, inner.data_path);
                             inner.data_len.store(data_len as u64, Ordering::Relaxed);
                             // SAFETY: data_file was checked above to be None
                             inner.data_file.set(data_file).unwrap();
@@ -419,16 +408,10 @@ impl SplitFile {
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
     ) -> Result<Ret, SplitFileError> {
-        let (meta_file, meta_file_len) = match &self.inner {
-            InnerState::ReadOnly(inner) => (&inner.meta_file, inner.meta_len),
-            InnerState::Writable(inner) => {
-                (&inner.meta_file, inner.meta_len.load(Ordering::Relaxed))
-            }
-        };
         let file_offset = file_offset_from_logical(offset);
         let ret = read_meta_entry(
-            meta_file,
-            meta_file_len,
+            self.meta_file(),
+            self.meta_len(),
             file_offset,
             |meta_entry, _data_ref| callback(stored_account_without_data_from(meta_entry)),
         )?;
@@ -484,16 +467,10 @@ impl SplitFile {
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(MetaEntryRef<'local>, LoadedData<'local>) -> Ret,
     ) -> Result<Ret, SplitFileError> {
-        let (meta_file, meta_file_len) = match &self.inner {
-            InnerState::ReadOnly(inner) => (&inner.meta_file, inner.meta_len),
-            InnerState::Writable(inner) => {
-                (&inner.meta_file, inner.meta_len.load(Ordering::Relaxed))
-            }
-        };
         let file_offset = file_offset_from_logical(offset);
         read_meta_entry(
-            meta_file,
-            meta_file_len,
+            self.meta_file(),
+            self.meta_len(),
             file_offset,
             |meta_entry, data_ref| -> Result<_, SplitFileError> {
                 match data_ref {
@@ -527,12 +504,8 @@ impl SplitFile {
         &self,
         mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfoWithoutData<'local>),
     ) -> Result<(), SplitFileError> {
-        let (meta_file, meta_file_len) = match &self.inner {
-            InnerState::ReadOnly(inner) => (&inner.meta_file, inner.meta_len),
-            InnerState::Writable(inner) => {
-                (&inner.meta_file, inner.meta_len.load(Ordering::Relaxed))
-            }
-        };
+        let meta_file = self.meta_file();
+        let meta_file_len = self.meta_len();
         let mut meta_reader =
             BufferedReader::<META_SCAN_BUFFER_SIZE>::new().with_file(meta_file, meta_file_len);
         meta_reader.consume_or_skip(META_HEADER_SIZE);
@@ -567,20 +540,10 @@ impl SplitFile {
         data_reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfo<'local>),
     ) -> Result<(), SplitFileError> {
-        let (meta_file, meta_file_len, data_file, data_file_len) = match &self.inner {
-            InnerState::ReadOnly(inner) => (
-                &inner.meta_file,
-                inner.meta_len,
-                inner.data_file.as_ref(),
-                inner.data_len,
-            ),
-            InnerState::Writable(inner) => (
-                &inner.meta_file,
-                inner.meta_len.load(Ordering::Relaxed),
-                inner.data_file.get(),
-                inner.data_len.load(Ordering::Relaxed),
-            ),
-        };
+        let meta_file = self.meta_file();
+        let meta_file_len = self.meta_len();
+        let data_file = self.data_file();
+        let data_file_len = self.data_len();
         let mut meta_reader =
             BufferedReader::<META_SCAN_BUFFER_SIZE>::new().with_file(meta_file, meta_file_len);
         meta_reader.consume_or_skip(META_HEADER_SIZE);
@@ -738,18 +701,18 @@ enum InnerState {
 
 #[derive(Debug)]
 struct ReadOnlyState {
-    meta_file: File,
-    meta_len: u64,
-    data_file: Option<File>,
-    data_len: u64,
+    meta: FileInfo,
+    data: Option<FileInfo>,
 }
 
 #[derive(Debug)]
 struct WritableState {
     write_lock: Mutex<()>,
+    meta_path: PathBuf,
     meta_file: File,
     meta_len: AtomicU64,
     uid: u64,
+    data_path: PathBuf,
     data_file: OnceLock<File>,
     data_len: AtomicU64,
 }
@@ -801,7 +764,7 @@ mod tests {
         let base_path = temp_dir.path().join("base");
         let split = SplitFile::new(&base_path).unwrap();
 
-        let meta = FileInfo::new_from_path(&split.meta_path).unwrap();
+        let meta = FileInfo::new_from_path(split.meta_path()).unwrap();
         _ = SplitFile::open(meta, None).unwrap();
     }
 
@@ -819,8 +782,8 @@ mod tests {
             .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
             .unwrap();
 
-        let meta = FileInfo::new_from_path(&split.meta_path).unwrap();
-        let data = FileInfo::new_from_path(&split.data_path).unwrap();
+        let meta = FileInfo::new_from_path(split.meta_path()).unwrap();
+        let data = FileInfo::new_from_path(split.data_path().unwrap()).unwrap();
         _ = SplitFile::open(meta, Some(data)).unwrap();
     }
 
@@ -840,8 +803,8 @@ mod tests {
             .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
             .unwrap();
 
-        let meta = FileInfo::new_from_path(&split1.meta_path).unwrap();
-        let data = FileInfo::new_from_path(&split2.data_path).unwrap();
+        let meta = FileInfo::new_from_path(split1.meta_path()).unwrap();
+        let data = FileInfo::new_from_path(split2.data_path().unwrap()).unwrap();
         let err = SplitFile::open(meta, Some(data)).unwrap_err();
         assert_matches!(err, SplitFileError::HeaderUidMismatch { .. });
     }
