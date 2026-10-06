@@ -11,7 +11,7 @@ use {
     solana_clap_utils::input_parsers::{parse_cpu_ranges, value_of},
     solana_core::{
         system_monitor_service::XdpNetworkConfigReport,
-        validator::{XdpModules, XdpTransmitSetup},
+        validator::{XdpComponents, XdpTransmitSetup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
@@ -43,15 +43,15 @@ pub(super) fn build_xdp_transmit_setup(
             .expect("selected interface should exist and have an IPv4 address assigned"),
         _ => panic!("IPv6 not supported"),
     };
-    // Nothing can express per-module queue assignments yet, so every
-    // module transmits over the whole queue set.
+    // Nothing can express per-component queue assignments yet, so every
+    // component transmits over the whole queue set.
     let all_positions: Box<[usize]> = (0..xdp_config.queues.len()).collect();
     (
         XdpTransmitSetup {
             transmitter_builder: TransmitterBuilder::new(xdp_config, exit)
                 .expect("failed to create xdp transmitter"),
             src_ip,
-            modules: XdpModules {
+            components: XdpComponents {
                 tpu: Some(all_positions.clone()),
                 turbine: Some(all_positions.clone()),
                 repair: Some(all_positions.clone()),
