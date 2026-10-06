@@ -1672,7 +1672,7 @@ impl ClusterInfo {
     {
         let mut cache = HashMap::<(Pubkey, SocketAddr), bool>::new();
         let mut ping_cache = self.ping_cache.lock().unwrap();
-        let mut hard_check = move |request: &PullRequest| {
+        let mut hard_check = move |ping_cache: &mut PingCache, request: &PullRequest| {
             let node = (request.caller.pubkey(), request.addr);
             let (check, ping) = ping_cache.check(rng, &self.keypair(), now, node);
             if let Some(ping) = ping {
@@ -1685,14 +1685,6 @@ impl ClusterInfo {
                 self.stats
                     .pull_request_ping_pong_check_failed_count
                     .add_relaxed(1);
-                // Keep the caller's contact info only if it advertises the
-                // address the pong verifies.
-                if stakes.get(&node.0).is_some_and(|stake| *stake > 0)
-                    && request.caller.contact_info().and_then(ContactInfo::gossip)
-                        == Some(request.addr)
-                {
-                    ping_cache.stash_pending_contact_info(node, request.caller.clone());
-                }
             }
             check
         };
@@ -1702,7 +1694,20 @@ impl ClusterInfo {
         move |request| {
             ContactInfo::is_valid_address(&request.addr, &self.socket_addr_space) && {
                 let node = (request.caller.pubkey(), request.addr);
-                *cache.entry(node).or_insert_with(|| hard_check(request))
+                let check = *cache
+                    .entry(node)
+                    .or_insert_with(|| hard_check(&mut ping_cache, request));
+                // Every request from an unverified caller offers its contact info,
+                // the newest wins. Keep it only if it advertises the address the
+                // pong verifies.
+                if !check
+                    && stakes.get(&node.0).is_some_and(|stake| *stake > 0)
+                    && request.caller.contact_info().and_then(ContactInfo::gossip)
+                        == Some(request.addr)
+                {
+                    ping_cache.stash_pending_contact_info(node, request.caller.clone());
+                }
+                check
             }
         }
     }
@@ -3031,6 +3036,52 @@ mod tests {
             &caller,
             Some(other_addr)
         ));
+    }
+
+    #[test]
+    fn test_pull_request_batch_keeps_newest_caller() {
+        // Two requests from one unverified caller in a batch, in both orders.
+        // The pong inserts the caller's newest contact info.
+        let caller = Keypair::new();
+        let stakes = HashMap::from([(caller.pubkey(), 1u64)]);
+        let now = timestamp();
+        let mut caller_info = ContactInfo::new_localhost(&caller.pubkey(), now);
+        let caller_addr = caller_info.gossip().unwrap();
+        let older = CrdsValue::new(CrdsData::ContactInfo(caller_info.clone()), &caller);
+        caller_info.set_wallclock(now + 1);
+        let newer = CrdsValue::new(CrdsData::ContactInfo(caller_info), &caller);
+        let request = |value: &CrdsValue| PullRequest {
+            addr: caller_addr,
+            filter: CrdsFilter::default(),
+            caller: value.clone(),
+        };
+        for batch in [[&older, &newer], [&newer, &older]] {
+            let this_node = Arc::new(Keypair::new());
+            let cluster_info = ClusterInfo::new(
+                ContactInfo::new_localhost(&this_node.pubkey(), timestamp()),
+                this_node,
+                SocketAddrSpace::Unspecified,
+            );
+            let requests = batch.into_iter().map(request).collect();
+            // One ping per caller and address, whatever the batch size.
+            let packets = cluster_info.handle_pull_requests(requests, &stakes);
+            assert_eq!(packets.len(), 1);
+            let packet = packets.iter().next().unwrap();
+            let Protocol::PingMessage(ping) =
+                deserialize_protocol(packet.data(..).unwrap()).unwrap()
+            else {
+                panic!("expected a ping");
+            };
+            cluster_info.handle_batch_pong_messages(
+                vec![(caller_addr, Pong::new(&ping, &caller))],
+                Instant::now(),
+                &stakes,
+            );
+            assert_eq!(
+                cluster_info.lookup_contact_info(&caller.pubkey(), ContactInfo::wallclock),
+                Some(now + 1)
+            );
+        }
     }
 
     #[test]
