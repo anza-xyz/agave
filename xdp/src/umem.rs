@@ -396,9 +396,7 @@ impl DerefMut for PageAlignedMemory {
 #[cfg(test)]
 mod tests {
     use {
-        crate::umem::{
-            CompletedFrameOffset, Frame, OwnedUmem, PageAlignedMemory, SliceUmem, Umem,
-        },
+        crate::umem::{CompletedFrameOffset, Frame, OwnedUmem, PageAlignedMemory, SliceUmem, Umem},
         std::slice,
     };
 
@@ -408,8 +406,7 @@ mod tests {
         // powers of two, e.g. (1024 + 4096) * 2 = 10240.
         for frame_count in [10_240, 6_144, 3_072] {
             let memory =
-                PageAlignedMemory::alloc_with_page_size(4_096, frame_count, 4_096, false)
-                    .unwrap();
+                PageAlignedMemory::alloc_with_page_size(4_096, frame_count, 4_096, false).unwrap();
             assert!(memory.len() >= frame_count * 4_096);
         }
     }
