@@ -11501,7 +11501,6 @@ dependencies = [
 name = "solana-turbine"
 version = "4.5.0-alpha.1"
 dependencies = [
- "agave-feature-set",
  "agave-logger",
  "agave-votor",
  "agave-votor-messages",
