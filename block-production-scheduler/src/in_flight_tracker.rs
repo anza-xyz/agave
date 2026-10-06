@@ -39,7 +39,7 @@ impl InFlightTracker {
     }
 
     /// Removes a completed batch using its original transaction count and estimated cost,
-    /// including when execution failed. Actual costs belong in the slot's cost tracker.
+    /// including when execution failed. Actual costs are accounted for separately for pacing.
     ///
     /// # Panics
     /// Panics if `worker` is outside the configured worker range. In debug builds, also panics

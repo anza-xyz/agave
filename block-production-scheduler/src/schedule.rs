@@ -342,20 +342,10 @@ impl<'a> ExecutionBatches<'a> {
 mod tests {
     use {
         super::*,
-        crate::{
-            check_response::TransactionState, resolved_transaction::ResolvedTransaction,
-            tests::setup_with_workers, tpu_ingress::TpuTransactionMeta,
-        },
-        agave_scheduler_bindings::SharableTransactionRegion,
+        crate::tests::{insert, setup_with_workers},
         agave_scheduler_handshake::AgaveSession,
-        agave_scheduling_utils::{
-            pubkeys_ptr::OwnedPubkeysPtr, transaction_ptr::OwnedTransactionPtr,
-        },
         core::time::Duration,
-        solana_message::{Message, MessageHeader, VersionedMessage},
         solana_pubkey::Pubkey,
-        solana_signature::Signature,
-        solana_transaction::versioned::VersionedTransaction,
         std::time::Instant,
     };
 
@@ -370,65 +360,6 @@ mod tests {
         };
         scheduler.handle_slot_change();
         (scheduler, agave)
-    }
-
-    fn insert(scheduler: &mut Scheduler, priority: u64, cost: u64, accounts: &[u8]) -> usize {
-        let bytes = wincode::serialize(&VersionedTransaction {
-            signatures: vec![Signature::default()],
-            message: VersionedMessage::Legacy(Message {
-                header: MessageHeader {
-                    num_required_signatures: 1,
-                    ..Default::default()
-                },
-                account_keys: accounts
-                    .iter()
-                    .map(|&key| Pubkey::from([key; 32]))
-                    .collect(),
-                ..Default::default()
-            }),
-        })
-        .unwrap();
-        let allocator = &scheduler.allocator;
-        let ptr = allocator.allocate(bytes.len() as u32).unwrap();
-        // SAFETY: this fresh allocation is large enough and does not overlap the source.
-        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.as_ptr(), bytes.len()) };
-        let region = SharableTransactionRegion {
-            // SAFETY: this allocation belongs to this allocator.
-            offset: unsafe { allocator.offset(ptr) },
-            length: bytes.len() as u32,
-        };
-        // SAFETY: the initialized allocation is transferred to the guard.
-        let transaction = unsafe { OwnedTransactionPtr::from_region(region, allocator) };
-        // SAFETY: no pubkey allocation is needed for a legacy transaction.
-        let pubkeys = unsafe { OwnedPubkeysPtr::from_region(None, allocator) };
-        // SAFETY: the transaction belongs to this allocator.
-        let transaction = unsafe {
-            ResolvedTransaction::try_new(
-                transaction,
-                pubkeys,
-                allocator,
-                &scheduler.reserved_account_keys,
-            )
-        }
-        .unwrap();
-        scheduler
-            .transactions
-            .insert(
-                priority,
-                TransactionState {
-                    transaction,
-                    metadata: TpuTransactionMeta {
-                        flags: 0,
-                        src_addr: [0; 16],
-                    },
-                    cost,
-                    allocated_accounts_data_size: 1,
-                    execution_worker: None,
-                },
-            )
-            .ok()
-            .unwrap()
-            .0
     }
 
     fn assert_batch(
