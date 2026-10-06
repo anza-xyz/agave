@@ -108,6 +108,8 @@ struct RetransmitStats {
     num_shreds_skipped: usize,
     num_small_batches: usize,
     total_batches: usize,
+    slot_cache_entries_total: usize,
+    slot_cache_entries_max: usize,
     total_time: u64,
     epoch_fetch: u64,
     epoch_cache_update: u64,
@@ -163,6 +165,16 @@ impl RetransmitStats {
             ("epoch_cache_update", self.epoch_cache_update, i64),
             ("num_iters", self.num_iters, i64),
             ("total_batches", self.total_batches, i64),
+            (
+                "slot_cache_entries_total",
+                self.slot_cache_entries_total,
+                i64
+            ),
+            (
+                "slot_cache_entries_max",
+                self.slot_cache_entries_max,
+                i64
+            ),
             ("num_small_batches", self.num_small_batches, i64),
             ("num_nodes", self.num_nodes, i64),
             ("num_addrs_failed", self.num_addrs_failed, i64),
@@ -241,6 +253,7 @@ struct BatchStats {
     num_shreds: usize,
     num_small_batches: usize,
     total_batches: usize,
+    slot_cache_entries: usize,
     total_time: u64,
     epoch_fetch: u64,
     unknown_shred_slot_leader: usize,
@@ -320,6 +333,7 @@ fn retransmit_batch(mut shreds: ShredBatch, worker_index: usize, context: &Worke
             Some((slot, (slot_leader.id, cluster_nodes)))
         })
         .collect();
+    stats.slot_cache_entries = cache.len();
 
     let socket_addr_space = context.cluster_info.socket_addr_space();
     for shred in shreds.drain(..) {
@@ -690,6 +704,8 @@ impl RetransmitStats {
             num_shreds: 0usize,
             num_shreds_skipped: 0usize,
             total_batches: 0usize,
+            slot_cache_entries_total: 0usize,
+            slot_cache_entries_max: 0usize,
             num_small_batches: 0usize,
             total_time: 0u64,
             epoch_fetch: 0u64,
@@ -746,6 +762,10 @@ impl RetransmitStats {
         self.num_shreds += job_stats.num_shreds;
         self.num_small_batches += job_stats.num_small_batches;
         self.total_batches += job_stats.total_batches;
+        self.slot_cache_entries_total += job_stats.slot_cache_entries;
+        self.slot_cache_entries_max = self
+            .slot_cache_entries_max
+            .max(job_stats.slot_cache_entries);
         self.num_nodes += job_stats.num_nodes;
         self.num_addrs_failed += job_stats.num_addrs_failed;
         self.num_shreds_dropped_xdp_full += job_stats.num_shreds_dropped_xdp_full;
