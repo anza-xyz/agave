@@ -4735,6 +4735,7 @@ pub mod tests {
         solana_rpc_client_api::{
             custom_error::{
                 JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
+                JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
                 JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
                 JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
             },
@@ -5387,7 +5388,10 @@ pub mod tests {
         assert_eq!(rank_map.validators.len(), 1);
         let validator = &rank_map.validators[0];
         assert_eq!(validator.rank, 0);
-        assert_eq!(validator.vote_pubkey, rpc.leader_vote_pubkey().to_string());
+        assert_eq!(
+            validator.vote_pubkey,
+            rpc.leader_vote_keypair.pubkey().to_string()
+        );
         assert_eq!(validator.node_pubkey, rpc.leader_pubkey().to_string());
         let bank = rpc.working_bank();
         let compressed = bank
@@ -5395,7 +5399,7 @@ pub mod tests {
             .unwrap()
             .stakes()
             .vote_accounts()
-            .get(&rpc.leader_vote_pubkey())
+            .get(&rpc.leader_vote_keypair.pubkey())
             .unwrap()
             .vote_state_view()
             .bls_pubkey_compressed()

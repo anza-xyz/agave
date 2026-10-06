@@ -10015,7 +10015,7 @@ dependencies = [
  "jsonrpc-pubsub",
  "libc",
  "log",
- "lru 0.18.4",
+ "lru 0.18.2",
  "rayon",
  "regex",
  "serde",
