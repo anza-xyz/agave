@@ -427,9 +427,10 @@ mod tests {
     fn test_owned_umem_reserves_and_recycles_non_power_of_two_frame_counts() {
         // Page rounding grants frames beyond the requested count, so capacity
         // derives from the mapped length; reserve/release must work regardless.
-        let memory = PageAlignedMemory::alloc_with_page_size(512, 3, 4_096, false).unwrap();
-        let umem = OwnedUmem::new(memory, 512).unwrap();
-        assert_eq!(umem.capacity(), 8); // 4096 / 512
+        // 256 * 9 = 2304 rounds up to 3072, giving capacity 12 (not a power of two).
+        let memory = PageAlignedMemory::alloc_with_page_size(256, 9, 1_024, false).unwrap();
+        let umem = OwnedUmem::new(memory, 256).unwrap();
+        assert_eq!(umem.capacity(), 12);
 
         let mut frames = Vec::new();
         while let Some(frame) = umem.reserve() {
