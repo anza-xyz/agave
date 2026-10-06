@@ -63,6 +63,13 @@ const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(30);
 /// batches (at most 256 packets), which takes about 1 ms in observed production workloads.
 const SIGVERIFY_SHRED_BATCH_SIZE: usize = 4;
 
+/// Maximum number of shreds sent to retransmit workers in one job.
+///
+/// Heavy-load measurements showed sigverify at ~5us/shred and retransmit at
+/// ~18us/shred. Splitting the typical 64-shred sigverify output into four
+/// retransmit jobs gives the worker pool enough parallelism to keep up.
+const RETRANSMIT_SHRED_BATCH_SIZE: usize = 16;
+
 #[allow(clippy::enum_variant_names)]
 enum ShredSigverifyError {
     RecvDisconnected,
@@ -268,12 +275,14 @@ fn run_shred_sigverify<const K: usize>(
 
     // Repaired shreds are not retransmitted.
     stats.num_retransmit_shreds += shreds.len();
-    if let Err(send_err) = retransmit_sender.try_send(shreds.clone()) {
-        match send_err {
-            crossbeam_channel::TrySendError::Full(v) => {
-                stats.num_retransmit_stage_overflow_shreds += v.len();
+    for shreds in shreds.chunks(RETRANSMIT_SHRED_BATCH_SIZE) {
+        if let Err(send_err) = retransmit_sender.try_send(shreds.to_vec()) {
+            match send_err {
+                crossbeam_channel::TrySendError::Full(v) => {
+                    stats.num_retransmit_stage_overflow_shreds += v.len();
+                }
+                _ => unreachable!("EvictingSender holds on to both ends of the channel"),
             }
-            _ => unreachable!("EvictingSender holds on to both ends of the channel"),
         }
     }
     // Send all shreds to window service to be inserted into blockstore.
