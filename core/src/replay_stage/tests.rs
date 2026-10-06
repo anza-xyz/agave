@@ -657,6 +657,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     let root_bank = bank_forks.read().unwrap().root_bank();
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&root_bank));
     let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
+    let (votor_commitment_sender, votor_commitment_receiver) = bounded(1024);
     let context = ProcessBankForksContext {
         bank_forks: bank_forks.clone(),
         blockstore: blockstore.clone(),
@@ -665,6 +666,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
         rpc_subscriptions: None,
         drop_bank_sender,
         leader_schedule_cache,
+        votor_commitment_sender,
     };
     let my_pubkey = Pubkey::new_unique();
 
@@ -710,6 +712,8 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     );
     assert_eq!(bank_forks.read().unwrap().root(), 0);
     assert!(!blockstore.is_root(2));
+    // A root replay didn't apply is never published to the commitment cache.
+    assert!(votor_commitment_receiver.is_empty());
 
     let block_id = bank_forks.read().unwrap().block_id(1).unwrap();
     let matching_command = SetRootCommand {
@@ -726,6 +730,14 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     );
     assert_eq!(bank_forks.read().unwrap().root(), 1);
     assert!(blockstore.is_root(1));
+    assert_eq!(
+        votor_commitment_receiver.try_recv().unwrap(),
+        CommitmentAggregationData {
+            commitment_type: CommitmentType::Rooted,
+            slot: 1,
+        }
+    );
+    assert!(votor_commitment_receiver.is_empty());
 }
 
 #[test]

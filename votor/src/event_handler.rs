@@ -2088,6 +2088,62 @@ mod tests {
     }
 
     #[test]
+    fn test_finalized_leaves_rooted_commitment_to_replay() {
+        // Ignores set-root commands, like replay before it gets to one.
+        struct NoopSetRootBankForksController {
+            inner: Arc<dyn BankForksController>,
+        }
+
+        impl BankForksController for NoopSetRootBankForksController {
+            fn insert_bank(
+                &self,
+                bank: Bank,
+            ) -> Result<BankWithScheduler, BankForksControllerError> {
+                self.inner.insert_bank(bank)
+            }
+
+            fn enqueue_set_root(&self, _new_root: Block) {}
+
+            fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
+                self.inner.clear_bank(slot)
+            }
+        }
+
+        let mut test_context = setup();
+        test_context.root_context.bank_forks_controller =
+            Arc::new(NoopSetRootBankForksController {
+                inner: test_context.root_context.bank_forks_controller.clone(),
+            });
+
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
+        let block_1 = Block {
+            slot: 1,
+            block_id: BlockId::from(bank1.block_id().unwrap()),
+        };
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
+        test_context.check_parent_ready_slot((1, test_context.local_context.genesis_block));
+        test_context.check_for_vote(&Vote::new_notarization_vote(block_1));
+        test_context.check_for_commitment(CommitmentType::Notarize, 1);
+
+        // Votor picks slot 1 as root, but replay hasn't written the root marker
+        // yet, so the commitment cache must not hear about the root.
+        test_context.send_finalized_event(block_1, true);
+        assert!(
+            !test_context
+                .commitment_receiver
+                .try_iter()
+                .any(|commitment| commitment.commitment_type == CommitmentType::Rooted),
+            "votor published a root before replay applied it",
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "we have a bank hash mismatch")]
     fn test_finalized_block_with_bank_hash_mismatch_panics() {
         let mut test_context = setup();
