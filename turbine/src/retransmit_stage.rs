@@ -34,7 +34,6 @@ use {
     solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
     std::{
-        collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
         ops::AddAssign,
         sync::{Arc, RwLock, atomic::Ordering},
@@ -244,7 +243,7 @@ impl<const K: usize> ShredDeduper<K> {
     }
 }
 
-type RetransmitAddrCache = HashMap<Slot, (Pubkey, Arc<ClusterNodes<RetransmitStage>>)>;
+type RetransmitAddrCache = Vec<(Slot, Pubkey, Arc<ClusterNodes<RetransmitStage>>)>;
 
 #[derive(Default)]
 struct BatchStats {
@@ -300,15 +299,24 @@ fn retransmit_batch(mut shreds: ShredBatch, worker_index: usize, context: &Worke
     stats.epoch_fetch = epoch_fetch.as_us();
     stats.root = root_bank.slot();
 
-    //TODO(klykov): the size of batch is typically 64 shreds, does it make any sense to make all
-    //this machinery with HashSet/Table? Use something simpler?
+    // Production metrics under heavy load show batches typically span about two distinct slots,
+    // with uncommon spikes around 15, so a small linear cache avoids hash-table overhead here.
+    let mut slot_counts = Vec::<(Slot, usize)>::new();
+    for shred in &shreds {
+        let Some(slot) = shred::layout::get_slot(shred) else {
+            continue;
+        };
+        if let Some((_, count)) = slot_counts.iter_mut().find(|(entry, _)| *entry == slot) {
+            *count += 1;
+        } else {
+            slot_counts.push((slot, 1));
+        }
+    }
+
     // Resolve the leader and retransmit tree once for each distinct slot in this capped batch.
-    let cache: RetransmitAddrCache = shreds
-        .iter()
-        .filter_map(|shred| shred::layout::get_slot(shred))
-        .collect::<HashSet<Slot>>()
+    let cache: RetransmitAddrCache = slot_counts
         .into_iter()
-        .filter_map(|slot| {
+        .filter_map(|(slot, count)| {
             context
                 .max_slots
                 .retransmit
@@ -318,10 +326,7 @@ fn retransmit_batch(mut shreds: ShredBatch, worker_index: usize, context: &Worke
                 .leader_schedule_cache
                 .slot_leader_at(slot, Some(&working_bank))
             else {
-                stats.unknown_shred_slot_leader += shreds
-                    .iter()
-                    .filter(|shred| shred::layout::get_slot(shred) == Some(slot))
-                    .count();
+                stats.unknown_shred_slot_leader += count;
                 return None;
             };
             let cluster_nodes = context.cluster_nodes_cache.get(
@@ -330,7 +335,7 @@ fn retransmit_batch(mut shreds: ShredBatch, worker_index: usize, context: &Worke
                 &working_bank,
                 &context.cluster_info,
             );
-            Some((slot, (slot_leader.id, cluster_nodes)))
+            Some((slot, slot_leader.id, cluster_nodes))
         })
         .collect();
     stats.slot_cache_entries = cache.len();
@@ -490,7 +495,7 @@ fn get_retransmit_addrs(
     socket_addr_space: &SocketAddrSpace,
     stats: &mut BatchStats,
 ) -> Option<(/*root_distance:*/ u8, Vec<SocketAddr>)> {
-    let (slot_leader, cluster_nodes) = cache.get(&shred.slot())?;
+    let (_, slot_leader, cluster_nodes) = cache.iter().find(|(slot, _, _)| *slot == shred.slot())?;
     let (root_distance, addrs) = cluster_nodes
         .get_retransmit_addrs(slot_leader, shred, DATA_PLANE_FANOUT, socket_addr_space)
         .inspect_err(|err| match err {
