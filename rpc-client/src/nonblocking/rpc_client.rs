@@ -14,6 +14,7 @@ use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
     crate::{
         http_sender::HttpSender,
+        identity_transition::IdentityTransitionStatus,
         mock_sender::{MockSender, MocksMap, mock_encoded_account},
         rpc_client::{
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableTransaction,
@@ -3458,6 +3459,32 @@ impl RpcClient {
                 RpcRequest::GetIdentity,
             )
         })
+    }
+
+    /// Observe the latest validator identity transition.
+    ///
+    /// Calls the parameterless `identityTransitionStatus` RPC on supporting Agave
+    /// nodes. A completed observation requires both command success and voting-context
+    /// adoption. The source submission slot records outbound-channel acceptance,
+    /// not transmission, landing, finality, or final tower/history persistence.
+    /// This query does not wait for completion or change the validator identity.
+    /// Unsupported nodes return their original RPC error (for example, method not found).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let observation = rpc_client.get_identity_transition_status().await?;
+    /// # Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_identity_transition_status(&self) -> ClientResult<IdentityTransitionStatus> {
+        self.send(RpcRequest::IdentityTransitionStatus, Value::Null)
+            .await
     }
 
     /// Returns the current inflation governor.

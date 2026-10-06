@@ -65,6 +65,7 @@ pub enum RpcRequest {
     GetTransactionCount,
     GetVersion,
     GetVoteAccounts,
+    IdentityTransitionStatus,
     IsBlockhashValid,
     MinimumLedgerSlot,
     RegisterNode,
@@ -133,6 +134,7 @@ impl RpcRequest {
             RpcRequest::GetTransactionCount => "getTransactionCount",
             RpcRequest::GetVersion => "getVersion",
             RpcRequest::GetVoteAccounts => "getVoteAccounts",
+            RpcRequest::IdentityTransitionStatus => "identityTransitionStatus",
             RpcRequest::IsBlockhashValid => "isBlockhashValid",
             RpcRequest::MinimumLedgerSlot => "minimumLedgerSlot",
             RpcRequest::RegisterNode => "registerNode",
@@ -243,6 +245,17 @@ mod tests {
         crate::config::RpcTokenAccountsFilter,
         solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     };
+
+    #[test]
+    fn test_identity_transition_status_request() {
+        let request = RpcRequest::IdentityTransitionStatus.build_request_json(1, Value::Null);
+        assert_eq!(request["method"], "identityTransitionStatus");
+        assert!(request["params"].is_null());
+        assert_eq!(
+            RpcRequest::IdentityTransitionStatus.to_string(),
+            "identityTransitionStatus"
+        );
+    }
 
     #[test]
     fn test_build_request_json() {

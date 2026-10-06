@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod http_sender;
+pub mod identity_transition;
 pub mod mock_sender;
 pub mod nonblocking;
 pub mod rpc_client;

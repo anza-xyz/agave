@@ -482,6 +482,12 @@ impl RpcSender for MockSender {
                 slot: 123_456_789,
                 prioritization_fee: 10_000,
             }])?,
+            "identityTransitionStatus" => json!({
+                "version": 1, "processInstanceId": "mock-validator", "sequence": 0,
+                "state": "idle", "consensus": "unknown", "currentIdentity": PUBKEY,
+                "fromIdentity": PUBKEY, "toIdentity": PUBKEY, "voteAccount": "",
+                "fromIdentityLastSubmittedVoteSlot": null, "towerRootSlot": null, "error": null
+            }),
             "getIdentity" => serde_json::to_value(RpcIdentity {
                 identity: PUBKEY.to_string(),
             })?,
