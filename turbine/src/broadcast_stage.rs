@@ -4,6 +4,7 @@ use {
     self::{
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, BroadcastDuplicatesRun},
         broadcast_metrics::*,
+        scheduled_equivocation_run::{EquivocationSchedule, ScheduledEquivocationRun},
         standard_broadcast_run::StandardBroadcastRun,
     },
     crate::{
@@ -52,6 +53,7 @@ use {
 pub mod broadcast_duplicates_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
+pub mod scheduled_equivocation_run;
 pub(crate) mod standard_broadcast_run;
 
 const _: () = const {
@@ -158,6 +160,8 @@ pub enum BroadcastStageReturnType {
 pub enum BroadcastStageType {
     Standard,
     BroadcastDuplicates(BroadcastDuplicatesConfig),
+    /// Standard broadcast that additionally equivocates on scheduled slots (tests only).
+    ScheduledEquivocation(EquivocationSchedule),
 }
 
 impl BroadcastStageType {
@@ -191,6 +195,26 @@ impl BroadcastStageType {
                     migration_status,
                     votor_event_sender,
                     leader_schedule_cache,
+                ),
+                xdp_sender,
+            ),
+
+            BroadcastStageType::ScheduledEquivocation(schedule) => BroadcastStage::new(
+                sock,
+                cluster_info,
+                receiver,
+                retransmit_slots_receiver,
+                exit_sender,
+                blockstore,
+                bank_forks,
+                ScheduledEquivocationRun::new(
+                    StandardBroadcastRun::new(
+                        shred_version,
+                        migration_status,
+                        votor_event_sender,
+                        leader_schedule_cache,
+                    ),
+                    schedule.clone(),
                 ),
                 xdp_sender,
             ),

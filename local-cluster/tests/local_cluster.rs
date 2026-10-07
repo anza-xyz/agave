@@ -11,7 +11,7 @@ use {
     gag::BufferRedirect,
     itertools::Itertools,
     log::*,
-    rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom},
+    rand::{Rng, SeedableRng, prelude::IndexedRandom, rngs::StdRng, seq::SliceRandom},
     serial_test::serial,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
@@ -24,7 +24,8 @@ use {
         },
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         repair::{
-            malicious_repair_handler::MaliciousRepairConfig, repair_handler::RepairHandlerType,
+            malicious_repair_handler::{MaliciousRepairConfig, MaliciousRepairSchedule},
+            repair_handler::RepairHandlerType,
         },
         replay_stage::DUPLICATE_THRESHOLD,
         validator::{BlockProductionMethod, BlockVerificationMethod, ValidatorConfig},
@@ -93,6 +94,7 @@ use {
     solana_turbine::broadcast_stage::{
         BroadcastStageType,
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, ClusterPartition},
+        scheduled_equivocation_run::EquivocationSchedule,
     },
     solana_vote::{
         vote_parser::{self},
@@ -105,7 +107,7 @@ use {
         fs,
         io::Read,
         iter,
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
         path::Path,
         sync::{
@@ -363,7 +365,9 @@ fn test_forwarding() {
 fn test_restart_node() {
     agave_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_restart_node");
-    let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH * 2;
+    // Keep the fixed schedule comfortably ahead of cluster startup, fault
+    // injection, and the recovery oracle.
+    let slots_per_epoch = 512;
     let ticks_per_slot = 16;
     let validator_config = ValidatorConfig::default_for_test();
     let mut cluster = LocalCluster::new(
@@ -4336,6 +4340,14 @@ fn run_test_cluster_partition(num_partitions: usize, is_alpenglow: bool) {
 type ByzFuzzPartition = Vec<Vec<Pubkey>>;
 type ByzFuzzNetworkFaults = BTreeMap<Slot, Vec<ByzFuzzPartition>>;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ByzFuzzProcessFault {
+    recipients: Vec<Pubkey>,
+    seed: u64,
+}
+
+type ByzFuzzProcessFaults = BTreeMap<Slot, Vec<ByzFuzzProcessFault>>;
+
 fn byz_fuzz_input<T>(name: &str, default: T) -> T
 where
     T: std::str::FromStr,
@@ -4366,6 +4378,28 @@ fn byz_fuzz_random_partition(rng: &mut StdRng, validators: &[Pubkey]) -> ByzFuzz
     }
     partition.sort_unstable_by_key(|group| group[0]);
     partition
+}
+
+fn byz_fuzz_random_recipients(
+    rng: &mut StdRng,
+    validators: &[Pubkey],
+    byzantine: &Pubkey,
+) -> Vec<Pubkey> {
+    let candidates = validators
+        .iter()
+        .filter(|validator| *validator != byzantine)
+        .copied()
+        .collect::<Vec<_>>();
+    let mut recipients = candidates
+        .iter()
+        .filter(|_| rng.random::<bool>())
+        .copied()
+        .collect::<Vec<_>>();
+    if recipients.is_empty() {
+        recipients.push(*candidates.choose(rng).unwrap());
+    }
+    recipients.sort_unstable();
+    recipients
 }
 
 /// If more than one partition is sampled for the same round, a message is dropped when
@@ -4432,27 +4466,84 @@ fn byz_fuzz_wait_for_slot(
     }
 }
 
-/// Samples and executes the network-fault half of the ByzFuzz initialization algorithm.
+/// Installs each process fault on both Byzantine paths: the broadcast stage equivocates
+/// directly to the recipients, and the repair handler answers their repair requests for
+/// the same slot with forged shreds. The repair handler identifies requesters by IP.
+fn byz_fuzz_install_process_faults(
+    equivocation_schedule: &EquivocationSchedule,
+    repair_schedule: &MaliciousRepairSchedule,
+    cluster: &LocalCluster,
+    start_slot: Slot,
+    process_faults: &ByzFuzzProcessFaults,
+) {
+    let validator_ips = cluster
+        .validators
+        .iter()
+        .map(|(pubkey, validator)| (*pubkey, validator.info.contact_info.gossip().unwrap().ip()))
+        .collect::<BTreeMap<Pubkey, IpAddr>>();
+    assert_eq!(
+        validator_ips.values().collect::<HashSet<_>>().len(),
+        validator_ips.len(),
+        "repair process faults need a distinct IP per validator"
+    );
+
+    for (round, faults) in process_faults {
+        let slot = start_slot.saturating_add(*round);
+        let mut recipients = BTreeMap::<Pubkey, u64>::new();
+        for fault in faults {
+            for recipient in &fault.recipients {
+                // Multiple sampled faults can match the same message. Choose the
+                // smallest seed to make that otherwise ambiguous case deterministic.
+                recipients
+                    .entry(*recipient)
+                    .and_modify(|seed| *seed = (*seed).min(fault.seed))
+                    .or_insert(fault.seed);
+            }
+        }
+        repair_schedule.set_slot_faults(
+            slot,
+            recipients
+                .iter()
+                .map(|(recipient, seed)| (validator_ips[recipient], *seed))
+                .collect(),
+        );
+        equivocation_schedule.set_slot_faults(slot, recipients);
+    }
+}
+
+/// Samples and executes the network- and process-fault portions of ByzFuzz.
 ///
 /// Environment inputs:
 /// - `BYZ_FUZZ_SEED`: deterministic RNG seed.
 /// - `BYZ_FUZZ_NUM_NODES`: size of P.
 /// - `BYZ_FUZZ_NETWORK_FAULT_ROUNDS`: d, the number of sampling attempts.
+/// - `BYZ_FUZZ_PROCESS_FAULT_ROUNDS`: c, the number of sampling attempts.
 /// - `BYZ_FUZZ_ROUNDS`: r, the number of rounds to execute.
 #[test]
 #[serial]
 fn test_byz_fuzz() {
     const DEFAULT_SEED: u64 = 0x6279_7a66_757a_7a;
-    const DEFAULT_NUM_NODES: usize = 3;
+    const DEFAULT_NUM_NODES: usize = 5;
+    const BYZANTINE_STAKE_PERCENT: u64 = 19;
+    const LEADER_WINDOW_SLOTS: usize = 4;
     const DEFAULT_NETWORK_FAULT_ROUNDS: usize = 3;
+    const DEFAULT_PROCESS_FAULT_ROUNDS: usize = 3;
     const DEFAULT_ROUNDS: Slot = 8;
 
-    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    // Keep the injected process faults visible; the default filter hides turbine logs.
+    agave_logger::setup_with_default(&format!(
+        "{AG_DEBUG_LOG_FILTER},solana_turbine::broadcast_stage::scheduled_equivocation_run=info,\
+         solana_core::repair::malicious_repair_handler=info"
+    ));
     let seed = byz_fuzz_input("BYZ_FUZZ_SEED", DEFAULT_SEED);
     let num_nodes = byz_fuzz_input("BYZ_FUZZ_NUM_NODES", DEFAULT_NUM_NODES);
     let network_fault_rounds = byz_fuzz_input(
         "BYZ_FUZZ_NETWORK_FAULT_ROUNDS",
         DEFAULT_NETWORK_FAULT_ROUNDS,
+    );
+    let process_fault_rounds = byz_fuzz_input(
+        "BYZ_FUZZ_PROCESS_FAULT_ROUNDS",
+        DEFAULT_PROCESS_FAULT_ROUNDS,
     );
     let rounds = byz_fuzz_input("BYZ_FUZZ_ROUNDS", DEFAULT_ROUNDS);
     assert!(num_nodes >= 2, "byz_fuzz needs at least two validators");
@@ -4491,18 +4582,88 @@ fn test_byz_fuzz() {
             round_faults.push(partition);
         }
     }
+    let byzantine = *validators.choose(&mut rng).unwrap();
+    // The rotation starts with the Byzantine validator and the fuzz start slot is aligned
+    // so that round 1 is the first slot of a rotation. Round r is then Byzantine-led iff
+    // (r - 1) % rotation_slots < LEADER_WINDOW_SLOTS. Process faults are only sampled on
+    // those rounds, since the malicious repair handler can only sign its own slots.
+    let rotation_slots = (num_nodes * LEADER_WINDOW_SLOTS) as Slot;
+    let byzantine_rounds = (1..=rounds)
+        .filter(|round| (round - 1) % rotation_slots < LEADER_WINDOW_SLOTS as Slot)
+        .collect::<Vec<_>>();
+    let mut process_faults = ByzFuzzProcessFaults::new();
+    for _ in 0..process_fault_rounds {
+        let round = *byzantine_rounds.choose(&mut rng).unwrap();
+        let fault = ByzFuzzProcessFault {
+            recipients: byz_fuzz_random_recipients(&mut rng, &validators, &byzantine),
+            seed: rng.random(),
+        };
+        let round_faults = process_faults.entry(round).or_default();
+        if !round_faults.contains(&fault) {
+            round_faults.push(fault);
+        }
+    }
     info!(
-        "BYZ_FUZZ seed={seed} nodes={num_nodes} d={network_fault_rounds} r={rounds} \
-         network_faults={network_faults:?}"
+        "BYZ_FUZZ seed={seed} nodes={num_nodes} d={network_fault_rounds} c={process_fault_rounds} \
+         r={rounds} byzantine={byzantine} byzantine_rounds={byzantine_rounds:?} \
+         network_faults={network_faults:?} process_faults={process_faults:?}"
     );
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.wait_for_supermajority = Some(0);
-    let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH * 2;
+    // Leader schedules are indexed within an epoch, so the epoch must be a whole number of
+    // rotations for the slot -> leader mapping to be the same in every epoch.
+    let slots_per_epoch = (MINIMUM_SLOTS_PER_EPOCH * 2).next_multiple_of(rotation_slots);
+    // Every validator leads one window per rotation, starting with the Byzantine validator.
+    let byzantine_index = validator_keys
+        .iter()
+        .position(|(keys, _)| keys.node_keypair.pubkey() == byzantine)
+        .unwrap();
+    let fixed_leader_schedule = FixedSchedule {
+        leader_schedule: Arc::new(create_custom_leader_schedule(
+            validator_keys
+                .iter()
+                .cycle()
+                .skip(byzantine_index)
+                .take(num_nodes)
+                .map(|(keys, _)| (SlotLeader::from(keys), LEADER_WINDOW_SLOTS)),
+        )),
+    };
+    // The Byzantine validator holds BYZANTINE_STAKE_PERCENT of total stake, just under
+    // Alpenglow's 20% Byzantine bound; honest validators split the rest equally.
+    let honest_stake =
+        DEFAULT_NODE_STAKE * (100 - BYZANTINE_STAKE_PERCENT) / (num_nodes as u64 - 1);
+    let node_stakes = validator_keys
+        .iter()
+        .map(|(keys, _)| {
+            if keys.node_keypair.pubkey() == byzantine {
+                DEFAULT_NODE_STAKE * BYZANTINE_STAKE_PERCENT
+            } else {
+                honest_stake
+            }
+        })
+        .collect::<Vec<_>>();
+    // Process faults are injected by the Byzantine leader's broadcast stage: on a scheduled
+    // slot it sends a conflicting version of one shred per FEC set directly to the
+    // recipients, ahead of the normal broadcast. Honest validators run unmodified.
+    let equivocation_schedule = EquivocationSchedule::default();
+    let repair_schedule = MaliciousRepairSchedule::default();
+    let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
+    for ((keys, _), config) in validator_keys.iter().zip(&mut validator_configs) {
+        config.fixed_leader_schedule = Some(fixed_leader_schedule.clone());
+        if keys.node_keypair.pubkey() == byzantine {
+            config.broadcast_stage_type =
+                BroadcastStageType::ScheduledEquivocation(equivocation_schedule.clone());
+            config.repair_handler_type = RepairHandlerType::Malicious(MaliciousRepairConfig {
+                fault_schedule: Some(repair_schedule.clone()),
+                ..MaliciousRepairConfig::default()
+            });
+        }
+    }
     let mut config = ClusterConfig {
-        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_configs,
         validator_keys: Some(validator_keys),
-        node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
+        node_stakes,
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
         skip_warmup_slots: true,
@@ -4516,11 +4677,26 @@ fn test_byz_fuzz() {
     cluster.check_for_new_processed(4, "BYZ_FUZZ preflight", SocketAddrSpace::Unspecified);
 
     let controller = NetworkPartitionController::new(&cluster).unwrap();
-    let start_slots = byz_fuzz_working_slots(&cluster);
-    let start_slot = *start_slots
+    // Align start_slot to the last slot of a rotation, leaving a margin so the faults are
+    // installed before the first Byzantine-led round is produced.
+    let current_slot = *byz_fuzz_working_slots(&cluster)
         .values()
-        .min()
+        .max()
         .expect("byz_fuzz cluster is not empty");
+    let start_slot = (current_slot + 3).next_multiple_of(rotation_slots) - 1;
+    byz_fuzz_install_process_faults(
+        &equivocation_schedule,
+        &repair_schedule,
+        &cluster,
+        start_slot,
+        &process_faults,
+    );
+    let start_timeout =
+        Duration::from_millis(ms_for_n_slots(2 * rotation_slots, config.ticks_per_slot));
+    let (reached_start, slots) = byz_fuzz_wait_for_slot(&cluster, start_slot - 1, start_timeout);
+    if !reached_start {
+        warn!("BYZ_FUZZ timed out waiting for start_slot={start_slot}; slots={slots:?}");
+    }
     let mut partition_active = false;
 
     for round in 1..=rounds {
@@ -4528,6 +4704,13 @@ fn test_byz_fuzz() {
         // The previous iteration either observed the preceding slot or exhausted its
         // timeout, so this is the boundary at which the next fault round begins.
         let slots_before = byz_fuzz_working_slots(&cluster);
+
+        if let Some(faults) = process_faults.get(&round) {
+            info!(
+                "BYZ_FUZZ round={round} target_slot={target_slot} byzantine={byzantine} \
+                 process_faults={faults:?}"
+            );
+        }
 
         if let Some(partitions) = network_faults.get(&round) {
             let partition = byz_fuzz_refine_partitions(&validators, partitions);
@@ -6352,6 +6535,7 @@ fn test_alpenglow_basic_equivocation() {
         bad_shred_slot_frequency: Some(duplicate_frequency),
         bad_shred_index_frequency: Some(DATA_SHREDS_PER_FEC_BLOCK as u64),
         slot_range: Some((0, last_duplicate)),
+        ..MaliciousRepairConfig::default()
     });
 
     // Cluster config
