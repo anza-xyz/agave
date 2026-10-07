@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use socket2::SockFilter;
 use {
     crate::{
         cluster::{Cluster, ClusterValidatorInfo, ValidatorInfo},
@@ -10,6 +12,7 @@ use {
     agave_votor::vote_history_storage::FileVoteHistoryStorage,
     itertools::izip,
     log::*,
+    socket2::Socket,
     solana_account::{
         Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
     },
@@ -25,6 +28,7 @@ use {
     solana_fee_structure::FeeStructure,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{
+        cluster_info::{DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig},
         contact_info::{ContactInfo, Protocol},
         gossip_service::{discover_peers, discover_validators},
         node::Node,
@@ -36,7 +40,11 @@ use {
     },
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_net_utils::{
+        SocketAddrSpace, find_available_ports_in_range,
+        multihomed_sockets::BindIpAddrs,
+        sockets::{bind_to_localhost_unique, localhost_port_range_for_tests},
+    },
     solana_poh_config::PohConfig,
     solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
@@ -55,6 +63,7 @@ use {
         instruction as stake_instruction,
         state::{Authorized, Lockup, StakeStateV2},
     },
+    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
     solana_transaction::Transaction,
@@ -67,10 +76,11 @@ use {
         },
     },
     std::{
-        collections::HashMap,
-        io::{Error, Result},
+        collections::{HashMap, HashSet},
+        io::{Error, ErrorKind, Result},
         iter,
-        net::{SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
         time::Duration,
@@ -114,6 +124,9 @@ pub struct ClusterConfig {
     pub poh_config: PohConfig,
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
     pub vote_use_quic: bool,
+    /// Give validators distinct loopback identities and retain their sockets so a
+    /// [`NetworkPartitionController`] can partition all peer-to-peer transports.
+    pub enable_network_partitions: bool,
 }
 
 impl ClusterConfig {
@@ -151,6 +164,7 @@ impl Default for ClusterConfig {
             skip_warmup_slots: false,
             additional_accounts: vec![],
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+            enable_network_partitions: false,
         }
     }
 }
@@ -163,9 +177,422 @@ pub struct LocalCluster {
     pub validators: HashMap<Pubkey, ClusterValidatorInfo>,
     pub genesis_config: GenesisConfig,
     shred_version: u16,
+    partition_network: Option<Arc<PartitionNetworkState>>,
+}
+
+const FIRST_VALIDATOR_LOOPBACK_IP: u32 = u32::from_be_bytes([127, 0, 0, 2]);
+const LAST_VALIDATOR_LOOPBACK_IP: u32 = u32::from_be_bytes([127, 255, 255, 254]);
+
+struct PartitionNetworkState {
+    inner: RwLock<PartitionNetworkStateInner>,
+}
+
+struct PartitionNetworkStateInner {
+    next_loopback_ip: u32,
+    validator_ips: HashMap<Pubkey, Ipv4Addr>,
+    validator_sockets: HashMap<Pubkey, Vec<Socket>>,
+    partition: Option<HashMap<Pubkey, usize>>,
+}
+
+impl Default for PartitionNetworkState {
+    fn default() -> Self {
+        Self {
+            inner: RwLock::new(PartitionNetworkStateInner {
+                next_loopback_ip: FIRST_VALIDATOR_LOOPBACK_IP,
+                validator_ips: HashMap::new(),
+                validator_sockets: HashMap::new(),
+                partition: None,
+            }),
+        }
+    }
+}
+
+impl PartitionNetworkState {
+    fn validator_ip(&self, pubkey: &Pubkey) -> Ipv4Addr {
+        let mut inner = self.inner.write().unwrap();
+        if let Some(ip) = inner.validator_ips.get(pubkey) {
+            return *ip;
+        }
+
+        #[cfg(target_os = "linux")]
+        let ip = {
+            assert!(
+                inner.next_loopback_ip <= LAST_VALIDATOR_LOOPBACK_IP,
+                "local cluster exhausted validator loopback addresses"
+            );
+            let ip = Ipv4Addr::from(inner.next_loopback_ip);
+            inner.next_loopback_ip += 1;
+            ip
+        };
+        #[cfg(not(target_os = "linux"))]
+        let ip = Ipv4Addr::LOCALHOST;
+
+        inner.validator_ips.insert(*pubkey, ip);
+        ip
+    }
+
+    fn register_node(&self, pubkey: Pubkey, node: &Node) -> Result<()> {
+        let sockets = clone_node_sockets(node)?;
+        let mut inner = self.inner.write().unwrap();
+        if let Some(partition) = &inner.partition {
+            let validator_group = partition.get(&pubkey).ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("validator {pubkey} is not in the active network partition"),
+                )
+            })?;
+            let blocked_ips = partition
+                .iter()
+                .filter(|(_, group)| *group != validator_group)
+                .map(|(peer, _)| {
+                    inner.validator_ips.get(peer).copied().ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::NotFound,
+                            format!("network identity is unavailable for validator {peer}"),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            attach_partition_filter(&sockets, &blocked_ips)?;
+        }
+        inner.validator_sockets.insert(pubkey, sockets);
+        Ok(())
+    }
+
+    fn unregister_node(&self, pubkey: &Pubkey) {
+        self.inner.write().unwrap().validator_sockets.remove(pubkey);
+    }
+
+    fn clear_sockets(&self) {
+        let mut inner = self.inner.write().unwrap();
+        inner.validator_sockets.clear();
+        inner.partition = None;
+    }
+
+    fn apply(&self, validators: &HashSet<Pubkey>, partitions: &[Vec<Pubkey>]) -> Result<()> {
+        let partition = validate_partition(validators.iter().copied(), partitions)?;
+        let mut inner = self.inner.write().unwrap();
+        for validator in validators {
+            if !inner.validator_sockets.contains_key(validator) {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("network sockets are unavailable for validator {validator}"),
+                ));
+            }
+        }
+
+        let previous_partition = inner.partition.clone();
+        if let Err(err) = apply_partition_filters(&inner, validators, Some(&partition)) {
+            if let Err(rollback_err) =
+                apply_partition_filters(&inner, validators, previous_partition.as_ref())
+            {
+                error!("failed to restore network partition filters: {rollback_err}");
+            }
+            return Err(err);
+        }
+        inner.partition = Some(partition);
+        Ok(())
+    }
+
+    fn heal(&self, validators: &HashSet<Pubkey>) -> Result<()> {
+        let mut inner = self.inner.write().unwrap();
+        if inner.partition.is_none() {
+            return Ok(());
+        }
+        apply_partition_filters(&inner, validators, None)?;
+        inner.partition = None;
+        Ok(())
+    }
+}
+
+/// Dynamically partitions all validator-to-validator traffic carried by the sockets
+/// supplied to [`Validator`], including gossip, Turbine, repair, TPU, and Votor.
+///
+/// On Linux, each local validator binds to a distinct address in `127.0.0.0/8` and
+/// socket-level BPF filters discard packets received from validators in other groups.
+pub struct NetworkPartitionController {
+    network: Arc<PartitionNetworkState>,
+    validators: HashSet<Pubkey>,
+}
+
+impl NetworkPartitionController {
+    pub fn new(cluster: &LocalCluster) -> Result<Self> {
+        #[cfg(not(target_os = "linux"))]
+        return Err(Error::new(
+            ErrorKind::Unsupported,
+            "local-cluster network partitions require Linux socket filters",
+        ));
+
+        let network = cluster.partition_network.clone().ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidInput,
+                "set ClusterConfig::enable_network_partitions before starting the local cluster",
+            )
+        })?;
+        let validators = cluster.validators.keys().copied().collect::<HashSet<_>>();
+        let inner = network.inner.read().unwrap();
+        if let Some(validator) = validators
+            .iter()
+            .find(|validator| !inner.validator_sockets.contains_key(validator))
+        {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("network sockets are unavailable for validator {validator}"),
+            ));
+        }
+        drop(inner);
+        Ok(Self {
+            network,
+            validators,
+        })
+    }
+
+    /// Applies an exact-cover partition. Traffic is allowed within each group and
+    /// discarded between groups. Empty groups, duplicates, missing validators, and
+    /// unknown validators are rejected without changing the current topology.
+    pub fn apply(&self, partitions: &[Vec<Pubkey>]) -> Result<()> {
+        self.network.apply(&self.validators, partitions)
+    }
+
+    /// Removes the socket filters and restores full connectivity.
+    pub fn heal(&self) -> Result<()> {
+        self.network.heal(&self.validators)
+    }
+}
+
+impl Drop for NetworkPartitionController {
+    fn drop(&mut self) {
+        if let Err(err) = self.heal() {
+            error!("failed to heal local-cluster network partition: {err}");
+        }
+    }
+}
+
+fn clone_node_sockets(node: &Node) -> Result<Vec<Socket>> {
+    let mut sockets = Vec::new();
+    macro_rules! clone_udp_socket {
+        ($socket:expr) => {
+            sockets.push(Socket::from($socket.try_clone()?));
+        };
+    }
+
+    for socket in node
+        .sockets
+        .gossip
+        .iter()
+        .chain(&node.sockets.tvu)
+        .chain(&node.sockets.tpu_vote)
+        .chain(&node.sockets.broadcast)
+        .chain(iter::once(&node.sockets.repair))
+        .chain(&node.sockets.retransmit_sockets)
+        .chain(iter::once(&node.sockets.serve_repair))
+        .chain(iter::once(&node.sockets.ancestor_hashes_requests))
+        .chain(&node.sockets.tpu_quic)
+        .chain(&node.sockets.tpu_forwards_quic)
+        .chain(&node.sockets.tpu_vote_quic)
+        .chain(iter::once(&node.sockets.block_id_repair))
+        .chain(iter::once(&node.sockets.tpu_vote_forwarding_client))
+        .chain(&node.sockets.tpu_transaction_forwarding_clients)
+        .chain(&node.sockets.votor_server)
+        .chain(iter::once(&node.sockets.quic_vote_client))
+        .chain(iter::once(&node.sockets.quic_votor_client))
+        .chain(iter::once(&node.sockets.rpc_sts_client))
+    {
+        clone_udp_socket!(socket);
+    }
+    if let Some(ip_echo) = &node.sockets.ip_echo {
+        sockets.push(Socket::from(ip_echo.try_clone()?));
+    }
+    Ok(sockets)
+}
+
+fn apply_partition_filters(
+    inner: &PartitionNetworkStateInner,
+    validators: &HashSet<Pubkey>,
+    partition: Option<&HashMap<Pubkey, usize>>,
+) -> Result<()> {
+    for validator in validators {
+        let sockets = inner.validator_sockets.get(validator).ok_or_else(|| {
+            Error::new(
+                ErrorKind::NotFound,
+                format!("network sockets are unavailable for validator {validator}"),
+            )
+        })?;
+        if let Some(partition) = partition {
+            let validator_group = partition[validator];
+            let blocked_ips = partition
+                .iter()
+                .filter(|(_, group)| **group != validator_group)
+                .map(|(peer, _)| {
+                    inner.validator_ips.get(peer).copied().ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::NotFound,
+                            format!("network identity is unavailable for validator {peer}"),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            attach_partition_filter(sockets, &blocked_ips)?;
+        } else {
+            detach_partition_filter(sockets)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn attach_partition_filter(sockets: &[Socket], blocked_ips: &[Ipv4Addr]) -> Result<()> {
+    const IPV4_SOURCE_ADDRESS_OFFSET: u32 = (libc::BPF_NET_OFF + 12) as u32;
+    let mut filter = Vec::with_capacity(2 * blocked_ips.len() + 2);
+    filter.push(SockFilter::new(
+        (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+        0,
+        0,
+        IPV4_SOURCE_ADDRESS_OFFSET,
+    ));
+    for blocked_ip in blocked_ips {
+        filter.push(SockFilter::new(
+            (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            0,
+            1,
+            u32::from_be_bytes(blocked_ip.octets()),
+        ));
+        filter.push(SockFilter::new(
+            (libc::BPF_RET | libc::BPF_K) as u16,
+            0,
+            0,
+            0,
+        ));
+    }
+    filter.push(SockFilter::new(
+        (libc::BPF_RET | libc::BPF_K) as u16,
+        0,
+        0,
+        u32::MAX,
+    ));
+    for socket in sockets {
+        socket.attach_filter(&filter)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn attach_partition_filter(_sockets: &[Socket], _blocked_ips: &[Ipv4Addr]) -> Result<()> {
+    Err(Error::new(
+        ErrorKind::Unsupported,
+        "local-cluster network partitions require Linux socket filters",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn detach_partition_filter(sockets: &[Socket]) -> Result<()> {
+    for socket in sockets {
+        if let Err(err) = socket.detach_filter() {
+            if err.raw_os_error() != Some(libc::ENOENT) {
+                return Err(err);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn detach_partition_filter(_sockets: &[Socket]) -> Result<()> {
+    Ok(())
+}
+
+fn validate_partition(
+    validators: impl IntoIterator<Item = Pubkey>,
+    partitions: &[Vec<Pubkey>],
+) -> Result<HashMap<Pubkey, usize>> {
+    if partitions.is_empty() {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "a network partition must contain at least one group",
+        ));
+    }
+
+    let validators = validators.into_iter().collect::<HashSet<_>>();
+    let mut group_by_validator = HashMap::with_capacity(validators.len());
+    for (group, members) in partitions.iter().enumerate() {
+        if members.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("network partition group {group} is empty"),
+            ));
+        }
+        for validator in members {
+            if !validators.contains(validator) {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("unknown validator in network partition: {validator}"),
+                ));
+            }
+            if group_by_validator.insert(*validator, group).is_some() {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("validator appears in multiple partition groups: {validator}"),
+                ));
+            }
+        }
+    }
+
+    if group_by_validator.len() != validators.len() {
+        let mut missing = validators
+            .iter()
+            .filter(|validator| !group_by_validator.contains_key(validator))
+            .copied()
+            .collect::<Vec<_>>();
+        missing.sort_unstable();
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            format!("validators missing from network partition: {missing:?}"),
+        ));
+    }
+    Ok(group_by_validator)
 }
 
 impl LocalCluster {
+    fn new_validator_node(
+        partition_network: Option<&PartitionNetworkState>,
+        pubkey: &Pubkey,
+    ) -> Node {
+        let Some(partition_network) = partition_network else {
+            return Node::new_localhost_with_pubkey(pubkey);
+        };
+        let bind_ip_addr = IpAddr::V4(partition_network.validator_ip(pubkey));
+        let port_range = localhost_port_range_for_tests();
+        let mut node = Node::new_with_external_ip(
+            pubkey,
+            NodeConfig {
+                advertised_ip: bind_ip_addr,
+                gossip_port: port_range.0,
+                port_range,
+                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])
+                    .expect("validator should bind to its loopback address"),
+                public_tpu_addr: None,
+                public_tpu_forwards_addr: None,
+                public_tvu_addr: None,
+                num_tvu_receive_sockets: NonZeroUsize::new(1).unwrap(),
+                num_tvu_retransmit_sockets: NonZeroUsize::new(1).unwrap(),
+                num_quic_endpoints: NonZeroUsize::new(DEFAULT_QUIC_ENDPOINTS).unwrap(),
+                num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
+            },
+        );
+        let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range)
+            .expect("validator RPC ports should be available");
+        node.info
+            .set_rpc(SocketAddr::new(bind_ip_addr, rpc_ports[0]))
+            .unwrap();
+        node.info
+            .set_rpc_pubsub(SocketAddr::new(bind_ip_addr, rpc_ports[1]))
+            .unwrap();
+        partition_network
+            .register_node(*pubkey, &node)
+            .expect("validator sockets should be registered for network partitions");
+        node
+    }
+
     pub fn new_with_equal_stakes(
         num_nodes: usize,
         mint_lamports: u64,
@@ -280,7 +707,10 @@ impl LocalCluster {
         let leader_keypair = &keys_in_genesis[0].node_keypair;
         let leader_vote_keypair = &keys_in_genesis[0].vote_keypair;
         let leader_pubkey = leader_keypair.pubkey();
-        let leader_node = Node::new_localhost_with_pubkey(&leader_pubkey);
+        let partition_network = config
+            .enable_network_partitions
+            .then(|| Arc::new(PartitionNetworkState::default()));
+        let leader_node = Self::new_validator_node(partition_network.as_deref(), &leader_pubkey);
 
         let feature_set = FeatureSet::all_enabled();
 
@@ -371,6 +801,7 @@ impl LocalCluster {
                 validators: HashMap::new(),
                 genesis_config,
                 shred_version: leader_node.info.shred_version(),
+                partition_network: partition_network.clone(),
             };
 
             let validator_keys = validator_keys
@@ -455,6 +886,7 @@ impl LocalCluster {
                 validators,
                 genesis_config,
                 shred_version: leader_contact_info.shred_version(),
+                partition_network,
             };
 
             for (stake, validator_config, (keys, in_genesis)) in izip!(
@@ -530,6 +962,9 @@ impl LocalCluster {
                 v.join();
             }
         }
+        if let Some(partition_network) = &self.partition_network {
+            partition_network.clear_sockets();
+        }
     }
 
     /// Set up validator without voting or staking accounts
@@ -583,7 +1018,8 @@ impl LocalCluster {
         let validator_keypair = validator_keys.node_keypair.clone();
         let voting_keypair = validator_keys.vote_keypair.clone();
         let validator_pubkey = validator_keypair.pubkey();
-        let validator_node = Node::new_localhost_with_pubkey(&validator_pubkey);
+        let validator_node =
+            Self::new_validator_node(self.partition_network.as_deref(), &validator_pubkey);
         let contact_info = validator_node.info.clone();
         let (ledger_path, _blockhash) = create_new_tmp_ledger!(&self.genesis_config);
 
@@ -734,12 +1170,16 @@ impl LocalCluster {
             let validator_config = safe_clone_config(validator_config);
             let genesis_config = self.genesis_config.clone();
             let entry_points = vec![self.entry_point_info.clone()];
+            let partition_network = self.partition_network.clone();
 
             let handle = std::thread::spawn(move || {
                 let validator_pubkey = validator_keypair.pubkey();
                 info!("Starting validator {validator_pubkey}");
 
-                let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
+                let validator_node = Self::new_validator_node(
+                    partition_network.as_deref(),
+                    &validator_keypair.pubkey(),
+                );
                 let contact_info = validator_node.info.clone();
                 let (ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
 
@@ -1253,6 +1693,9 @@ impl Cluster for LocalCluster {
         let mut validator = node.validator.take().expect("Validator must be running");
         validator.exit();
         validator.join();
+        if let Some(partition_network) = &self.partition_network {
+            partition_network.unregister_node(pubkey);
+        }
         node
     }
 
@@ -1262,7 +1705,7 @@ impl Cluster for LocalCluster {
         cluster_validator_info: &mut ClusterValidatorInfo,
     ) -> (Node, Vec<ContactInfo>) {
         // Update the stored ContactInfo for this node
-        let mut node = Node::new_localhost_with_pubkey(pubkey);
+        let mut node = Self::new_validator_node(self.partition_network.as_deref(), pubkey);
         node.info.set_shred_version(self.shred_version());
         cluster_validator_info.info.contact_info = node.info.clone();
         cluster_validator_info.config.rpc_addrs =
@@ -1380,5 +1823,82 @@ impl Cluster for LocalCluster {
 impl Drop for LocalCluster {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_partition_socket_filter() {
+        let receiver = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 10), 0)).unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let receiver_addr = receiver.local_addr().unwrap();
+        let blocked_sender = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 11), 0)).unwrap();
+        let allowed_sender = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 12), 0)).unwrap();
+        let filter_socket = Socket::from(receiver.try_clone().unwrap());
+
+        attach_partition_filter(&[filter_socket], &[Ipv4Addr::new(127, 0, 0, 11)]).unwrap();
+        blocked_sender.send_to(b"blocked", receiver_addr).unwrap();
+        let mut buffer = [0u8; 16];
+        assert!(matches!(
+            receiver.recv_from(&mut buffer).unwrap_err().kind(),
+            ErrorKind::WouldBlock | ErrorKind::TimedOut
+        ));
+
+        allowed_sender.send_to(b"allowed", receiver_addr).unwrap();
+        let (size, source) = receiver.recv_from(&mut buffer).unwrap();
+        assert_eq!(&buffer[..size], b"allowed");
+        assert_eq!(source.ip(), allowed_sender.local_addr().unwrap().ip());
+
+        detach_partition_filter(&[Socket::from(receiver.try_clone().unwrap())]).unwrap();
+        blocked_sender.send_to(b"healed", receiver_addr).unwrap();
+        let (size, source) = receiver.recv_from(&mut buffer).unwrap();
+        assert_eq!(&buffer[..size], b"healed");
+        assert_eq!(source.ip(), blocked_sender.local_addr().unwrap().ip());
+    }
+
+    #[test]
+    fn test_validate_network_partition() {
+        let validators = [
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ];
+
+        let groups = validate_partition(
+            validators,
+            &[vec![validators[0], validators[1]], vec![validators[2]]],
+        )
+        .unwrap();
+        assert_eq!(groups[&validators[0]], groups[&validators[1]]);
+        assert_ne!(groups[&validators[0]], groups[&validators[2]]);
+
+        assert!(validate_partition(validators, &[]).is_err());
+        assert!(validate_partition(validators, &[vec![]]).is_err());
+        assert!(
+            validate_partition(
+                validators,
+                &[vec![validators[0]], vec![validators[0], validators[1]]]
+            )
+            .is_err()
+        );
+        assert!(
+            validate_partition(validators, &[vec![validators[0]], vec![validators[1]]]).is_err()
+        );
+        assert!(
+            validate_partition(
+                validators,
+                &[
+                    vec![validators[0], validators[1]],
+                    vec![validators[2], Pubkey::new_unique()],
+                ]
+            )
+            .is_err()
+        );
     }
 }

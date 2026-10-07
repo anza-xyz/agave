@@ -13,11 +13,10 @@ use {
     crate::{
         cluster::{Cluster, ClusterValidatorInfo},
         cluster_tests,
-        local_cluster::{ClusterConfig, LocalCluster},
+        local_cluster::{ClusterConfig, LocalCluster, NetworkPartitionController},
         validator_configs::*,
     },
     agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
-    arc_swap::ArcSwap,
     log::*,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
@@ -36,19 +35,17 @@ use {
         blockstore::{Blockstore, PurgeType},
         blockstore_meta::DuplicateSlotProof,
         blockstore_options::{AccessType, BlockstoreOptions},
-        shred::filter::{TurbineMode, TurbineModeKind},
     },
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_turbine::broadcast_stage::BroadcastStageType,
     static_assertions,
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         fs, iter,
-        net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         sync::{Arc, atomic::AtomicBool},
@@ -426,7 +423,6 @@ pub fn run_cluster_partition<C>(
     assert_eq!(node_stakes.len(), num_nodes);
     let mint_lamports = crate::local_cluster::DEFAULT_MINT_LAMPORTS
         + node_stakes.iter().sum::<u64>().saturating_mul(2);
-    let turbine_mode = TurbineMode::new(TurbineModeKind::Enabled);
     let wait_for_supermajority = if no_wait_for_vote_to_start_leader {
         // This helps nodes get a little more in sync by waiting for
         // supermajority to observe slot 0. It still doesn't provide perfect
@@ -443,7 +439,6 @@ pub fn run_cluster_partition<C>(
     let mut validator_config = ValidatorConfig {
         wait_for_supermajority,
         no_wait_for_vote_to_start_leader,
-        turbine_mode: turbine_mode.clone(),
         ..ValidatorConfig::default_for_test()
     };
 
@@ -478,14 +473,10 @@ pub fn run_cluster_partition<C>(
         .unwrap()
         .no_wait_for_vote_to_start_leader = true;
     let slots_per_epoch = 2048;
-    // Shared handle to the votor peer-socket override maps on each validator.
-    // We populate it below to blackhole all peers (simulating a partition),
-    // then clear it to heal the cluster.
-    // Every validator's cache reads this same handle on each refresh.
-    let alpenglow_port_override = Arc::new(ArcSwap::from_pointee(HashMap::new()));
-    for config in &mut validator_configs {
-        config.votor_peer_overrides = alpenglow_port_override.clone();
-    }
+    let partition_pubkeys = validator_keys
+        .iter()
+        .map(|keys| keys.node_keypair.pubkey())
+        .collect::<Vec<_>>();
     let mut config = ClusterConfig {
         mint_lamports,
         node_stakes,
@@ -501,6 +492,7 @@ pub fn run_cluster_partition<C>(
         skip_warmup_slots: true,
         additional_accounts,
         ticks_per_slot: ticks_per_slot.unwrap_or(DEFAULT_TICKS_PER_SLOT),
+        enable_network_partitions: true,
         ..ClusterConfig::default()
     };
 
@@ -540,27 +532,20 @@ pub fn run_cluster_partition<C>(
         let epoch_info = node_client.get_epoch_info().unwrap();
         assert_eq!(epoch_info.slots_in_epoch, slots_per_epoch);
     }
+    let partition_controller = NetworkPartitionController::new(&cluster).unwrap();
+    let partition_groups = partition_pubkeys
+        .into_iter()
+        .map(|pubkey| vec![pubkey])
+        .collect::<Vec<_>>();
 
     info!("PARTITION_TEST start partition");
     on_partition_start(&mut cluster, &mut context);
-    turbine_mode.set(TurbineModeKind::TurbineAndRepairDisabled);
-
-    // Make all to all votes/certs not able to reach each other by overriding the
-    // alpenglow port override to SocketAddr which no one is listening on.
-    let blackhole_socket = bind_to_localhost_unique().unwrap();
-    let blackhole_addr: SocketAddr = blackhole_socket.local_addr().unwrap();
-    let new_override: HashMap<_, _> = cluster_nodes
-        .iter()
-        .map(|node| (*node.pubkey(), Some(blackhole_addr)))
-        .collect();
-    alpenglow_port_override.store(Arc::new(new_override));
+    partition_controller.apply(&partition_groups).unwrap();
     sleep(partition_duration);
 
     on_before_partition_resolved(&mut cluster, &mut context);
     info!("PARTITION_TEST remove partition");
-    turbine_mode.set(TurbineModeKind::Enabled);
-    // Restore the alpenglow port override to the default, so that the nodes can communicate again.
-    alpenglow_port_override.store(Arc::new(HashMap::new()));
+    partition_controller.heal().unwrap();
 
     // Give partitions time to propagate their blocks from during the partition
     // after the partition resolves
