@@ -117,13 +117,10 @@ impl BigTableUploadService {
 /// Returns the last slot of the next upload pass starting at `start_slot`, or
 /// `None` if there is nothing new to upload yet.
 ///
-/// The highest slot eligible for upload is the highest root that has complete
-/// block metadata. The root comes from the blockstore itself: `max_root` only
-/// advances after the root markers are written, and `upload_confirmed_blocks`
-/// treats a range with no rooted slots as done. A root taken from anywhere
-/// else, like the commitment cache (which under Alpenglow sees a new root
-/// before `Blockstore::set_roots` runs), can lead the markers, and the first
-/// block after a skipped leader window is then passed over and never uploaded.
+/// Bound by the blockstore's root, not the commitment cache's:
+/// `upload_confirmed_blocks` treats a range with no rooted slots as done, and
+/// under Alpenglow the commitment cache can see a root before its marker is
+/// written.
 fn next_upload_end_slot(
     start_slot: Slot,
     max_complete_transaction_status_slot: &AtomicU64,
@@ -145,54 +142,10 @@ fn next_upload_end_slot(
 mod tests {
     use {super::*, crate::get_tmp_ledger_path_auto_delete};
 
-    // Runs one pass of the service loop and returns the new `start_slot`.
-    fn run_upload_pass(
-        runtime: &Runtime,
-        bigtable: &solana_storage_bigtable::LedgerStorage,
-        start_slot: Slot,
-        max_complete_transaction_status_slot: &AtomicU64,
-        blockstore: &Arc<Blockstore>,
-        config: &ConfirmedBlockUploadConfig,
-    ) -> Slot {
-        let Some(end_slot) = next_upload_end_slot(
-            start_slot,
-            max_complete_transaction_status_slot,
-            blockstore,
-            config,
-        ) else {
-            return start_slot;
-        };
-        let last_slot_uploaded = runtime
-            .block_on(bigtable_upload::upload_confirmed_blocks(
-                blockstore.clone(),
-                bigtable.clone(),
-                start_slot,
-                end_slot,
-                config.clone(),
-                Arc::new(AtomicBool::new(false)),
-            ))
-            .unwrap();
-        last_slot_uploaded.saturating_add(1)
-    }
-
     #[test]
     fn test_block_after_skipped_window_waits_for_root_marker() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let runtime = Runtime::new().unwrap();
-        // Nothing listens here. The only pass that calls upload_confirmed_blocks
-        // has no rooted slots in its range, so it returns before making any
-        // bigtable request.
-        let bigtable = runtime
-            .block_on(async {
-                solana_storage_bigtable::LedgerStorage::new_for_emulator(
-                    "test",
-                    "default",
-                    "127.0.0.1:1",
-                    None,
-                )
-            })
-            .unwrap();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let config = ConfirmedBlockUploadConfig {
             max_num_slots_to_check: 16,
             ..ConfirmedBlockUploadConfig::default()
@@ -202,21 +155,43 @@ mod tests {
         // and block 156 is the new root. Its transaction statuses are written,
         // but its root marker isn't yet.
         blockstore.set_roots([0, 150].iter()).unwrap();
-        let start_slot = 151;
         let max_complete_transaction_status_slot = AtomicU64::new(156);
-        let start_slot = run_upload_pass(
-            &runtime,
-            &bigtable,
-            start_slot,
-            &max_complete_transaction_status_slot,
-            &blockstore,
-            &config,
+
+        // The pass must not run past the unwritten root.
+        let start_slot = 151;
+        assert_eq!(
+            next_upload_end_slot(
+                start_slot,
+                &max_complete_transaction_status_slot,
+                &blockstore,
+                &config,
+            ),
+            None,
+            "pass would skip slot 156",
         );
 
-        // The pass must not advance past the unwritten root...
-        assert_eq!(start_slot, 151, "slot 156 was skipped");
+        // A pass starting before the highest written root runs up to it...
+        assert_eq!(
+            next_upload_end_slot(
+                149,
+                &max_complete_transaction_status_slot,
+                &blockstore,
+                &config
+            ),
+            Some(150),
+        );
+        // ...but not when it starts at the root; that waits for the next root.
+        assert_eq!(
+            next_upload_end_slot(
+                150,
+                &max_complete_transaction_status_slot,
+                &blockstore,
+                &config
+            ),
+            None,
+        );
 
-        // ...and once the marker is written, the next pass includes 156.
+        // Once the marker is written, the pass from 151 includes 156.
         blockstore.set_roots([156].iter()).unwrap();
         assert_eq!(
             next_upload_end_slot(
