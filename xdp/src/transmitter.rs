@@ -4,7 +4,6 @@ use {
     crate::ecn_codepoint::EcnCodepoint,
     bytes::Bytes,
     std::{
-        error::Error,
         io,
         net::{SocketAddr, SocketAddrV4},
         sync::{Arc, atomic::AtomicBool},
@@ -14,12 +13,13 @@ use {
 #[cfg(target_os = "linux")]
 use {
     crate::{
-        device::{NetworkDevice, QueueId},
+        InterfaceIpError, LoadXdpProgramError,
+        device::{DefaultRouteDeviceError, NetworkDevice, QueueId},
         load_xdp_program,
         neighbors::NeighborsObserver,
-        route::{RouteTable, Router, RoutingTables},
+        route::{RouteTable, Router},
         route_monitor::RouteMonitor,
-        tx_loop::{self, TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
+        tx_loop::{self, TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxLoopError, TxPacket},
         umem::OwnedUmem,
     },
     agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
@@ -338,6 +338,42 @@ pub struct Transmitter {
     threads: Vec<thread::JoinHandle<()>>,
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum TransmitterError {
+    #[error("failed to open interface {interface}: {source}")]
+    OpenInterface {
+        interface: String,
+        source: io::Error,
+    },
+    #[error(transparent)]
+    DefaultRouteDevice(#[from] DefaultRouteDeviceError),
+    #[error("invalid CPU {cpu_id}: {source}")]
+    InvalidCpu { cpu_id: usize, source: io::Error },
+    #[error("failed to read CPU affinity: {0}")]
+    ReadCpuAffinity(#[source] io::Error),
+    #[error("failed to pin setup thread to CPU {cpu_id}: {source}")]
+    PinToCpu { cpu_id: usize, source: io::Error },
+    #[error("failed to unpin setup thread from CPU {cpu_id}: {source}")]
+    UnpinFromCpu { cpu_id: usize, source: io::Error },
+    #[error("all CPUs are reserved; no CPU available for the main thread")]
+    NoUnreservedCpu,
+    #[error(transparent)]
+    TxLoop(#[from] TxLoopError),
+    #[error("failed to raise {capability} capability: {source}")]
+    RaiseCapability {
+        capability: caps::Capability,
+        source: caps::errors::CapsError,
+    },
+    #[error(transparent)]
+    LoadXdpProgram(#[from] LoadXdpProgramError),
+    #[error("failed to load routing tables: {0}")]
+    LoadRoutingTables(#[source] io::Error),
+    #[error("failed to start neighbors refresher: {0}")]
+    StartNeighborsRefresher(#[source] io::Error),
+}
+
 #[cfg(not(target_os = "linux"))]
 pub struct TransmitterBuilder {}
 
@@ -354,12 +390,15 @@ pub struct TransmitterBuilder {
 
 impl TransmitterBuilder {
     #[cfg(not(target_os = "linux"))]
-    pub fn new(_config: XdpConfig, _exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(
+        _config: XdpConfig,
+        _exit: Arc<AtomicBool>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         Err("XDP is only supported on Linux".into())
     }
 
     #[cfg(target_os = "linux")]
-    pub fn new(config: XdpConfig, exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(config: XdpConfig, exit: Arc<AtomicBool>) -> Result<Self, TransmitterError> {
         Self::new_with_intervals(
             config,
             exit,
@@ -375,12 +414,12 @@ impl TransmitterBuilder {
         config: XdpConfig,
         exit: Arc<AtomicBool>,
         neighbor_intervals: NeighborIntervals,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> Result<Self, TransmitterError> {
         use {
             crate::neighbors::NeighborsRefresher,
             caps::Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
             log::debug,
-            std::{collections::HashSet, io},
+            std::collections::HashSet,
         };
         let XdpConfig {
             interface: maybe_interface,
@@ -390,26 +429,31 @@ impl TransmitterBuilder {
         } = config;
 
         let dev = Arc::new(if let Some(interface) = maybe_interface {
-            NetworkDevice::new(interface).unwrap()
+            NetworkDevice::new(interface.as_str())
+                .map_err(|source| TransmitterError::OpenInterface { interface, source })?
         } else {
-            NetworkDevice::new_from_default_route().unwrap()
+            NetworkDevice::new_from_default_route()?
         });
 
         let mut tx_loop_config_builder = TxLoopConfigBuilder::new();
         tx_loop_config_builder.zero_copy(zero_copy);
-        let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
+        let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev)?;
 
+        let new_cpu_id = |cpu_id| {
+            CpuId::new(cpu_id).map_err(|source| TransmitterError::InvalidCpu { cpu_id, source })
+        };
         let reserved_cores = queues
             .iter()
-            .map(|binding| CpuId::new(binding.cpu))
-            .collect::<io::Result<HashSet<_>>>()?;
-        let unreserved_cores = cpu_affinity(None)?
+            .map(|binding| new_cpu_id(binding.cpu))
+            .collect::<Result<HashSet<_>, _>>()?;
+        let unreserved_cores = cpu_affinity(None)
+            .map_err(TransmitterError::ReadCpuAffinity)?
             .into_iter()
             .filter(|core| !reserved_cores.contains(core))
             .collect::<Vec<_>>();
 
         if unreserved_cores.is_empty() {
-            return Err("all CPUs are reserved; no CPU available for the main thread".into());
+            return Err(TransmitterError::NoUnreservedCpu);
         }
 
         let mut tx_loop_builders = Vec::with_capacity(queues.len());
@@ -417,8 +461,11 @@ impl TransmitterBuilder {
             // since we aren't necessarily allocating from the thread that we intend to run on,
             // temporarily switch to the target cpu for each TxLoop to ensure that the Umem region
             // is allocated to the correct numa node
-            let cpu = CpuId::new(binding.cpu)?;
-            set_cpu_affinity(None, [cpu])?;
+            let cpu = new_cpu_id(binding.cpu)?;
+            set_cpu_affinity(None, [cpu]).map_err(|source| TransmitterError::PinToCpu {
+                cpu_id: binding.cpu,
+                source,
+            })?;
             let tx_loop_builder = TxLoopBuilder::new(
                 binding.cpu,
                 QueueId(binding.queue as u64),
@@ -426,23 +473,22 @@ impl TransmitterBuilder {
                 &dev,
             );
             // migrate main thread back off of the last xdp reserved cpu
-            set_cpu_affinity(None, unreserved_cores.iter().copied())?;
-            tx_loop_builders.push(tx_loop_builder);
+            set_cpu_affinity(None, unreserved_cores.iter().copied()).map_err(|source| {
+                TransmitterError::UnpinFromCpu {
+                    cpu_id: binding.cpu,
+                    source,
+                }
+            })?;
+            tx_loop_builders.push(tx_loop_builder?);
         }
 
-        // switch to higher caps while we setup XDP. We assume that an error in
-        // this function is irrecoverable so we don't try to drop on errors.
-        let _setup_caps =
-            CapGuard::raise([CAP_NET_ADMIN, CAP_NET_RAW]).expect("raise net capabilities");
+        // The guards drop temporary effective capabilities on success and failure.
+        let _setup_caps = CapGuard::raise([CAP_NET_ADMIN, CAP_NET_RAW])?;
 
-        let maybe_ebpf_result = if zero_copy {
-            let _ebpf_caps =
-                CapGuard::raise([CAP_BPF, CAP_PERFMON]).expect("raise ebpf capabilities");
+        let maybe_ebpf = if zero_copy {
+            let _ebpf_caps = CapGuard::raise([CAP_BPF, CAP_PERFMON])?;
 
-            let load_result =
-                load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"));
-
-            Some(load_result)
+            Some(load_xdp_program(&dev)?)
         } else {
             None
         };
@@ -450,12 +496,9 @@ impl TransmitterBuilder {
         let tx_loops = tx_loop_builders
             .into_iter()
             .map(|tx_loop_builder| tx_loop_builder.build())
-            .collect::<Result<Vec<_>, io::Error>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let tables_result = RoutingTables::from_netlink(RouteTable::Main);
-
-        let tables = tables_result?;
-        let router = Router::from_tables(tables)?;
+        let router = Router::new().map_err(TransmitterError::LoadRoutingTables)?;
         debug!(
             "published router table {}:\n{}",
             RouteTable::Main,
@@ -487,9 +530,8 @@ impl TransmitterBuilder {
             NeighborsRefresher::start(exit, neighbor_intervals, || {
                 retain_cap_net_admin();
                 info!("neighbors thread started");
-            })?;
-
-        let maybe_ebpf = maybe_ebpf_result.transpose()?;
+            })
+            .map_err(TransmitterError::StartNeighborsRefresher)?;
 
         Ok(Self {
             tx_loops,
@@ -626,22 +668,28 @@ impl Transmitter {
 
 /// Returns the IPv4 address of the master interface if the given interface is part of a bond.
 #[cfg(target_os = "linux")]
-pub(crate) fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
+pub(crate) fn read_bond_master_ip(interface: &str) -> Result<Option<Ipv4Addr>, InterfaceIpError> {
     let master_ifindex_path = format!("/sys/class/net/{interface}/master/ifindex");
-    if let Ok(contents) = std::fs::read_to_string(&master_ifindex_path) {
-        let idx = contents.trim().parse().unwrap();
-        return Some(
-            NetworkDevice::new_from_index(idx)
-                .and_then(|dev| dev.ipv4_addr())
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "failed to open bond master interface for {interface}: master index \
-                         {idx}: {e}"
-                    )
-                }),
-        );
-    }
-    None
+    let Ok(contents) = std::fs::read_to_string(&master_ifindex_path) else {
+        return Ok(None);
+    };
+    resolve_bond_master_ip(interface, &contents).map(Some)
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_bond_master_ip(interface: &str, contents: &str) -> Result<Ipv4Addr, InterfaceIpError> {
+    let invalid_index = |source| InterfaceIpError::InvalidBondMasterIndex {
+        interface: interface.to_string(),
+        source,
+    };
+    let index = contents.trim().parse().map_err(invalid_index)?;
+    NetworkDevice::new_from_index(index)
+        .and_then(|device| device.ipv4_addr())
+        .map_err(|source| InterfaceIpError::ResolveBondMasterIp {
+            interface: interface.to_string(),
+            index,
+            source,
+        })
 }
 
 #[cfg(target_os = "linux")]
@@ -657,15 +705,18 @@ struct CapGuard {
 impl CapGuard {
     fn raise(
         raised_capabilities: impl IntoIterator<Item = caps::Capability>,
-    ) -> Result<Self, caps::errors::CapsError> {
-        let mut capabilities = ArrayVec::new();
+    ) -> Result<Self, TransmitterError> {
+        let mut guard = Self {
+            capabilities: ArrayVec::new(),
+        };
         for capability in raised_capabilities {
-            capabilities.try_push(capability).unwrap_or_else(|_| {
+            guard.capabilities.try_push(capability).unwrap_or_else(|_| {
                 panic!("CapGuard supports at most {CAP_GUARD_CAPACITY} capabilities")
             });
-            caps::raise(None, caps::CapSet::Effective, capability)?;
+            caps::raise(None, caps::CapSet::Effective, capability)
+                .map_err(|source| TransmitterError::RaiseCapability { capability, source })?;
         }
-        Ok(Self { capabilities })
+        Ok(guard)
     }
 }
 
@@ -685,6 +736,86 @@ mod tests {
         super::*,
         crate::tx_loop::{Receiver, TryRecvError, TxReceiver},
     };
+
+    #[test]
+    fn test_transmitter_builder_reports_missing_interface() {
+        let result = TransmitterBuilder::new(
+            XdpConfig::new(Some(""), vec![], false),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(TransmitterError::OpenInterface { interface, .. }) if interface.is_empty()
+            ),
+            "transmitter initialization must report the interface lookup failure"
+        );
+    }
+
+    #[test]
+    fn test_transmitter_builder_reports_no_unreserved_cpu() {
+        let queues = cpu_affinity(None)
+            .expect("the test thread CPU affinity should be readable")
+            .into_iter()
+            .enumerate()
+            .map(|(queue, cpu)| QueueCpuBinding {
+                queue: queue as u32,
+                cpu: *cpu,
+            })
+            .collect();
+        let result = TransmitterBuilder::new(
+            XdpConfig::new(Some("lo"), queues, false),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(
+            matches!(result, Err(TransmitterError::NoUnreservedCpu)),
+            "reserving every allowed CPU for XDP must leave none for the main thread"
+        );
+    }
+
+    #[test]
+    fn test_read_bond_master_ip() {
+        for interface in ["lo", "\0"] {
+            assert_eq!(
+                read_bond_master_ip(interface).expect("an unreadable master index is not an error"),
+                None,
+                "interfaces without a readable master index must not be treated as bonded: \
+                 {interface:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_bond_master_ip() {
+        let device = NetworkDevice::new("lo").expect("loopback should exist");
+        let contents = format!("{}\n", device.if_index());
+        assert_eq!(
+            resolve_bond_master_ip("test-interface", &contents)
+                .expect("a valid loopback interface index should resolve"),
+            Ipv4Addr::LOCALHOST,
+            "the address must come from the master index, not the slave name"
+        );
+    }
+
+    #[test]
+    fn test_resolve_bond_master_ip_reports_errors() {
+        assert!(
+            matches!(
+                resolve_bond_master_ip("test-interface", "invalid\n"),
+                Err(InterfaceIpError::InvalidBondMasterIndex { interface, .. })
+                    if interface == "test-interface"
+            ),
+            "malformed bond master indices must be reported as invalid"
+        );
+        assert!(
+            matches!(
+                resolve_bond_master_ip("test-interface", "0\n"),
+                Err(InterfaceIpError::ResolveBondMasterIp { interface, index: 0, .. })
+                    if interface == "test-interface"
+            ),
+            "missing bond masters must report the interface and index"
+        );
+    }
 
     /// The receivers are returned so they stay connected for the lifetime of the test.
     fn sender_with_receivers(sender_count: usize) -> (XdpSender, Vec<TxReceiver<BytesTxPacket>>) {
