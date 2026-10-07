@@ -117,10 +117,8 @@ impl BigTableUploadService {
 /// Returns the last slot of the next upload pass starting at `start_slot`, or
 /// `None` if there is nothing new to upload yet.
 ///
-/// Bound by the blockstore's root, not the commitment cache's:
-/// `upload_confirmed_blocks` treats a range with no rooted slots as done, and
-/// under Alpenglow the commitment cache can see a root before its marker is
-/// written.
+/// The pass never extends past `blockstore.max_root()`, because
+/// `upload_confirmed_blocks` treats a range with no rooted slots as done.
 fn next_upload_end_slot(
     start_slot: Slot,
     max_complete_transaction_status_slot: &AtomicU64,
