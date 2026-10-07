@@ -4480,6 +4480,101 @@ fn byz_fuzz_refine_partitions(
     groups.into_values().collect()
 }
 
+/// A validator's finalized chain: every slot from genesis to its highest root, with
+/// the frozen bank hash of the block it finalized there.
+type ByzFuzzFinalizedChain = BTreeMap<Slot, Option<Hash>>;
+
+/// Reads a validator's finalized chain. Every ancestor of a finalized block is
+/// finalized, so the chain is the parent path from the highest root back to genesis.
+fn byz_fuzz_finalized_chain(blockstore: &Blockstore) -> ByzFuzzFinalizedChain {
+    let mut chain = ByzFuzzFinalizedChain::new();
+    let mut slot = blockstore.max_root();
+    loop {
+        chain.insert(slot, blockstore.get_bank_hash(slot));
+        if slot == 0 {
+            break;
+        }
+        let meta = blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap_or_else(|| panic!("missing slot meta for finalized slot {slot}"));
+        slot = meta
+            .parent_slot
+            .unwrap_or_else(|| panic!("finalized slot {slot} has no parent"));
+    }
+    chain
+}
+
+/// Safety oracle: no two honest validators may finalize conflicting blocks. Up to the
+/// lower of their highest roots, every pair of finalized chains must contain the same
+/// slots with the same bank hashes; otherwise one finalized a different block at some
+/// slot, or a slot the other skipped. Returns a description of the first conflict.
+fn byz_fuzz_find_conflict(chains: &BTreeMap<Pubkey, ByzFuzzFinalizedChain>) -> Option<String> {
+    for (i, (a, chain_a)) in chains.iter().enumerate() {
+        for (b, chain_b) in chains.iter().skip(i + 1) {
+            let common = (*chain_a.keys().last()?).min(*chain_b.keys().last()?);
+            let prefix_a = chain_a.range(..=common).collect::<Vec<_>>();
+            let prefix_b = chain_b.range(..=common).collect::<Vec<_>>();
+            if prefix_a != prefix_b {
+                let conflict = prefix_a
+                    .iter()
+                    .zip(&prefix_b)
+                    .find(|(x, y)| x != y)
+                    .map(|(x, y)| format!("{a} finalized {x:?}, {b} finalized {y:?}"))
+                    .unwrap_or_else(|| "chains differ in length".to_string());
+                return Some(format!(
+                    "{a} and {b} finalized conflicting blocks up to slot {common}: {conflict}"
+                ));
+            }
+        }
+    }
+    None
+}
+
+fn byz_fuzz_check_safety(cluster: &LocalCluster, honest: &[Pubkey]) {
+    let chains = honest
+        .iter()
+        .map(|pubkey| {
+            let validator = cluster.validators[pubkey]
+                .validator
+                .as_ref()
+                .expect("byz_fuzz validator must be running");
+            (*pubkey, byz_fuzz_finalized_chain(&validator.blockstore))
+        })
+        .collect::<BTreeMap<_, _>>();
+    if let Some(conflict) = byz_fuzz_find_conflict(&chains) {
+        panic!("BYZ_FUZZ safety violation: {conflict}");
+    }
+    info!(
+        "BYZ_FUZZ safety check passed: highest roots {:?}",
+        chains
+            .iter()
+            .map(|(pubkey, chain)| (pubkey, chain.keys().last().unwrap()))
+            .collect::<BTreeMap<_, _>>()
+    );
+}
+
+#[test]
+fn test_byz_fuzz_find_conflict() {
+    let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+    let hash = |n: u8| Some(Hash::new_from_array([n; 32]));
+    let chain = |slots: &[(Slot, Option<Hash>)]| slots.iter().copied().collect();
+    let check = |chain_a: ByzFuzzFinalizedChain, chain_b: ByzFuzzFinalizedChain| {
+        byz_fuzz_find_conflict(&BTreeMap::from([(a, chain_a), (b, chain_b)]))
+    };
+    let base = [(0, hash(0)), (1, hash(1)), (3, hash(3))];
+
+    // Identical chains, and one chain a prefix of the other, are safe.
+    assert_eq!(check(chain(&base), chain(&base)), None);
+    assert_eq!(check(chain(&base), chain(&[base[0], base[1]])), None);
+    let longer = [base[0], base[1], base[2], (5, hash(5))];
+    assert_eq!(check(chain(&longer), chain(&base)), None);
+    // A different block finalized at the same slot.
+    assert!(check(chain(&base), chain(&[base[0], base[1], (3, hash(9))])).is_some());
+    // A slot that the other validator's chain skipped.
+    assert!(check(chain(&base), chain(&[base[0], (2, hash(2)), base[2]])).is_some());
+}
+
 fn byz_fuzz_working_slots(cluster: &LocalCluster) -> BTreeMap<Pubkey, Slot> {
     cluster
         .validators
@@ -4901,6 +4996,12 @@ fn test_byz_fuzz() {
         delay_controller.heal().unwrap();
     }
     cluster.check_for_new_roots(8, "BYZ_FUZZ recovery", SocketAddrSpace::Unspecified);
+    let honest = validators
+        .iter()
+        .filter(|validator| **validator != byzantine)
+        .copied()
+        .collect::<Vec<_>>();
+    byz_fuzz_check_safety(&cluster, &honest);
 }
 
 /// Proves a four-node cluster stays live after killing the bootstrap leader, which is a
