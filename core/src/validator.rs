@@ -40,6 +40,7 @@ use {
         slot_clock::SharedAlpenglowSlotClock,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
+        vote_mutation::VoteMutationSchedule,
     },
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
@@ -351,6 +352,8 @@ pub struct ValidatorConfig {
     pub new_hard_forks: Option<Vec<Slot>>,
     pub known_validators: Option<HashSet<Pubkey>>, // None = trust all
     pub repair_validators: Option<HashSet<Pubkey>>, // None = repair from all
+    /// Test-only Byzantine behavior: votes broadcast for scheduled slots are mutated.
+    pub vote_mutation_schedule: Option<VoteMutationSchedule>,
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
     /// Peers plugged into the votor peer_list regardless of stake, admitting their
     /// inbound connections and (while this node is staked) pushing consensus
@@ -439,6 +442,7 @@ impl ValidatorConfig {
             new_hard_forks: None,
             known_validators: None,
             repair_validators: None,
+            vote_mutation_schedule: None,
             should_check_duplicate_instance: true,
             repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
             votor_peer_overrides: Arc::default(),
@@ -1751,6 +1755,7 @@ impl Validator {
                 turbine_xdp_sender: turbine_xdp_sender.clone(),
                 repair_xdp_sender,
                 replay_arena,
+                vote_mutation_schedule: config.vote_mutation_schedule.clone(),
             },
             &max_slots,
             block_metadata_notifier,

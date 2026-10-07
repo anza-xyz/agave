@@ -17,6 +17,7 @@ pub mod slot_clock;
 mod timer_manager;
 pub mod vote_history;
 pub mod vote_history_storage;
+pub mod vote_mutation;
 pub mod voting_service;
 pub mod voting_utils;
 pub mod votor;

@@ -4,6 +4,7 @@ use {
         common::nonblocking_send,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
+        vote_mutation::{self, VoteMutationSchedule},
         voting_service::BLSOp,
     },
     agave_bls_sigverify::rewards::{RewardInput, rewards_wants_vote},
@@ -127,6 +128,8 @@ pub(crate) struct VotingContext {
     pub(crate) wait_to_vote_slot: Option<u64>,
     pub(crate) sharable_banks: SharableBanks,
     pub(crate) consensus_metrics_sender: ConsensusMetricsEventSender,
+    /// Test-only Byzantine behavior: votes broadcast for scheduled slots are mutated.
+    pub(crate) vote_mutation_schedule: Option<VoteMutationSchedule>,
 }
 
 fn get_or_insert_bls_keypair(
@@ -302,9 +305,46 @@ pub(crate) fn insert_vote_and_create_bls_message(
         .vote_history_storage
         .store(&SavedVoteHistoryVersions::from(saved_vote_history))?;
 
+    if let Some(mutation) = context
+        .vote_mutation_schedule
+        .as_ref()
+        .and_then(|schedule| schedule.mutation(vote.slot()))
+    {
+        return mutated_bls_message(vote, vote_msg, mutation, context);
+    }
+
     // Return vote for sending
     Ok(Some(BLSOp::PushVote {
         vote: Arc::new(vote_msg),
+    }))
+}
+
+/// Replaces the broadcast of `vote` with its mutated vote. The honest vote has already
+/// been recorded locally, so only the network sees the mutation.
+fn mutated_bls_message(
+    vote: Vote,
+    vote_msg: VoteMessage,
+    mutation: vote_mutation::VoteMutation,
+    context: &mut VotingContext,
+) -> Result<Option<BLSOp>, VoteError> {
+    let mutated = vote_mutation::mutate(vote, mutation);
+    let mutated_msg = if mutated == vote {
+        vote_msg
+    } else {
+        match create_vote_message(mutated, context, /* respect_wait_to_vote */ false) {
+            Ok(vote_msg) => vote_msg,
+            Err(e) => {
+                handle_skippable_vote_error(e, "generate mutated vote message")?;
+                return Ok(None);
+            }
+        }
+    };
+    info!(
+        "{}: Byzantine vote mutation {mutation:?}: {vote:?} -> {mutated:?}",
+        context.identity_keypair.pubkey()
+    );
+    Ok(Some(BLSOp::PushVote {
+        vote: Arc::new(mutated_msg),
     }))
 }
 
@@ -463,6 +503,7 @@ mod tests {
             sharable_banks,
             consensus_metrics_sender,
             leader_schedule,
+            vote_mutation_schedule: None,
         };
         (voting_context, bank_forks, own_reward_aggregates_receiver)
     }

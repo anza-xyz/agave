@@ -60,6 +60,7 @@ use {
         timer_manager::TimerManager,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
+        vote_mutation::VoteMutationSchedule,
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
@@ -154,6 +155,9 @@ pub struct VotorConfig {
     pub own_votes_receiver: Receiver<VoteMessage>,
     pub footer_certs_receiver: Receiver<SmallVec<[Certificate; 2]>>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
+
+    /// Test-only Byzantine behavior: votes broadcast for scheduled slots are mutated.
+    pub vote_mutation_schedule: Option<VoteMutationSchedule>,
 }
 
 /// Context shared with block creation, replay, gossip, banking stage etc
@@ -210,6 +214,7 @@ impl Votor {
             bank_forks_controller,
             own_votes_receiver,
             footer_certs_receiver,
+            vote_mutation_schedule,
         } = config;
 
         let migration_status = bank_forks.read().unwrap().migration_status();
@@ -247,6 +252,7 @@ impl Votor {
             wait_to_vote_slot,
             sharable_banks: sharable_banks.clone(),
             consensus_metrics_sender,
+            vote_mutation_schedule,
         };
 
         let root_context = RootContext {

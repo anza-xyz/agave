@@ -4,6 +4,7 @@ use {
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
+    agave_votor::vote_mutation::{VoteMutation, VoteMutationKind, VoteMutationSchedule},
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
     arc_swap::ArcSwap,
     assert_matches::assert_matches,
@@ -4341,8 +4342,18 @@ type ByzFuzzPartition = Vec<Vec<Pubkey>>;
 type ByzFuzzNetworkFaults = BTreeMap<Slot, Vec<ByzFuzzPartition>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+enum ByzFuzzProcessFaultKind {
+    /// Conflicting shreds sent to `recipients` through broadcast and repair. Only
+    /// sampled on Byzantine-led rounds, since only the leader can sign the slot.
+    Shreds { recipients: Vec<Pubkey> },
+    /// A mutation of the Byzantine validator's votes for the round's slot, broadcast
+    /// to every peer. Sampled on any round, since every validator votes every slot.
+    Votes(VoteMutationKind),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ByzFuzzProcessFault {
-    recipients: Vec<Pubkey>,
+    kind: ByzFuzzProcessFaultKind,
     seed: u64,
 }
 
@@ -4472,6 +4483,7 @@ fn byz_fuzz_wait_for_slot(
 fn byz_fuzz_install_process_faults(
     equivocation_schedule: &EquivocationSchedule,
     repair_schedule: &MaliciousRepairSchedule,
+    vote_schedule: &VoteMutationSchedule,
     cluster: &LocalCluster,
     start_slot: Slot,
     process_faults: &ByzFuzzProcessFaults,
@@ -4489,9 +4501,27 @@ fn byz_fuzz_install_process_faults(
 
     for (round, faults) in process_faults {
         let slot = start_slot.saturating_add(*round);
+        // Multiple vote faults in one round: keep the one with the smallest seed.
+        if let Some((kind, seed)) = faults
+            .iter()
+            .filter_map(|fault| match fault.kind {
+                ByzFuzzProcessFaultKind::Votes(kind) => Some((kind, fault.seed)),
+                ByzFuzzProcessFaultKind::Shreds { .. } => None,
+            })
+            .min_by_key(|(_, seed)| *seed)
+        {
+            vote_schedule.set_slot_mutation(slot, VoteMutation { kind, seed });
+        }
+
         let mut recipients = BTreeMap::<Pubkey, u64>::new();
         for fault in faults {
-            for recipient in &fault.recipients {
+            let ByzFuzzProcessFaultKind::Shreds {
+                recipients: fault_recipients,
+            } = &fault.kind
+            else {
+                continue;
+            };
+            for recipient in fault_recipients {
                 // Multiple sampled faults can match the same message. Choose the
                 // smallest seed to make that otherwise ambiguous case deterministic.
                 recipients
@@ -4499,6 +4529,9 @@ fn byz_fuzz_install_process_faults(
                     .and_modify(|seed| *seed = (*seed).min(fault.seed))
                     .or_insert(fault.seed);
             }
+        }
+        if recipients.is_empty() {
+            continue;
         }
         repair_schedule.set_slot_faults(
             slot,
@@ -4517,7 +4550,9 @@ fn byz_fuzz_install_process_faults(
 /// - `BYZ_FUZZ_SEED`: deterministic RNG seed.
 /// - `BYZ_FUZZ_NUM_NODES`: size of P.
 /// - `BYZ_FUZZ_NETWORK_FAULT_ROUNDS`: d, the number of sampling attempts.
-/// - `BYZ_FUZZ_PROCESS_FAULT_ROUNDS`: c, the number of sampling attempts.
+/// - `BYZ_FUZZ_PROCESS_FAULT_ROUNDS`: c, the number of sampling attempts. Each sample is
+///   a shred equivocation or a vote mutation (bad slot or bad block_id) by the
+///   Byzantine validator.
 /// - `BYZ_FUZZ_ROUNDS`: r, the number of rounds to execute.
 #[test]
 #[serial]
@@ -4593,9 +4628,24 @@ fn test_byz_fuzz() {
         .collect::<Vec<_>>();
     let mut process_faults = ByzFuzzProcessFaults::new();
     for _ in 0..process_fault_rounds {
-        let round = *byzantine_rounds.choose(&mut rng).unwrap();
+        let (round, kind) = match rng.random_range(0..3) {
+            0 => (
+                *byzantine_rounds.choose(&mut rng).unwrap(),
+                ByzFuzzProcessFaultKind::Shreds {
+                    recipients: byz_fuzz_random_recipients(&mut rng, &validators, &byzantine),
+                },
+            ),
+            vote_kind => (
+                rng.random_range(1..=rounds),
+                ByzFuzzProcessFaultKind::Votes(if vote_kind == 1 {
+                    VoteMutationKind::BadSlot
+                } else {
+                    VoteMutationKind::BadBlockId
+                }),
+            ),
+        };
         let fault = ByzFuzzProcessFault {
-            recipients: byz_fuzz_random_recipients(&mut rng, &validators, &byzantine),
+            kind,
             seed: rng.random(),
         };
         let round_faults = process_faults.entry(round).or_default();
@@ -4648,6 +4698,7 @@ fn test_byz_fuzz() {
     // recipients, ahead of the normal broadcast. Honest validators run unmodified.
     let equivocation_schedule = EquivocationSchedule::default();
     let repair_schedule = MaliciousRepairSchedule::default();
+    let vote_schedule = VoteMutationSchedule::default();
     let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
     for ((keys, _), config) in validator_keys.iter().zip(&mut validator_configs) {
         config.fixed_leader_schedule = Some(fixed_leader_schedule.clone());
@@ -4658,6 +4709,7 @@ fn test_byz_fuzz() {
                 fault_schedule: Some(repair_schedule.clone()),
                 ..MaliciousRepairConfig::default()
             });
+            config.vote_mutation_schedule = Some(vote_schedule.clone());
         }
     }
     let mut config = ClusterConfig {
@@ -4687,6 +4739,7 @@ fn test_byz_fuzz() {
     byz_fuzz_install_process_faults(
         &equivocation_schedule,
         &repair_schedule,
+        &vote_schedule,
         &cluster,
         start_slot,
         &process_faults,

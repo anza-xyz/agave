@@ -12,8 +12,7 @@ use {
         blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
-            DATA_SHREDS_PER_FEC_BLOCK, Nonce, ProcessShredsStats, ReedSolomonCache, Shred,
-            Shredder,
+            DATA_SHREDS_PER_FEC_BLOCK, Nonce, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
         },
     },
     solana_perf::packet::{BytesPacket, PacketBatch},

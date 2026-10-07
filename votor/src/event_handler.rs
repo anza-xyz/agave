@@ -1267,6 +1267,7 @@ mod tests {
             own_reward_sender: reward_aggregates_sender,
             consensus_metrics_sender,
             leader_schedule: leader_schedule_cache,
+            vote_mutation_schedule: None,
         };
 
         let root_context = RootContext {

@@ -38,6 +38,7 @@ use {
         slot_clock::SharedAlpenglowSlotClock,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
+        vote_mutation::VoteMutationSchedule,
         voting_service::{VotingService as BLSVotingService, votor_rate_limit_pps},
         votor::{Votor, VotorConfig},
     },
@@ -163,6 +164,8 @@ pub struct TvuConfig {
     pub turbine_xdp_sender: Option<TurbineXdpSender>,
     pub repair_xdp_sender: Option<PinnedXdpSender>,
     pub(crate) replay_arena: Option<Arena>,
+    /// Test-only Byzantine behavior: votes broadcast for scheduled slots are mutated.
+    pub vote_mutation_schedule: Option<VoteMutationSchedule>,
 }
 
 impl Default for TvuConfig {
@@ -179,6 +182,7 @@ impl Default for TvuConfig {
             bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             turbine_xdp_sender: None,
             repair_xdp_sender: None,
+            vote_mutation_schedule: None,
             replay_arena: None,
         }
     }
@@ -561,6 +565,7 @@ impl Tvu {
             own_votes_receiver,
             footer_certs_receiver,
             consensus_metrics_receiver,
+            vote_mutation_schedule: tvu_config.vote_mutation_schedule.clone(),
         };
         let votor = Votor::new(votor_config);
 

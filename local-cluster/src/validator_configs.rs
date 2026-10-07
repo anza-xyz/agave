@@ -29,6 +29,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         known_validators: config.known_validators.clone(),
         should_check_duplicate_instance: config.should_check_duplicate_instance,
         repair_validators: config.repair_validators.clone(),
+        vote_mutation_schedule: config.vote_mutation_schedule.clone(),
         repair_whitelist: config.repair_whitelist.clone(),
         gossip_validators: config.gossip_validators.clone(),
         max_genesis_archive_unpacked_size: config.max_genesis_archive_unpacked_size,
