@@ -47,7 +47,8 @@ use {
     crossbeam_channel::{Receiver, TrySendError},
     itertools::{Either, Itertools},
     parking_lot::{RwLock, RwLockReadGuard},
-    rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
+    rand::{CryptoRng, Rng, SeedableRng, prelude::IndexedMutRandom},
+    rand_chacha::ChaCha8Rng,
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_hash::Hash,
@@ -1773,7 +1774,7 @@ impl ClusterInfo {
             })
             .collect();
         let (total_bytes, sent_crds_values) = WeightedShuffle::new("handle-pull-requests", scores)
-            .shuffle(&mut rng)
+            .shuffle(&mut ChaCha8Rng::from_rng(&mut rng))
             .filter_map(|k| {
                 let (addr, values) = &mut pull_responses[k];
                 let num_values = values.len();

@@ -20,24 +20,6 @@ pub enum SigVerifiedBatch {
     Certificates(Vec<Certificate>),
 }
 
-impl SigVerifiedBatch {
-    /// Returns the length of the batch
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Votes(aggregates) => aggregates.len(),
-            Self::Certificates(certs) => certs.len(),
-        }
-    }
-
-    /// Returns true if the batch is empty.
-    pub fn is_empty(&self) -> bool {
-        match self {
-            Self::Votes(aggregates) => aggregates.is_empty(),
-            Self::Certificates(certs) => certs.is_empty(),
-        }
-    }
-}
-
 /// A batch of identical votes that have been sigverified
 ///
 /// NOTE: the fields should not be exposed outside of the crate so that users use approved paths to

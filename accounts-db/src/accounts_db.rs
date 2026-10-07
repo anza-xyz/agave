@@ -43,7 +43,7 @@ use {
             StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsForSquashStats,
             StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
         },
-        accounts_file::AccountsFileProvider,
+        accounts_file::{self, AccountsFileProvider},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
@@ -60,6 +60,7 @@ use {
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
+        split_file,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         utils::{self, create_account_shared_data},
     },
@@ -1429,7 +1430,7 @@ impl AccountsDb {
         storages.retain(|s| s.slot() <= max_slot_inclusive);
         // populate
         storages.par_iter().for_each_init(
-            || Box::new(append_vec::new_scan_accounts_reader()),
+            || Box::new(accounts_file::new_scan_accounts_reader()),
             |reader, storage| {
                 let slot = storage.slot();
                 storage
@@ -2654,7 +2655,7 @@ impl AccountsDb {
                     })
                 }
                 ScanAccountStorageData::DataRefForStorage => {
-                    let mut reader = append_vec::new_scan_accounts_reader();
+                    let mut reader = accounts_file::new_scan_accounts_reader();
                     storage.scan_accounts(&mut reader, None, |_offset, account| {
                         let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
                         storage_scan_func(retval, &account_without_data, Some(account.data));
@@ -3889,6 +3890,41 @@ impl AccountsDb {
                     .load(Ordering::Relaxed),
                 i64
             ),
+            (
+                "split_files_open",
+                split_file::SPLIT_FILE_STATS
+                    .num_open
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_dirty",
+                split_file::SPLIT_FILE_STATS
+                    .num_dirty
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_empty",
+                split_file::SPLIT_FILE_STATS
+                    .num_empty
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_stored_bytes_meta",
+                split_file::SPLIT_FILE_STATS
+                    .num_stored_bytes_meta
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "split_files_stored_bytes_data",
+                split_file::SPLIT_FILE_STATS
+                    .num_stored_bytes_data
+                    .load(Ordering::Relaxed),
+                i64
+            ),
         );
     }
 
@@ -4994,7 +5030,7 @@ impl AccountsDb {
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
                             let mut thread_accum = IndexGenerationAccumulator::new();
-                            let mut reader = append_vec::new_scan_accounts_reader();
+                            let mut reader = accounts_file::new_scan_accounts_reader();
                             for next_item in storages_orderer.iter() {
                                 let storage = next_item.storage;
                                 self.generate_index_for_slot(

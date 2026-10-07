@@ -1719,12 +1719,7 @@ impl Bank {
             .write()
             .unwrap();
 
-        if *current_env != *upcoming_env
-            && ebpp
-                .upcoming_environment
-                .as_ref()
-                .is_none_or(|e| **e != *upcoming_env)
-        {
+        if *current_env != *upcoming_env && ebpp.upcoming_environment.as_ref().is_none() {
             // A different environment is upcoming and we are not preparing for
             // it yet. Initiate or restart EBPP.
             let pc = self
@@ -4628,31 +4623,6 @@ impl Bank {
         let ((), update_stakes_cache_us) =
             measure_us!(self.update_stakes_cache(sanitized_txs, &processing_results));
 
-        let ((), update_executors_us) = measure_us!({
-            let mut cache = None;
-            for processing_result in &processing_results {
-                if let Some(ProcessedTransaction::Executed(executed_tx)) =
-                    processing_result.processed_transaction()
-                {
-                    let programs_modified_by_tx = &executed_tx.programs_modified_by_tx;
-                    if executed_tx.was_successful() && !programs_modified_by_tx.is_empty() {
-                        cache
-                            .get_or_insert_with(|| {
-                                self.transaction_processor
-                                    .global_program_cache
-                                    .write()
-                                    .unwrap()
-                            })
-                            .merge(
-                                &self.transaction_processor.program_runtime_environment,
-                                self.slot,
-                                programs_modified_by_tx,
-                            );
-                    }
-                }
-            }
-        });
-
         let accounts_data_len_delta = processing_results
             .iter()
             .filter_map(|processing_result| processing_result.processed_transaction())
@@ -4676,7 +4646,6 @@ impl Bank {
             ExecuteTimingType::UpdateStakesCacheUs,
             update_stakes_cache_us,
         );
-        timings.saturating_add_in_place(ExecuteTimingType::UpdateExecutorsUs, update_executors_us);
         timings.saturating_add_in_place(
             ExecuteTimingType::UpdateTransactionStatuses,
             update_transaction_statuses_us,

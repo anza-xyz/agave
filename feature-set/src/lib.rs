@@ -81,6 +81,7 @@ pub struct FeatureSnapshot {
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
+    pub early_instruction_trace_overflow_detection: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -182,6 +183,9 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
             loader_v3_set_program_data_to_elf_length: is_active(
                 &loader_v3_set_program_data_to_elf_length::ID,
+            ),
+            early_instruction_trace_overflow_detection: is_active(
+                &early_instruction_trace_overflow_detection::ID,
             ),
         }
     }
@@ -344,6 +348,8 @@ impl FeatureSet {
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
             loader_v3_set_program_data_to_elf_length: snapshot
                 .loader_v3_set_program_data_to_elf_length,
+            early_instruction_trace_overflow_detection: snapshot
+                .early_instruction_trace_overflow_detection,
         }
     }
 }
@@ -1442,7 +1448,7 @@ pub mod limit_instruction_accounts {
 }
 
 pub mod block_revenue_sharing {
-    solana_pubkey::declare_id!("DSroRTaL5zozFw5yRYpaCTjeND1mSxxsnAeSi5vhELUv");
+    solana_pubkey::declare_id!("Crbnc267wkJvFhYakqwWWX57sx5bkrftJLekzy6yWKLT");
 }
 
 pub mod vote_account_initialize_v2 {
@@ -1539,6 +1545,10 @@ pub mod remove_inactive_stakes {
 
 pub mod loader_v3_set_program_data_to_elf_length {
     solana_pubkey::declare_id!("EhisBfVtGvEA8bVCVN5VMaYEaX6iTfoUrmcDi8LY7Kxy");
+}
+
+pub mod early_instruction_trace_overflow_detection {
+    solana_pubkey::declare_id!("HeqqMQXVqavmiJsGTEXgCMydzMEWiiQTAgbs9KVKJVww");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2634,6 +2644,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loader_v3_set_program_data_to_elf_length::id(),
             "SIMD-0433: Loader V3 Set Program Data to ELF Length",
+        ),
+        (
+            early_instruction_trace_overflow_detection::id(),
+            "SIMD-582: Early detection of instruction trace overflow",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

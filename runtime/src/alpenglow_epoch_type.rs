@@ -135,6 +135,10 @@ impl RewardEpochDelegatedStakes {
             delegated_stakes: HashMap::new(),
         }
     }
+
+    pub(crate) fn account_lamports_for_tests(bank: &Bank) -> u64 {
+        bank.get_balance(&REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT)
+    }
 }
 
 impl From<RewardEpochDelegatedStakesAccount> for RewardEpochDelegatedStakes {
