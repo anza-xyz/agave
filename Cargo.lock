@@ -7995,6 +7995,7 @@ dependencies = [
  "agave-votor",
  "agave-votor-messages",
  "agave-votor-transport",
+ "agave-wake-channel",
  "agave-xdp",
  "ahash 0.8.12",
  "anyhow",
@@ -10838,6 +10839,7 @@ name = "solana-streamer"
 version = "4.5.0-alpha.1"
 dependencies = [
  "agave-logger",
+ "agave-wake-channel",
  "anyhow",
  "anza-quinn",
  "assert_matches",
