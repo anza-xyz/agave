@@ -340,7 +340,7 @@ impl EventHandler {
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
                     Self::handle_parent_ready_event(
-                        slot,
+                        first_of_consecutive_leader_slots(slot),
                         parent_block,
                         vctx,
                         ctx,
@@ -514,7 +514,7 @@ impl EventHandler {
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
                     Self::handle_parent_ready_event(
-                        block.slot,
+                        first_of_consecutive_leader_slots(block.slot),
                         parent_block,
                         vctx,
                         ctx,
@@ -649,9 +649,22 @@ impl EventHandler {
             // We have a different block id for the slot, repair should kick in later
             return None;
         }
-        let parent_bank = bank.parent()?;
+        // A late joiner cannot notarize later slots of the window (try_notar requires a notarized parent chain), so emit parent ready for the window start, where the parent-ready check alone suffices
+        let first_bank = ctx.bank_forks.read().unwrap().get(first_slot_of_window)?;
+        if !first_bank.is_frozen() {
+            return None;
+        }
+        let parent_bank = first_bank.parent()?;
         let parent_slot = parent_bank.slot();
-        let Some(parent_block_id) = parent_bank.block_id() else {
+        let parent_block = if parent_slot == 0 {
+            // The parent is the genesis bank, whose block is the chain's genesis block
+            local_context.genesis_block
+        } else if let Some(parent_block_id) = parent_bank.block_id() {
+            Block {
+                slot: parent_slot,
+                block_id: BlockId::from(parent_block_id),
+            }
+        } else {
             // Maybe this bank is set to root after we drop bank_forks.
             error!(
                 "{}: Unable to find block id for parent bank {parent_slot} to trigger parent ready",
@@ -660,14 +673,11 @@ impl EventHandler {
             return None;
         };
         info!(
-            "{}: Triggering parent ready for slot {slot} with parent {parent_slot} \
-             {parent_block_id}",
+            "{}: Triggering parent ready for slot {first_slot_of_window} with parent \
+             {parent_block:?}",
             local_context.my_pubkey
         );
-        Some(Block {
-            slot: parent_slot,
-            block_id: BlockId::from(parent_block_id),
-        })
+        Some(parent_block)
     }
 
     fn handle_set_identity(
@@ -2152,18 +2162,27 @@ mod tests {
             true,
         );
 
-        // We should now have parent ready for slot 5
-        test_context.check_parent_ready_slot((
-            5,
-            Block {
-                slot: 4,
-                block_id: block_id_4,
-            },
-        ));
+        // The recovery traces back to the window start (4), whose parent is the genesis
+        // block, so the notarize chain starts there: 4, then 5.
+        test_context.check_parent_ready_slot((4, test_context.local_context.genesis_block));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 4,
+            block_id: block_id_4,
+        }));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 5,
+            block_id: block_id_5,
+        }));
 
         // We are partitioned off from rest of the network, and suddenly received finalize for
         // slot 9 a little before we finished replay slot 9
-        let bank9 = test_context.create_block_only(9, bank5);
+        let bank6 = test_context.create_block_and_send_block_event(6, bank5);
+        let block_id_6 = BlockId::from(bank6.block_id().unwrap());
+        let bank7 = test_context.create_block_and_send_block_event(7, bank6);
+        let block_id_7 = BlockId::from(bank7.block_id().unwrap());
+        let bank8 = test_context.create_block_and_send_block_event(8, bank7);
+        let block_id_8 = BlockId::from(bank8.block_id().unwrap());
+        let bank9 = test_context.create_block_only(9, bank8);
         let block_id_9 = BlockId::from(bank9.block_id().unwrap());
         test_context.send_finalized_event(
             Block {
@@ -2175,14 +2194,31 @@ mod tests {
 
         test_context.send_block_event(9, bank9);
 
-        // We should now have parent ready for slot 9
+        // The recovery traces back to the window start (8) and emits parent ready for it,
+        // so the notarize chain starts there: 8, then 9.
         test_context.check_parent_ready_slot((
-            9,
+            8,
             Block {
-                slot: 5,
-                block_id: block_id_5,
+                slot: 7,
+                block_id: block_id_7,
             },
         ));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 6,
+            block_id: block_id_6,
+        }));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 7,
+            block_id: block_id_7,
+        }));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 8,
+            block_id: block_id_8,
+        }));
+        test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+            slot: 9,
+            block_id: block_id_9,
+        }));
     }
 
     #[test]
@@ -2216,6 +2252,54 @@ mod tests {
                 block_id: block_id_1,
             },
         ));
+    }
+
+    #[test]
+    fn test_add_missing_parent_ready_traces_back_to_window_start() {
+        let mut test_context = setup();
+
+        // A late joiner replays the window 4-7 after the certificates arrive. The only
+        // finalization certificate it has seen covers a later slot of the window.
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let mut banks = Vec::new();
+        let mut parent = root_bank;
+        for slot in 1..=7 {
+            parent = test_context.create_block_only(slot, parent);
+            banks.push(parent.clone());
+        }
+        let block_ids: Vec<_> = banks[3..7]
+            .iter()
+            .map(|bank| BlockId::from(bank.block_id().unwrap()))
+            .collect();
+
+        // The certificate for slot 7 arrives before its replay completes
+        test_context.send_finalized_event(
+            Block {
+                slot: 7,
+                block_id: block_ids[3],
+            },
+            true,
+        );
+
+        // The window's blocks complete replay: none can be notarized yet, since there is
+        // no parent ready for the window start (4).
+        for (offset, bank) in banks.iter().enumerate().skip(3) {
+            test_context.send_block_event(4 + offset as Slot, bank.clone());
+        }
+
+        // The recovery must trace back to the window start (4) and emit parent ready for
+        // it, so the notarize chain starts: 4, 5, 6, 7.
+        for (offset, block_id) in block_ids.iter().enumerate() {
+            test_context.check_for_vote(&Vote::new_notarization_vote(Block {
+                slot: 4 + offset as Slot,
+                block_id: *block_id,
+            }));
+        }
     }
 
     #[test]
