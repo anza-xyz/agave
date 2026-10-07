@@ -299,7 +299,7 @@ impl TryFrom<GenesisCert> for GenesisCertBlockMarker {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockFinalizationCert {
     pub slot: Slot,
-    pub block_id: Hash,
+    pub block_id: BlockId,
     pub final_aggregate: VotesAggregate,
     pub notar_aggregate: Option<VotesAggregate>,
 }
@@ -309,7 +309,7 @@ impl BlockFinalizationCert {
     pub fn new_for_tests() -> BlockFinalizationCert {
         BlockFinalizationCert {
             slot: 1234567890,
-            block_id: Hash::new_from_array([1u8; 32]),
+            block_id: BlockId::new_unique(),
             final_aggregate: VotesAggregate {
                 signature: BLSSignatureCompressed(
                     [0; solana_bls_signatures::BLS_SIGNATURE_COMPRESSED_SIZE],
@@ -693,10 +693,7 @@ pub fn finalization_certificates_from_footer(
         final_aggregate,
         notar_aggregate,
     } = block_final_cert;
-    let block = Block {
-        slot,
-        block_id: BlockId::from(block_id),
-    };
+    let block = Block { slot, block_id };
 
     let final_signature = final_aggregate.uncompress_signature().ok()?;
     let final_bitmap = final_aggregate.into_bitmap();
@@ -799,7 +796,7 @@ mod tests {
     #[test]
     fn finalization_certificates_from_fast_footer() {
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let shred_version = 123;
         let final_bitmap = vec![0x11; 64];
         let (final_aggregate, final_signature) =
@@ -820,10 +817,7 @@ mod tests {
         };
         assert_eq!(
             certificate.cert_type,
-            CertificateType::FinalizeFast(Block {
-                slot,
-                block_id: BlockId::from(block_id)
-            })
+            CertificateType::FinalizeFast(Block { slot, block_id })
         );
         assert_eq!(certificate.signature, final_signature);
         assert_eq!(certificate.bitmap, final_bitmap);
@@ -833,7 +827,7 @@ mod tests {
     #[test]
     fn finalization_certificates_from_slow_footer() {
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let shred_version = 123;
         let final_bitmap = vec![0x11; 64];
         let notar_bitmap = vec![0x22; 64];
@@ -857,10 +851,7 @@ mod tests {
         };
         assert_eq!(
             notarize.cert_type,
-            CertificateType::Notarize(Block {
-                slot,
-                block_id: BlockId::from(block_id)
-            })
+            CertificateType::Notarize(Block { slot, block_id })
         );
         assert_eq!(notarize.signature, notar_signature);
         assert_eq!(notarize.bitmap, notar_bitmap);

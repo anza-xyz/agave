@@ -72,7 +72,7 @@ fn convert_finalization_cert(
     } = cert;
     block_footer::BlockFinalizationCert {
         slot: *slot,
-        block_id: *block_id,
+        block_id: block_id.to_hash(),
         final_aggregate: convert_votes_aggregate(final_aggregate),
         notar_aggregate: notar_aggregate.as_ref().map(convert_votes_aggregate),
     }
@@ -219,7 +219,10 @@ mod tests {
         super::*,
         crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
-        agave_votor_messages::reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        agave_votor_messages::{
+            consensus_message::BlockId,
+            reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        },
         arc_swap::ArcSwap,
         libloading::Library,
         solana_bls_signatures::{BLS_SIGNATURE_COMPRESSED_SIZE, SignatureCompressed},
@@ -350,7 +353,7 @@ mod tests {
             num_transactions: 2,
         };
         let bank_hash = Hash::new_unique();
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let signature = SignatureCompressed([7; BLS_SIGNATURE_COMPRESSED_SIZE]);
         let block_footer = VersionedBlockFooter::V1(BlockFooterV1 {
             bank_hash,
@@ -364,7 +367,8 @@ mod tests {
             }),
             skip_reward_cert: Some(SkipRewardCertificate::try_new(41, signature, vec![6]).unwrap()),
             notar_reward_cert: Some(
-                NotarRewardCertificate::try_new(42, block_id, signature, vec![8]).unwrap(),
+                NotarRewardCertificate::try_new(42, block_id.to_hash(), signature, vec![8])
+                    .unwrap(),
             ),
         });
         let expected_block_footer =
@@ -374,7 +378,7 @@ mod tests {
                 block_user_agent: b"test-validator",
                 block_final_cert: Some(block_footer::BlockFinalizationCert {
                     slot: 42,
-                    block_id,
+                    block_id: block_id.to_hash(),
                     final_aggregate: block_footer::VotesAggregate {
                         signature,
                         bitmap: &[1, 2, 3],
@@ -391,7 +395,7 @@ mod tests {
                 }),
                 notar_reward_cert: Some(block_footer::NotarRewardCertificate {
                     slot: 42,
-                    block_id,
+                    block_id: block_id.to_hash(),
                     signature,
                     bitmap: &[8],
                 }),
