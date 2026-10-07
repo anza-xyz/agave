@@ -11,7 +11,7 @@ use {
     gag::BufferRedirect,
     itertools::Itertools,
     log::*,
-    rand::seq::SliceRandom,
+    rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom},
     serial_test::serial,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
@@ -66,7 +66,9 @@ use {
             setup_snapshot_validator_config, test_faulty_node, wait_for_duplicate_proof,
             wait_for_last_vote_in_tower_to_land_in_ledger,
         },
-        local_cluster::{ClusterConfig, DEFAULT_MINT_LAMPORTS, LocalCluster},
+        local_cluster::{
+            ClusterConfig, DEFAULT_MINT_LAMPORTS, LocalCluster, NetworkPartitionController,
+        },
         validator_configs::*,
     },
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -99,7 +101,7 @@ use {
     solana_vote_interface::state::TowerSync,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
-        collections::{BTreeSet, HashMap, HashSet},
+        collections::{BTreeMap, BTreeSet, HashMap, HashSet},
         fs,
         io::Read,
         iter,
@@ -4329,6 +4331,232 @@ fn run_test_cluster_partition(num_partitions: usize, is_alpenglow: bool) {
         vec![],
         is_alpenglow,
     )
+}
+
+type ByzFuzzPartition = Vec<Vec<Pubkey>>;
+type ByzFuzzNetworkFaults = BTreeMap<Slot, Vec<ByzFuzzPartition>>;
+
+fn byz_fuzz_input<T>(name: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    std::env::var(name).map_or(default, |value| {
+        value
+            .parse()
+            .unwrap_or_else(|err| panic!("invalid {name}={value:?}: {err}"))
+    })
+}
+
+fn byz_fuzz_random_partition(rng: &mut StdRng, validators: &[Pubkey]) -> ByzFuzzPartition {
+    assert!(validators.len() >= 2);
+    let mut validators = validators.to_vec();
+    validators.shuffle(rng);
+    let num_groups = rng.random_range(2..=validators.len());
+    let mut partition = validators
+        .drain(..num_groups)
+        .map(|validator| vec![validator])
+        .collect::<Vec<_>>();
+    for validator in validators {
+        let group = rng.random_range(0..num_groups);
+        partition[group].push(validator);
+    }
+    for group in &mut partition {
+        group.sort_unstable();
+    }
+    partition.sort_unstable_by_key(|group| group[0]);
+    partition
+}
+
+/// If more than one partition is sampled for the same round, a message is dropped when
+/// any sampled partition isolates its endpoints. The common refinement below is the
+/// equivalent single topology accepted by `NetworkPartitionController`.
+fn byz_fuzz_refine_partitions(
+    validators: &[Pubkey],
+    partitions: &[ByzFuzzPartition],
+) -> ByzFuzzPartition {
+    let mut groups = BTreeMap::<Vec<usize>, Vec<Pubkey>>::new();
+    for validator in validators {
+        let signature = partitions
+            .iter()
+            .map(|partition| {
+                partition
+                    .iter()
+                    .position(|group| group.contains(validator))
+                    .expect("sampled partition must cover every validator")
+            })
+            .collect::<Vec<_>>();
+        groups.entry(signature).or_default().push(*validator);
+    }
+    groups.into_values().collect()
+}
+
+fn byz_fuzz_working_slots(cluster: &LocalCluster) -> BTreeMap<Pubkey, Slot> {
+    cluster
+        .validators
+        .iter()
+        .map(|(pubkey, validator)| {
+            let slot = validator
+                .validator
+                .as_ref()
+                .expect("byz_fuzz validator must be running")
+                .bank_forks
+                .read()
+                .unwrap()
+                .working_bank()
+                .slot();
+            (*pubkey, slot)
+        })
+        .collect()
+}
+
+fn byz_fuzz_wait_for_slot(
+    cluster: &LocalCluster,
+    target_slot: Slot,
+    timeout: Duration,
+) -> (bool, BTreeMap<Pubkey, Slot>) {
+    let start = Instant::now();
+    loop {
+        let slots = byz_fuzz_working_slots(cluster);
+        // There is no single cluster slot after a partition. A round is complete only
+        // after every validator reaches it; the timeout below prevents a stalled
+        // validator from pinning the fuzzing clock forever.
+        let observed_slot = *slots.values().min().expect("byz_fuzz cluster is not empty");
+        if observed_slot >= target_slot {
+            return (true, slots);
+        }
+        if start.elapsed() >= timeout {
+            return (false, slots);
+        }
+        sleep(Duration::from_millis(10));
+    }
+}
+
+/// Samples and executes the network-fault half of the ByzFuzz initialization algorithm.
+///
+/// Environment inputs:
+/// - `BYZ_FUZZ_SEED`: deterministic RNG seed.
+/// - `BYZ_FUZZ_NUM_NODES`: size of P.
+/// - `BYZ_FUZZ_NETWORK_FAULT_ROUNDS`: d, the number of sampling attempts.
+/// - `BYZ_FUZZ_ROUNDS`: r, the number of rounds to execute.
+#[test]
+#[serial]
+fn test_byz_fuzz() {
+    const DEFAULT_SEED: u64 = 0x6279_7a66_757a_7a;
+    const DEFAULT_NUM_NODES: usize = 3;
+    const DEFAULT_NETWORK_FAULT_ROUNDS: usize = 3;
+    const DEFAULT_ROUNDS: Slot = 8;
+
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    let seed = byz_fuzz_input("BYZ_FUZZ_SEED", DEFAULT_SEED);
+    let num_nodes = byz_fuzz_input("BYZ_FUZZ_NUM_NODES", DEFAULT_NUM_NODES);
+    let network_fault_rounds = byz_fuzz_input(
+        "BYZ_FUZZ_NETWORK_FAULT_ROUNDS",
+        DEFAULT_NETWORK_FAULT_ROUNDS,
+    );
+    let rounds = byz_fuzz_input("BYZ_FUZZ_ROUNDS", DEFAULT_ROUNDS);
+    assert!(num_nodes >= 2, "byz_fuzz needs at least two validators");
+    assert!(rounds > 0, "byz_fuzz needs at least one round");
+
+    let validator_keys = (0..num_nodes)
+        .map(|index| {
+            let mut node_seed = [0u8; 32];
+            node_seed[..8].copy_from_slice(&seed.to_le_bytes());
+            node_seed[8..16].copy_from_slice(&(index as u64).to_le_bytes());
+            node_seed[16] = 1;
+            let mut vote_seed = node_seed;
+            vote_seed[16] = 2;
+            (
+                ValidatorKeys {
+                    node_keypair: Arc::new(keypair_from_seed(&node_seed).unwrap()),
+                    vote_keypair: Arc::new(keypair_from_seed(&vote_seed).unwrap()),
+                },
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut validators = validator_keys
+        .iter()
+        .map(|(keys, _)| keys.node_keypair.pubkey())
+        .collect::<Vec<_>>();
+    validators.sort_unstable();
+
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut network_faults = ByzFuzzNetworkFaults::new();
+    for _ in 0..network_fault_rounds {
+        let round = rng.random_range(1..=rounds);
+        let partition = byz_fuzz_random_partition(&mut rng, &validators);
+        let round_faults = network_faults.entry(round).or_default();
+        if !round_faults.contains(&partition) {
+            round_faults.push(partition);
+        }
+    }
+    info!(
+        "BYZ_FUZZ seed={seed} nodes={num_nodes} d={network_fault_rounds} r={rounds} \
+         network_faults={network_faults:?}"
+    );
+
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
+    let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH * 2;
+    let mut config = ClusterConfig {
+        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_keys: Some(validator_keys),
+        node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
+        slots_per_epoch,
+        stakers_slot_offset: slots_per_epoch,
+        skip_warmup_slots: true,
+        enable_network_partitions: true,
+        ..ClusterConfig::default()
+    };
+    // A total partition can prevent the target slot from ever being produced. Bound
+    // each round so that the next scheduled topology (usually a heal) can still run.
+    let round_timeout = Duration::from_millis(ms_for_n_slots(10, config.ticks_per_slot));
+    let cluster = LocalCluster::new_alpenglow(&mut config, SocketAddrSpace::Unspecified);
+    cluster.check_for_new_processed(4, "BYZ_FUZZ preflight", SocketAddrSpace::Unspecified);
+
+    let controller = NetworkPartitionController::new(&cluster).unwrap();
+    let start_slots = byz_fuzz_working_slots(&cluster);
+    let start_slot = *start_slots
+        .values()
+        .min()
+        .expect("byz_fuzz cluster is not empty");
+    let mut partition_active = false;
+
+    for round in 1..=rounds {
+        let target_slot = start_slot.saturating_add(round);
+        // The previous iteration either observed the preceding slot or exhausted its
+        // timeout, so this is the boundary at which the next fault round begins.
+        let slots_before = byz_fuzz_working_slots(&cluster);
+
+        if let Some(partitions) = network_faults.get(&round) {
+            let partition = byz_fuzz_refine_partitions(&validators, partitions);
+            info!(
+                "BYZ_FUZZ round={round} target_slot={target_slot} slots={slots_before:?} apply \
+                 partition={partition:?}"
+            );
+            controller.apply(&partition).unwrap();
+            partition_active = true;
+        } else if partition_active {
+            info!("BYZ_FUZZ round={round} target_slot={target_slot} slots={slots_before:?} heal");
+            controller.heal().unwrap();
+            partition_active = false;
+        }
+
+        let (reached_target, slots_after) =
+            byz_fuzz_wait_for_slot(&cluster, target_slot, round_timeout);
+        if !reached_target {
+            warn!(
+                "BYZ_FUZZ round={round} timed out waiting for target_slot={target_slot}; \
+                 slots={slots_after:?}; advancing the fault schedule"
+            );
+        }
+    }
+
+    if partition_active {
+        controller.heal().unwrap();
+    }
+    cluster.check_for_new_roots(8, "BYZ_FUZZ recovery", SocketAddrSpace::Unspecified);
 }
 
 /// Proves a four-node cluster stays live after killing the bootstrap leader, which is a
