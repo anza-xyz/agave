@@ -448,10 +448,12 @@ mod tests {
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
     where
-        T: wincode::Serialize<Src = T> + SysvarId,
-        AccountSharedData: solana_account::state_traits::StateMutWincode<T>,
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
     {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+        let serialized_len = wincode::config::serialized_size(value, solana_account::WINCODE_CONFIG)
+            .unwrap() as usize;
         let canonical_data_len = match T::id() {
             sysvar::clock::ID => solana_clock::SIZE,
             sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
