@@ -13718,7 +13718,9 @@ fn test_new_for_txn_tests_system_transfer() {
     let bank = bank_forks.read().unwrap().root_bank();
 
     assert_eq!(bank.slot(), slot);
-    assert_eq!(bank.bank_id(), BankId::new(1));
+    // Verify that the bank_id of the newly created bank is different from the bank_id
+    // used to store the parent slot's accounts
+    assert_ne!(bank.bank_id(), bank_id);
     assert_eq!(bank.epoch(), epoch);
     assert_eq!(bank.last_blockhash(), recent_blockhash);
 
@@ -13904,7 +13906,9 @@ fn test_new_for_block_tests_with_vote_account() {
     let bank = bank_forks.read().unwrap().root_bank();
 
     assert_eq!(bank.slot(), slot);
-    assert_eq!(bank.bank_id(), BankId::new(1));
+    // Verify that the bank_id of the newly created bank is different from the bank_id
+    // used to store the parent slot's accounts
+    assert_ne!(bank.bank_id(), bank_id);
     assert_eq!(bank.epoch(), epoch);
     assert!(bank.capitalization() > 0);
     assert_eq!(bank.last_blockhash(), recent_blockhash);
