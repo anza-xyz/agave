@@ -171,7 +171,7 @@ fn get_stake_bucket(stake: Option<&u64>) -> usize {
 mod tests {
     use {
         super::*, agave_random::range::random_u64_range, itertools::iproduct, rand::SeedableRng,
-        rand_chacha::ChaChaRng, std::iter::repeat_with,
+        rand_chacha::ChaCha8Rng, std::iter::repeat_with,
     };
 
     #[test]
@@ -201,7 +201,7 @@ mod tests {
     fn test_push_active_set() {
         const CLUSTER_SIZE: usize = 117;
         const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
-        let mut rng = ChaChaRng::from_seed([189u8; 32]);
+        let mut rng = ChaCha8Rng::from_seed([189u8; 32]);
         let pubkey = Pubkey::new_unique();
         let addrs: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
         let nodes: Vec<(u64, Pubkey)> = repeat_with(|| random_u64_range(&mut rng, 1..MAX_STAKE))
@@ -220,63 +220,63 @@ mod tests {
                 assert!(filter.contains(node));
             }
         }
-        let other = &addrs[5];
-        let origin = &addrs[17];
+        let other = &addrs[17];
+        let origin = &addrs[5];
         assert!(
             active_set
                 .get_nodes(&pubkey, origin, &stakes)
-                .eq([13, 5, 18, 16, 0].into_iter().map(|k| &addrs[k]))
+                .eq([17, 14, 11, 18, 16].into_iter().map(|k| &addrs[k]))
         );
         assert!(
             active_set
                 .get_nodes(&pubkey, other, &stakes)
-                .eq([13, 18, 16, 0].into_iter().map(|k| &addrs[k]))
+                .eq([14, 11, 18, 16].into_iter().map(|k| &addrs[k]))
         );
-        active_set.prune(&pubkey, &addrs[5], &[*origin], &stakes);
+        active_set.prune(&pubkey, &addrs[17], &[*origin], &stakes);
         active_set.prune(&pubkey, &addrs[3], &[*origin], &stakes);
         active_set.prune(&pubkey, &addrs[16], &[*origin], &stakes);
         assert!(
             active_set
                 .get_nodes(&pubkey, origin, &stakes)
-                .eq([13, 18, 0].into_iter().map(|k| &addrs[k]))
+                .eq([14, 11, 18].into_iter().map(|k| &addrs[k]))
         );
         assert!(
             active_set
                 .get_nodes(&pubkey, other, &stakes)
-                .eq([13, 18, 16, 0].into_iter().map(|k| &addrs[k]))
+                .eq([14, 11, 18, 16].into_iter().map(|k| &addrs[k]))
         );
         active_set.rotate(&mut rng, 7, CLUSTER_SIZE, nodes.iter().copied());
         assert!(active_set.0.iter().all(|entry| entry.0.len() == 7));
         assert!(
             active_set
                 .get_nodes(&pubkey, origin, &stakes)
-                .eq([18, 0, 7, 15, 11].into_iter().map(|k| &addrs[k]))
+                .eq([14, 11, 18, 0, 1, 12].into_iter().map(|k| &addrs[k]))
         );
         assert!(
             active_set
                 .get_nodes(&pubkey, other, &stakes)
-                .eq([18, 16, 0, 7, 15, 11].into_iter().map(|k| &addrs[k]))
+                .eq([14, 11, 18, 16, 0, 1, 12].into_iter().map(|k| &addrs[k]))
         );
         let origins = [*origin, *other];
         active_set.prune(&pubkey, &addrs[18], &origins, &stakes);
         active_set.prune(&pubkey, &addrs[0], &origins, &stakes);
-        active_set.prune(&pubkey, &addrs[15], &origins, &stakes);
+        active_set.prune(&pubkey, &addrs[3], &origins, &stakes);
         assert!(
             active_set
                 .get_nodes(&pubkey, origin, &stakes)
-                .eq([7, 11].into_iter().map(|k| &addrs[k]))
+                .eq([14, 11, 1, 12].into_iter().map(|k| &addrs[k]))
         );
         assert!(
             active_set
                 .get_nodes(&pubkey, other, &stakes)
-                .eq([16, 7, 11].into_iter().map(|k| &addrs[k]))
+                .eq([14, 11, 16, 1, 12].into_iter().map(|k| &addrs[k]))
         );
     }
 
     #[test]
     fn test_push_active_set_entry() {
         const NUM_BLOOM_FILTER_ITEMS: usize = 100;
-        let mut rng = ChaChaRng::from_seed([147u8; 32]);
+        let mut rng = ChaCha8Rng::from_seed([147u8; 32]);
         let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
         let weights: Vec<_> = repeat_with(|| random_u64_range(&mut rng, 1..1000))
             .take(20)
@@ -290,7 +290,7 @@ mod tests {
             weights.iter().copied(),
         );
         assert_eq!(entry.0.len(), 5);
-        let keys = [&nodes[16], &nodes[11], &nodes[17], &nodes[14], &nodes[5]];
+        let keys = [&nodes[6], &nodes[4], &nodes[16], &nodes[13], &nodes[2]];
         assert!(entry.0.keys().eq(keys));
         for (pubkey, origin) in iproduct!(&nodes, &nodes) {
             if !keys.contains(&origin) {
@@ -316,14 +316,14 @@ mod tests {
         }
         // Assert that prune excludes node from get.
         let origin = &nodes[3];
-        entry.prune(&nodes[11], origin);
-        entry.prune(&nodes[14], origin);
+        entry.prune(&nodes[4], origin);
+        entry.prune(&nodes[13], origin);
         entry.prune(&nodes[19], origin);
         for pubkey in &nodes {
             assert!(
                 entry.get_nodes(pubkey, origin).eq(keys
                     .into_iter()
-                    .filter(|&&node| pubkey == origin || (node != nodes[11] && node != nodes[14])))
+                    .filter(|&&node| pubkey == origin || (node != nodes[4] && node != nodes[13])))
             );
         }
         // Assert that rotate adds new nodes.
@@ -334,7 +334,7 @@ mod tests {
             &nodes,
             weights.iter().copied(),
         );
-        let keys = [&nodes[11], &nodes[17], &nodes[14], &nodes[5], &nodes[7]];
+        let keys = [&nodes[4], &nodes[16], &nodes[13], &nodes[2], &nodes[10]];
         assert!(entry.0.keys().eq(keys));
         entry.rotate(
             &mut rng,
@@ -344,7 +344,7 @@ mod tests {
             weights.iter().copied(),
         );
         let keys = [
-            &nodes[17], &nodes[14], &nodes[5], &nodes[7], &nodes[1], &nodes[13],
+            &nodes[16], &nodes[13], &nodes[2], &nodes[10], &nodes[0], &nodes[3],
         ];
         assert!(entry.0.keys().eq(keys));
         entry.rotate(
@@ -354,7 +354,7 @@ mod tests {
             &nodes,
             weights.iter().copied(),
         );
-        let keys = [&nodes[5], &nodes[7], &nodes[1], &nodes[13]];
+        let keys = [&nodes[2], &nodes[10], &nodes[0], &nodes[3]];
         assert!(entry.0.keys().eq(keys));
     }
 }

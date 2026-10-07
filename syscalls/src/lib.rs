@@ -5234,11 +5234,11 @@ mod tests {
          */
 
         // Execute A
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         invoke_context.transaction_context.pop().unwrap();
 
         // Execute B
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         // B does a CPI into B1
         invoke_context
             .transaction_context
@@ -5248,12 +5248,12 @@ mod tests {
                 vec![b'B', 1],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         invoke_context.transaction_context.pop().unwrap();
         invoke_context.transaction_context.pop().unwrap();
 
         // Start instruction C
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
 
         const VM_BASE_ADDRESS: u64 = 0x100000000;
         const META_OFFSET: usize = 0;
@@ -5498,10 +5498,10 @@ mod tests {
          */
 
         // Execute Instr A
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         invoke_context.transaction_context.pop().unwrap();
         // Execute Instr B
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         // CPI into B1
         invoke_context
             .transaction_context
@@ -5511,7 +5511,7 @@ mod tests {
                 vec![b'B', 1],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         // CPI into B2
         invoke_context
             .transaction_context
@@ -5521,7 +5521,7 @@ mod tests {
                 vec![b'B', 2],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         // Return from B2 and B1
         invoke_context.transaction_context.pop().unwrap();
         invoke_context.transaction_context.pop().unwrap();
@@ -5534,7 +5534,7 @@ mod tests {
                 vec![b'B', 3],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         // Return from B3
         invoke_context.transaction_context.pop().unwrap();
         // CPI into B4
@@ -5546,7 +5546,7 @@ mod tests {
                 vec![b'B', 4],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         // CPI into B5
         invoke_context
             .transaction_context
@@ -5556,7 +5556,7 @@ mod tests {
                 vec![b'B', 5],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the syscall from B5 should return false
         invoke_context
@@ -5583,7 +5583,7 @@ mod tests {
                 vec![b'B', 6],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         // CPI into B7
         invoke_context
             .transaction_context
@@ -5593,7 +5593,7 @@ mod tests {
                 vec![b'B', 7],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
         // Return from B7
         invoke_context.transaction_context.pop().unwrap();
 
@@ -5677,7 +5677,7 @@ mod tests {
                 vec![b'B', 8],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the syscall from B8 with index zero should return ix B6
         invoke_context
@@ -5809,7 +5809,7 @@ mod tests {
         invoke_context.transaction_context.pop().unwrap();
 
         // Execute C
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the syscall from B with index zero should return ix C
         invoke_context
@@ -5875,7 +5875,7 @@ mod tests {
                 vec![b'C', 1],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the CPI from C1 with index zero should return false.
         invoke_context
@@ -5902,7 +5902,7 @@ mod tests {
                 vec![b'C', 2],
             )
             .unwrap();
-        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.push(true).unwrap();
 
         // Invoking the syscall from C2 with index zero should return ix C1
         invoke_context

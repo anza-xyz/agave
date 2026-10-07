@@ -35,8 +35,5 @@ solana-serde-varint = { workspace = true }
 solana-wincode-varint = { workspace = true }
 wincode = { workspace = true }
 
-[dev-dependencies]
-bincode = { workspace = true }
-
 [lints]
 workspace = true

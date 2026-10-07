@@ -1343,7 +1343,7 @@ pub mod test {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_exit_on_cancel() {
         let SpawnTestServerResult {
             join_handle,
@@ -1363,7 +1363,7 @@ pub mod test {
         drop(receiver);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_timeout() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1383,7 +1383,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_stream_timeout() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1423,7 +1423,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_block_multiple_connections() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1443,7 +1443,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_multiple_connections_on_single_client_endpoint() {
         agave_logger::setup();
 
@@ -1529,7 +1529,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_multiple_writes() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1548,7 +1548,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_staked_connection_removal() {
         agave_logger::setup();
 
@@ -1583,7 +1583,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_evicts_destaked_connection() {
         agave_logger::setup();
 
@@ -1662,7 +1662,7 @@ pub mod test {
         thread.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_zero_staked_connection_removal() {
         // In this test, the client has a pubkey, but is not in stake table.
         agave_logger::setup();
@@ -1698,7 +1698,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_unstaked_connection_removal() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1726,7 +1726,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_unstaked_node_connect_failure() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
@@ -1762,7 +1762,7 @@ pub mod test {
         t.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_multiple_streams() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
@@ -2139,7 +2139,7 @@ pub mod test {
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_throttling_check_no_packet_drop() {
         agave_logger::setup_with_default_filter();
 
@@ -2451,7 +2451,7 @@ pub mod test {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_client_connection_close_invalid_stream() {
         let SpawnTestServerResult {
             join_handle,
@@ -2484,7 +2484,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_client_connection_accepts_packet_up_to_configured_max_stream_data_bytes() {
         let max_stream_data_bytes = MAX_TRANSACTION_SIZE as u32;
         let SpawnTestServerResult {

@@ -9,9 +9,8 @@ use {
     self::{
         common::{DataLen, DataRef, ExternalDataOffset, FileOffset, LoadedData},
         data::{
-            DATA_ENTRY_FIXED_SIZE, DATA_HEADER_SIZE, calculate_data_entry_stored_size,
-            create_data_file, parse_data_entry, read_data_entry, read_data_header,
-            validate_data_entry_offset, write_data_entry,
+            DATA_HEADER_SIZE, calculate_data_entry_stored_size, create_data_file, parse_data_entry,
+            read_data_entry, read_data_header, validate_data_entry_offset, write_data_entry,
         },
         meta::{
             META_ENTRY_FIXED_SIZE, META_ENTRY_OFFSET_ALIGNMENT, META_HEADER_SIZE, MetaEntryRef,
@@ -29,8 +28,7 @@ use {
     agave_fs::{
         FileInfo, FileSize,
         buffered_reader::{
-            BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
-            RequiredLenBufRead as _,
+            BufferedReader, FileBufRead as _, RequiredLenBufFileRead, RequiredLenBufRead as _,
         },
     },
     solana_account::{AccountSharedData, ReadableAccount},
@@ -56,21 +54,6 @@ pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
 
 /// Buffer size to use when scaning a meta file.
 const META_SCAN_BUFFER_SIZE: usize = 16 * 1024;
-
-/// Creates a reusable buffered reader tuned for scanning external account data.
-#[allow(dead_code)]
-pub fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
-    // 128KiB covers a reasonably large distribution of typical account sizes.
-    // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-    const MIN_CAPACITY: usize = 128 * 1024;
-    const MAX_CAPACITY: usize = DATA_ENTRY_FIXED_SIZE + DataLen::MAX as usize;
-    const BUFFER_SIZE: usize = 32 * 1024;
-    BufReaderWithOverflow::new(
-        BufferedReader::<BUFFER_SIZE>::new(),
-        MIN_CAPACITY,
-        MAX_CAPACITY,
-    )
-}
 
 /// Account storage backed by split metadata and data files.
 ///
@@ -764,6 +747,7 @@ pub struct SplitFileStats {
 mod tests {
     use {
         super::*,
+        crate::accounts_file::new_scan_accounts_reader,
         error::{ReadDataEntryError, ReadMetaEntryError},
         meta::META_ENTRY_INLINE_DATA_MAX_SIZE,
         solana_account::accounts_equal,

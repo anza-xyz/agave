@@ -1512,7 +1512,7 @@ mod tests {
     fn test_genesis_cert_block_marker() -> GenesisCertBlockMarker {
         GenesisCertBlockMarker {
             slot: Slot::MAX,
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         }

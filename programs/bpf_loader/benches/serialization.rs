@@ -118,7 +118,7 @@ mod bench {
         transaction_context
             .configure_top_level_instruction_for_tests(0, instruction_accounts, instruction_data)
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         transaction_context
     }
 

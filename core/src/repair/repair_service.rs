@@ -1555,7 +1555,6 @@ mod test {
             let bank_forks = bank_forks.read().unwrap();
             (bank_forks.root_bank(), bank_forks.migration_status())
         };
-        migration_status.enable_alpenglow_for_tests();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let (_dumped_slots_sender, dumped_slots_receiver) = crossbeam_channel::unbounded();

@@ -58,6 +58,11 @@ jobs:
               ;;
             *)
               echo "should_trigger=false" >> $GITHUB_OUTPUT
+              {
+                echo "### ⏳ Waiting for CI approval"
+                echo ""
+                echo 'Waiting for a member to add the `CI` label'
+              } >> "$GITHUB_STEP_SUMMARY"
               exit 1
               ;;
           esac

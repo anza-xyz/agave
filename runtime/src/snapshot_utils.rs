@@ -564,12 +564,14 @@ pub fn serialize_snapshot(
             if should_finalize {
                 let flush_measure = Measure::start("");
                 for storage in snapshot_storages {
+                    // The storage file must exist in order for fastboot on restart to work.
+                    // By default, storage files are deleted when their owning AccountStorageEntry
+                    // is dropped, so we must disable that for all storages.
+                    // And it must be done *before* calling flush().
+                    storage.disable_remove_on_drop();
                     storage.flush().map_err(|err| {
                         AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
                     })?;
-                    // We're about to mark this snapshot fastboot-loadable. Pin the storage
-                    // file so it outlives the validator-exit Drop chain.
-                    storage.disable_remove_on_drop();
                 }
                 let flush_us = flush_measure.end_as_us();
 

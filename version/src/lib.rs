@@ -1,7 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 
 mod client_ids;
-pub mod v3;
 pub mod v4;
 
 pub use {client_ids::*, v4::*};

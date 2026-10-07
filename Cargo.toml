@@ -272,7 +272,7 @@ crossbeam-queue = "0.3.14"
 crossbeam-utils = "0.8.23"
 csv = "1.4.0"
 ctrlc = "3.5.2"
-dashmap = "5.5.3"
+dashmap = "6.2.1"
 derive-where = "1.7.0"
 derive_more = { version = "2.1.1", features = ["full"] }
 dialoguer = "0.12.0"
@@ -379,7 +379,7 @@ solana-account-decoder = { path = "account-decoder", version = "=4.5.0-alpha.1",
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.5.0-alpha.1", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.1"
 solana-accounts-db = { path = "accounts-db", version = "=4.5.0-alpha.1", features = ["agave-unstable-api"] }
-solana-address = "2.8.0"
+solana-address = "2.9.0"
 solana-address-lookup-table-interface = "4.0.0"
 solana-banks-client = { path = "banks-client", version = "=4.5.0-alpha.1", features = ["agave-unstable-api"] }
 solana-banks-interface = { path = "banks-interface", version = "=4.5.0-alpha.1", features = ["agave-unstable-api"] }

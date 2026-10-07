@@ -56,8 +56,12 @@ const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = 2;
 // are needed, we can use longer durations for cache TTL.
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(30);
 
-/// Maximum number of packet batches to process in a single sigverify iteration.
-const SIGVERIFY_SHRED_BATCH_SIZE: usize = 1024;
+/// Maximum number of packet batches processed in a single sigverify iteration.
+///
+/// In case of legitimate sigverify traffic sigverify stage keeps up with fetch stage and processes
+/// one packet batch per iteration. If a backlog accumulates, this limits each iteration to four
+/// batches (at most 256 packets), which takes about 1 ms in observed production workloads.
+const SIGVERIFY_SHRED_BATCH_SIZE: usize = 4;
 
 #[allow(clippy::enum_variant_names)]
 enum ShredSigverifyError {
@@ -691,7 +695,8 @@ mod tests {
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
-        let mut shreds = shredder.make_merkle_shreds_from_entries(
+        // Only older leaders resign shreds.
+        let (data_shreds, coding_shreds) = shredder.entries_to_resigned_merkle_shreds_for_tests(
             &leader_keypair,
             &entries,
             is_last_in_slot,
@@ -699,8 +704,8 @@ mod tests {
             0,
             0,
             &ReedSolomonCache::default(),
-            &mut ProcessShredsStats::default(),
         );
+        let mut shreds: Vec<_> = data_shreds.into_iter().chain(coding_shreds).collect();
 
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&leader_pubkey, timestamp()),

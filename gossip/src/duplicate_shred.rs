@@ -1270,9 +1270,22 @@ pub(crate) mod tests {
                 None
             }
         };
-        let data_shred = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
-        let coding_shred =
-            new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader)[0].clone();
+        // Older leaders may still produce resigned shreds.
+        let is_last_in_slot = true;
+        let chained_merkle_root = Hash::new_from_array(rng.random());
+        let next_code_index = next_shred_index;
+        let (mut data_shreds, mut coding_shreds) = shredder
+            .entries_to_resigned_merkle_shreds_for_tests(
+                &leader,
+                &[Entry::new(&Hash::new_unique(), 1, vec![])],
+                is_last_in_slot,
+                chained_merkle_root,
+                next_shred_index,
+                next_code_index,
+                &ReedSolomonCache::default(),
+            );
+        let data_shred = data_shreds.swap_remove(0);
+        let coding_shred = coding_shreds.swap_remove(0);
         let mut data_shred_different_retransmitter_payload = data_shred.clone().into_payload();
         shred::layout::set_retransmitter_signature(
             &mut data_shred_different_retransmitter_payload.as_mut(),

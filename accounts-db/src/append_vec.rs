@@ -21,8 +21,7 @@ use {
     agave_fs::{
         FileInfo, FileSize,
         buffered_reader::{
-            BufReaderWithOverflow, BufferedReader, FileBufRead, RequiredLenBufFileRead,
-            RequiredLenBufRead as _,
+            BufferedReader, FileBufRead, RequiredLenBufFileRead, RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
     },
@@ -756,7 +755,7 @@ impl AppendVec {
         &'a self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
-        let mut reader = new_scan_accounts_reader();
+        let mut reader = crate::accounts_file::new_scan_accounts_reader();
         reader.set_file(&self.file, self.len() as FileSize)?;
         self.scan_accounts_stored_meta_with(&mut reader, callback)
     }
@@ -1032,20 +1031,6 @@ impl AppendVec {
     pub(crate) fn open_file_for_archive(&self) -> OpenFileForArchive<'_> {
         OpenFileForArchive::Borrowed(&self.file)
     }
-}
-
-/// Create a reusable buffered reader tuned for scanning storages with account data.
-pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
-    // 128KiB covers a reasonably large distribution of typical account sizes.
-    // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-    const MIN_CAPACITY: usize = 1024 * 128;
-    const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
-    const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-    BufReaderWithOverflow::new(
-        BufferedReader::<BUFFER_SIZE>::new(),
-        MIN_CAPACITY,
-        MAX_CAPACITY,
-    )
 }
 
 /// Returns FileOffset from logical `offset`.

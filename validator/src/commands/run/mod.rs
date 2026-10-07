@@ -1,5 +1,7 @@
 pub mod args;
 pub mod execute;
+#[cfg(target_os = "linux")]
+mod xdp;
 
 pub use {args::add_args, execute::execute};
 
