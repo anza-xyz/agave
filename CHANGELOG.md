@@ -46,6 +46,7 @@ Release channels have their own copy of this changelog:
 
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
+* Previously deprecated `solana-tokens` binary and crate have been removed.
 
 #### Changes
 

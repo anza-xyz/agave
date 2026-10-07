@@ -106,7 +106,6 @@ members = [
     "syscalls/gen-syscall-list",
     "test-validator",
     "tls-utils",
-    "tokens",
     "tpu-client",
     "tpu-client-next",
     "transaction-context",
@@ -171,7 +170,6 @@ dcou = [
 # These bins are deprecated and will be removed in a future release
 deprecated = [
     "solana-stake-accounts",
-    "solana-tokens",
     "agave-install-init",
 ]
 dcou-tainted-packages = [
@@ -332,7 +330,6 @@ num_enum = "0.7.6"
 openssl = "0.10.81"
 parking_lot = "0.12"
 pem = "1.1.1"
-pickledb = { version = "0.5.1", default-features = false }
 predicates = "3.1"
 pretty-hex = "0.4.2"
 pretty_assertions = "1.4.1"
