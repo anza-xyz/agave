@@ -34,6 +34,10 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* `agave-validator repair-shred-from-peer` now requires `--pubkey`, and the `repairShredFromPeer`
+  admin RPC now requires `pubkey`. Sampling repair peers when no pubkey is given is no longer supported
+  due to the Alpenglow migration. The request now returns an error if the peer has no valid repair socket.
+
 #### Changes
 
 * The default full snapshot interval is now 200,000 slots.

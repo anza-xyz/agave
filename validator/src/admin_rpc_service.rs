@@ -267,7 +267,7 @@ pub trait AdminRpc {
     fn repair_shred_from_peer(
         &self,
         meta: Self::Metadata,
-        pubkey: Option<Pubkey>,
+        pubkey: Pubkey,
         slot: u64,
         shred_index: u64,
     ) -> Result<()>;
@@ -697,23 +697,28 @@ impl AdminRpc for AdminRpcImpl {
     fn repair_shred_from_peer(
         &self,
         meta: Self::Metadata,
-        pubkey: Option<Pubkey>,
+        pubkey: Pubkey,
         slot: u64,
         shred_index: u64,
     ) -> Result<()> {
         debug!("repair_shred_from_peer request received");
 
         meta.with_post_init(|post_init| {
-            repair_service::RepairService::request_repair_for_shred_from_peer(
+            let sent = repair_service::RepairService::request_repair_for_shred_from_peer(
                 post_init.cluster_info.clone(),
-                post_init.cluster_slots.clone(),
                 pubkey,
                 slot,
                 shred_index,
                 &post_init.repair_socket,
                 post_init.outstanding_repair_requests.clone(),
             );
-            Ok(())
+            if sent {
+                Ok(())
+            } else {
+                Err(jsonrpc_core::error::Error::invalid_params(format!(
+                    "No valid repair socket found for {pubkey}"
+                )))
+            }
         })
     }
 
@@ -1290,9 +1295,6 @@ mod tests {
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),
-                    cluster_slots: Arc::new(
-                        solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default_for_tests(),
-                    ),
                     node: None,
                     banking_control_sender: mpsc::channel(1).0,
                     snapshot_controller,
