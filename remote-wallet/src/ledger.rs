@@ -69,17 +69,17 @@ const LEDGER_NANO_GEN5_PIDS: [u16; 33] = [
 ];
 const LEDGER_TRANSPORT_HEADER_LEN: usize = 5;
 
-/// Number of bytes expected from a small-screen model's configuration response
+/// Number of bytes expected from a nano model's configuration response
 ///
 /// Bytes of the app-configuration vector that are actually read: blind-signing
 /// flag, pubkey display mode, then major, minor and patch.
-const SMALL_SCREEN_APP_CONFIGURATION_LEN: usize = 5;
+const NANO_APP_CONFIGURATION_LEN: usize = 5;
 
-/// Number of bytes expected from a large-screen model's configuration response
+/// Number of bytes expected from a wallet-screen model's configuration response
 ///
 /// Bytes of the app-configuration vector that are actually read: blind-signing
 /// flag, pubkey display mode, then major, minor and patch.
-const BIG_SCREEN_APP_CONFIGURATION_LEN: usize = 7;
+const WALLET_SCREEN_APP_CONFIGURATION_LEN: usize = 7;
 
 const HID_PACKET_SIZE: usize = 64 + HID_PREFIX_ZERO;
 
@@ -113,6 +113,8 @@ pub enum PubkeyDisplayMode {
 pub struct LedgerSettings {
     pub enable_blind_signing: bool,
     pub pubkey_display: PubkeyDisplayMode,
+    pub transaction_check_opt_in_seen: bool,
+    pub enable_transaction_check: bool,
 }
 
 /// Ledger Wallet device
@@ -336,23 +338,40 @@ impl LedgerWallet {
     fn get_configuration(&self) -> Result<Configuration, RemoteWalletError> {
         if let Ok(config) = self._send_apdu(commands::GET_APP_CONFIGURATION, 0, 0, &[], false) {
             match config.len() {
-                SMALL_SCREEN_APP_CONFIGURATION_LEN | BIG_SCREEN_APP_CONFIGURATION_LEN => {
-                    Ok(Configuration {
-                        settings: LedgerSettings {
-                            enable_blind_signing: config[0] != 0,
-                            pubkey_display: if config[1] == 0 {
-                                PubkeyDisplayMode::Long
-                            } else {
-                                PubkeyDisplayMode::Short
-                            },
+                WALLET_SCREEN_APP_CONFIGURATION_LEN => Ok(Configuration {
+                    settings: LedgerSettings {
+                        enable_blind_signing: config[0] != 0,
+                        pubkey_display: if config[1] == 0 {
+                            PubkeyDisplayMode::Long
+                        } else {
+                            PubkeyDisplayMode::Short
                         },
-                        firmware_version: FirmwareVersion::new(
-                            config[2].into(),
-                            config[3].into(),
-                            config[4].into(),
-                        ),
-                    })
-                }
+                        transaction_check_opt_in_seen: config[5] != 0,
+                        enable_transaction_check: config[6] != 0,
+                    },
+                    firmware_version: FirmwareVersion::new(
+                        config[2].into(),
+                        config[3].into(),
+                        config[4].into(),
+                    ),
+                }),
+                NANO_APP_CONFIGURATION_LEN => Ok(Configuration {
+                    settings: LedgerSettings {
+                        enable_blind_signing: config[0] != 0,
+                        pubkey_display: if config[1] == 0 {
+                            PubkeyDisplayMode::Long
+                        } else {
+                            PubkeyDisplayMode::Short
+                        },
+                        transaction_check_opt_in_seen: false,
+                        enable_transaction_check: false,
+                    },
+                    firmware_version: FirmwareVersion::new(
+                        config[2].into(),
+                        config[3].into(),
+                        config[4].into(),
+                    ),
+                }),
                 _ => Err(RemoteWalletError::Protocol("Version packet size mismatch")),
             }
         } else {
@@ -365,6 +384,8 @@ impl LedgerWallet {
                 settings: LedgerSettings {
                     enable_blind_signing: false,
                     pubkey_display: PubkeyDisplayMode::Short,
+                    transaction_check_opt_in_seen: false,
+                    enable_transaction_check: false,
                 },
                 firmware_version: FirmwareVersion::new(
                     config[1].into(),
