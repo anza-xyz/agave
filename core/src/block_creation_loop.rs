@@ -1036,11 +1036,14 @@ fn handle_parent_ready(
     let accumulated_txs = Arc::new(accumulated_txs);
 
     if let Some(transaction_status_sender) = &ctx.transaction_status_sender {
+        // TSS processes the prefix writes, this purge, and the rescheduled suffix writes in
+        // channel order, so the leader does not need to wait for the purge to finish.
         transaction_status_sender
-            .enqueue_purge_transaction_history_for_slot(
+            .send_purge_transaction_history_for_slot(
                 slot,
                 TransactionHistoryPurgeSource::LeaderWindow,
                 TransactionHistoryPurgeInput::Leader(Arc::clone(&accumulated_txs)),
+                /*wait_until_finished:*/ false,
             )
             .map_err(|err| PohRecorderError::PurgeTransactionHistory(slot, err))?;
     }
@@ -1742,6 +1745,7 @@ mod tests {
             rpc_subscriptions: None,
             slot_status_notifier: None,
             entry_notification_sender: None,
+            transaction_status_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,

@@ -7671,7 +7671,7 @@ fn test_purge_switch_bank_transaction_history_before_malformed_component(
     blockstore.insert_shreds(shreds, true).unwrap();
 
     let stats = blockstore
-        .purge_transaction_history_for_switch_bank_slot_exact(slot)
+        .purge_transaction_history_for_slot_exact(slot)
         .unwrap();
     assert_eq!(stats.transactions_processed, 1);
     assert!(

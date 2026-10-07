@@ -30,6 +30,7 @@ use {
     solana_transaction_error::TransactionResult,
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     std::{borrow::Cow, sync::Arc, time::Instant},
+    thiserror::Error,
 };
 
 type WorkSequence = u64;
@@ -252,6 +253,12 @@ fn do_get_first_error<T, Tx: SVMTransaction>(
     first_err
 }
 
+#[derive(Debug, Error)]
+pub enum TransactionStatusSenderError {
+    #[error("transaction status service disconnected")]
+    Disconnected,
+}
+
 #[derive(Clone, Debug)]
 pub struct TransactionStatusSender {
     pub sender: crossbeam_channel::Sender<TransactionStatusMessage>,
@@ -302,38 +309,21 @@ impl TransactionStatusSender {
         }
     }
 
-    /// Requests removal of transaction history for `slot` and waits until the
-    /// TransactionStatusService has finished processing the request.
+    /// Requests removal of transaction history for `slot`, optionally waiting
+    /// until TransactionStatusService has finished processing the request.
     pub fn send_purge_transaction_history_for_slot(
         &self,
         slot: Slot,
         source: TransactionHistoryPurgeSource,
         purge_input: TransactionHistoryPurgeInput,
-    ) -> Result<(), String> {
-        let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
-        self.send_purge_transaction_history_request(slot, source, purge_input, Some(done_sender))?;
-
-        done_receiver.recv().map_err(|err| err.to_string())
-    }
-
-    /// Queues removal of transaction history for `slot` without waiting for
-    /// TransactionStatusService to process the request.
-    pub fn enqueue_purge_transaction_history_for_slot(
-        &self,
-        slot: Slot,
-        source: TransactionHistoryPurgeSource,
-        purge_input: TransactionHistoryPurgeInput,
-    ) -> Result<(), String> {
-        self.send_purge_transaction_history_request(slot, source, purge_input, None)
-    }
-
-    fn send_purge_transaction_history_request(
-        &self,
-        slot: Slot,
-        source: TransactionHistoryPurgeSource,
-        purge_input: TransactionHistoryPurgeInput,
-        done_sender: Option<crossbeam_channel::Sender<()>>,
-    ) -> Result<(), String> {
+        wait_until_finished: bool,
+    ) -> Result<(), TransactionStatusSenderError> {
+        let (done_sender, done_receiver) = if wait_until_finished {
+            let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
+            (Some(done_sender), Some(done_receiver))
+        } else {
+            (None, None)
+        };
         self.sender
             .send(TransactionStatusMessage::PurgeTransactionHistory {
                 slot,
@@ -342,7 +332,13 @@ impl TransactionStatusSender {
                 requested_at: Instant::now(),
                 done_sender,
             })
-            .map_err(|err| err.to_string())
+            .map_err(|_| TransactionStatusSenderError::Disconnected)?;
+        if let Some(done_receiver) = done_receiver {
+            done_receiver
+                .recv()
+                .map_err(|_| TransactionStatusSenderError::Disconnected)?;
+        }
+        Ok(())
     }
 }
 

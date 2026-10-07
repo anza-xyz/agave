@@ -52,6 +52,7 @@ use {
         snapshot_controller::SnapshotController,
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
+            TransactionStatusSenderError,
         },
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
@@ -297,8 +298,11 @@ pub enum BlockstoreProcessorError {
     #[error("bank hash mismatch at slot {0}: expected {1}, got {2}")]
     BankHashMismatch(Slot, Hash, Hash),
 
+    #[error("failed to request transaction-history purge for slot {0}: {1}")]
+    FailedToRequestTransactionHistoryPurge(Slot, #[source] TransactionStatusSenderError),
+
     #[error("failed to purge transaction history for slot {0}: {1}")]
-    FailedToPurgeTransactionHistory(Slot, String),
+    FailedToPurgeTransactionHistory(Slot, #[source] BlockstoreError),
 }
 
 impl BlockstoreProcessorError {
@@ -1918,7 +1922,7 @@ fn process_next_slots(
 
         // Clear pre-UpdateParent transaction history before filtering out partial slots. Those
         // slots resume from the UpdateParent boundary in ReplayStage and will not request another
-        // purge after restart.
+        // purge after restart. Wait here so startup cannot expose the slot before cleanup finishes.
         if next_meta.has_update_parent() {
             if let Some(transaction_status_sender) = transaction_status_sender {
                 transaction_status_sender
@@ -1926,18 +1930,18 @@ fn process_next_slots(
                         *next_slot,
                         TransactionHistoryPurgeSource::StartupReplay,
                         TransactionHistoryPurgeInput::ReplayStage,
+                        /*wait_until_finished:*/ true,
                     )
                     .map_err(|err| {
-                        BlockstoreProcessorError::FailedToPurgeTransactionHistory(*next_slot, err)
+                        BlockstoreProcessorError::FailedToRequestTransactionHistoryPurge(
+                            *next_slot, err,
+                        )
                     })?;
             } else if blockstore.is_primary_access() {
                 blockstore
                     .purge_transaction_history_for_replay_slot_exact(*next_slot)
                     .map_err(|err| {
-                        BlockstoreProcessorError::FailedToPurgeTransactionHistory(
-                            *next_slot,
-                            err.to_string(),
-                        )
+                        BlockstoreProcessorError::FailedToPurgeTransactionHistory(*next_slot, err)
                     })?;
             }
         }

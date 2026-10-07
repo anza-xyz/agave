@@ -2686,23 +2686,33 @@ impl ReplayStage {
         if let Some((transaction_status_sender, source, input)) = transaction_history_purge {
             for slot in slots_to_purge {
                 match &input {
-                    TransactionHistoryPurgeInput::ReplayStage => transaction_status_sender
-                        .enqueue_purge_transaction_history_for_slot(
-                            slot,
-                            source,
-                            TransactionHistoryPurgeInput::ReplayStage,
-                        )
-                        .expect("failed to enqueue UpdateParent transaction-history purge"),
-                    TransactionHistoryPurgeInput::SwitchBank => transaction_status_sender
-                        .send_purge_transaction_history_for_slot(
-                            slot,
-                            source,
-                            TransactionHistoryPurgeInput::SwitchBank,
-                        )
-                        .expect(
-                            "TransactionStatusService failed to purge transaction history before \
-                             SwitchBank",
-                        ),
+                    TransactionHistoryPurgeInput::ReplayStage => {
+                        // TSS processes the discarded prefix writes, this purge, and restarted
+                        // execution writes in channel order, so replay does not need to wait.
+                        transaction_status_sender
+                            .send_purge_transaction_history_for_slot(
+                                slot,
+                                source,
+                                TransactionHistoryPurgeInput::ReplayStage,
+                                /*wait_until_finished:*/ false,
+                            )
+                            .expect("failed to enqueue UpdateParent transaction-history purge")
+                    }
+                    TransactionHistoryPurgeInput::SwitchBank => {
+                        // Wait while the outgoing slot's shreds are still present; the purge must
+                        // reconstruct their deletion keys before SwitchBank replaces those shreds.
+                        transaction_status_sender
+                            .send_purge_transaction_history_for_slot(
+                                slot,
+                                source,
+                                TransactionHistoryPurgeInput::SwitchBank,
+                                /*wait_until_finished:*/ true,
+                            )
+                            .expect(
+                                "TransactionStatusService failed to purge transaction history \
+                                 before SwitchBank",
+                            )
+                    }
                     TransactionHistoryPurgeInput::Leader(_) => {
                         unreachable!("leader transaction-history purge cannot clear replay slots")
                     }

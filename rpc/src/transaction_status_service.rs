@@ -350,10 +350,10 @@ impl TransactionStatusService {
                             blockstore.purge_transaction_history_for_replay_slot_exact(slot)
                         }
                         TransactionHistoryPurgeInput::SwitchBank => {
-                            blockstore.purge_transaction_history_for_switch_bank_slot_exact(slot)
+                            blockstore.purge_transaction_history_for_slot_exact(slot)
                         }
                         TransactionHistoryPurgeInput::Leader(transactions) => blockstore
-                            .purge_transaction_history_for_leader_slot_exact(
+                            .purge_transaction_history_for_slot_transactions_exact(
                                 slot,
                                 transactions.as_slice(),
                             ),
@@ -841,6 +841,7 @@ pub(crate) mod tests {
                     42,
                     TransactionHistoryPurgeSource::UpdateParentSignal,
                     TransactionHistoryPurgeInput::ReplayStage,
+                    /*wait_until_finished:*/ true,
                 )
                 .is_err()
         );

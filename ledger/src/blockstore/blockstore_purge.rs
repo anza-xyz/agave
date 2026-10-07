@@ -595,7 +595,7 @@ impl Blockstore {
                     error @ (BlockstoreError::InvalidShredData(_)
                     | BlockstoreError::BlockAborted(_)),
                 ) => {
-                    warn!(
+                    info!(
                         "Stopping transaction-history purge reconstruction for slot {slot} at \
                          shred range {completed_range:?}; transaction history from earlier \
                          components will still be purged: {error}"
@@ -645,14 +645,13 @@ impl Blockstore {
         Ok(stats)
     }
 
-    /// Removes transaction history for the ordered transactions the leader recorded
-    /// before producing an UpdateParent marker.
-    pub fn purge_transaction_history_for_leader_slot_exact(
+    /// Removes transaction history for the provided ordered transactions in a slot.
+    pub fn purge_transaction_history_for_slot_transactions_exact(
         &self,
         slot: Slot,
-        accumulated_txs: &[VersionedTransaction],
+        transactions: &[VersionedTransaction],
     ) -> Result<TransactionHistoryPurgeStats> {
-        if accumulated_txs.is_empty() {
+        if transactions.is_empty() {
             return Ok(TransactionHistoryPurgeStats::default());
         }
 
@@ -660,7 +659,7 @@ impl Blockstore {
         let mut stats = TransactionHistoryPurgeStats::default();
         let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
 
-        for (transaction_index, transaction) in accumulated_txs.iter().enumerate() {
+        for (transaction_index, transaction) in transactions.iter().enumerate() {
             if let Some(&signature) = transaction.signatures.first() {
                 let meta = self
                     .read_transaction_status((signature, slot))?
@@ -690,12 +689,14 @@ impl Blockstore {
     }
 
     /// Removes transaction history for the entire persisted slot.
-    pub fn purge_transaction_history_for_switch_bank_slot_exact(
+    pub fn purge_transaction_history_for_slot_exact(
         &self,
         slot: Slot,
     ) -> Result<TransactionHistoryPurgeStats> {
         let mut write_batch = self.get_write_batch();
         let mut prepare_deletions_timer = Measure::start("prepare_transaction_history_deletions");
+        // An empty but readable slot succeeds with no deletion keys. Propagate reconstruction
+        // failures rather than report a partial purge as successful.
         let mut stats = self.purge_special_columns_exact(
             &mut write_batch,
             slot,
@@ -1402,7 +1403,7 @@ pub mod tests {
         );
 
         let stats = blockstore
-            .purge_transaction_history_for_leader_slot_exact(slot, &accumulated_txs)
+            .purge_transaction_history_for_slot_transactions_exact(slot, &accumulated_txs)
             .unwrap();
         assert_eq!(stats.transactions_processed, signatures.len() as u64);
         assert_eq!(
@@ -1555,7 +1556,7 @@ pub mod tests {
 
         assert!(blockstore.meta(switch_slot).unwrap().is_none());
         let stats = blockstore
-            .purge_transaction_history_for_switch_bank_slot_exact(switch_slot)
+            .purge_transaction_history_for_slot_exact(switch_slot)
             .unwrap();
         assert_eq!(stats.transactions_processed, 0);
         assert_eq!(stats.deletion_keys_staged, 0);
