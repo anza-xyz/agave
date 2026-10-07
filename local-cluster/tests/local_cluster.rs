@@ -71,6 +71,7 @@ use {
         local_cluster::{
             ClusterConfig, DEFAULT_MINT_LAMPORTS, LocalCluster, NetworkPartitionController,
         },
+        network_delay::{LinkDelay, NetworkDelayController},
         validator_configs::*,
     },
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -4340,6 +4341,45 @@ fn run_test_cluster_partition(num_partitions: usize, is_alpenglow: bool) {
 
 type ByzFuzzPartition = Vec<Vec<Pubkey>>;
 type ByzFuzzNetworkFaults = BTreeMap<Slot, Vec<ByzFuzzPartition>>;
+/// Delay on directed (sender, receiver) links, applied for a single round.
+type ByzFuzzLinkDelays = BTreeMap<(Pubkey, Pubkey), LinkDelay>;
+type ByzFuzzDelayFaults = BTreeMap<Slot, ByzFuzzLinkDelays>;
+
+/// The largest sampled link delay and jitter. A slot is 400ms.
+const BYZ_FUZZ_MAX_LINK_DELAY_MS: u64 = 300;
+const BYZ_FUZZ_MAX_LINK_JITTER_MS: u64 = 100;
+
+/// Samples a non-empty set of directed links with a random delay and jitter each.
+/// Jitter larger than the gap between packets reorders them.
+fn byz_fuzz_random_link_delays(rng: &mut StdRng, validators: &[Pubkey]) -> ByzFuzzLinkDelays {
+    let links = validators
+        .iter()
+        .flat_map(|from| {
+            validators
+                .iter()
+                .filter(move |to| *to != from)
+                .map(move |to| (*from, *to))
+        })
+        .collect::<Vec<_>>();
+    let mut chosen = links
+        .iter()
+        .filter(|_| rng.random::<bool>())
+        .copied()
+        .collect::<Vec<_>>();
+    if chosen.is_empty() {
+        chosen.push(*links.choose(rng).unwrap());
+    }
+    chosen
+        .into_iter()
+        .map(|link| {
+            let delay = LinkDelay {
+                delay: Duration::from_millis(rng.random_range(1..=BYZ_FUZZ_MAX_LINK_DELAY_MS)),
+                jitter: Duration::from_millis(rng.random_range(0..=BYZ_FUZZ_MAX_LINK_JITTER_MS)),
+            };
+            (link, delay)
+        })
+        .collect()
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ByzFuzzProcessFaultKind {
@@ -4567,6 +4607,8 @@ fn byz_fuzz_install_process_faults(
 /// - `BYZ_FUZZ_PROCESS_FAULT_ROUNDS`: c, the number of sampling attempts. Each sample is
 ///   a shred equivocation or a vote fault by the Byzantine validator: a bad slot, a
 ///   bad block_id, or a notarize vote to some validators and a skip vote to the rest.
+/// - `BYZ_FUZZ_DELAY_FAULT_ROUNDS`: the number of sampled per-link delay and jitter
+///   faults. They only run inside a network namespace (`local-cluster/run-in-netns.sh`).
 /// - `BYZ_FUZZ_ROUNDS`: r, the number of rounds to execute.
 #[test]
 #[serial]
@@ -4577,6 +4619,7 @@ fn test_byz_fuzz() {
     const LEADER_WINDOW_SLOTS: usize = 4;
     const DEFAULT_NETWORK_FAULT_ROUNDS: usize = 3;
     const DEFAULT_PROCESS_FAULT_ROUNDS: usize = 3;
+    const DEFAULT_DELAY_FAULT_ROUNDS: usize = 3;
     const DEFAULT_ROUNDS: Slot = 8;
 
     // Keep the injected process faults visible; the default filter hides turbine logs.
@@ -4594,6 +4637,8 @@ fn test_byz_fuzz() {
         "BYZ_FUZZ_PROCESS_FAULT_ROUNDS",
         DEFAULT_PROCESS_FAULT_ROUNDS,
     );
+    let delay_fault_rounds =
+        byz_fuzz_input("BYZ_FUZZ_DELAY_FAULT_ROUNDS", DEFAULT_DELAY_FAULT_ROUNDS);
     let rounds = byz_fuzz_input("BYZ_FUZZ_ROUNDS", DEFAULT_ROUNDS);
     assert!(num_nodes >= 2, "byz_fuzz needs at least two validators");
     assert!(rounds > 0, "byz_fuzz needs at least one round");
@@ -4681,10 +4726,23 @@ fn test_byz_fuzz() {
             round_faults.push(fault);
         }
     }
+    // Sampled after all other faults so existing seeds keep their earlier schedules.
+    let mut delay_faults = ByzFuzzDelayFaults::new();
+    for _ in 0..delay_fault_rounds {
+        let round = rng.random_range(1..=rounds);
+        let round_delays = delay_faults.entry(round).or_default();
+        // Several faults on one link in a round: keep the largest delay and jitter.
+        for (link, delay) in byz_fuzz_random_link_delays(&mut rng, &validators) {
+            let entry = round_delays.entry(link).or_default();
+            entry.delay = entry.delay.max(delay.delay);
+            entry.jitter = entry.jitter.max(delay.jitter);
+        }
+    }
     info!(
         "BYZ_FUZZ seed={seed} nodes={num_nodes} d={network_fault_rounds} c={process_fault_rounds} \
-         r={rounds} byzantine={byzantine} byzantine_rounds={byzantine_rounds:?} \
-         network_faults={network_faults:?} process_faults={process_faults:?}"
+         delay_rounds={delay_fault_rounds} r={rounds} byzantine={byzantine} \
+         byzantine_rounds={byzantine_rounds:?} network_faults={network_faults:?} \
+         process_faults={process_faults:?} delay_faults={delay_faults:?}"
     );
 
     let mut validator_config = ValidatorConfig::default_for_test();
@@ -4757,6 +4815,12 @@ fn test_byz_fuzz() {
     cluster.check_for_new_processed(4, "BYZ_FUZZ preflight", SocketAddrSpace::Unspecified);
 
     let controller = NetworkPartitionController::new(&cluster).unwrap();
+    // Delay faults need tc netem in a private network namespace; see
+    // local-cluster/run-in-netns.sh. Outside one they are skipped.
+    let delay_controller = NetworkDelayController::new(&cluster).unwrap();
+    if delay_controller.is_none() && !delay_faults.is_empty() {
+        warn!("BYZ_FUZZ skipping delay faults: not running in a network namespace");
+    }
     // Align start_slot to the last slot of a rotation, leaving a margin so the faults are
     // installed before the first Byzantine-led round is produced.
     let current_slot = *byz_fuzz_working_slots(&cluster)
@@ -4779,6 +4843,7 @@ fn test_byz_fuzz() {
         warn!("BYZ_FUZZ timed out waiting for start_slot={start_slot}; slots={slots:?}");
     }
     let mut partition_active = false;
+    let mut delay_active = false;
 
     for round in 1..=rounds {
         let target_slot = start_slot.saturating_add(round);
@@ -4807,6 +4872,18 @@ fn test_byz_fuzz() {
             partition_active = false;
         }
 
+        if let Some(delay_controller) = &delay_controller {
+            if let Some(delays) = delay_faults.get(&round) {
+                info!("BYZ_FUZZ round={round} target_slot={target_slot} apply delays={delays:?}");
+                delay_controller.apply(delays).unwrap();
+                delay_active = true;
+            } else if delay_active {
+                info!("BYZ_FUZZ round={round} target_slot={target_slot} clear delays");
+                delay_controller.heal().unwrap();
+                delay_active = false;
+            }
+        }
+
         let (reached_target, slots_after) =
             byz_fuzz_wait_for_slot(&cluster, target_slot, round_timeout);
         if !reached_target {
@@ -4819,6 +4896,9 @@ fn test_byz_fuzz() {
 
     if partition_active {
         controller.heal().unwrap();
+    }
+    if let Some(delay_controller) = delay_controller.as_ref().filter(|_| delay_active) {
+        delay_controller.heal().unwrap();
     }
     cluster.check_for_new_roots(8, "BYZ_FUZZ recovery", SocketAddrSpace::Unspecified);
 }
