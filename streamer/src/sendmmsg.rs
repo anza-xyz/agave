@@ -81,6 +81,8 @@ where
     for (p, a) in packets {
         match sock.send_to(p.as_ref(), a.borrow()) {
             Ok(_) => num_sent += 1,
+            // The send buffer of a non-blocking socket is full, so the rest would fail too.
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
             Err(err) => check_fatal(err)?,
         }
     }
@@ -161,7 +163,13 @@ fn sendmmsg_retry(
     while !pkts.is_empty() {
         let npkts = match unsafe { libc::sendmmsg(sock_fd, &mut pkts[0], pkts.len() as u32, 0) } {
             -1 => {
-                check_fatal(io::Error::last_os_error())?;
+                let err = io::Error::last_os_error();
+                // The send buffer of a non-blocking socket is full, so the rest of the
+                // packets would fail too. Drop them instead of trying them one by one.
+                if err.kind() == io::ErrorKind::WouldBlock {
+                    break;
+                }
+                check_fatal(err)?;
                 // skip over the failing packet
                 1_usize
             }
@@ -227,7 +235,9 @@ where
 ///
 /// Returns the number of packets that were sent successfully. Failures for individual
 /// destinations are expected and are not reported. An Err is returned only when the
-/// send failed for a reason that makes the socket permanently unusable.
+/// send failed for a reason that makes the socket permanently unusable. When the send
+/// buffer of a non-blocking socket is full, the rest of the up to `MAX_IOV` packets
+/// passed to that sendmmsg call are dropped.
 // Need &'a to ensure that raw packet pointers obtained in mmsghdr_for_packet
 // stay valid.
 #[cfg(target_os = "linux")]
