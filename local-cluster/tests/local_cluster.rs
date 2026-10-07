@@ -4349,6 +4349,10 @@ enum ByzFuzzProcessFaultKind {
     /// A mutation of the Byzantine validator's votes for the round's slot, broadcast
     /// to every peer. Sampled on any round, since every validator votes every slot.
     Votes(VoteMutationKind),
+    /// The Byzantine validator's notarize vote for the round's slot goes only to
+    /// `notarize_recipients`, and every other validator is sent a skip vote instead.
+    /// Both groups are non-empty. Sampled on any round.
+    VoteEquivocate { notarize_recipients: Vec<Pubkey> },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4504,8 +4508,18 @@ fn byz_fuzz_install_process_faults(
         // Multiple vote faults in one round: keep the one with the smallest seed.
         if let Some((kind, seed)) = faults
             .iter()
-            .filter_map(|fault| match fault.kind {
-                ByzFuzzProcessFaultKind::Votes(kind) => Some((kind, fault.seed)),
+            .filter_map(|fault| match &fault.kind {
+                ByzFuzzProcessFaultKind::Votes(kind) => Some((kind.clone(), fault.seed)),
+                ByzFuzzProcessFaultKind::VoteEquivocate {
+                    notarize_recipients,
+                } => Some((
+                    VoteMutationKind::Equivocate {
+                        notarize_recipients: Arc::new(
+                            notarize_recipients.iter().copied().collect(),
+                        ),
+                    },
+                    fault.seed,
+                )),
                 ByzFuzzProcessFaultKind::Shreds { .. } => None,
             })
             .min_by_key(|(_, seed)| *seed)
@@ -4551,8 +4565,8 @@ fn byz_fuzz_install_process_faults(
 /// - `BYZ_FUZZ_NUM_NODES`: size of P.
 /// - `BYZ_FUZZ_NETWORK_FAULT_ROUNDS`: d, the number of sampling attempts.
 /// - `BYZ_FUZZ_PROCESS_FAULT_ROUNDS`: c, the number of sampling attempts. Each sample is
-///   a shred equivocation or a vote mutation (bad slot or bad block_id) by the
-///   Byzantine validator.
+///   a shred equivocation or a vote fault by the Byzantine validator: a bad slot, a
+///   bad block_id, or a notarize vote to some validators and a skip vote to the rest.
 /// - `BYZ_FUZZ_ROUNDS`: r, the number of rounds to execute.
 #[test]
 #[serial]
@@ -4628,21 +4642,35 @@ fn test_byz_fuzz() {
         .collect::<Vec<_>>();
     let mut process_faults = ByzFuzzProcessFaults::new();
     for _ in 0..process_fault_rounds {
-        let (round, kind) = match rng.random_range(0..3) {
+        let (round, kind) = match rng.random_range(0..4) {
             0 => (
                 *byzantine_rounds.choose(&mut rng).unwrap(),
                 ByzFuzzProcessFaultKind::Shreds {
                     recipients: byz_fuzz_random_recipients(&mut rng, &validators, &byzantine),
                 },
             ),
-            vote_kind => (
+            1 => (
                 rng.random_range(1..=rounds),
-                ByzFuzzProcessFaultKind::Votes(if vote_kind == 1 {
-                    VoteMutationKind::BadSlot
-                } else {
-                    VoteMutationKind::BadBlockId
-                }),
+                ByzFuzzProcessFaultKind::Votes(VoteMutationKind::BadSlot),
             ),
+            2 => (
+                rng.random_range(1..=rounds),
+                ByzFuzzProcessFaultKind::Votes(VoteMutationKind::BadBlockId),
+            ),
+            _ => {
+                let mut notarize_recipients =
+                    byz_fuzz_random_recipients(&mut rng, &validators, &byzantine);
+                // Equivocation needs a non-empty group on each side.
+                if notarize_recipients.len() == validators.len() - 1 {
+                    notarize_recipients.remove(rng.random_range(0..notarize_recipients.len()));
+                }
+                (
+                    rng.random_range(1..=rounds),
+                    ByzFuzzProcessFaultKind::VoteEquivocate {
+                        notarize_recipients,
+                    },
+                )
+            }
         };
         let fault = ByzFuzzProcessFault {
             kind,

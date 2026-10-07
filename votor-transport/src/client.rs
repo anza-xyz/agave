@@ -2,12 +2,11 @@
 use {
     crate::{
         METRICS_INTERVAL, PeerListReceiver, close_codes,
-        endpoint::KeyUpdateListener,
+        endpoint::{Egress, KeyUpdateListener},
         error::Error,
         stats::{self, ClientStats, record_client_error},
         transport::new_client_config,
     },
-    bytes::Bytes,
     log::{debug, error, info, warn},
     quinn::{Connection, Endpoint, SendDatagramError},
     solana_keypair::{Keypair, Signer},
@@ -99,7 +98,7 @@ pub(crate) struct OutboundLoop {
     endpoint: Endpoint,
     local_pubkey: Pubkey,
     /// Channel for outbound messages to be broadcast
-    egress_receiver: mpsc::Receiver<Bytes>,
+    egress_receiver: mpsc::Receiver<Egress>,
     key_updates: KeyUpdateListener,
     peer_list_receiver: PeerListReceiver,
     /// Per-peer send-only connection state.
@@ -116,7 +115,7 @@ impl OutboundLoop {
     pub(crate) fn new(
         endpoint: Endpoint,
         local_pubkey: Pubkey,
-        egress_receiver: mpsc::Receiver<Bytes>,
+        egress_receiver: mpsc::Receiver<Egress>,
         key_updates: KeyUpdateListener,
         peer_list_receiver: PeerListReceiver,
         cancel: CancellationToken,
@@ -336,12 +335,19 @@ impl OutboundLoop {
         }
     }
 
-    /// Broadcast one message to every live connection. Broken connections are
-    /// dropped from the table so the next reconcile remakes them.
-    fn perform_broadcast(&mut self, message: Bytes) {
+    /// Broadcast one message to every live connection it targets. Broken connections
+    /// are dropped from the table so the next reconcile remakes them.
+    fn perform_broadcast(&mut self, egress: Egress) {
+        let Egress {
+            payload: message,
+            targets,
+        } = egress;
         let mut sent = 0u64;
         let mut dead_peers = Vec::new();
         for (peer, state) in self.peer_state.iter() {
+            if !targets.includes(peer) {
+                continue;
+            }
             let PeerState::Established { connection, .. } = state else {
                 continue;
             };
@@ -533,7 +539,7 @@ mod tests {
             client_connection,
         ));
         server_connection
-            .send_datagram(Bytes::new())
+            .send_datagram(bytes::Bytes::new())
             .expect("client advertised datagram support");
         reader.await.unwrap();
         let reason = timeout(Duration::from_secs(5), server_connection.closed())

@@ -4,7 +4,7 @@ use {
         common::nonblocking_send,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
-        vote_mutation::{self, VoteMutationSchedule},
+        vote_mutation::{self, VoteMutationKind, VoteMutationSchedule},
         voting_service::BLSOp,
     },
     agave_bls_sigverify::rewards::{RewardInput, rewards_wants_vote},
@@ -14,6 +14,7 @@ use {
         vote::Vote,
         wire::get_vote_payload_to_sign,
     },
+    agave_votor_transport::endpoint::EgressTargets,
     crossbeam_channel::{Sender, TrySendError},
     solana_bls_signatures::{BlsError, keypair::Keypair as BLSKeypair},
     solana_clock::{Epoch, Slot},
@@ -26,7 +27,7 @@ use {
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_transaction::Transaction,
     std::{
-        collections::{HashMap, hash_map::Entry},
+        collections::{HashMap, HashSet, hash_map::Entry},
         sync::{Arc, RwLock},
     },
     thiserror::Error,
@@ -310,12 +311,65 @@ pub(crate) fn insert_vote_and_create_bls_message(
         .as_ref()
         .and_then(|schedule| schedule.mutation(vote.slot()))
     {
+        if let VoteMutationKind::Equivocate {
+            notarize_recipients,
+        } = &mutation.kind
+        {
+            return equivocated_bls_message(vote, vote_msg, notarize_recipients, context);
+        }
         return mutated_bls_message(vote, vote_msg, mutation, context);
     }
 
     // Return vote for sending
     Ok(Some(BLSOp::PushVote {
         vote: Arc::new(vote_msg),
+    }))
+}
+
+/// Splits the broadcast of `vote` between peers, as described on
+/// `VoteMutationKind::Equivocate`. A notarize vote goes to `notarize_recipients` while
+/// every other peer is sent a skip vote for the same slot; any later vote for a slot
+/// the validator notarized goes only to `notarize_recipients`.
+fn equivocated_bls_message(
+    vote: Vote,
+    vote_msg: VoteMessage,
+    notarize_recipients: &Arc<HashSet<Pubkey>>,
+    context: &mut VotingContext,
+) -> Result<Option<BLSOp>, VoteError> {
+    let slot = vote.slot();
+    if vote.is_notarization() {
+        let skip = Vote::new_skip_vote(slot);
+        match create_vote_message(skip, context, /* respect_wait_to_vote */ false) {
+            Ok(skip_msg) => {
+                info!(
+                    "{}: Byzantine vote equivocation: {vote:?} to {notarize_recipients:?}, \
+                     {skip:?} to all other peers",
+                    context.identity_keypair.pubkey()
+                );
+                context
+                    .bls_sender
+                    .send(BLSOp::PushVoteTo {
+                        vote: Arc::new(skip_msg),
+                        targets: EgressTargets::Except(notarize_recipients.clone()),
+                    })
+                    .map_err(|_| VoteError::ChannelDisconnected("bls_sender"))?;
+            }
+            Err(e) => handle_skippable_vote_error(e, "generate equivocating skip vote")?,
+        }
+    } else if context.vote_history.voted_notar(slot).is_none() {
+        // The first vote for the slot was not a notarize, so nothing was equivocated.
+        return Ok(Some(BLSOp::PushVote {
+            vote: Arc::new(vote_msg),
+        }));
+    } else {
+        info!(
+            "{}: Byzantine vote equivocation: {vote:?} to {notarize_recipients:?} only",
+            context.identity_keypair.pubkey()
+        );
+    }
+    Ok(Some(BLSOp::PushVoteTo {
+        vote: Arc::new(vote_msg),
+        targets: EgressTargets::Only(notarize_recipients.clone()),
     }))
 }
 
@@ -327,7 +381,7 @@ fn mutated_bls_message(
     mutation: vote_mutation::VoteMutation,
     context: &mut VotingContext,
 ) -> Result<Option<BLSOp>, VoteError> {
-    let mutated = vote_mutation::mutate(vote, mutation);
+    let mutated = vote_mutation::mutate(vote, &mutation);
     let mutated_msg = if mutated == vote {
         vote_msg
     } else {

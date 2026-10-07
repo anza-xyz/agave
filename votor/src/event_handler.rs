@@ -1511,7 +1511,9 @@ mod tests {
                         found |= votes.len() != previous_len;
                         !votes.is_empty()
                     }
-                    BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
+                    BLSOp::PushVoteTo { .. }
+                    | BLSOp::PushCertificates { .. }
+                    | BLSOp::RefreshCertificates { .. } => true,
                 });
                 assert!(found, "Did not find expected vote: {expected_message:?}");
             }
@@ -1547,7 +1549,9 @@ mod tests {
                     found |= votes.len() != previous_len;
                     !votes.is_empty()
                 }
-                BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
+                BLSOp::PushVoteTo { .. }
+                | BLSOp::PushCertificates { .. }
+                | BLSOp::RefreshCertificates { .. } => true,
             });
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver

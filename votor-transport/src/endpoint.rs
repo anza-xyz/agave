@@ -19,6 +19,7 @@ use {
     solana_pubkey::Pubkey,
     solana_tls_utils::NotifyKeyUpdate,
     std::{
+        collections::HashSet,
         net::SocketAddr,
         sync::{Arc, Mutex, TryLockError},
         time::Duration,
@@ -40,6 +41,43 @@ pub struct Datagram {
     pub peer_pubkey: Pubkey,
     pub peer_address: SocketAddr,
     pub message: Bytes,
+}
+
+/// Which connected peers an outbound datagram is sent to.
+#[derive(Clone, Debug)]
+pub enum EgressTargets {
+    /// Every connected peer.
+    All,
+    /// Only these peers. Used by test-only Byzantine behavior.
+    Only(Arc<HashSet<Pubkey>>),
+    /// Every connected peer except these. Used by test-only Byzantine behavior.
+    Except(Arc<HashSet<Pubkey>>),
+}
+
+impl EgressTargets {
+    pub(crate) fn includes(&self, peer: &Pubkey) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(peers) => peers.contains(peer),
+            Self::Except(peers) => !peers.contains(peer),
+        }
+    }
+}
+
+/// An outbound datagram and the peers to send it to.
+#[derive(Clone, Debug)]
+pub struct Egress {
+    pub payload: Bytes,
+    pub targets: EgressTargets,
+}
+
+impl From<Bytes> for Egress {
+    fn from(payload: Bytes) -> Self {
+        Self {
+            payload,
+            targets: EgressTargets::All,
+        }
+    }
 }
 
 /// Datagram-only QUIC endpoint.
@@ -83,7 +121,7 @@ impl QuicDatagramEndpoint {
         socket_addr_space: SocketAddrSpace,
         max_datagrams_per_second_per_peer: usize,
         cancel: CancellationToken,
-    ) -> Result<(mpsc::Sender<Bytes>, Self), Error> {
+    ) -> Result<(mpsc::Sender<Egress>, Self), Error> {
         assert!(!inbound_sockets.is_empty(), "Must have sockets provided");
         assert!(
             inbound_sockets.len() <= MAX_ENDPOINTS,
@@ -386,7 +424,7 @@ pub fn stub_ban_channel_for_tests(capacity: usize) -> (BanSender, mpsc::Receiver
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use {
-        super::{BanSender, Datagram, QuicDatagramEndpoint},
+        super::{BanSender, Datagram, Egress, EgressTargets, QuicDatagramEndpoint},
         crate::{METRICS_INTERVAL, PeerList, PeerListSender, transport::MAX_IDLE_TIMEOUT},
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
@@ -418,6 +456,17 @@ mod tests {
         tokio_util::sync::CancellationToken,
     };
 
+    #[test]
+    fn test_egress_targets() {
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let only_a = Arc::new(std::collections::HashSet::from([a]));
+        assert!(EgressTargets::All.includes(&a) && EgressTargets::All.includes(&b));
+        assert!(EgressTargets::Only(only_a.clone()).includes(&a));
+        assert!(!EgressTargets::Only(only_a.clone()).includes(&b));
+        assert!(!EgressTargets::Except(only_a.clone()).includes(&a));
+        assert!(EgressTargets::Except(only_a).includes(&b));
+    }
+
     const HIGH_PPS: usize = 1000;
 
     fn make_runtime_for_tests() -> Runtime {
@@ -433,7 +482,7 @@ mod tests {
 
     struct Node {
         endpoint: QuicDatagramEndpoint,
-        egress: mpsc::Sender<Bytes>,
+        egress: mpsc::Sender<Egress>,
         ingress_receiver: Receiver<Datagram>,
         addr: SocketAddr,
         keypair: Keypair,
@@ -449,7 +498,7 @@ mod tests {
         /// Broadcast `payload` to every peer in this node's peer_list.
         fn send(&self, payload: &Bytes) {
             self.egress
-                .try_send(payload.clone())
+                .try_send(payload.clone().into())
                 .expect("This channel must never overflow");
         }
 
@@ -936,7 +985,7 @@ mod tests {
         rt.block_on(async {
             for i in 0..(BURST * 4) {
                 let payload = Bytes::from(format!("burst-{i:04}").into_bytes());
-                let _ = client.egress.send(payload).await;
+                let _ = client.egress.send(payload.into()).await;
             }
         });
         std::thread::sleep(Duration::from_secs(1));
@@ -988,7 +1037,7 @@ mod tests {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
             loop {
                 for _ in 0..2000 {
-                    let _ = client.egress.send(flood.clone()).await;
+                    let _ = client.egress.send(flood.clone().into()).await;
                 }
                 if server
                     .endpoint
@@ -1094,7 +1143,7 @@ mod tests {
         let sender = std::thread::spawn(move || {
             let mut seq = 0u32;
             while !sender_stop.load(Ordering::Relaxed) {
-                let _ = egress.try_send(Bytes::from(seq.to_be_bytes().to_vec()));
+                let _ = egress.try_send(Bytes::from(seq.to_be_bytes().to_vec()).into());
                 seq = seq.wrapping_add(1);
                 std::thread::sleep(SEND_INTERVAL);
             }

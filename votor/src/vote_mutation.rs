@@ -2,15 +2,17 @@
 //!
 //! A `VoteMutationSchedule` maps slots to a mutation. When the validator casts a
 //! vote for a scheduled slot, its own consensus pool and vote history still record
-//! the honest vote, but the vote it broadcasts is replaced by `mutate`'s output.
+//! the honest vote, but the vote it broadcasts is replaced by `mutate`'s output, or,
+//! for `VoteMutationKind::Equivocate`, split between two groups of peers.
 //! Mutated votes are signed with the validator's real BLS key.
 
 use {
     agave_votor_messages::{consensus_message::Block, vote::Vote},
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_pubkey::Pubkey,
     std::{
-        collections::BTreeMap,
+        collections::{BTreeMap, HashSet},
         sync::{Arc, RwLock},
     },
 };
@@ -19,15 +21,23 @@ use {
 /// mutated slot stays within an epoch whose rank map is known.
 const MAX_BAD_SLOT_OFFSET: u64 = 4;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VoteMutationKind {
     /// Replace the vote with the same vote for a later slot.
     BadSlot,
     /// Replace the block_id of notarize(-fallback) votes with a bogus one.
     BadBlockId,
+    /// Equivocate between peers: the notarize vote and every later vote for the slot
+    /// go only to `notarize_recipients`, and every other peer is sent a skip vote
+    /// instead. Each group sees a self-consistent validator. If the validator's
+    /// first vote for the slot is a skip, there is no block to equivocate with and
+    /// its votes are sent unchanged.
+    Equivocate {
+        notarize_recipients: Arc<HashSet<Pubkey>>,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VoteMutation {
     pub kind: VoteMutationKind,
     /// Deterministically selects the bad slot offset and bogus block_id.
@@ -55,7 +65,7 @@ impl VoteMutationSchedule {
     }
 
     pub(crate) fn mutation(&self, slot: Slot) -> Option<VoteMutation> {
-        self.mutations.read().unwrap().get(&slot).copied()
+        self.mutations.read().unwrap().get(&slot).cloned()
     }
 }
 
@@ -71,9 +81,11 @@ fn bogus_block(slot: Slot, seed: u64) -> Block {
 }
 
 /// Returns the vote to broadcast in place of `vote`. Votes that a mutation does not
-/// apply to are returned unchanged.
-pub fn mutate(vote: Vote, mutation: VoteMutation) -> Vote {
+/// apply to, and equivocations, which change recipients rather than the vote, are
+/// returned unchanged.
+pub fn mutate(vote: Vote, mutation: &VoteMutation) -> Vote {
     let VoteMutation { kind, seed } = mutation;
+    let seed = *seed;
     match kind {
         VoteMutationKind::BadSlot => {
             let shift = |slot: Slot| slot.saturating_add(1 + seed % MAX_BAD_SLOT_OFFSET);
@@ -99,6 +111,7 @@ pub fn mutate(vote: Vote, mutation: VoteMutation) -> Vote {
             }
             _ => vote,
         },
+        VoteMutationKind::Equivocate { .. } => vote,
     }
 }
 
@@ -119,11 +132,11 @@ mod tests {
             kind: VoteMutationKind::BadSlot,
             seed: 2,
         };
-        let mutated = mutate(notar(10), mutation);
+        let mutated = mutate(notar(10), &mutation);
         assert_eq!(mutated.slot(), 13);
         assert_eq!(mutated.block_id(), notar(10).block_id());
         assert_eq!(
-            mutate(Vote::new_skip_vote(10), mutation),
+            mutate(Vote::new_skip_vote(10), &mutation),
             Vote::new_skip_vote(13)
         );
     }
@@ -134,12 +147,12 @@ mod tests {
             kind: VoteMutationKind::BadBlockId,
             seed: 1,
         };
-        let mutated = mutate(notar(10), mutation);
+        let mutated = mutate(notar(10), &mutation);
         assert_eq!(mutated.slot(), 10);
         assert_ne!(mutated.block_id(), notar(10).block_id());
-        assert_eq!(mutate(notar(10), mutation), mutated);
+        assert_eq!(mutate(notar(10), &mutation), mutated);
         assert_eq!(
-            mutate(Vote::new_skip_vote(10), mutation),
+            mutate(Vote::new_skip_vote(10), &mutation),
             Vote::new_skip_vote(10)
         );
     }

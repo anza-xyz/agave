@@ -3,6 +3,7 @@ use {
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
     },
+    agave_votor_transport::endpoint::{Egress, EgressTargets},
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_clock::Slot,
@@ -67,10 +68,23 @@ const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub enum BLSOp {
-    PushVote { vote: Arc<VoteMessage> },
-    PushCertificates { certificates: Vec<Arc<Certificate>> },
-    RefreshVotes { votes: Vec<Arc<VoteMessage>> },
-    RefreshCertificates { certificates: Vec<Arc<Certificate>> },
+    PushVote {
+        vote: Arc<VoteMessage>,
+    },
+    /// Send a vote to only some peers. Used by test-only Byzantine behavior.
+    PushVoteTo {
+        vote: Arc<VoteMessage>,
+        targets: EgressTargets,
+    },
+    PushCertificates {
+        certificates: Vec<Arc<Certificate>>,
+    },
+    RefreshVotes {
+        votes: Vec<Arc<VoteMessage>>,
+    },
+    RefreshCertificates {
+        certificates: Vec<Arc<Certificate>>,
+    },
 }
 
 #[derive(Debug)]
@@ -203,7 +217,7 @@ impl VotingService {
     pub fn new(
         bls_receiver: Receiver<BLSOp>,
         cluster_info: Arc<ClusterInfo>,
-        egress: mpsc::Sender<Bytes>,
+        egress: mpsc::Sender<Egress>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     ) -> Self {
         let mut standstill_queue = StandstillRefreshQueue::default();
@@ -237,7 +251,7 @@ impl VotingService {
         standstill_queue: &mut StandstillRefreshQueue,
         highest_finalized: &RwLock<Option<ValidatedBlockFinalizationCert>>,
         cluster_info: &ClusterInfo,
-        egress: &mpsc::Sender<Bytes>,
+        egress: &mpsc::Sender<Egress>,
     ) {
         if !standstill_queue.should_refresh() {
             return;
@@ -284,7 +298,17 @@ impl VotingService {
     /// endpoint fans it out to every connected peer.
     fn broadcast_consensus_message(
         message: &VersionedWireConsensusMessage,
-        egress: &mpsc::Sender<Bytes>,
+        egress: &mpsc::Sender<Egress>,
+    ) {
+        Self::send_consensus_message(message, EgressTargets::All, egress);
+    }
+
+    /// Serialize a consensus message and hand it to the endpoint, which sends it to
+    /// the connected peers in `targets`.
+    fn send_consensus_message(
+        message: &VersionedWireConsensusMessage,
+        targets: EgressTargets,
+        egress: &mpsc::Sender<Egress>,
     ) {
         let buf = match wincode::serialize(message) {
             Ok(buf) => Bytes::from(buf),
@@ -296,7 +320,10 @@ impl VotingService {
 
         // Drop on full / closed channel: votor consensus tolerates loss, we
         // never want to backpressure into consensus, but will shout loudly.
-        match egress.try_send(buf) {
+        match egress.try_send(Egress {
+            payload: buf,
+            targets,
+        }) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
                 error!("alpenglow transport egress channel full; dropping votes/certs!");
@@ -311,7 +338,7 @@ impl VotingService {
     fn handle_bls_op(
         cluster_info: &ClusterInfo,
         bls_op: BLSOp,
-        egress: &mpsc::Sender<Bytes>,
+        egress: &mpsc::Sender<Egress>,
         standstill_queue: &mut StandstillRefreshQueue,
     ) {
         match bls_op {
@@ -321,6 +348,13 @@ impl VotingService {
                     cluster_info.my_shred_version(),
                 );
                 Self::broadcast_consensus_message(&msg, egress);
+            }
+            BLSOp::PushVoteTo { vote, targets } => {
+                let msg = VersionedWireConsensusMessage::new_from_vote(
+                    Arc::unwrap_or_clone(vote),
+                    cluster_info.my_shred_version(),
+                );
+                Self::send_consensus_message(&msg, targets, egress);
             }
             BLSOp::PushCertificates { certificates } => {
                 for certificate in certificates {
@@ -553,7 +587,7 @@ mod tests {
         peer_list_receiver: PeerListReceiver,
     ) -> (
         QuicDatagramEndpoint,
-        mpsc::Sender<Bytes>,
+        mpsc::Sender<Egress>,
         Receiver<Datagram>,
         SocketAddr,
         Runtime,
@@ -586,7 +620,7 @@ mod tests {
     fn create_voting_service(
         bls_receiver: Receiver<BLSOp>,
         spy_listener: (Pubkey, SocketAddr),
-        egress: mpsc::Sender<Bytes>,
+        egress: mpsc::Sender<Egress>,
         peer_list: PeerListSender,
     ) -> (
         VotingService,
@@ -698,7 +732,7 @@ mod tests {
         let warmup = Bytes::from_static(b"warmup");
         let warmup_deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let _ = egress.try_send(warmup.clone());
+            let _ = egress.try_send(warmup.clone().into());
             if ingress_rx.recv_timeout(Duration::from_millis(50)).is_ok() {
                 break;
             }
