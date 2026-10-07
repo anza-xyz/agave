@@ -97,7 +97,6 @@ solana-vote-interface = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-serde = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-entry = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
@@ -107,6 +106,7 @@ solana-slot-history = { workspace = true }
 solana-stake-history = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
+solana-sysvar-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sysvar-id = { workspace = true }
 solana-vote-program = { workspace = true }
 

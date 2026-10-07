@@ -62,6 +62,7 @@ zstd = { workspace = true }
 assert_matches = { workspace = true }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-sysvar-account = { workspace = true, features = ["dev-context-only-utils"] }
 
 [lints]
 workspace = true

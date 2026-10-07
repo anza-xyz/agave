@@ -158,6 +158,7 @@ solana-system-interface = "3.2"
 solana-system-program = { path = "../programs/system", version = "=4.5.0-alpha.1", features = ["agave-unstable-api"] }
 solana-system-transaction = "5.0.0"
 solana-sysvar = "5.0.0"
+solana-sysvar-account = { path = "../sysvar-account" }
 solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "../test-validator", version = "=4.5.0-alpha.1" }
 solana-time-utils = "3.0.0"

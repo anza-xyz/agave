@@ -1178,7 +1178,7 @@ mod tests {
         solana_sdk_ids::{system_program, sysvar},
         solana_svm_feature_set::SVMFeatureSet,
         solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
-        solana_sysvar_id::SysvarId,
+        solana_sysvar_account::create_sysvar_account,
         std::{fs::File, io::Read, ops::Range},
         test_case::test_case,
     };
@@ -1202,23 +1202,6 @@ mod tests {
             set_programdata_to_elf_length,
         } = loader_v3_features;
         feature_set.loader_v3_set_program_data_to_elf_length = set_programdata_to_elf_length;
-    }
-
-    fn create_sysvar_account<T>(value: &T) -> AccountSharedData
-    where
-        T: wincode::Serialize<Src = T> + SysvarId,
-    {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
-        let canonical_data_len = match T::id() {
-            sysvar::clock::ID => solana_clock::SIZE,
-            sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
-            sysvar::rent::ID => solana_rent::SIZE,
-            id => panic!("unsupported sysvar: {id}"),
-        };
-        let required_data_len = canonical_data_len.max(serialized_len);
-        let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
     }
 
     // 10 iterations is intentionally low: `mock_process_instruction` runs on a

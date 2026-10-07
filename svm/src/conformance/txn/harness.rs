@@ -216,6 +216,7 @@ mod tests {
         solana_sdk_ids::{system_program, sysvar},
         solana_system_interface::instruction::transfer,
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_TRANSFER_CUS,
+        solana_sysvar_account::create_sysvar_account,
         std::borrow::Cow,
         test_case::test_case,
     };
@@ -384,17 +385,11 @@ mod tests {
             (payer, Account::new(5_000_000, 0, &system_program::id())),
             (
                 clock_pubkey,
-                Account {
-                    lamports: 1,
-                    data: wincode::serialize(&Clock {
-                        slot: 1,
-                        ..Clock::default()
-                    })
-                    .unwrap(),
-                    owner: sysvar::id(),
-                    executable: false,
-                    rent_epoch: 0,
-                },
+                create_sysvar_account(&Clock {
+                    slot: 1,
+                    ..Clock::default()
+                })
+                .into(),
             ),
         ]);
         let message =

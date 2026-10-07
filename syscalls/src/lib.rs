@@ -2871,7 +2871,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         core::slice,
-        solana_account::{AccountSharedData, WritableAccount},
+        solana_account::AccountSharedData,
         solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
@@ -2896,7 +2896,7 @@ mod tests {
             vm::Config,
         },
         solana_sdk_ids::{
-            bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader, sysvar,
+            bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader,
         },
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
@@ -2904,6 +2904,7 @@ mod tests {
         solana_stake_history::{
             SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
         },
+        solana_sysvar_account::keyed_sysvar_account,
         solana_sysvar_id::SysvarId,
         solana_transaction_context::instruction_accounts::InstructionAccount,
         std::{
@@ -2913,17 +2914,6 @@ mod tests {
         },
         test_case::test_case,
     };
-
-    fn create_account_shared_data_for_test<T>(value: &T, data_len: usize) -> AccountSharedData
-    where
-        T: wincode::Serialize<Src = T>,
-    {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
-        let data_len = data_len.max(serialized_len);
-        let mut account = AccountSharedData::new(1, data_len, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
-    }
 
     macro_rules! assert_access_violation {
         ($result:expr, $va:expr, $len:expr) => {
@@ -4357,33 +4347,12 @@ mod tests {
         src_restart.last_restart_slot = 1;
 
         let transaction_accounts = vec![
-            (
-                sysvar::clock::id(),
-                create_account_shared_data_for_test(&src_clock, solana_clock::SIZE),
-            ),
-            (
-                sysvar::epoch_schedule::id(),
-                create_account_shared_data_for_test(
-                    &src_epochschedule,
-                    solana_epoch_schedule::SIZE,
-                ),
-            ),
-            (
-                sysvar::fees::id(),
-                create_account_shared_data_for_test(&src_fees, solana_sysvar::fees::SIZE),
-            ),
-            (
-                sysvar::rent::id(),
-                create_account_shared_data_for_test(&src_rent, solana_sysvar::rent::SIZE),
-            ),
-            (
-                sysvar::epoch_rewards::id(),
-                create_account_shared_data_for_test(&src_rewards, solana_epoch_rewards::SIZE),
-            ),
-            (
-                sysvar::last_restart_slot::id(),
-                create_account_shared_data_for_test(&src_restart, solana_last_restart_slot::SIZE),
-            ),
+            keyed_sysvar_account(&src_clock),
+            keyed_sysvar_account(&src_epochschedule),
+            keyed_sysvar_account(&src_fees),
+            keyed_sysvar_account(&src_rent),
+            keyed_sysvar_account(&src_rewards),
+            keyed_sysvar_account(&src_restart),
         ];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
@@ -4753,10 +4722,7 @@ mod tests {
 
         let src_history = src_history;
 
-        let transaction_accounts = vec![(
-            sysvar::stake_history::id(),
-            create_account_shared_data_for_test(&src_history, STAKE_HISTORY_ACCOUNT_SIZE),
-        )];
+        let transaction_accounts = vec![keyed_sysvar_account(&src_history)];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
         {
@@ -4817,10 +4783,7 @@ mod tests {
         let mut src_hashes_buf = vec![0; solana_slot_hashes::SIZE];
         wincode::serialize_into(&mut src_hashes_buf, &src_hashes).unwrap();
 
-        let transaction_accounts = vec![(
-            sysvar::slot_hashes::id(),
-            create_account_shared_data_for_test(&src_hashes, solana_slot_hashes::SIZE),
-        )];
+        let transaction_accounts = vec![keyed_sysvar_account(&src_hashes)];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
         {
@@ -4989,10 +4952,7 @@ mod tests {
         }
 
         {
-            let transaction_accounts = vec![(
-                sysvar::clock::id(),
-                create_account_shared_data_for_test(&src_clock, solana_clock::SIZE),
-            )];
+            let transaction_accounts = vec![keyed_sysvar_account(&src_clock)];
             let memory_mapping = unsafe {
                 MemoryMapping::new(
                     vec![
