@@ -12715,6 +12715,41 @@ fn test_failed_simulation_load_error() {
 }
 
 #[test]
+fn test_failed_simulation_load_error_returns_rollback_accounts() {
+    let (mut genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5_000, 0);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let missing_program_id = Pubkey::new_unique();
+    let message = Message::new(
+        &[Instruction::new_with_wincode(
+            missing_program_id,
+            &0,
+            vec![],
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+
+    bank.freeze();
+    let fee_payer = mint_keypair.pubkey();
+    let fee_payer_balance = bank.get_balance(&fee_payer);
+    let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
+    let simulation = bank.simulate_transaction(&sanitized, false);
+
+    assert_eq!(
+        simulation.result,
+        Err(TransactionError::ProgramAccountNotFound)
+    );
+    assert_eq!(simulation.fee, Some(5_000));
+    assert_eq!(simulation.post_simulation_accounts.len(), 1);
+    let (account_address, account) = &simulation.post_simulation_accounts[0];
+    assert_eq!(*account_address, fee_payer);
+    assert_eq!(account.lamports(), fee_payer_balance - 5_000);
+    assert_eq!(bank.get_balance(&fee_payer), fee_payer_balance);
+}
+
+#[test]
 fn test_filter_program_errors_and_collect_fee_details() {
     // TX  | PROCESSING RESULT           | COLLECT            | COLLECT
     //     |                             | (TX_FEE, PRIO_FEE) | RESULT
