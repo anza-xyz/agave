@@ -7496,7 +7496,7 @@ fn test_purge_transaction_history_before_missing_shred_and_update_parent() {
         slot,
         original_parent,
         update_parent,
-        Hash::new_unique(),
+        BlockId::new_unique(),
         update_parent_fec_set_index,
         false,
     ));
@@ -7579,7 +7579,6 @@ fn test_purge_transaction_history_before_malformed_component_and_update_parent(
                 Hash::new_unique(),
                 malformed_fec_set_index,
                 malformed_fec_set_index,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .unwrap(),
@@ -7588,7 +7587,7 @@ fn test_purge_transaction_history_before_malformed_component_and_update_parent(
         slot,
         original_parent,
         update_parent,
-        Hash::new_unique(),
+        BlockId::new_unique(),
         update_parent_fec_set_index,
         false,
     ));
@@ -7663,7 +7662,6 @@ fn test_purge_switch_bank_transaction_history_before_malformed_component(
                 Hash::new_unique(),
                 malformed_fec_set_index,
                 malformed_fec_set_index,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .unwrap(),
