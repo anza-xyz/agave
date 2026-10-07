@@ -69,6 +69,18 @@ const LEDGER_NANO_GEN5_PIDS: [u16; 33] = [
 ];
 const LEDGER_TRANSPORT_HEADER_LEN: usize = 5;
 
+/// Number of bytes expected from a nano model's configuration response
+///
+/// Bytes of the app-configuration vector that are actually read: blind-signing
+/// flag, pubkey display mode, then major, minor and patch.
+const NANO_APP_CONFIGURATION_LEN: usize = 5;
+
+/// Number of bytes expected from a wallet-screen model's configuration response
+///
+/// Bytes of the app-configuration vector that are actually read: blind-signing
+/// flag, pubkey display mode, then major, minor and patch.
+const WALLET_SCREEN_APP_CONFIGURATION_LEN: usize = 7;
+
 const HID_PACKET_SIZE: usize = 64 + HID_PREFIX_ZERO;
 
 #[cfg(windows)]
@@ -86,9 +98,9 @@ mod commands {
     pub const SIGN_OFFCHAIN_MESSAGE: u8 = 0x07;
 }
 
-enum ConfigurationVersion {
-    Deprecated(Vec<u8>),
-    Current(Vec<u8>),
+struct Configuration {
+    settings: LedgerSettings,
+    firmware_version: FirmwareVersion,
 }
 
 #[derive(Debug)]
@@ -101,6 +113,8 @@ pub enum PubkeyDisplayMode {
 pub struct LedgerSettings {
     pub enable_blind_signing: bool,
     pub pubkey_display: PubkeyDisplayMode,
+    pub transaction_check_opt_in_seen: bool,
+    pub enable_transaction_check: bool,
 }
 
 /// Ledger Wallet device
@@ -313,50 +327,72 @@ impl LedgerWallet {
     }
 
     fn get_firmware_version(&self) -> Result<FirmwareVersion, RemoteWalletError> {
-        self.get_configuration_vector().map(|config| match config {
-            ConfigurationVersion::Current(config) => {
-                FirmwareVersion::new(config[2].into(), config[3].into(), config[4].into())
-            }
-            ConfigurationVersion::Deprecated(config) => {
-                FirmwareVersion::new(config[1].into(), config[2].into(), config[3].into())
-            }
-        })
+        self.get_configuration()
+            .map(|config| config.firmware_version)
     }
 
     pub fn get_settings(&self) -> Result<LedgerSettings, RemoteWalletError> {
-        self.get_configuration_vector().map(|config| match config {
-            ConfigurationVersion::Current(config) => {
-                let enable_blind_signing = config[0] != 0;
-                let pubkey_display = if config[1] == 0 {
-                    PubkeyDisplayMode::Long
-                } else {
-                    PubkeyDisplayMode::Short
-                };
-                LedgerSettings {
-                    enable_blind_signing,
-                    pubkey_display,
-                }
-            }
-            ConfigurationVersion::Deprecated(_) => LedgerSettings {
-                enable_blind_signing: false,
-                pubkey_display: PubkeyDisplayMode::Short,
-            },
-        })
+        self.get_configuration().map(|config| config.settings)
     }
 
-    fn get_configuration_vector(&self) -> Result<ConfigurationVersion, RemoteWalletError> {
+    fn get_configuration(&self) -> Result<Configuration, RemoteWalletError> {
         if let Ok(config) = self._send_apdu(commands::GET_APP_CONFIGURATION, 0, 0, &[], false) {
-            if config.len() != 5 {
-                return Err(RemoteWalletError::Protocol("Version packet size mismatch"));
+            match config.len() {
+                WALLET_SCREEN_APP_CONFIGURATION_LEN => Ok(Configuration {
+                    settings: LedgerSettings {
+                        enable_blind_signing: config[0] != 0,
+                        pubkey_display: if config[1] == 0 {
+                            PubkeyDisplayMode::Long
+                        } else {
+                            PubkeyDisplayMode::Short
+                        },
+                        transaction_check_opt_in_seen: config[5] != 0,
+                        enable_transaction_check: config[6] != 0,
+                    },
+                    firmware_version: FirmwareVersion::new(
+                        config[2].into(),
+                        config[3].into(),
+                        config[4].into(),
+                    ),
+                }),
+                NANO_APP_CONFIGURATION_LEN => Ok(Configuration {
+                    settings: LedgerSettings {
+                        enable_blind_signing: config[0] != 0,
+                        pubkey_display: if config[1] == 0 {
+                            PubkeyDisplayMode::Long
+                        } else {
+                            PubkeyDisplayMode::Short
+                        },
+                        transaction_check_opt_in_seen: false,
+                        enable_transaction_check: false,
+                    },
+                    firmware_version: FirmwareVersion::new(
+                        config[2].into(),
+                        config[3].into(),
+                        config[4].into(),
+                    ),
+                }),
+                _ => Err(RemoteWalletError::Protocol("Version packet size mismatch")),
             }
-            Ok(ConfigurationVersion::Current(config))
         } else {
             let config =
                 self._send_apdu(commands::DEPRECATED_GET_APP_CONFIGURATION, 0, 0, &[], true)?;
             if config.len() != 4 {
                 return Err(RemoteWalletError::Protocol("Version packet size mismatch"));
             }
-            Ok(ConfigurationVersion::Deprecated(config))
+            Ok(Configuration {
+                settings: LedgerSettings {
+                    enable_blind_signing: false,
+                    pubkey_display: PubkeyDisplayMode::Short,
+                    transaction_check_opt_in_seen: false,
+                    enable_transaction_check: false,
+                },
+                firmware_version: FirmwareVersion::new(
+                    config[1].into(),
+                    config[2].into(),
+                    config[3].into(),
+                ),
+            })
         }
     }
 
