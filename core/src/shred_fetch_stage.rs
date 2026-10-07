@@ -33,15 +33,12 @@ pub(crate) struct ShredFetchStage {
 /// to future proof for increases of CU limits (e.g., a future 100k CU limit).
 pub(crate) const SHRED_FETCH_CHANNEL_SIZE: usize = 1024 * 64;
 
-<<<<<<< HEAD
-#[derive(Clone)]
-=======
 /// Ingress limit for the repair-response fetch channel (in terms of packet _batches_).
 ///
 /// Sized so that a full queue of requests always drains within ~400ms.
 const REPAIR_FETCH_CHANNEL_SIZE: usize = 128;
 
->>>>>>> 7703005 (repair: reduce bufferbloat (#15495))
+#[derive(Clone)]
 struct RepairContext {
     repair_socket: Arc<UdpSocket>,
     cluster_info: Arc<ClusterInfo>,
@@ -149,9 +146,9 @@ impl ShredFetchStage {
         turbine_mode: TurbineMode,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let channel_size = match &ingress {
-            ShredIngress::Turbine => SHRED_FETCH_CHANNEL_SIZE,
-            ShredIngress::Repair(_) => REPAIR_FETCH_CHANNEL_SIZE,
+        let channel_size = match &repair_context {
+            None => SHRED_FETCH_CHANNEL_SIZE,
+            Some(_) => REPAIR_FETCH_CHANNEL_SIZE,
         };
         let (packet_sender, packet_receiver) = EvictingSender::new_bounded(channel_size);
         let receiver_stats = Arc::new(StreamerReceiveStats::new(receiver_name));
