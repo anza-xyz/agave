@@ -44,7 +44,9 @@ use {
         bank::{Bank, NewBankOptions},
         bank_forks::{BankForks, SharableBanks},
         bank_forks_controller::{BankForksController, BankForksControllerError},
-        block_component_processor::BlockComponentProcessor,
+        block_component_processor::{
+            BlockComponentProcessor, vote_reward::VoteAccountsUpdateStats,
+        },
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
         validated_reward_certificate::ValidatedRewardCert,
@@ -862,8 +864,20 @@ fn record_and_complete_block(
             reward_cert,
             final_cert_input,
         )?;
-        slot_metrics.vote_accounts_update_us = vote_account_update_stats.update_us;
-        slot_metrics.vote_accounts_updated = vote_account_update_stats.vote_accounts_updated;
+        if let Some(VoteAccountsUpdateStats {
+            update_us,
+            num_accounts_updated,
+            load_accounts_us,
+            serialize_accounts_us,
+            store_accounts_us,
+        }) = vote_account_update_stats
+        {
+            slot_metrics.vote_accounts_update_us = update_us;
+            slot_metrics.vote_accounts_updated = num_accounts_updated;
+            slot_metrics.load_accounts_us = load_accounts_us;
+            slot_metrics.serialize_accounts_us = serialize_accounts_us;
+            slot_metrics.store_accounts_us = store_accounts_us;
+        }
         footer
     };
 

@@ -5,6 +5,7 @@ use {
     log::info,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
+    solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH,
     solana_vote::vote_account::VoteAccount,
@@ -378,14 +379,21 @@ fn update_accounts(
     vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
     mut updated_accounts: HashMap<Pubkey, VoteState>,
     validators: impl Iterator<Item = Pubkey>,
-) -> Result<(Vec<(Pubkey, AccountSharedData)>, usize), CalcVoteRewardUpdateVoteStatesError> {
+) -> Result<
+    (Vec<(Pubkey, AccountSharedData)>, VoteAccountsUpdateStats),
+    CalcVoteRewardUpdateVoteStatesError,
+> {
     let mut leader_reward = 0;
     let mut num_vote_accounts = 0;
+    let mut load_vote_accounts_us = 0;
     for validator in validators {
         num_vote_accounts += 1;
+        let mut load_time = Measure::start("load");
         let Some(mut vote_state) = VoteState::try_new(vote_accounts, validator) else {
             continue;
         };
+        load_time.stop();
+        load_vote_accounts_us += load_time.as_us();
         let account_updated = match (reward_state, final_cert_state) {
             (None, None) => false,
             (Some(state), None) => state.update_account(&mut vote_state, &mut leader_reward)?,
@@ -421,28 +429,63 @@ fn update_accounts(
         }
     }
 
+    let mut serialize_measure = Measure::start("serialize");
+    let accounts = updated_accounts
+        .into_values()
+        .filter_map(|vote_state| vote_state.serialize())
+        .collect();
+    serialize_measure.stop();
+
     Ok((
-        updated_accounts
-            .into_values()
-            .filter_map(|vote_state| vote_state.serialize())
-            .collect(),
-        num_vote_accounts,
+        accounts,
+        VoteAccountsUpdateStats {
+            update_us: 0,
+            num_accounts_updated: num_vote_accounts,
+            load_accounts_us: load_vote_accounts_us,
+            serialize_accounts_us: serialize_measure.as_us(),
+            store_accounts_us: 0,
+        },
     ))
 }
 
-/// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
-/// based on the calculated rewards and the `final_cert_input`.
-///
-/// Returns number of vote accounts updated.
-pub(super) fn calc_vote_rewards_update_vote_states(
+pub struct VoteAccountsUpdateStats {
+    pub update_us: u64,
+    pub num_accounts_updated: usize,
+    pub load_accounts_us: u64,
+    pub serialize_accounts_us: u64,
+    pub store_accounts_us: u64,
+}
+
+pub(super) fn update_vote_accounts(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
     final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
     block_producer_time_nanos: i64,
-) -> Result<usize, CalcVoteRewardUpdateVoteStatesError> {
+) -> Result<Option<VoteAccountsUpdateStats>, CalcVoteRewardUpdateVoteStatesError> {
+    let (mut vote_account_update_stats, update_us) =
+        measure_us!(calc_vote_rewards_update_vote_states(
+            bank,
+            reward_cert,
+            final_cert_input,
+            block_producer_time_nanos,
+        )?);
+    if let Some(stats) = vote_account_update_stats.as_mut() {
+        stats.update_us = update_us;
+    }
+    Ok(vote_account_update_stats)
+}
+
+/// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
+/// based on the calculated rewards and the `final_cert_input`.
+fn calc_vote_rewards_update_vote_states(
+    bank: &Bank,
+    reward_cert: Option<ValidatedRewardCert>,
+    final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
+    block_producer_time_nanos: i64,
+) -> Result<Option<VoteAccountsUpdateStats>, CalcVoteRewardUpdateVoteStatesError> {
     let Some(updated_accounts) = allocate_updated_accounts(bank, &reward_cert, &final_cert_input)?
     else {
-        return Ok(0);
+        return Ok(None);
     };
     let reward_state = match &reward_cert {
         Some(c) => Some(RewardState::try_new(
@@ -458,8 +501,9 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     });
     let vote_accounts = bank.vote_accounts();
 
-    let (updated_accounts, num_vote_accounts_updated) = match (&reward_state, &final_cert_state) {
-        (None, None) => return Ok(0),
+    let (updated_accounts, mut vote_account_update_stats) = match (&reward_state, &final_cert_state)
+    {
+        (None, None) => return Ok(None),
         (Some(state), None) => update_accounts(
             &reward_state,
             &final_cert_state,
@@ -483,8 +527,10 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         )?,
     };
 
-    bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
-    Ok(num_vote_accounts_updated)
+    let ((), store_accounts_us) =
+        measure_us!(bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None));
+    vote_account_update_stats.store_accounts_us = store_accounts_us;
+    Ok(Some(vote_account_update_stats))
 }
 
 /// Computes the voting reward in Lamports.

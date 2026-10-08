@@ -118,6 +118,9 @@ pub(crate) struct SlotMetrics {
     pub(super) reward_certs_skipped: u64,
     pub(super) vote_accounts_update_us: u64,
     pub(super) vote_accounts_updated: usize,
+    pub(super) load_accounts_us: u64,
+    pub(super) serialize_accounts_us: u64,
+    pub(super) store_accounts_us: u64,
 }
 
 impl SlotMetrics {
@@ -133,6 +136,9 @@ impl SlotMetrics {
             reward_certs_skipped: 0,
             vote_accounts_update_us: 0,
             vote_accounts_updated: 0,
+            load_accounts_us: 0,
+            serialize_accounts_us: 0,
+            store_accounts_us: 0,
         }
     }
 
@@ -148,6 +154,9 @@ impl SlotMetrics {
             reward_certs_skipped,
             vote_accounts_update_us,
             vote_accounts_updated,
+            load_accounts_us,
+            serialize_accounts_us,
+            store_accounts_us,
         } = self;
         datapoint_info!(
             "slot-metrics",
@@ -161,6 +170,9 @@ impl SlotMetrics {
             ("reward_certs_skipped", reward_certs_skipped, i64),
             ("vote_accounts_update_us", vote_accounts_update_us, i64),
             ("vote_accounts_updated", vote_accounts_updated, i64),
+            ("load_accounts_us", load_accounts_us, i64),
+            ("serialize_accounts_us", serialize_accounts_us, i64),
+            ("store_accounts_us", store_accounts_us, i64),
         );
     }
 }

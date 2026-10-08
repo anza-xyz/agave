@@ -2,7 +2,7 @@ use {
     crate::{
         bank::Bank,
         block_component_processor::vote_reward::{
-            CalcVoteRewardUpdateVoteStatesError, calc_vote_rewards_update_vote_states,
+            CalcVoteRewardUpdateVoteStatesError, VoteAccountsUpdateStats, update_vote_accounts,
         },
         leader_schedule_utils::leader_slot_index,
         validated_block_finalization::{
@@ -29,13 +29,12 @@ use {
         entry::EntryView,
     },
     solana_hash::Hash,
-    solana_measure::measure_us,
     solana_pubkey::Pubkey,
     std::{collections::HashSet, sync::Arc},
     thiserror::Error,
 };
 
-pub(crate) mod vote_reward;
+pub mod vote_reward;
 
 #[derive(Debug, Error)]
 pub enum BankFooterError {
@@ -774,29 +773,21 @@ impl BlockComponentProcessor {
         bank_hash: Option<Hash>,
         reward_cert: Option<ValidatedRewardCert>,
         final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
-    ) -> Result<VoteAccountUpdateStats, BankFooterError> {
+    ) -> Result<Option<VoteAccountsUpdateStats>, BankFooterError> {
         bank.update_clock_from_footer(block_producer_time_nanos);
-        let (vote_accounts_updated, update_us) = measure_us!(calc_vote_rewards_update_vote_states(
+        let vote_account_update_stats = update_vote_accounts(
             bank,
             reward_cert,
             final_cert_input,
             block_producer_time_nanos,
-        )?);
+        )?;
 
         if let Some(hash) = bank_hash {
             // Record expected bank hash from footer for later verification when the bank is frozen.
             bank.set_expected_bank_hash(hash);
         }
-        Ok(VoteAccountUpdateStats {
-            update_us,
-            vote_accounts_updated,
-        })
+        Ok(vote_account_update_stats)
     }
-}
-
-pub struct VoteAccountUpdateStats {
-    pub update_us: u64,
-    pub vote_accounts_updated: usize,
 }
 
 #[cfg(test)]
