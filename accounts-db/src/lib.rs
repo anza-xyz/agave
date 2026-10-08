@@ -33,7 +33,6 @@ pub mod pubkey_bins;
 pub mod read_only_accounts_cache;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod read_only_accounts_cache;
-mod rolling_bit_field;
 mod split_file;
 pub mod stake_rewards;
 pub mod storable_accounts;

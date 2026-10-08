@@ -4173,7 +4173,8 @@ impl Bank {
                 .unwrap_or_default();
             if slot_history.check(self.slot()) == Check::Found {
                 let mut ancestors = self.ancestors.clone();
-                ancestors.remove(&self.slot());
+                let removed = ancestors.remove_max_slot();
+                debug_assert_eq!(removed, Some(self.slot()));
                 if let Some((account, _)) =
                     self.load_slow_with_fixed_root(&ancestors, &slot_history_id)
                 {
