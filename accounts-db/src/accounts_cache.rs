@@ -340,18 +340,15 @@ impl AccountsCache {
         // Exit early if the pubkey isn't in the cache
         let index_max_slot = self.index.max_slot_for_pubkey(pubkey)?;
 
-        // Ancestors take priority over roots regardless of slot. Iterate every slot in the
-        // range in descending order and return the first (highest) ancestor that has it.
-        if let Some(ancestors_min_slot) = ancestors.min_slot() {
-            // Bound the search to ancestors.max_slot() as slots > than ancestors max_slot
-            // are not visible to the querying bank.
-            let max_slot = ancestors.max_slot().min(index_max_slot);
-            for slot in (ancestors_min_slot..=max_slot).rev() {
-                if ancestors.contains_key(&slot)
-                    && let Some(account) = self.load(slot, pubkey)
-                {
-                    return Some((account, slot));
-                }
+        // Ancestors take priority over roots regardless of slot. Walk them in descending order,
+        // skipping those above the newest cached version, and return the first (highest) that has it.
+        for slot in ancestors
+            .iter()
+            .rev()
+            .skip_while(|slot| *slot > index_max_slot)
+        {
+            if let Some(account) = self.load(slot, pubkey) {
+                return Some((account, slot));
             }
         }
 

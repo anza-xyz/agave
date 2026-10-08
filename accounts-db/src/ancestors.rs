@@ -44,7 +44,7 @@ impl Ancestors {
         self.iter().collect()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = Slot> + '_ {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = Slot> + '_ {
         self.ancestors.iter().map(|(slot, _bank_id)| *slot)
     }
 
