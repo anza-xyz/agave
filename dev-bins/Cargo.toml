@@ -169,7 +169,7 @@ solana-transaction-status = { path = "../transaction-status", version = "=4.5.0-
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-version = { path = "../version", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-vote = { path = "../vote", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-vote-interface = "7.1.0"
+solana-vote-interface = "7.2.0"
 solana-vote-program = { path = "../programs/vote", version = "=4.5.0-alpha.2", default-features = false, features = ["agave-unstable-api"] }
 tempfile = "3.23.0"
 test-case = "3.4.0"
