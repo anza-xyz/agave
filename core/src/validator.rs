@@ -622,6 +622,7 @@ struct TransactionHistoryServices {
     transaction_status_sender: Option<TransactionStatusSender>,
     transaction_status_service: Option<TransactionStatusService>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
+    max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
 }
 
 /// A struct easing passing Validator TPU Configurations
@@ -963,6 +964,7 @@ impl Validator {
                 transaction_status_sender,
                 transaction_status_service,
                 max_complete_transaction_status_slot,
+                max_complete_and_rooted_transaction_status_slot,
             },
             blockstore_process_options,
             blockstore_root_scan,
@@ -1340,6 +1342,8 @@ impl Validator {
                 max_slots: max_slots.clone(),
                 leader_schedule_cache: leader_schedule_cache.clone(),
                 max_complete_transaction_status_slot: max_complete_transaction_status_slot.clone(),
+                max_complete_and_rooted_transaction_status_slot:
+                    max_complete_and_rooted_transaction_status_slot.clone(),
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 rpc_tpu_client_args,
             };
@@ -1348,6 +1352,7 @@ impl Validator {
             let rpc_subscriptions = Arc::new(RpcSubscriptions::new_with_config(
                 exit.clone(),
                 max_complete_transaction_status_slot,
+                max_complete_and_rooted_transaction_status_slot,
                 blockstore.clone(),
                 bank_forks.clone(),
                 block_commitment_cache.clone(),
@@ -2980,6 +2985,8 @@ fn initialize_rpc_transaction_history_services(
     dependency_tracker: Option<Arc<DependencyTracker>>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
+    let max_complete_and_rooted_transaction_status_slot =
+        Arc::new(AtomicU64::new(blockstore.max_root()));
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
     let transaction_status_sender = Some(TransactionStatusSender {
         sender: transaction_status_sender,
@@ -2988,6 +2995,7 @@ fn initialize_rpc_transaction_history_services(
     let transaction_status_service = Some(TransactionStatusService::new(
         transaction_status_receiver,
         max_complete_transaction_status_slot.clone(),
+        max_complete_and_rooted_transaction_status_slot.clone(),
         enable_rpc_transaction_history,
         transaction_notifier,
         blockstore,
@@ -3000,6 +3008,7 @@ fn initialize_rpc_transaction_history_services(
         transaction_status_sender,
         transaction_status_service,
         max_complete_transaction_status_slot,
+        max_complete_and_rooted_transaction_status_slot,
     }
 }
 
