@@ -76,7 +76,7 @@ impl Bank {
             })
         });
         self.accounts_lt_hash_async_progress
-            .enqueue_for_dedup(updates);
+            .enqueue_for_dedup(accounts.len(), updates);
 
         // reclaim the seen accounts hashset
         seen_accounts_freelist.try_push(seen_accounts);
@@ -285,21 +285,30 @@ impl AccountsLtHashAsyncProgress {
     ///
     /// Returns without waiting for the hashing. The manager dedups updates across
     /// calls and spawns them once per dedup interval, or on `finish()`, which forces
-    /// a queue flush.
+    /// a queue flush. `updates` must hold at most `max_updates_count` updates.
     fn enqueue_for_dedup(
         self: &Arc<Self>,
+        max_updates_count: usize,
         updates: impl IntoIterator<Item = AccountsLtHashUpdate>,
     ) {
+        // Count first, so a worker cannot drive the pending count below zero.
+        // Transaction processing threads all write this count, so they bump it
+        // once per call rather than once per update.
+        self.num_jobs_pending
+            .fetch_add(max_updates_count, Ordering::Relaxed);
         let manager = accounts_lt_hash_manager();
         let mut num_enqueued = 0;
         for update in updates {
-            // Count first, so a worker cannot drive the pending count below zero.
-            self.num_jobs_pending.fetch_add(1, Ordering::Relaxed);
             manager.queue.push(QueuedAccountsLtHashUpdate {
                 async_progress: Arc::clone(self),
                 inner: update,
             });
             num_enqueued += 1;
+        }
+        let num_skipped = max_updates_count - num_enqueued;
+        if num_skipped > 0 {
+            self.num_jobs_pending
+                .fetch_sub(num_skipped, Ordering::Relaxed);
         }
 
         // Wake up the manager in case updates were enqueued and banks are waiting.
@@ -1369,7 +1378,7 @@ mod tests {
             if spawn {
                 async_progress.spawn_deduped(updates);
             } else {
-                async_progress.enqueue_for_dedup(updates);
+                async_progress.enqueue_for_dedup(updates.len(), updates);
             }
         }
 
