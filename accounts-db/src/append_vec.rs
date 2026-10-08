@@ -913,7 +913,6 @@ impl AppendVec {
     ) -> Option<StoredAccountsInfo> {
         let _lock = self.read_write_state.append_guard();
         let mut offset = align_offset(self.len() as FileOffset);
-        let mut end_of_data = self.len() as FileOffset;
         // Appends require the appender to control the file cursor. Reads use positional I/O, so
         // they leave the cursor untouched.
         (&self.file)
@@ -935,9 +934,8 @@ impl AppendVec {
         let mut offsets = Vec::with_capacity(offsets_len);
         for i in 0..len {
             let appended = accounts.account_default_if_zero_lamport(i, |account| {
-                let data_len = account.data().len();
-                let unaligned_end = offset + (STORE_META_OVERHEAD + data_len) as FileOffset;
-                if unaligned_end > self.file_size {
+                let stored_size = Self::calculate_stored_size(account.data().len()) as FileOffset;
+                if offset + stored_size > self.file_size {
                     return false;
                 }
                 appender
@@ -951,8 +949,7 @@ impl AppendVec {
                     })
                     .expect("must append data to append_vec");
                 offsets.push(offset);
-                offset += Self::calculate_stored_size(data_len) as FileOffset;
-                end_of_data = unaligned_end;
+                offset += stored_size;
                 true
             });
             if !appended {
@@ -962,8 +959,7 @@ impl AppendVec {
 
         // Readers must see the appended data before it's included in `current_len`
         appender.flush().expect("must flush data to append_vec");
-        self.current_len
-            .store(end_of_data as usize, Ordering::Release);
+        self.current_len.store(offset as usize, Ordering::Release);
 
         if !offsets.is_empty() {
             // If we've actually written to the AppendVec, make sure we mark it as dirty.
@@ -1333,12 +1329,11 @@ mod tests {
         let data_len = 1;
         let account = create_test_account(data_len);
         let index = av.append_account_test(&account).unwrap();
-        // make the append vec 1 byte too short. we should get `None` since the append vec was truncated
-        assert_eq!(
-            STORE_META_OVERHEAD + data_len,
-            av.current_len.load(Ordering::Relaxed)
-        );
+        assert_eq!(AppendVec::calculate_stored_size(data_len), av.len());
         assert_eq!(av.get_account_test(index).unwrap(), account);
+        // drop the alignment padding, so each truncation makes the account 1 byte too short
+        av.current_len
+            .store(STORE_META_OVERHEAD + data_len, Ordering::Relaxed);
         truncate_and_test(av, index);
     }
 
