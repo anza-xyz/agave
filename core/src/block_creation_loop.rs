@@ -1317,7 +1317,7 @@ fn maybe_start_leader(
     }
 
     if let Some(expected) = parent_block_id.filter(|block_id| block_id != &BlockId::default()) {
-        let actual = parent_bank.block_id().map(BlockId::from);
+        let actual = parent_bank.block_id();
         if actual != Some(expected) {
             return Err(StartLeaderError::ParentBlockIdMismatch {
                 leader_slot: slot,
@@ -1670,7 +1670,7 @@ mod tests {
         let genesis = create_genesis_config_with_leader(10_000, &old_identity, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
         let parent_block_id = BlockId::new_unique();
-        root_bank.set_block_id(Some(parent_block_id.to_hash()));
+        root_bank.set_block_id(Some(parent_block_id));
         root_bank.freeze();
         let bank_forks = BankForks::new_rw_arc(root_bank);
         let root_bank = bank_forks.read().unwrap().root_bank();
@@ -2069,7 +2069,7 @@ mod tests {
         let my_pubkey = Pubkey::new_unique();
         let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
-        root_bank.set_block_id(Some(Hash::new_unique()));
+        root_bank.set_block_id(Some(BlockId::new_unique()));
         root_bank.freeze();
         let bank_forks = BankForks::new_rw_arc(root_bank);
         let root_bank = bank_forks.read().unwrap().root_bank();
@@ -2086,10 +2086,10 @@ mod tests {
         );
         new_parent.register_unique_recent_blockhash_for_test();
         new_parent.freeze();
-        new_parent.set_block_id(Some(new_parent_block_id.to_hash()));
+        new_parent.set_block_id(Some(new_parent_block_id));
         let new_parent_bank_id = new_parent.bank_id();
 
-        let optimistic_parent_hash = Hash::new_unique();
+        let optimistic_parent_block_id = BlockId::new_unique();
         let optimistic_parent = if optimistic_parent_slot == new_parent_slot {
             Arc::new(Bank::new_from_parent(
                 root_bank.clone(),
@@ -2106,7 +2106,7 @@ mod tests {
         };
         optimistic_parent.register_unique_recent_blockhash_for_test();
         optimistic_parent.freeze();
-        optimistic_parent.set_block_id(Some(optimistic_parent_hash));
+        optimistic_parent.set_block_id(Some(optimistic_parent_block_id));
         let optimistic_parent_bank_id = optimistic_parent.bank_id();
         assert_ne!(optimistic_parent_bank_id, new_parent_bank_id);
         assert_ne!(
@@ -2209,7 +2209,7 @@ mod tests {
             parent_ready,
             Block {
                 slot: optimistic_parent_slot,
-                block_id: BlockId::from(optimistic_parent_hash),
+                block_id: optimistic_parent_block_id,
             },
             vec![accumulated_tx.clone()],
             &mut Instant::now(),

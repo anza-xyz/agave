@@ -477,7 +477,7 @@ pub struct ExtraFieldsToSerialize {
     pub unused_epoch_accounts_hash: Option<Hash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    pub block_id: Option<Hash>,
+    pub block_id: Option<BlockId>,
 }
 
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads

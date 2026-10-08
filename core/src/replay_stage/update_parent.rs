@@ -12,7 +12,7 @@ use {
         consensus::progress_map::{DeadSlotReason, ProgressMap},
         repair::cluster_slot_state_verifier::{DuplicateSlotsToRepair, PurgeRepairSlotCounter},
     },
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     solana_clock::Slot,
     solana_entry::block_component::VersionedUpdateParent,
     solana_ledger::{
@@ -79,7 +79,8 @@ pub(super) fn child_bank_replay_start(
     }
 
     // Genesis doesn't have a block id.
-    if parent_slot != 0 && Some(slot_meta.parent_block_id) != parent_bank.block_id() {
+    if parent_slot != 0 && parent_bank.block_id() != Some(BlockId::from(slot_meta.parent_block_id))
+    {
         // There were duplicate blocks in this slot and we have the wrong one
         // replayed. Do not continue down this fork. If this fork ends up
         // being ParentReady, votor will repair the duplicate parent block and

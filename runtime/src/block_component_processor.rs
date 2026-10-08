@@ -506,10 +506,7 @@ impl BlockComponentProcessor {
             .parent_block_id()
             .expect("Block id is populated for all slots > 0");
         if (bank.parent_slot(), parent_block_id)
-            != (
-                genesis_block_marker.slot,
-                genesis_block_marker.block_id.to_hash(),
-            )
+            != (genesis_block_marker.slot, genesis_block_marker.block_id)
         {
             return Err(BlockComponentProcessorError::GenesisCertificateOnNonChild);
         }
@@ -903,7 +900,7 @@ mod tests {
         let (genesis_bank, bank_forks) = create_test_bank_tower();
         let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
         let parent_block_id = BlockId::new_unique();
-        parent.set_block_id(Some(parent_block_id.to_hash()));
+        parent.set_block_id(Some(parent_block_id));
         let bank = create_child_bank(&bank_forks, &parent, 2);
         let genesis_marker = GenesisCertBlockMarker {
             slot: parent.slot(),
@@ -930,7 +927,7 @@ mod tests {
         let (genesis_bank, bank_forks) = create_test_bank_tower();
         let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
         let parent_block_id = BlockId::new_unique();
-        parent.set_block_id(Some(parent_block_id.to_hash()));
+        parent.set_block_id(Some(parent_block_id));
         let bank = create_child_bank(&bank_forks, &parent, 2);
         let genesis_marker = GenesisCertBlockMarker {
             slot: parent.slot(),

@@ -22,7 +22,9 @@ use {
         tower1_14_11::Tower1_14_11,
     },
     crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
-    agave_votor_messages::{fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD},
+    agave_votor_messages::{
+        consensus_message::BlockId, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD,
+    },
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -680,9 +682,9 @@ impl Tower {
             // Note: since the new shred format is yet to be rolled out to all clusters,
             // this can also happen for non-leader banks. Once rolled out we can assert
             // here that this is our leader bank.
-            Hash::default()
+            BlockId::default()
         });
-        self.record_bank_vote_and_update_lockouts(bank.slot(), bank.hash(), block_id)
+        self.record_bank_vote_and_update_lockouts(bank.slot(), bank.hash(), block_id.to_hash())
     }
 
     /// If we've recently updated the vote state by applying a new vote
