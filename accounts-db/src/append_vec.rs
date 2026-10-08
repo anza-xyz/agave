@@ -1042,7 +1042,8 @@ fn align_offset(x: FileOffset) -> FileOffset {
 /// The per-account hash, stored in the AppendVec.
 ///
 /// This field is now obsolete, but it still lives in the file format.
-type ObsoleteAccountHash = [u8; 32];
+#[derive(Debug)]
+struct ObsoleteAccountHash(#[expect(dead_code)] [u8; 32]);
 
 /// Writes accounts in AppendVec format to a Writer.
 pub(crate) struct AppendVecAccountWriter<W> {
