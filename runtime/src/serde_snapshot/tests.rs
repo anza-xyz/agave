@@ -132,7 +132,9 @@ mod serde_snapshot_tests {
             // Copy file to new directory
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
-            buf_reader.set_file(file.as_ref(), file.read_limit())?;
+            if let Some(file) = file {
+                buf_reader.set_file(file.as_ref(), file.read_limit())?;
+            }
             let reader = AccountStorageReader::new(
                 storage_entry,
                 None,

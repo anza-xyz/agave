@@ -180,21 +180,25 @@ pub fn archive_snapshot(
 
                 // Queue the whole chunk for read-ahead before consuming any of
                 // it, so the io_uring pipeline can saturate across files.
-                for (_, file) in &chunk {
-                    chunk_reader
-                        .add_file_to_prefetch(file.as_ref(), file.read_limit())
-                        .map_err(E::StorageFileBufReaderError)?;
+                for (storage, file) in &chunk {
+                    if let Some(file) = file {
+                        chunk_reader
+                            .add_file_to_prefetch(file.as_ref(), file.read_limit())
+                            .map_err(E::StorageFileBufReaderError)?;
+                    }
                 }
 
                 for (storage, file) in &chunk {
                     let path_in_archive = Path::new(ACCOUNTS_DIR)
                         .join(AccountsFile::file_name(storage.slot(), storage.id()));
 
-                    chunk_reader
-                        .set_file(file.as_ref(), file.read_limit())
-                        .map_err(|err| {
-                            E::AccountStorageReaderError(err, storage.path().to_path_buf())
-                        })?;
+                    if let Some(file) = file {
+                        chunk_reader
+                            .set_file(file.as_ref(), file.read_limit())
+                            .map_err(|err| {
+                                E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                            })?;
+                    }
                     let reader = AccountStorageReader::new(
                         storage,
                         Some(snapshot_slot),

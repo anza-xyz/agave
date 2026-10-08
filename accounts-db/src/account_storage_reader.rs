@@ -76,7 +76,7 @@ pub fn storage_file_buf_reader<'a>(
 pub fn open_storage_files<'s>(
     storages: impl IntoIterator<Item = &'s AccountStorageEntry> + 's,
     use_direct_io: bool,
-) -> impl Iterator<Item = io::Result<OpenFileForArchive<'s>>> + 's {
+) -> impl Iterator<Item = io::Result<Option<OpenFileForArchive<'s>>>> + 's {
     storages
         .into_iter()
         .map(move |storage| storage.accounts.open_file_for_archive(use_direct_io))
@@ -97,7 +97,7 @@ pub enum TombstonesFilter {
 ///
 /// The caller is responsible for activating the storage's file on `file_reader`
 /// via `set_file` (typically using a file opened with [`open_storage_files`])
-/// before constructing the reader.
+/// before constructing the reader, unless the storage has no external data file.
 pub struct AccountStorageReader<'s, 'r, R> {
     storage: &'s AccountStorageEntry,
     reader: &'r mut R,
@@ -110,7 +110,7 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
     /// The excluded accounts list is sorted during initialization.
     ///
     /// Expects that the caller has already attached the storage's file to
-    /// `file_reader` via `set_file`.
+    /// `file_reader` via `set_file`, unless it has no external data file.
     pub fn new(
         storage: &'s AccountStorageEntry,
         snapshot_slot: Option<Slot>,
@@ -251,6 +251,18 @@ mod tests {
 
         storage.write_accounts(&(slot, &accounts[..])).unwrap();
 
+        if matches!(provider, AccountsFileProvider::Split) {
+            for use_direct_io in [false, true] {
+                assert!(
+                    storage
+                        .accounts
+                        .open_file_for_archive(use_direct_io)
+                        .unwrap()
+                        .is_none()
+                );
+            }
+        }
+
         let files = open_storage_files(iter::once(&storage), false)
             .collect::<io::Result<Vec<_>>>()
             .unwrap();
@@ -260,9 +272,11 @@ mod tests {
             &IoSetupState::default(),
         )
         .unwrap();
-        buf_reader
-            .set_file(files[0].as_ref(), files[0].read_limit())
-            .unwrap();
+        if let Some(file) = &files[0] {
+            buf_reader
+                .set_file(file.as_ref(), file.read_limit())
+                .unwrap();
+        }
         let reader =
             AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut buf_reader)
                 .unwrap();
@@ -270,6 +284,9 @@ mod tests {
             reader.len_for_archive(),
             2 * AppendVec::calculate_stored_size(10)
         );
+        let mut output = Vec::new();
+        reader.write_to(&mut output).unwrap();
+        assert_eq!(output.len(), 2 * AppendVec::calculate_stored_size(10));
     }
 
     #[test_matrix(
@@ -372,9 +389,11 @@ mod tests {
             &IoSetupState::default(),
         )
         .unwrap();
-        file_reader
-            .set_file(files[0].as_ref(), files[0].read_limit())
-            .unwrap();
+        if let Some(file) = &files[0] {
+            file_reader
+                .set_file(file.as_ref(), file.read_limit())
+                .unwrap();
+        }
         let reader =
             AccountStorageReader::new(&storage, None, tombstones_filter, &mut file_reader).unwrap();
         let mut number_of_accounts_to_remove = num_obsolete;
@@ -526,9 +545,11 @@ mod tests {
         .unwrap();
         for snapshot_slot in 0..slot_marked_dead {
             let obsolete_slot = Some(snapshot_slot);
-            file_reader
-                .set_file(files[0].as_ref(), files[0].read_limit())
-                .unwrap();
+            if let Some(file) = &files[0] {
+                file_reader
+                    .set_file(file.as_ref(), file.read_limit())
+                    .unwrap();
+            }
             let reader = AccountStorageReader::new(
                 &storage,
                 obsolete_slot,
@@ -655,9 +676,11 @@ mod tests {
             128 * 1024,
             4096 + MAX_PERMITTED_DATA_LENGTH as usize,
         );
-        file_reader
-            .set_file(files[0].as_ref(), files[0].read_limit())
-            .unwrap();
+        if let Some(file) = &files[0] {
+            file_reader
+                .set_file(file.as_ref(), file.read_limit())
+                .unwrap();
+        }
         let storage_reader =
             AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut file_reader)
                 .unwrap();

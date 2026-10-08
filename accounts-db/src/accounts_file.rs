@@ -329,25 +329,28 @@ impl AccountsFile {
     /// Returns a file handle suitable for archive-style reads. With
     /// `use_direct_io = true` a fresh fd is opened with `O_DIRECT`; otherwise
     /// the `AccountsFile`'s existing fd is borrowed, saving one fd per storage.
-    pub fn open_file_for_archive(&self, use_direct_io: bool) -> io::Result<OpenFileForArchive<'_>> {
-        let (data_file, read_limit) = self.account_data_file();
-        let file = if use_direct_io {
+    /// Returns `None` for a split file with no external account data file.
+    pub fn open_file_for_archive(
+        &self,
+        use_direct_io: bool,
+    ) -> io::Result<Option<OpenFileForArchive<'_>>> {
+        if use_direct_io {
             let path = match self {
                 Self::AppendVec(av) => av.path(),
-                Self::Split(split) => split.data_path().unwrap_or_else(|| {
-                    // We're opening a file here to use with AccountStorageReader for archiving
-                    // snapshots.  However, this SplitFile doesn't have a data file, so there's
-                    // nothing to actually read...  Since we need to return something, using
-                    // the meta file here is fine; the AccountStorageReader will never use it.
-                    // Ideal? No.  Safe? Yes.
-                    split.meta_path()
-                }),
+                Self::Split(split) => {
+                    let Some(path) = split.data_path() else {
+                        return Ok(None);
+                    };
+                    path
+                }
             };
-            ArchiveFile::Owned(open_for_reading(path, true)?)
+            open_for_reading(path, true).map(|file| Some(OpenFileForArchive::Owned(file)))
         } else {
-            ArchiveFile::Borrowed(data_file)
-        };
-        Ok(OpenFileForArchive { file, read_limit })
+            Ok(match self {
+                Self::AppendVec(av) => Some(av.open_file_for_archive()),
+                Self::Split(split) => split.data_file().map(OpenFileForArchive::Borrowed),
+            })
+        }
     }
 }
 
