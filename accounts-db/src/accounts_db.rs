@@ -4387,6 +4387,7 @@ impl AccountsDb {
     pub(crate) fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
+        _bank_id: BankId,
         ancestors: &Ancestors,
     ) {
         // If all transactions in a batch are errored,
@@ -5703,10 +5704,15 @@ impl AccountsDb {
         }
 
         // Pre-populate new zero-lamport accounts with single-lamport placeholders.
-        self.store_accounts_unfrozen((slot, pre_populate_zero_lamport.as_slice()), &ancestors);
+        let bank_id = BankId::new(slot);
+        self.store_accounts_unfrozen(
+            (slot, pre_populate_zero_lamport.as_slice()),
+            bank_id,
+            &ancestors,
+        );
 
         // Then store the actual accounts provided by the caller.
-        self.store_accounts_unfrozen(accounts, &ancestors);
+        self.store_accounts_unfrozen(accounts, bank_id, &ancestors);
     }
 
     #[allow(clippy::needless_range_loop)]
