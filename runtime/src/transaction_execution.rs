@@ -52,6 +52,10 @@ pub struct TransactionStatusBatch {
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
     Freeze(Arc<Bank>),
+    Rooted {
+        slot: Slot,
+        bank_id: BankId,
+    },
     PurgeTransactionHistory {
         slot: Slot,
         source: TransactionHistoryPurgeSource,
@@ -308,6 +312,16 @@ impl TransactionStatusSender {
         {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
+        }
+    }
+
+    pub fn send_transaction_status_rooted_message(&self, bank: &Arc<Bank>) {
+        if let Err(e) = self.sender.send(TransactionStatusMessage::Rooted {
+            slot: bank.slot(),
+            bank_id: bank.bank_id(),
+        }) {
+            let slot = bank.slot();
+            warn!("Slot {slot} transaction_status send rooted message failed: {e:?}");
         }
     }
 

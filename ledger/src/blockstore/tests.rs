@@ -4811,6 +4811,26 @@ fn test_get_confirmed_signatures_for_address2() {
         .unwrap();
     assert!(!sig_infos.found_before);
     assert!(sig_infos.infos.is_empty());
+
+    // An `until` cursor above the query's highest slot excludes all results.
+    let until = blockstore
+        .find_address_signatures_for_slot(address0, 9)
+        .unwrap()
+        .first()
+        .unwrap()
+        .1;
+    blockstore.set_roots([9].iter()).unwrap();
+    let sig_infos = blockstore
+        .get_confirmed_signatures_for_address2(
+            address0,
+            highest_super_majority_root,
+            None,
+            Some(until),
+            usize::MAX,
+        )
+        .unwrap();
+    assert!(sig_infos.found_until);
+    assert!(sig_infos.infos.is_empty());
 }
 
 #[test]

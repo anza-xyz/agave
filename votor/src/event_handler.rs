@@ -1135,6 +1135,7 @@ mod tests {
                 None,
                 Some(new_root),
                 &None,
+                None,
                 &self.drop_bank_sender,
                 &self.blockstore,
                 &self.leader_schedule_cache,
