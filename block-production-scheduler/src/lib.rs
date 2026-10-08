@@ -242,8 +242,10 @@ pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError
         pack_to_simulate_worker_capacity: 0,
         simulate_worker_to_pack_capacity: 0,
     };
+    // Resolve the ledger symlink to the short socket path before connecting.
+    let ipc_path = config.ipc_path.canonicalize()?;
     let mut scheduler = Scheduler::new(
-        client::connect(config.ipc_path, logon, config.handshake_timeout)?,
+        client::connect(ipc_path, logon, config.handshake_timeout)?,
         config.transaction_state_capacity,
         config.execution_margin,
         config.max_cost_units_per_worker,
