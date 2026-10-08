@@ -40,6 +40,10 @@ Release channels have their own copy of this changelog:
   with `--xdp-zero-copy` and `--no-xdp`.
 * The default full snapshot interval is now 200,000 slots.
 
+#### Deprecations
+
+* `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+
 ### CLI
 
 #### Breaking

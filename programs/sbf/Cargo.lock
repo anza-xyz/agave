@@ -392,7 +392,6 @@ dependencies = [
  "solana-streamer",
  "solana-system-interface",
  "solana-test-validator",
- "solana-tpu-client",
  "solana-turbine",
  "solana-unified-scheduler-pool",
  "solana-validator-exit",

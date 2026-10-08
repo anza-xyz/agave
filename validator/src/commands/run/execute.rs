@@ -498,7 +498,6 @@ pub fn execute(
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
-    let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
@@ -1102,7 +1101,7 @@ pub fn execute(
         start_progress,
         run_args.socket_addr_space,
         ValidatorTpuConfig {
-            vote_use_quic,
+            vote_use_quic: false,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,

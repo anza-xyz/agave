@@ -33,7 +33,6 @@ use {
         DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
         DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_QUIC_ENDPOINTS,
     },
-    solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
     std::{cmp::Ordering, path::PathBuf, str::FromStr},
 };
 
@@ -219,6 +218,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("No-op; initial accounts cleaning is no longer performed"),
         usage_warning: "Initial accounts cleaning is no longer performed.",
     );
+    add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("vote_use_quic")
+            .long("vote-use-quic")
+            .takes_value(true)
+            .help("No-op, towerBFT only concept"),
+        usage_warning: "TowerBFT-only argument.",
+    );
     res
 }
 
@@ -296,7 +303,6 @@ pub struct DefaultArgs {
 
     pub num_quic_endpoints: String,
     pub num_votor_endpoints: String,
-    pub vote_use_quic: String,
 
     pub banking_trace_dir_byte_limit: String,
     pub block_production_pacing_fill_time_millis: String,
@@ -336,7 +342,6 @@ impl DefaultArgs {
             accounts_shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_RATIO.to_string(),
             tpu_max_connections_per_ipaddr_per_minute:
                 DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE.to_string(),
-            vote_use_quic: DEFAULT_VOTE_USE_QUIC.to_string(),
             tpu_max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER
                 .to_string(),
             tpu_max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER
