@@ -674,10 +674,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     if matches.is_present("lamports_per_byte_year") {
         eprintln!("lamports_per_byte_year is deprecated and will be removed in a future release");
     }
-    if matches.is_present("rent_exemption_threshold") {
+    if matches.occurrences_of("rent_exemption_threshold") > 0 {
         eprintln!("rent_exemption_threshold is deprecated and will be removed in a future release");
     }
-    if matches.is_present("rent_burn_percentage") {
+    if matches.occurrences_of("rent_burn_percentage") > 0 {
         eprintln!("rent_burn_percentage is deprecated and will be removed in a future release");
     }
 
