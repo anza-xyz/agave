@@ -26,7 +26,7 @@ static IDENTITY_SIGNATURE: LazyLock<BLSSignatureCompressed> =
 /// Struct to hold state for building a single reward cert.
 pub(super) struct PartialCert {
     accumulator: AggregateAccumulator,
-    validators: Vec<Pubkey>,
+    pub(crate) validators: Vec<Pubkey>,
 }
 
 impl PartialCert {
@@ -88,11 +88,6 @@ impl PartialCert {
             bitmap,
             validators: self.validators,
         }
-    }
-
-    /// Returns how much stake has been observed.
-    pub(super) fn stake(&self) -> u64 {
-        self.accumulator.stake()
     }
 }
 
