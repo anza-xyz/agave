@@ -656,7 +656,6 @@ mod serde_snapshot_tests {
         current_slot += 1;
         accounts.store_for_tests((current_slot, [(&pubkey1, &account)].as_slice()));
         accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
-        accounts.add_root(current_slot);
 
         // B: Test multiple updates to pubkey1 in a single slot/storage
         current_slot += 1;
@@ -676,7 +675,6 @@ mod serde_snapshot_tests {
         accounts.store_for_tests((current_slot, [(&pubkey1, &account3)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         assert!(accounts.contains(&pubkey1));
-        accounts.add_root_and_flush_write_cache(current_slot);
 
         // D: Make pubkey1 0-lamport; also triggers clean of step B
         current_slot += 1;
@@ -686,12 +684,11 @@ mod serde_snapshot_tests {
 
         // The zero lamport account was converted to a tombstone, so pubkey1 is out of the index
         assert!(!accounts.contains(&pubkey1));
-        accounts.add_root(current_slot);
 
         // E: Avoid missing bank hash error
         current_slot += 1;
         accounts.store_for_tests((current_slot, [(&dummy_pubkey, &dummy_account)].as_slice()));
-        accounts.add_root(current_slot);
+        accounts.add_root_and_flush_write_cache(current_slot);
 
         accounts.assert_not_load_account(current_slot, pubkey1);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
@@ -701,7 +698,6 @@ mod serde_snapshot_tests {
         // If step C and step D should be purged, snapshot restore would cause
         // pubkey1 to be revived as the state of step A.
         // So, prevent that from happening by introducing refcount
-        ((current_slot - 1)..=current_slot).for_each(|slot| accounts.flush_root_write_cache(slot));
         accounts.clean_accounts_for_tests();
 
         // Reconstruct the database from the snapshot to simulate a restore
@@ -978,7 +974,7 @@ mod serde_snapshot_tests {
         let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
         bank.set_block_id(Some(Hash::default()));
         bank.freeze();
-        bank.rc.accounts.add_root(bank.slot());
+        bank.rc.accounts.add_root(bank.ancestor());
         bank.force_flush_accounts_cache();
 
         // Set extra fields

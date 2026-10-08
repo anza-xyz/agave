@@ -372,7 +372,11 @@ mod tests {
         solana_account::{
             AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
         },
-        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+        solana_accounts_db::{
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+            ancestors::Ancestor,
+            bank_id::BankId,
+        },
         solana_genesis_config::create_genesis_config,
         solana_hash::Hash,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -610,9 +614,15 @@ mod tests {
             1,
             [(&pubkey_keep, &account), (&pubkey_multi, &account)].as_slice(),
         ));
-        accounts.add_root(1);
+        accounts.add_root(Ancestor {
+            slot: 1,
+            bank_id: BankId::new(1),
+        });
         accounts.store_for_tests((2, [(&pubkey_multi, &account)].as_slice()));
-        accounts.add_root(2);
+        accounts.add_root(Ancestor {
+            slot: 2,
+            bank_id: BankId::new(2),
+        });
         // Flush without clean so pubkey_multi keeps both slot list entries
         accounts.flush_rooted_accounts_cache_without_clean();
 

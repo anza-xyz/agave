@@ -15,7 +15,7 @@ use {
         account_locks::validate_account_locks,
         accounts::Accounts,
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
-        ancestors::Ancestors,
+        ancestors::{Ancestor, Ancestors},
     },
     solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
@@ -324,6 +324,10 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
 
     let bank_rc = BankRc::new(create_accounts_db());
     let bank_id = bank_rc.next_bank_id();
+    let ancestor = Ancestor {
+        slot: parent_slot,
+        bank_id,
+    };
     let rent_account = AccountSharedData::new_data(1, &Rent::default(), &sysvar::id()).unwrap();
     bank_rc.accounts.store_accounts(
         (parent_slot, &[(sysvar::rent::id(), rent_account)][..]),
@@ -331,7 +335,7 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
         None,
         &Ancestors::default(),
     );
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(ancestor);
 
     let epoch_stakes = [epoch, epoch.saturating_add(1)]
         .into_iter()

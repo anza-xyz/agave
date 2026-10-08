@@ -11,7 +11,10 @@ use {
         PrevVoteAccount as ProtoPrevVoteAccount,
     },
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_accounts_db::{accounts_hash::AccountsLtHash, ancestors::Ancestors},
+    solana_accounts_db::{
+        accounts_hash::AccountsLtHash,
+        ancestors::{Ancestor, Ancestors},
+    },
     solana_clock::{DEFAULT_TICKS_PER_SLOT, Epoch},
     solana_cost_model::cost_model::CostModel,
     solana_epoch_schedule::EpochSchedule,
@@ -100,13 +103,17 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         .collect();
 
     let bank_id = bank_rc.next_bank_id();
+    let ancestor = Ancestor {
+        slot: parent_slot,
+        bank_id,
+    };
     bank_rc.accounts.store_accounts(
         (parent_slot, &accounts_to_store[..]),
         bank_id,
         None,
         &Ancestors::default(),
     );
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(ancestor);
     let accounts_data_size_initial = accounts_to_store
         .iter()
         .map(|(_, account)| account.data().len() as u64)

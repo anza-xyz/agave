@@ -21,7 +21,7 @@ use {
     solana_accounts_db::{
         accounts::Accounts,
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
-        ancestors::Ancestors,
+        ancestors::{Ancestor, Ancestors},
         blockhash_queue::BlockhashQueue,
     },
     solana_clock::{Clock, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_PROCESSING_AGE},
@@ -104,11 +104,15 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     // Populate the accounts DB with the input accounts at the parent slot.
     let bank_rc = BankRc::new(new_accounts_for_tests_single_threaded());
     let bank_id = bank_rc.next_bank_id();
-    let ancestors = Ancestors::from(vec![parent_slot]);
+    let ancestor = Ancestor {
+        slot: parent_slot,
+        bank_id,
+    };
+    let ancestors = Ancestors::from(vec![ancestor]);
     bank_rc
         .accounts
         .store_accounts((parent_slot, &accounts[..]), bank_id, None, &ancestors);
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(ancestor);
 
     // Dummy epoch stakes with the provided total stake at the current and next epoch.
     let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();

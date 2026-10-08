@@ -53,7 +53,7 @@ use {
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
-        ancestors::Ancestors,
+        ancestors::{Ancestor, Ancestors},
         append_vec::{self, AppendVec},
         bank_id::BankId,
         contains::Contains,
@@ -4791,7 +4791,8 @@ impl AccountsDb {
         }
     }
 
-    pub fn add_root(&self, slot: Slot) -> AccountsAddRootTiming {
+    pub fn add_root(&self, ancestor: Ancestor) -> AccountsAddRootTiming {
+        let Ancestor { slot, bank_id: _ } = ancestor;
         let mut cache_time = Measure::start("cache_add_root");
         self.accounts_cache.add_root(slot);
         cache_time.stop();
@@ -5575,8 +5576,13 @@ impl AccountsDb {
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
-        self.add_root(slot);
+        self.add_root_for_tests(slot);
         self.flush_root_write_cache(slot);
+    }
+
+    /// Roots `slot` under `BankId::new(slot)`
+    pub(crate) fn add_root_for_tests(&self, slot: Slot) {
+        self.add_root(Ancestor::new_for_tests(slot));
     }
 
     /// note this returns Some for accounts with zero lamports
