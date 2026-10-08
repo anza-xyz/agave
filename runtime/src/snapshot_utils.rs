@@ -199,17 +199,6 @@ impl BankSnapshotInfo {
     }
 }
 
-/// When constructing a bank a snapshot, traditionally the snapshot was from a snapshot archive.  Now,
-/// the snapshot can be from a snapshot directory, or from a snapshot archive.  This is the flag to
-/// indicate which.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SnapshotFrom {
-    /// Build from the snapshot archive
-    Archive,
-    /// Build directly from the bank snapshot directory
-    Dir,
-}
-
 /// Helper type when rebuilding from snapshots.  Designed to handle when rebuilding from just a
 /// full snapshot, or from both a full snapshot and an incremental snapshot.
 #[derive(Debug)]
@@ -1319,11 +1308,9 @@ fn unarchive_snapshot(
                  ..
              }| {
                 let (storage, measure_untar) = measure_time!(
-                    SnapshotStorageRebuilder::rebuild_storages(
+                    SnapshotStorageRebuilder::rebuild_storages_from_snapshot_archive(
                         append_vec_files.into_iter().chain(file_receiver),
                         next_append_vec_id,
-                        SnapshotFrom::Archive,
-                        None,
                     )?,
                     measure_name
                 );
@@ -1480,11 +1467,12 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
              append_vec_files,
              ..
          }| {
-            let storage = SnapshotStorageRebuilder::rebuild_storages(
+            let storage = SnapshotStorageRebuilder::rebuild_storages_from_local_state(
                 append_vec_files.into_iter().chain(file_receiver),
                 next_append_vec_id,
-                SnapshotFrom::Dir,
-                obsolete_accounts,
+                obsolete_accounts
+                    .map(|accounts| accounts.into_hashmap())
+                    .unwrap_or_default(),
             )?;
             Ok((storage, bank_fields, accounts_db_fields))
         },
