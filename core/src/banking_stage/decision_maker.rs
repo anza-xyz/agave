@@ -1,5 +1,5 @@
 use {
-    super::progress_tracker::alpenglow_slot_progress,
+    super::alpenglow_timing::alpenglow_slot_progress,
     agave_votor::slot_clock::SharedAlpenglowSlotClock,
     agave_votor_messages::migration::MigrationStatus,
     solana_clock::{

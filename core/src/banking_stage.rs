@@ -59,6 +59,7 @@ use {
 
 pub mod transaction_scheduler;
 
+mod alpenglow_timing;
 mod committer;
 mod consume_worker;
 mod consumer;
