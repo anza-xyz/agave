@@ -2641,6 +2641,7 @@ impl AccountsDb {
     pub(crate) fn scan_account_storage<R, B>(
         &self,
         slot: Slot,
+        bank_id: BankId,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
         storage_scan_func: impl for<'a, 'b, 'storage> Fn(
             &'b mut B,
@@ -2653,7 +2654,7 @@ impl AccountsDb {
         R: Send,
         B: Send + Default + Sync,
     {
-        self.scan_cache_storage_fallback(slot, cache_map_func, |retval, storage| {
+        self.scan_cache_storage_fallback(slot, bank_id, cache_map_func, |retval, storage| {
             match scan_account_storage_data {
                 ScanAccountStorageData::NoData => {
                     storage.scan_accounts_without_data(|_offset, account_without_data| {
@@ -2676,6 +2677,7 @@ impl AccountsDb {
     pub fn scan_cache_storage_fallback<R, B>(
         &self,
         slot: Slot,
+        bank_id: BankId,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
         storage_fallback_func: impl Fn(&mut B, &AccountStorageEntry) + Sync,
     ) -> ScanStorageResult<R, B>
@@ -2684,6 +2686,11 @@ impl AccountsDb {
         B: Send + Default + Sync,
     {
         if let Some(slot_cache) = self.accounts_cache.slot_cache(slot) {
+            debug_assert_eq!(
+                slot_cache.bank_id(),
+                bank_id,
+                "slot {slot} holds accounts stored by another bank"
+            );
             // If we see the slot in the cache, then all the account information
             // is in this cached slot
             ScanStorageResult::Cached(
@@ -4104,9 +4111,14 @@ impl AccountsDb {
     }
 
     /// Return all of the accounts for a given slot
-    pub fn get_pubkey_account_for_slot(&self, slot: Slot) -> Vec<(Pubkey, AccountSharedData)> {
+    pub fn get_pubkey_account_for_slot(
+        &self,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Vec<(Pubkey, AccountSharedData)> {
         let scan_result = self.scan_account_storage(
             slot,
+            bank_id,
             |loaded_account| {
                 // Cache only has one version per key, don't need to worry about versioning
                 Some((*loaded_account.pubkey(), loaded_account.take_account()))

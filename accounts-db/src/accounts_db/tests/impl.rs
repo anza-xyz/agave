@@ -4451,6 +4451,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
     for slot in &slots {
         if let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
             *slot as Slot,
+            BankId::new(*slot as Slot),
             |_| Some(0),
             |slot_accounts: &mut HashSet<Pubkey>, stored_account, _data| {
                 slot_accounts.insert(*stored_account.pubkey());
@@ -4488,6 +4489,7 @@ fn test_accounts_db_cache_clean() {
     for slot in &slots {
         if let ScanStorageResult::Stored(slot_account) = accounts_db.scan_account_storage(
             *slot as Slot,
+            BankId::new(*slot as Slot),
             |_| Some(0),
             |slot_account: &mut Pubkey, stored_account, _data| {
                 *slot_account = *stored_account.pubkey();
@@ -4547,6 +4549,7 @@ fn run_test_accounts_db_cache_clean_max_root(
     for slot in &slots {
         let slot_accounts = accounts_db.scan_account_storage(
             *slot as Slot,
+            BankId::new(*slot as Slot),
             |loaded_account| {
                 assert!(
                     !is_cache_at_limit,
@@ -4672,6 +4675,7 @@ fn run_flush_rooted_accounts_cache(should_clean: bool) {
     for slot in &slots {
         let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
             *slot as Slot,
+            BankId::new(*slot as Slot),
             |_| Some(0),
             |slot_account: &mut HashSet<Pubkey>, stored_account, _data| {
                 slot_account.insert(*stored_account.pubkey());

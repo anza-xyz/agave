@@ -4756,7 +4756,7 @@ impl Bank {
             .rc
             .accounts
             .accounts_db
-            .get_pubkey_account_for_slot(self.slot());
+            .get_pubkey_account_for_slot(self.slot(), self.bank_id());
         // Sort the accounts by pubkey to make diff deterministic.
         accounts.sort_unstable_by_key(|a| a.0);
         accounts
@@ -5417,7 +5417,7 @@ impl Bank {
     ) -> Vec<KeyedAccountSharedData> {
         self.rc
             .accounts
-            .load_by_program_slot(self.slot(), Some(program_id))
+            .load_by_program_slot(self.slot(), self.bank_id(), Some(program_id))
     }
 
     pub fn get_transaction_logs(
@@ -5432,7 +5432,9 @@ impl Bank {
 
     /// Returns all the accounts stored in this slot
     pub fn get_all_accounts_modified_since_parent(&self) -> Vec<KeyedAccountSharedData> {
-        self.rc.accounts.load_by_program_slot(self.slot(), None)
+        self.rc
+            .accounts
+            .load_by_program_slot(self.slot(), self.bank_id(), None)
     }
 
     // if you want get_account_modified_since_parent without fixed_root, please define so...

@@ -145,6 +145,11 @@ impl SlotCache {
             .map(|account_ref| account_ref.value().clone())
     }
 
+    /// The bank that stored the accounts in this slot
+    pub(crate) fn bank_id(&self) -> BankId {
+        self.bank_id
+    }
+
     pub fn mark_slot_frozen(&self) {
         self.is_frozen.store(true, Ordering::Release);
     }
