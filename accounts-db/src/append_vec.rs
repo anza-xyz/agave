@@ -35,7 +35,7 @@ use {
         self,
         convert::TryFrom,
         fs::{File, OpenOptions, remove_file},
-        io::{self, BufWriter},
+        io::{self, BufWriter, Seek, SeekFrom},
         iter::ExactSizeIterator,
         mem::{self, MaybeUninit, offset_of},
         path::{Path, PathBuf},
@@ -123,24 +123,32 @@ struct AccountOffsets {
 /// above 64KiB, so the capacity stays small to avoid oversized allocations.
 const APPEND_BUFFER_CAPACITY: usize = 256 * 1024;
 
-type AccountsAppender = AppendVecAccountWriter<BufWriter<File>>;
-
-/// Validates and serializes appends (when `appender` is called) such that only
+/// Validates and serializes appends (when `append_guard` is called) such that only
 /// writable AppendVec is updated and only from a single thread at a time.
 #[derive(Debug)]
 enum ReadWriteState {
     ReadOnly,
-    /// The appender owns a separate file handle, so its cursor is independent of reads
     Writable {
-        appender: Mutex<AccountsAppender>,
+        /// A lock used to serialize append operations.
+        append_lock: Mutex<()>,
     },
 }
 
 impl ReadWriteState {
-    fn appender(&self) -> MutexGuard<'_, AccountsAppender> {
+    fn new(allow_writes: bool) -> Self {
+        if allow_writes {
+            Self::Writable {
+                append_lock: Mutex::new(()),
+            }
+        } else {
+            Self::ReadOnly
+        }
+    }
+
+    fn append_guard(&self) -> MutexGuard<'_, ()> {
         match self {
             Self::ReadOnly => panic!("append not allowed in read-only state"),
-            Self::Writable { appender } => appender.lock().unwrap(),
+            Self::Writable { append_lock } => append_lock.lock().unwrap(),
         }
     }
 }
@@ -236,25 +244,19 @@ impl AppendVec {
 
         // Theoretical performance optimization: set the logical/inode size
         // so that we don't have to resize it later, which may be expensive.
-        let file_size = u64::try_from(size).unwrap();
-        data.set_len(file_size).unwrap();
-
-        let appender_file = OpenOptions::new().write(true).open(&file).unwrap();
-        let appender = AppendVecAccountWriter::new(BufWriter::with_capacity(
-            size.min(APPEND_BUFFER_CAPACITY),
-            appender_file,
-        ));
+        let size = u64::try_from(size).unwrap();
+        data.set_len(size).unwrap();
 
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
         AppendVec {
             path: file,
             file: data,
-            read_write_state: ReadWriteState::Writable {
-                appender: Mutex::new(appender),
-            },
+            // writable state's mutex forces append to be single threaded, but concurrent with
+            // reads
+            read_write_state: ReadWriteState::new(true),
             current_len: AtomicUsize::new(initial_len),
-            file_size,
+            file_size: size,
             remove_file_on_drop: AtomicBool::new(true),
             is_dirty: AtomicBool::new(false),
         }
@@ -909,9 +911,22 @@ impl AppendVec {
         &self,
         accounts: &impl StorableAccounts<'a>,
     ) -> Option<StoredAccountsInfo> {
-        let mut appender = self.read_write_state.appender();
+        let _lock = self.read_write_state.append_guard();
         let mut offset = align_offset(self.len() as FileOffset);
         let mut end_of_data = self.len() as FileOffset;
+        // Appends require the appender to control the file cursor. Reads use positional I/O, so
+        // they leave the cursor untouched.
+        (&self.file)
+            .seek(SeekFrom::Start(offset))
+            .expect("must seek to the end of append_vec data");
+        let buffer_capacity = self
+            .file_size
+            .saturating_sub(offset)
+            .min(APPEND_BUFFER_CAPACITY as FileSize);
+        let mut appender = AppendVecAccountWriter::new(BufWriter::with_capacity(
+            buffer_capacity as usize,
+            &self.file,
+        ));
         let len = accounts.len();
         // Here we have `len` number of accounts.  The +1 extra capacity
         // is for storing the aligned offset of the last-plus-one entry,
@@ -1034,7 +1049,6 @@ fn align_offset(x: FileOffset) -> FileOffset {
 type ObsoleteAccountHash = [u8; 32];
 
 /// Writes accounts in AppendVec format to a Writer.
-#[derive(Debug)]
 pub(crate) struct AppendVecAccountWriter<W> {
     output: W,
 }
