@@ -1131,7 +1131,10 @@ impl Validator {
                 exit.clone(),
             )
         };
-        let (record_sender, record_receiver) = record_channels(transaction_status_sender.is_some());
+        let (record_sender, record_receiver) = record_channels(tracks_transaction_indexes(
+            &bank_forks.read().unwrap().working_bank(),
+            transaction_status_sender.as_ref(),
+        ));
         let transaction_recorder = TransactionRecorder::new(record_sender);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (poh_controller, poh_service_message_receiver) = PohController::new();
@@ -2109,6 +2112,15 @@ impl Validator {
             geyser_plugin_service.join().expect("geyser_plugin_service");
         }
     }
+}
+
+/// Transaction status and geyser account updates both report each transaction's block index
+fn tracks_transaction_indexes(
+    bank: &Bank,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+) -> bool {
+    transaction_status_sender.is_some()
+        || bank.rc.accounts.accounts_db.has_accounts_update_notifier()
 }
 
 fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> bool {
@@ -3236,6 +3248,7 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
 mod tests {
     use {
         super::*,
+        crate::test_utils::RecordingAccountsNotifier,
         agave_votor_messages::certificate::{CertSignature, GenesisCert},
         crossbeam_channel::{RecvTimeoutError, bounded},
         solana_entry::entry,
@@ -3819,5 +3832,49 @@ mod tests {
         };
         let bank = Bank::new_for_tests(&genesis_config);
         check_poh_speed(&bank, Some(10_000)).unwrap();
+    }
+
+    #[test]
+    fn test_tracks_transaction_indexes_without_consumers() {
+        let bank = bank_with_accounts_update_notifier(None);
+        assert!(!tracks_transaction_indexes(&bank, None));
+    }
+
+    #[test]
+    fn test_tracks_transaction_indexes_with_transaction_status_sender() {
+        let bank = bank_with_accounts_update_notifier(None);
+        let (sender, _receiver) = bounded(1);
+        let transaction_status_sender = TransactionStatusSender {
+            sender,
+            dependency_tracker: None,
+        };
+        assert!(tracks_transaction_indexes(
+            &bank,
+            Some(&transaction_status_sender)
+        ));
+    }
+
+    #[test]
+    fn test_tracks_transaction_indexes_with_accounts_update_notifier() {
+        let notifier = Arc::new(RecordingAccountsNotifier::default());
+        let bank = bank_with_accounts_update_notifier(Some(notifier));
+        assert!(tracks_transaction_indexes(&bank, None));
+    }
+
+    fn bank_with_accounts_update_notifier(
+        accounts_update_notifier: Option<AccountsUpdateNotifier>,
+    ) -> Bank {
+        Bank::new_from_genesis(
+            &create_genesis_config(1).0,
+            Arc::new(RuntimeConfig::default()),
+            vec![],
+            None,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            accounts_update_notifier,
+            None,
+            Arc::default(),
+            None,
+            None,
+        )
     }
 }
