@@ -15,6 +15,8 @@ use {
     std::{io::ErrorKind, path::Path, sync::Arc, thread},
 };
 
+mod scheduling_flows;
+
 fn config(path: &Path) -> Config {
     Config {
         ipc_path: path.to_path_buf(),
