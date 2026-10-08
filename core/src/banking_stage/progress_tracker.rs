@@ -10,11 +10,6 @@ use {
     solana_clock::{BankId, Slot},
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_poh::poh_recorder::SharedLeaderState,
-<<<<<<< HEAD
-    solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
-=======
-    solana_runtime::bank::BankId,
->>>>>>> 53b462b (fix: make Alpenglow slot timing available on Windows (#15886))
     std::{
         sync::{
             Arc,
