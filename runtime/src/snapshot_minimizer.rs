@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        bank::Bank,
+        alpenglow_epoch_type::REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT, bank::Bank,
         block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
         static_ids,
     },
@@ -137,6 +137,8 @@ impl<'a> SnapshotMinimizer<'a> {
         self.minimized_account_set
             .insert(*GENESIS_CERTIFICATE_ACCOUNT);
         self.minimized_account_set.insert(*VOTE_REWARD_ACCOUNT_ADDR);
+        self.minimized_account_set
+            .insert(*REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT);
     }
 
     /// Used to get reserved accounts in `minimize`
