@@ -11513,9 +11513,12 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
         assert_eq!(slot_versions.len(), 1);
     }
 
-    // Advance the bank to middle of epoch to start the recompilation phase,
-    // which recompiles the program in the same slot it starts.
+    // Advance the bank to middle of epoch and root it, latching EBPP. The next
+    // slot starts the recompilation phase.
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
+    bank.prune_program_cache(&bank_forks.read().unwrap());
+    goto_end_of_slot(bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 17);
     let current_env = bank
         .transaction_processor
         .program_runtime_environment_for_epoch(0);
@@ -11628,7 +11631,12 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
         &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
     );
 
-    // Advance the bank to the end of the epoch to update the epoch_boundary_preparation.
+    // Advance the bank into the window and root it, latching EBPP.
+    goto_end_of_slot(bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
+    bank.prune_program_cache(&bank_forks.read().unwrap());
+
+    // Advance the bank to the end of the epoch.
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 31);
     let current_env = bank
@@ -11771,8 +11779,9 @@ fn test_feature_activation_loaded_programs_late_activation() {
     // Advance the bank to the middle of the epoch to start the recompilation
     // phase. We've seen no feature yet, so environments should match and cache
     // contents should be unchanged. Also, EBPP should not have latched yet,
-    // since it hasn't seen a changed environment yet.
+    // since the root hasn't seen a changed environment yet.
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
+    bank.prune_program_cache(&bank_forks.read().unwrap());
     let current_env = bank
         .transaction_processor
         .program_runtime_environment_for_epoch(0);
@@ -11814,9 +11823,10 @@ fn test_feature_activation_loaded_programs_late_activation() {
         &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
     );
 
-    // Go a few more slots. See that the EBPP does in fact relatch, now that
-    // we observe a changed upcoming environment. We also recompile our first
-    // few programs.
+    // Root the bank. See that EBPP does in fact latch, now that the root
+    // observes a changed upcoming environment. Go a few more slots, and we
+    // also recompile our first few programs.
+    bank.prune_program_cache(&bank_forks.read().unwrap());
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 30);
     let current_env = bank
@@ -11888,208 +11898,6 @@ fn test_feature_activation_loaded_programs_late_activation() {
             slot_versions[1].program.get_environment().unwrap(),
             &new_processor_env,
         );
-    }
-}
-
-#[test]
-fn test_feature_activation_loaded_programs_fork_without_activation() {
-    // Fork graph created for the test
-    //                              10
-    //                             /  \
-    //         Feature staged --> 11   16 <-- Enters window first
-    //                            |    |
-    //   Enters window second --> 17   18
-    //
-    agave_logger::setup();
-
-    // Bank Setup
-    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    genesis_config
-        .accounts
-        .remove(&feature_set::disable_sbpf_v0_execution::id());
-    genesis_config
-        .accounts
-        .remove(&feature_set::reenable_sbpf_v0_execution::id());
-    let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-    // Program Setup (multiple)
-    let program_data = include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
-    let program_keypairs = [Keypair::new(), Keypair::new(), Keypair::new()];
-    for program_keypair in &program_keypairs {
-        let program_account = AccountSharedData::from(Account {
-            lamports: Rent::default().minimum_balance(program_data.len()).min(1),
-            data: program_data.to_vec(),
-            owner: bpf_loader::id(),
-            executable: true,
-            rent_epoch: 0,
-        });
-        root_bank.store_account(&program_keypair.pubkey(), &program_account);
-    }
-
-    // Advance the bank so that the programs become effective, then load them
-    // all with the old environment.
-    goto_end_of_slot(root_bank.clone());
-    let bank = new_from_parent_with_fork_next_slot(root_bank, bank_forks.as_ref());
-    for program_keypair in &program_keypairs {
-        let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
-        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-        let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
-        assert_eq!(bank.process_transaction(&transaction), Ok(()));
-    }
-
-    // Fork point at 10.
-    goto_end_of_slot(bank.clone());
-    let fork_point =
-        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 10);
-    goto_end_of_slot(fork_point.clone());
-
-    // Feature is submitted on 11, on a fork.
-    let with_feature = Bank::new_from_parent_with_bank_forks(
-        &bank_forks,
-        fork_point.clone(),
-        SlotLeader::default(),
-        11,
-    );
-    let feature_account_balance =
-        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
-    with_feature.store_account(
-        &feature_set::disable_sbpf_v0_execution::id(),
-        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
-    );
-
-    // Fork on 16 does not see the feature and enters the EBPP window first.
-    // It sees no change in environment, so EBPP does not latch yet.
-    let without_feature =
-        Bank::new_from_parent_with_bank_forks(&bank_forks, fork_point, SlotLeader::default(), 16);
-    {
-        let current_env = without_feature
-            .transaction_processor
-            .program_runtime_environment_for_epoch(0);
-        let upcoming_env = without_feature
-            .transaction_processor
-            .program_runtime_environment_for_epoch(1);
-        let ebpp = without_feature
-            .transaction_processor
-            .epoch_boundary_preparation
-            .read()
-            .unwrap();
-        assert!(*current_env == *upcoming_env);
-        assert_eq!(current_env, upcoming_env);
-        assert!(ebpp.upcoming_environment.is_none());
-        assert!(ebpp.programs_to_recompile.is_empty());
-    }
-
-    // The fork with the activation now enters the EBPP window at 17. It
-    // latches EBPP with its observed upcoming environment.
-    goto_end_of_slot(with_feature.clone());
-    let with_feature =
-        Bank::new_from_parent_with_bank_forks(&bank_forks, with_feature, SlotLeader::default(), 17);
-    let ebpp_latch_env = {
-        let current_env = without_feature
-            .transaction_processor
-            .program_runtime_environment_for_epoch(0);
-        let upcoming_env = without_feature
-            .transaction_processor
-            .program_runtime_environment_for_epoch(1);
-        let ebpp = without_feature
-            .transaction_processor
-            .epoch_boundary_preparation
-            .read()
-            .unwrap();
-        let ebpp_env = ebpp.upcoming_environment.clone().unwrap();
-        assert!(*current_env != *upcoming_env);
-        assert_ne!(current_env, upcoming_env);
-        assert!(*ebpp_env == *upcoming_env);
-        assert_eq!(ebpp_env, upcoming_env);
-        // We already recompiled one program in this slot, too.
-        assert_eq!(ebpp.programs_to_recompile.len(), program_keypairs.len() - 1);
-        ebpp_env
-    };
-
-    // The fork without the activation steps through the phase again at 18. It
-    // finds latch closed from slot 17's environment. However, since this fork
-    // still sees no change in environment, it leaves the latch alone.
-    let without_feature = Bank::new_from_parent_with_bank_forks(
-        &bank_forks,
-        without_feature,
-        SlotLeader::default(),
-        18,
-    );
-    let non_recompiled_programs = {
-        // If we query from EBPP, we'll see the new environment from the other
-        // fork.
-        let current_env = without_feature
-            .transaction_processor
-            .program_runtime_environment_for_epoch(0);
-        let upcoming_env = without_feature
-            .transaction_processor
-            .program_runtime_environment_for_epoch(1);
-        assert!(*current_env != *upcoming_env);
-        assert_ne!(current_env, upcoming_env);
-
-        // But if we compare with this fork's feature set, we'll see it's not
-        // the same.
-        let computed_env =
-            without_feature.create_program_runtime_environment(&without_feature.feature_set);
-        assert!(*current_env == *computed_env);
-
-        // EBPP is still latched properly to the "with feature" fork's upcoming
-        // environment.
-        let ebpp = without_feature
-            .transaction_processor
-            .epoch_boundary_preparation
-            .read()
-            .unwrap();
-        let ebpp_env = ebpp.upcoming_environment.clone().unwrap();
-        assert!(*ebpp_env == *upcoming_env);
-        assert_eq!(ebpp_env, upcoming_env);
-        assert_eq!(ebpp_env, ebpp_latch_env);
-        assert!(*ebpp_env != *computed_env);
-        // This fork even picked up some work, even though it doesn't have
-        // the feature!
-        assert_eq!(ebpp.programs_to_recompile.len(), program_keypairs.len() - 2);
-
-        // Skip these in checks later, since they didn't get recompiled.
-        ebpp.programs_to_recompile.clone()
-    };
-
-    // Now the fork with the activation crosses the epoch boundary and
-    // activates the feature.
-    goto_end_of_slot(with_feature.clone());
-    let with_feature =
-        Bank::new_from_parent_with_bank_forks(&bank_forks, with_feature, SlotLeader::default(), 33);
-
-    // The processor's new environment is now exactly equal to what EBPP was
-    // preparing for.
-    let computed_env = with_feature.create_program_runtime_environment(&with_feature.feature_set);
-    let new_processor_env = with_feature
-        .transaction_processor
-        .program_runtime_environment
-        .clone();
-    assert!(*new_processor_env == *computed_env);
-    assert!(*new_processor_env == *ebpp_latch_env);
-    assert_eq!(new_processor_env, ebpp_latch_env); // `Arc::ptr_eq`
-
-    {
-        let program_cache = with_feature
-            .transaction_processor
-            .global_program_cache
-            .write()
-            .unwrap();
-        for program_id in program_keypairs.iter().filter_map(|program_keypair| {
-            let program_id = program_keypair.pubkey();
-            non_recompiled_programs
-                .iter()
-                .all(|(key, _)| *key != program_id)
-                .then_some(program_id)
-        }) {
-            let slot_versions = program_cache.get_slot_versions_for_tests(&program_id);
-            assert_eq!(slot_versions.len(), 2);
-            assert_eq!(
-                slot_versions[1].program.get_environment().unwrap(),
-                &new_processor_env,
-            );
-        }
     }
 }
 
@@ -12166,6 +11974,11 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
         &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
     );
 
+    // Enter the window and root the bank, latching EBPP.
+    goto_end_of_slot(bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
+    bank.prune_program_cache(&bank_forks.read().unwrap());
+
     // Check on our environments.
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 24);
@@ -12190,7 +12003,8 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
         )
     };
     // We should see a proper EBPP preparing for the upcoming environment. The
-    // queue is drained, since recompilation starts in the slot EBPP latches.
+    // queue is drained, since recompilation started in the slot after EBPP
+    // latched.
     assert!(*current_env != *upcoming_env);
     assert!(*upcoming_env == *ebpp_env);
     assert_eq!(upcoming_env, ebpp_env);

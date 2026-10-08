@@ -1712,34 +1712,14 @@ impl Bank {
             return upcoming_feature_set;
         }
 
-        let upcoming_env = self.create_program_runtime_environment(&upcoming_feature_set);
-        let current_env = self
-            .transaction_processor
-            .program_runtime_environment
-            .clone();
-
         let mut ebpp = self
             .transaction_processor
             .epoch_boundary_preparation
             .write()
             .unwrap();
 
-        if *current_env != *upcoming_env && ebpp.upcoming_environment.as_ref().is_none() {
-            // A different environment is upcoming and we are not preparing for
-            // it yet. Initiate or restart EBPP.
-            let pc = self
-                .transaction_processor
-                .global_program_cache
-                .read()
-                .unwrap();
-            ebpp.programs_to_recompile = pc.get_flattened_entries();
-            ebpp.programs_to_recompile
-                .sort_by_cached_key(|(_id, program)| program.retention_score());
-            ebpp.upcoming_epoch = self.epoch.saturating_add(1);
-            ebpp.upcoming_environment = Some(upcoming_env);
-        }
-
-        // Proceed with recompilation, if any programs remain.
+        // Proceed with recompilation, if the root has latched EBPP (see
+        // `latch_ebpp_from_root`) and any programs remain.
         let Some(ebpp_env) = ebpp.upcoming_environment.clone() else {
             return upcoming_feature_set;
         };
@@ -1754,8 +1734,8 @@ impl Bank {
     }
 
     // In an epoch where we've activated a program runtime feature, it's
-    // possible that EBPP (above) could have latched on the *incorrect*
-    // environment, depending on which fork entered the window first.
+    // possible that EBPP could have latched on the *incorrect* environment,
+    // since the root may not have observed the latest activations yet.
     //
     // This function stages an override for `do_load_and_execute_transactions`
     // to ensure the correct deployment environment is picked up for the
@@ -1782,6 +1762,50 @@ impl Bank {
             .set_deployment_env_override(deployment_env);
     }
 
+    // Once the root enters the EBPP window, it latches EBPP onto its upcoming
+    // environment, relatching as that changes.
+    //
+    // Only called on the new root bank.
+    fn latch_ebpp_from_root(&self) {
+        if !self.in_ebpp_recompilation_window() {
+            // Not in the window, nothing to do.
+            return;
+        }
+
+        let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
+        let upcoming_env = self.create_program_runtime_environment(&upcoming_feature_set);
+        let current_env = self
+            .transaction_processor
+            .program_runtime_environment
+            .clone();
+
+        let mut ebpp = self
+            .transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap();
+
+        if *current_env != *upcoming_env
+            && ebpp
+                .upcoming_environment
+                .as_ref()
+                .is_none_or(|e| **e != *upcoming_env)
+        {
+            // A different environment is upcoming and we are not preparing for
+            // it yet. Initiate or restart EBPP.
+            let pc = self
+                .transaction_processor
+                .global_program_cache
+                .read()
+                .unwrap();
+            ebpp.programs_to_recompile = pc.get_flattened_entries();
+            ebpp.programs_to_recompile
+                .sort_by_cached_key(|(_id, program)| program.retention_score());
+            ebpp.upcoming_epoch = self.epoch.saturating_add(1);
+            ebpp.upcoming_environment = Some(upcoming_env);
+        }
+    }
+
     pub fn prune_program_cache(&self, bank_forks: &BankForks) {
         let upcoming_environment = self
             .transaction_processor
@@ -1802,6 +1826,7 @@ impl Bank {
                 }),
                 bank_forks,
             );
+        self.latch_ebpp_from_root();
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
