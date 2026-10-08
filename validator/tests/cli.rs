@@ -52,3 +52,12 @@ fn test_conflicting_xdp_copy_mode_flags() {
             .stderr(predicates::str::contains("cannot be used with"));
     }
 }
+
+#[test]
+fn test_rpc_port_max_is_rejected() {
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!(env!("CARGO_PKG_NAME")));
+    cmd.args(["--rpc-port", "65535"]);
+    cmd.assert().failure().stderr(predicates::str::contains(
+        "the RPC websocket uses rpc-port + 1",
+    ));
+}

@@ -370,6 +370,18 @@ pub fn port_validator(port: String) -> Result<(), String> {
         .map_err(|e| format!("{e:?}"))
 }
 
+pub fn rpc_port_validator(port: String) -> Result<(), String> {
+    if port.parse::<u16>() == Ok(u16::MAX) {
+        Err(
+            "port 65535 cannot be used: the RPC websocket uses rpc-port + 1, which must be a \
+             valid port"
+                .to_string(),
+        )
+    } else {
+        port_validator(port)
+    }
+}
+
 pub fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
         // The port range is half-open: [start, end)
@@ -494,7 +506,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("PORT")
                 .takes_value(true)
                 .default_value(&default_args.rpc_port)
-                .validator(port_validator)
+                .validator(rpc_port_validator)
                 .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
         )
         .arg(
@@ -983,5 +995,16 @@ mod test {
                 next_name,
             );
         }
+    }
+
+    #[test]
+    fn test_rpc_port_max_is_rejected() {
+        let default_args = DefaultTestArgs::new();
+        let app = test_app("test", &default_args);
+        let matches = app.get_matches_from_safe(vec!["test", "--rpc-port", "65535"]);
+        assert!(
+            matches.is_err(),
+            "--rpc-port 65535 must be rejected: the RPC websocket uses rpc-port + 1"
+        );
     }
 }

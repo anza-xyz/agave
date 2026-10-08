@@ -322,6 +322,10 @@ impl TestValidatorGenesis {
     }
 
     pub fn rpc_port(&mut self, rpc_port: u16) -> &mut Self {
+        debug_assert!(
+            rpc_port < u16::MAX,
+            "rpc-port 65535 cannot be used: the RPC websocket uses rpc-port + 1"
+        );
         self.rpc_ports = Some((rpc_port, rpc_port + 1));
         self
     }
@@ -1685,5 +1689,11 @@ mod test {
                 TransactionError::AccountNotFound
             )
         ));
+    }
+
+    #[test]
+    #[should_panic(expected = "the RPC websocket uses rpc-port + 1")]
+    fn test_rpc_port_max_panics_in_debug() {
+        TestValidatorGenesis::default_for_tests().rpc_port(65535);
     }
 }

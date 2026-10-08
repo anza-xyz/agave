@@ -1,7 +1,7 @@
 use {
     crate::{
         bootstrap::RpcBootstrapConfig,
-        cli::{DefaultArgs, hash_validator, port_range_validator, port_validator},
+        cli::{DefaultArgs, hash_validator, port_range_validator, rpc_port_validator},
         commands::{FromClapArgMatches, Result},
     },
     agave_snapshots::{SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion},
@@ -235,7 +235,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("rpc-port")
             .value_name("PORT")
             .takes_value(true)
-            .validator(port_validator)
+            .validator(rpc_port_validator)
             .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
     )
     .arg(
@@ -1905,5 +1905,24 @@ mod tests {
             vec!["--allow-private-addr", "--no-xdp"],
             expected_args,
         );
+    }
+
+    #[test]
+    fn test_rpc_port_max_is_rejected() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(App::new("run_command"), &default_args);
+        let matches = app.get_matches_from_safe(vec!["run_command", "--rpc-port", "65535"]);
+        assert!(
+            matches.is_err(),
+            "--rpc-port 65535 must be rejected: the RPC websocket uses rpc-port + 1"
+        );
+    }
+
+    #[test]
+    fn test_rpc_port_max_minus_one_is_accepted() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(App::new("run_command"), &default_args);
+        let matches = app.get_matches_from_safe(vec!["run_command", "--rpc-port", "65534"]);
+        assert!(matches.is_ok());
     }
 }
