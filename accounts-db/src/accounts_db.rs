@@ -4387,7 +4387,7 @@ impl AccountsDb {
     pub(crate) fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        _bank_id: BankId,
+        bank_id: BankId,
         ancestors: &Ancestors,
     ) {
         // If all transactions in a batch are errored,
@@ -4399,7 +4399,7 @@ impl AccountsDb {
         // Store the accounts in the write cache
         let write_accounts_time = Measure::start("write_accounts");
         let (store_account, write_stats) =
-            self.write_accounts_to_cache(accounts.target_slot(), &accounts, ancestors);
+            self.write_accounts_to_cache(accounts.target_slot(), bank_id, &accounts, ancestors);
         let write_accounts_us = write_accounts_time.end_as_us();
 
         // Update the secondary index
@@ -4622,6 +4622,7 @@ impl AccountsDb {
     fn write_accounts_to_cache<'a, 'b>(
         &self,
         slot: Slot,
+        bank_id: BankId,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
         ancestors: &Ancestors,
     ) -> (BitVec, WriteAccountsToCacheStats) {
@@ -4659,7 +4660,8 @@ impl AccountsDb {
 
                 let account_shared_data = account.take_account();
                 let account_data_len = account_shared_data.data().len();
-                self.accounts_cache.store(slot, pubkey, account_shared_data);
+                self.accounts_cache
+                    .store(slot, bank_id, pubkey, account_shared_data);
                 store_account.set(index as u64, true);
                 stats.num_accounts_stored += 1;
                 stats.account_data_bytes_stored += account_data_len as u64;

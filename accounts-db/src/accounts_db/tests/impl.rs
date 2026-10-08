@@ -3894,7 +3894,8 @@ fn test_select_pubkeys_to_store() {
     let roots = BTreeSet::from([5, 10, 15]);
     let shared = Pubkey::new_unique();
     for &slot in &roots {
-        db.accounts_cache.store(slot, &shared, account.clone());
+        db.accounts_cache
+            .store(slot, BankId::new(slot), &shared, account.clone());
     }
 
     let shared_only = PubkeysToStore::Only([shared].into_iter().collect());
@@ -4719,6 +4720,7 @@ fn test_flush_untracks_cacheless_root() {
     let pubkey = Pubkey::new_unique();
     db.accounts_cache.store(
         10,
+        BankId::new(10),
         &pubkey,
         AccountSharedData::new(10, 0, &Pubkey::default()),
     );
@@ -6698,7 +6700,8 @@ fn test_is_ancestor_zero_lamport_cache_ancestor() {
 
     // Insert a non-zero lamport account and verify the function returns Some(false).
     let nonzero_account = AccountSharedData::new(100, 0, &Pubkey::default());
-    db.accounts_cache.store(slot, &pubkey, nonzero_account);
+    db.accounts_cache
+        .store(slot, BankId::new(slot), &pubkey, nonzero_account);
     assert_eq!(
         db.is_ancestor_zero_lamport(&pubkey, &ancestors),
         Some(false)
@@ -6706,7 +6709,8 @@ fn test_is_ancestor_zero_lamport_cache_ancestor() {
 
     // Update the account to zero lamports and verify the function returns Some(true).
     let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    db.accounts_cache.store(slot, &pubkey, zero_account);
+    db.accounts_cache
+        .store(slot, BankId::new(slot), &pubkey, zero_account);
     assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
 }
 
@@ -6720,7 +6724,8 @@ fn test_is_ancestor_zero_lamport_unflushed_root_in_cache() {
     let slot = 5;
 
     let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    db.accounts_cache.store(slot, &pubkey, zero_account);
+    db.accounts_cache
+        .store(slot, BankId::new(slot), &pubkey, zero_account);
     db.accounts_cache.add_root(slot);
 
     // The slot is not in ancestors, but is a root and returns the zero lamport UnflushedRoot
@@ -6766,7 +6771,8 @@ fn test_is_ancestor_zero_lamport_cache_over_storage() {
 
     // Zero lamport entry in the cache at the newer slot.
     let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    db.accounts_cache.store(cache_slot, &pubkey, zero_account);
+    db.accounts_cache
+        .store(cache_slot, BankId::new(cache_slot), &pubkey, zero_account);
 
     let ancestors = Ancestors::from(vec![cache_slot, storage_slot]);
     assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
@@ -6782,7 +6788,8 @@ fn test_do_load_returns_cache_value_for_cache_only_pubkey() {
     let slot = 5;
 
     let account = AccountSharedData::new(100, 0, &Pubkey::default());
-    db.accounts_cache.store(slot, &pubkey, account.clone());
+    db.accounts_cache
+        .store(slot, BankId::new(slot), &pubkey, account.clone());
     db.accounts_cache.add_root(slot);
     assert!(!db.accounts_index.contains(&pubkey));
 
