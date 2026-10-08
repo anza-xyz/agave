@@ -14,7 +14,7 @@ use {
     rand::seq::SliceRandom,
     serial_test::serial,
     solana_account::AccountSharedData,
-    solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
+    solana_accounts_db::utils::create_accounts_run_dir,
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -2212,11 +2212,7 @@ fn create_snapshot_to_hard_fork(
     let snapshot_config = create_simple_snapshot_config(ledger_path);
     let (bank_forks, _) = bank_forks_utils::try_load_bank_forks_from_snapshot(
         &genesis_config,
-        &[
-            create_accounts_run_and_snapshot_dirs(ledger_path.join("accounts"))
-                .unwrap()
-                .0,
-        ],
+        &[create_accounts_run_dir(ledger_path.join("accounts")).unwrap()],
         &snapshot_config,
         &process_options,
         None,

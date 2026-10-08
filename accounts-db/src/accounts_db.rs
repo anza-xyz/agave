@@ -733,10 +733,7 @@ pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<Path
 
     let paths: io::Result<Vec<_>> = temp_dirs
         .iter()
-        .map(|temp_dir| {
-            utils::create_accounts_run_and_snapshot_dirs(temp_dir)
-                .map(|(run_dir, _snapshot_dir)| run_dir)
-        })
+        .map(utils::create_accounts_run_dir)
         .collect();
     let paths = paths?;
     Ok((temp_dirs, paths))

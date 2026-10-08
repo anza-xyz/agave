@@ -732,7 +732,7 @@ pub fn bank_to_full_snapshot_archive(
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
-        false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        false, // we do not intend to fastboot, so skip finalization
         &snapshot_package.startup_hints,
         &io_setup,
     )?;
@@ -806,7 +806,7 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
-        false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        false, // we do not intend to fastboot, so skip finalization
         &snapshot_package.startup_hints,
         &io_setup,
     )?;
@@ -2965,8 +2965,8 @@ mod tests {
             .maximum_full_snapshot_archives_to_retain
             .get();
 
-        // Take some snapshots. Do not flush or hard link storages so that get highest loadable
-        // can be tested when the snapshot has not been marked loadable
+        // Take some snapshots. Do not finalize so that get highest loadable
+        // can be tested when the snapshot has not been marked loadable.
         let _bank = create_snapshot_dirs_for_tests(
             &GenesisConfig::default(),
             &snapshot_config.bank_snapshots_dir,
