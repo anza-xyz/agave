@@ -1319,6 +1319,7 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
 mod tests {
     use {
         super::*,
+        serial_test::serial,
         solana_clock::DEFAULT_MS_PER_SLOT,
         solana_instruction::AccountMeta,
         solana_keypair::{read_keypair_file, write_keypair_file},
@@ -1341,46 +1342,6 @@ mod tests {
             None,
             &client.get_latest_blockhash().unwrap(),
         )
-    }
-
-    #[test]
-    fn test_process_token_allocations() {
-        let alice = Keypair::new();
-        let test_validator = simple_test_validator(alice.pubkey());
-        let url = test_validator.rpc_url();
-
-        let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_tokens_with_client(&client, alice, None);
-    }
-
-    #[test]
-    fn test_process_transfer_amount_allocations() {
-        let alice = Keypair::new();
-        let test_validator = simple_test_validator(alice.pubkey());
-        let url = test_validator.rpc_url();
-
-        let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_tokens_with_client(&client, alice, sol_str_to_lamports("1.5"));
-    }
-
-    #[test]
-    fn test_create_stake_allocations() {
-        let alice = Keypair::new();
-        let test_validator = simple_test_validator(alice.pubkey());
-        let url = test_validator.rpc_url();
-
-        let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_create_stake_with_client(&client, alice);
-    }
-
-    #[test]
-    fn test_process_stake_allocations() {
-        let alice = Keypair::new();
-        let test_validator = simple_test_validator(alice.pubkey());
-        let url = test_validator.rpc_url();
-
-        let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_stake_with_client(&client, alice);
     }
 
     #[test]
@@ -1871,6 +1832,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_check_payer_balances_distribute_tokens_single_payer() {
         let alice = Keypair::new();
         let test_validator = simple_test_validator(alice.pubkey());
@@ -1953,6 +1915,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_check_payer_balances_distribute_tokens_separate_payers() {
         agave_logger::setup();
         let alice = Keypair::new();
@@ -2088,6 +2051,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_check_payer_balances_distribute_stakes_single_payer() {
         let alice = Keypair::new();
         let test_validator = simple_test_validator(alice.pubkey());
@@ -2201,6 +2165,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_check_payer_balances_distribute_stakes_separate_payers() {
         agave_logger::setup();
         let alice = Keypair::new();
@@ -2521,6 +2486,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_distribute_allocations_dump_db() {
         let sender_keypair = Keypair::new();
         let test_validator = simple_test_validator(sender_keypair.pubkey());
