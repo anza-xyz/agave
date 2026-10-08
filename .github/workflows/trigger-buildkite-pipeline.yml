@@ -26,6 +26,7 @@ jobs:
       should_trigger: ${{ steps.check.outputs.should_trigger }}
     permissions:
       contents: read
+      statuses: write
     steps:
       - name: Check permission
         id: check
@@ -33,6 +34,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           USERNAME: ${{ github.event.sender.login }}
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           TRUSTED_CI_USERS=(
             "mergify[bot]"
@@ -58,12 +61,18 @@ jobs:
               ;;
             *)
               echo "should_trigger=false" >> $GITHUB_OUTPUT
+
               {
                 echo "### ⏳ Waiting for CI approval"
                 echo ""
                 echo 'Waiting for a member to add the `CI` label'
               } >> "$GITHUB_STEP_SUMMARY"
-              exit 1
+
+              gh api --method POST "repos/$REPO/statuses/$COMMIT" \
+                -f state=pending \
+                -f context="buildkite/agave" \
+                -f description="⏳ waiting for a member to add the CI label" \
+                -f target_url="$RUN_URL"
               ;;
           esac
 
