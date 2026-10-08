@@ -270,7 +270,14 @@ if [[ -z "$noBuildPlatformTools" ]]; then
 
   # shellcheck disable=SC2086
   # starting from cargo-build-sbf v4.1.0, `cargo install cargo-build-sbf` installs both `cargo-build-sbf` and `cargo-test-sbf`
-  "$cargo" $maybeRustVersion install --locked cargo-build-sbf --root "$installDir" $maybeCargoBuildSbfVersionArg
+  "$cargo" $maybeRustVersion install --locked cargo-build-sbf $maybeCargoBuildSbfVersionArg
+
+  cargoInstallBinDir="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin"
+  for bin in cargo-build-sbf cargo-test-sbf; do
+    if [[ -x "$cargoInstallBinDir/$bin" ]]; then
+      ln -sfn "$cargoInstallBinDir/$bin" "$installDir/bin/$bin"
+    fi
+  done
 fi
 
 (
