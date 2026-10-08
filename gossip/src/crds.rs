@@ -42,6 +42,7 @@ use {
         set::IndexSet,
     },
     lazy_lru::LruCache,
+    parking_lot::RwLockReadGuard,
     rand::{rng, seq::IteratorRandom},
     rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
@@ -50,7 +51,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
-        ops::{Bound, Deref, Index, IndexMut, Range},
+        ops::{Bound, Index, IndexMut, Range},
         sync::Mutex,
     },
 };
@@ -171,10 +172,14 @@ pub(crate) struct NodesCursor<T> {
 
 impl<T> NodesCursor<T> {
     /// Takes the crds lock guard by value to release it before allocating.
-    pub(crate) fn new(crds: impl Deref<Target = Crds>) -> Self {
+    pub(crate) fn new(crds: RwLockReadGuard<'_, Crds>) -> Self {
         let num_nodes = crds.nodes.len();
         let initial_num_nodes_removed = crds.num_nodes_removed;
         drop(crds);
+        Self::from_parts(num_nodes, initial_num_nodes_removed)
+    }
+
+    fn from_parts(num_nodes: usize, initial_num_nodes_removed: u64) -> Self {
         Self {
             end: num_nodes,
             initial_num_nodes_removed,
@@ -1493,7 +1498,7 @@ mod tests {
         // Walks the nodes, calling f after each chunk. Values are the order of
         // the read.
         fn walk(crds: &mut Crds, mut f: impl FnMut(&mut Crds)) -> NodesCursor<usize> {
-            let mut cursor = NodesCursor::new(&*crds);
+            let mut cursor = NodesCursor::from_parts(crds.nodes.len(), crds.num_nodes_removed);
             let mut num_reads = 0;
             while !cursor.is_done() {
                 cursor.read_chunk(crds, CHUNK_SIZE, |_| {
@@ -1606,7 +1611,7 @@ mod tests {
             )
             .unwrap();
         }
-        let mut cursor = NodesCursor::new(&crds);
+        let mut cursor = NodesCursor::from_parts(crds.nodes.len(), crds.num_nodes_removed);
         let query = |value: &VersionedCrdsValue| {
             value
                 .value
