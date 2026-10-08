@@ -132,9 +132,8 @@ impl PacketAccumulator {
     // slices. For streams that complete successfully, this moves the allocation and
     // copy earlier: completion reuses this buffer without another allocation or copy.
     // Allocate to the stream cap so subsequent chunks need no reallocation;
-    // handle_chunks enforces that cap. The frozen buffer keeps that cap-sized
-    // allocation for the packet's lifetime rather than shrinking to the final stream
-    // length, which is acceptable for streams already past the expected chunk count.
+    // handle_chunks enforces that cap, and at EOF copies packets much smaller than it
+    // into an exact-size buffer so they don't pin the cap-sized allocation downstream.
     // Allocating the full cap up front is acceptable because handle_connection reads one
     // stream per connection at a time, so a peer can hold at most one such buffer per
     // connection. Revisit this if streams are ever read concurrently or the cap grows
@@ -817,8 +816,15 @@ fn handle_chunks(
 
     // If the stream switched to coalescing mode, its single owned buffer is the whole
     // packet; fold it back so the single-chunk (no extra copy) path below handles it.
+    // The buffer was allocated at the stream cap, so copy a packet using less than half
+    // of it, rather than keep the whole allocation alive downstream.
     if let Some(buf) = accum.coalesced.take() {
-        accum.chunks.push(buf.freeze());
+        let packet = if buf.len() < buf.capacity() / 2 {
+            Bytes::copy_from_slice(&buf)
+        } else {
+            buf.freeze()
+        };
+        accum.chunks.push(packet);
     }
 
     if accum.chunks.is_empty() {
