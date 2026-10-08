@@ -19,6 +19,9 @@ fi
 ns="local-cluster-$$"
 sudo -n ip netns add "$ns"
 trap 'sudo -n ip netns del "$ns"' EXIT
+# Exit through the EXIT trap, deleting the namespace, when killed by a signal.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 sudo -n ip netns exec "$ns" ip link set lo up
 
 # sudo -E keeps the environment (cargo/rustup homes, RUST_LOG, BYZ_FUZZ_*) except PATH and

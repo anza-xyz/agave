@@ -4349,6 +4349,23 @@ type ByzFuzzDelayFaults = BTreeMap<Slot, ByzFuzzLinkDelays>;
 const BYZ_FUZZ_MAX_LINK_DELAY_MS: u64 = 300;
 const BYZ_FUZZ_MAX_LINK_JITTER_MS: u64 = 100;
 
+/// The range of delay on the links between the two sides of a stacked fault's split.
+const BYZ_FUZZ_STACKED_LINK_DELAY_MS: std::ops::RangeInclusive<u64> = 150..=400;
+/// The largest number of rounds a stacked fault's network half lasts.
+const BYZ_FUZZ_MAX_STACKED_ROUNDS: Slot = 3;
+
+/// Adds `delay` to a link. Several faults on one link in a round keep the largest delay
+/// and jitter.
+fn byz_fuzz_add_link_delay(
+    delays: &mut ByzFuzzLinkDelays,
+    link: (Pubkey, Pubkey),
+    delay: LinkDelay,
+) {
+    let entry = delays.entry(link).or_default();
+    entry.delay = entry.delay.max(delay.delay);
+    entry.jitter = entry.jitter.max(delay.jitter);
+}
+
 /// Samples a non-empty set of directed links with a random delay and jitter each.
 /// Jitter larger than the gap between packets reorders them.
 fn byz_fuzz_random_link_delays(rng: &mut StdRng, validators: &[Pubkey]) -> ByzFuzzLinkDelays {
@@ -4704,6 +4721,9 @@ fn byz_fuzz_install_process_faults(
 ///   bad block_id, or a notarize vote to some validators and a skip vote to the rest.
 /// - `BYZ_FUZZ_DELAY_FAULT_ROUNDS`: the number of sampled per-link delay and jitter
 ///   faults. They only run inside a network namespace (`local-cluster/run-in-netns.sh`).
+/// - `BYZ_FUZZ_STACKED_FAULT_ROUNDS`: the number of sampled stacked faults, each a
+///   Byzantine equivocation between two groups of honest validators combined with a
+///   partition or heavy delay between the same groups for 1-3 rounds.
 /// - `BYZ_FUZZ_ROUNDS`: r, the number of rounds to execute.
 #[test]
 #[serial]
@@ -4715,7 +4735,8 @@ fn test_byz_fuzz() {
     const DEFAULT_NETWORK_FAULT_ROUNDS: usize = 3;
     const DEFAULT_PROCESS_FAULT_ROUNDS: usize = 3;
     const DEFAULT_DELAY_FAULT_ROUNDS: usize = 3;
-    const DEFAULT_ROUNDS: Slot = 8;
+    const DEFAULT_STACKED_FAULT_ROUNDS: usize = 3;
+    const DEFAULT_ROUNDS: Slot = 40;
 
     // Keep the injected process faults visible; the default filter hides turbine logs.
     agave_logger::setup_with_default(&format!(
@@ -4734,6 +4755,10 @@ fn test_byz_fuzz() {
     );
     let delay_fault_rounds =
         byz_fuzz_input("BYZ_FUZZ_DELAY_FAULT_ROUNDS", DEFAULT_DELAY_FAULT_ROUNDS);
+    let stacked_fault_rounds = byz_fuzz_input(
+        "BYZ_FUZZ_STACKED_FAULT_ROUNDS",
+        DEFAULT_STACKED_FAULT_ROUNDS,
+    );
     let rounds = byz_fuzz_input("BYZ_FUZZ_ROUNDS", DEFAULT_ROUNDS);
     assert!(num_nodes >= 2, "byz_fuzz needs at least two validators");
     assert!(rounds > 0, "byz_fuzz needs at least one round");
@@ -4826,18 +4851,91 @@ fn test_byz_fuzz() {
     for _ in 0..delay_fault_rounds {
         let round = rng.random_range(1..=rounds);
         let round_delays = delay_faults.entry(round).or_default();
-        // Several faults on one link in a round: keep the largest delay and jitter.
         for (link, delay) in byz_fuzz_random_link_delays(&mut rng, &validators) {
-            let entry = round_delays.entry(link).or_default();
-            entry.delay = entry.delay.max(delay.delay);
-            entry.jitter = entry.jitter.max(delay.jitter);
+            byz_fuzz_add_link_delay(round_delays, link, delay);
+        }
+    }
+    // Stacked faults aim a network fault at the same split of the honest validators as a
+    // process fault: the Byzantine validator equivocates between `group` and `rest`, and
+    // starting in the same round, `group` is partitioned from `rest` (the Byzantine
+    // validator stays with `rest`) or every link between them is heavily delayed while
+    // the Byzantine validator's links stay fast. Sampled last for the same reason.
+    let honest_validators = validators
+        .iter()
+        .filter(|validator| **validator != byzantine)
+        .copied()
+        .collect::<Vec<_>>();
+    for _ in 0..stacked_fault_rounds {
+        let mut group = byz_fuzz_random_recipients(&mut rng, &validators, &byzantine);
+        if group.len() == honest_validators.len() {
+            group.remove(rng.random_range(0..group.len()));
+        }
+        let rest = honest_validators
+            .iter()
+            .filter(|validator| !group.contains(validator))
+            .copied()
+            .collect::<Vec<_>>();
+        let (round, kind) = if rng.random::<bool>() {
+            (
+                *byzantine_rounds.choose(&mut rng).unwrap(),
+                ByzFuzzProcessFaultKind::Shreds {
+                    recipients: group.clone(),
+                },
+            )
+        } else {
+            (
+                rng.random_range(1..=rounds),
+                ByzFuzzProcessFaultKind::VoteEquivocate {
+                    notarize_recipients: group.clone(),
+                },
+            )
+        };
+        let fault = ByzFuzzProcessFault {
+            kind,
+            seed: rng.random(),
+        };
+        let round_faults = process_faults.entry(round).or_default();
+        if !round_faults.contains(&fault) {
+            round_faults.push(fault);
+        }
+
+        let last_round = round
+            .saturating_add(rng.random_range(1..=BYZ_FUZZ_MAX_STACKED_ROUNDS) - 1)
+            .min(rounds);
+        if rng.random::<bool>() {
+            let mut byzantine_side = rest.clone();
+            byzantine_side.push(byzantine);
+            byzantine_side.sort_unstable();
+            let mut partition = vec![group.clone(), byzantine_side];
+            partition.sort_unstable_by_key(|group| group[0]);
+            for round in round..=last_round {
+                let round_partitions = network_faults.entry(round).or_default();
+                if !round_partitions.contains(&partition) {
+                    round_partitions.push(partition.clone());
+                }
+            }
+        } else {
+            let delay = LinkDelay {
+                delay: Duration::from_millis(rng.random_range(BYZ_FUZZ_STACKED_LINK_DELAY_MS)),
+                jitter: Duration::from_millis(rng.random_range(0..=BYZ_FUZZ_MAX_LINK_JITTER_MS)),
+            };
+            for round in round..=last_round {
+                let round_delays = delay_faults.entry(round).or_default();
+                for a in &group {
+                    for b in &rest {
+                        byz_fuzz_add_link_delay(round_delays, (*a, *b), delay);
+                        byz_fuzz_add_link_delay(round_delays, (*b, *a), delay);
+                    }
+                }
+            }
         }
     }
     info!(
         "BYZ_FUZZ seed={seed} nodes={num_nodes} d={network_fault_rounds} c={process_fault_rounds} \
-         delay_rounds={delay_fault_rounds} r={rounds} byzantine={byzantine} \
-         byzantine_rounds={byzantine_rounds:?} network_faults={network_faults:?} \
-         process_faults={process_faults:?} delay_faults={delay_faults:?}"
+         delay_rounds={delay_fault_rounds} stacked_rounds={stacked_fault_rounds} r={rounds} \
+         byzantine={byzantine} byzantine_rounds={byzantine_rounds:?} \
+         network_faults={network_faults:?} process_faults={process_faults:?} \
+         delay_faults={delay_faults:?}"
     );
 
     let mut validator_config = ValidatorConfig::default_for_test();
