@@ -107,7 +107,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     let ancestors = Ancestors::from(vec![parent_slot]);
     bank_rc
         .accounts
-        .store_accounts((parent_slot, &accounts[..]), bank_id, None, &ancestors);
+        .store_accounts((parent_slot, &accounts[..]), bank_id, None, None, &ancestors);
     bank_rc.accounts.accounts_db.add_root(parent_slot);
 
     // Dummy epoch stakes with the provided total stake at the current and next epoch.
