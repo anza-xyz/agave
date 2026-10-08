@@ -69,6 +69,7 @@ use {
         },
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusMessage,
+            TransactionStatusSender,
         },
     },
     solana_sha256_hasher::hash,
@@ -699,11 +700,16 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&root_bank));
     let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
     let (votor_commitment_sender, votor_commitment_receiver) = bounded(1024);
+    let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
     let context = ProcessBankForksContext {
         bank_forks: bank_forks.clone(),
         blockstore: blockstore.clone(),
         snapshot_controller: None,
         bank_notification_sender: None,
+        transaction_status_sender: Some(TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        }),
         rpc_subscriptions: None,
         drop_bank_sender,
         leader_schedule_cache,
@@ -722,6 +728,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     );
     assert_eq!(bank_forks.read().unwrap().root(), 0);
     assert!(!blockstore.is_root(2));
+    assert!(transaction_status_receiver.is_empty());
 
     let mismatched_command = SetRootCommand {
         new_root: Block::new_unique(1),
@@ -734,6 +741,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     );
     assert_eq!(bank_forks.read().unwrap().root(), 0);
     assert!(!blockstore.is_root(1));
+    assert!(transaction_status_receiver.is_empty());
 
     let unfrozen_block_id = BlockId::new_unique();
     let unfrozen_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 2);
@@ -755,6 +763,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     assert!(!blockstore.is_root(2));
     // A root replay didn't apply is never published to the commitment cache.
     assert!(votor_commitment_receiver.is_empty());
+    assert!(transaction_status_receiver.is_empty());
 
     let block_id = bank_forks.read().unwrap().block_id(1).unwrap();
     let matching_command = SetRootCommand {
@@ -768,6 +777,11 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     );
     assert_eq!(bank_forks.read().unwrap().root(), 1);
     assert!(blockstore.is_root(1));
+    assert!(matches!(
+        transaction_status_receiver.try_recv().unwrap(),
+        TransactionStatusMessage::Rooted { slot: 1, bank_id }
+            if bank_id == bank_forks.read().unwrap().root_bank().bank_id()
+    ));
     assert_eq!(
         votor_commitment_receiver.try_recv().unwrap(),
         CommitmentAggregationData {
