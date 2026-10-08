@@ -178,6 +178,20 @@ fn is_workspace_wide_change(changed_files: &[String]) -> bool {
         .any(|f| f == "Cargo.toml" || f == "Cargo.lock")
 }
 
+/// Conformance CI infrastructure. Changes here belong to no crate but alter how
+/// every fixture set is fetched, selected, or run.
+const CONFORMANCE_INFRA: &[&str] = &[
+    ".github/workflows/conformance-dispatch.yml",
+    "ci/test-conformance.sh",
+    "ci/xtask/src/commands/conformance_table.rs",
+];
+
+fn is_infra_change(changed_files: &[String]) -> bool {
+    changed_files
+        .iter()
+        .any(|f| CONFORMANCE_INFRA.contains(&f.as_str()))
+}
+
 pub async fn run(args: CommandArgs) -> Result<()> {
     let repo = Repo::from_env();
     let changed_files = github::get_changed_files(&repo, args.pr_number).await?;
@@ -189,6 +203,9 @@ pub async fn run(args: CommandArgs) -> Result<()> {
 
     let entries = if is_workspace_wide_change(&changed_files) {
         info!("workspace manifest/lockfile changed; dispatching all fixture sets");
+        all_entries()
+    } else if is_infra_change(&changed_files) {
+        info!("conformance CI infrastructure changed; dispatching all fixture sets");
         all_entries()
     } else {
         let changed_crates = changed_files_to_crates(&changed_files)?;
@@ -320,6 +337,25 @@ mod tests {
         assert!(!is_workspace_wide_change(&[
             "svm/Cargo.toml".to_string(),
             "programs/sbf/Cargo.lock".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn test_infra_files_are_infra_changes() {
+        for &file in CONFORMANCE_INFRA {
+            assert!(is_infra_change(&[
+                "README.md".to_string(),
+                file.to_string()
+            ]));
+        }
+    }
+
+    #[test]
+    fn test_other_ci_files_are_not_infra_changes() {
+        assert!(!is_infra_change(&[
+            ".github/workflows/ci.yml".to_string(),
+            "ci/test-stable.sh".to_string(),
+            "ci/xtask/src/commands/mod.rs".to_string(),
         ]));
     }
 }
