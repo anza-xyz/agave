@@ -41,6 +41,8 @@ pub struct AccountsDbConfig {
     /// Number of threads for background operations (`thread_pool_background')
     pub num_background_threads: Option<NonZeroUsize>,
     pub accounts_file_provider: AccountsFileProvider,
+    /// Read storages with direct I/O when generating the index at startup
+    pub use_direct_io: bool,
 }
 
 pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
@@ -61,6 +63,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
     num_background_threads: None,
     accounts_file_provider: AccountsFileProvider::AppendVec,
+    use_direct_io: false,
 };
 
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
@@ -81,4 +84,5 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     num_background_threads: None,
     accounts_file_provider: AccountsFileProvider::AppendVec,
+    use_direct_io: false,
 };

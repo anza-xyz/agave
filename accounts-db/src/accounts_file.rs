@@ -237,7 +237,7 @@ impl AccountsFile {
         }
     }
 
-    /// Scans the file already activated on the reader, preserving archive read-ahead and I/O mode.
+    /// Scans the file already activated on the reader, preserving its read-ahead and I/O mode.
     pub(crate) fn scan_accounts_with<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
@@ -327,14 +327,15 @@ impl AccountsFile {
         }
     }
 
-    /// Returns a file handle suitable for archive-style reads. With
-    /// `use_direct_io = true` a fresh fd is opened with `O_DIRECT`; otherwise
-    /// the `AccountsFile`'s existing fd is borrowed, saving one fd per storage.
+    /// Returns a file handle for a bulk read (one sequential pass over the whole file) in batch
+    /// work like archiving or index generation, rather than for account loads.
+    /// With `use_direct_io = true` a fresh fd is opened with `O_DIRECT`; otherwise the
+    /// `AccountsFile`'s existing fd is borrowed.
     /// Returns `None` for a split file with no external account data file.
-    pub fn open_file_for_archive(
+    pub fn open_file_for_bulk_read(
         &self,
         use_direct_io: bool,
-    ) -> io::Result<Option<OpenFileForArchive<'_>>> {
+    ) -> io::Result<Option<OpenFileForBulkRead<'_>>> {
         let Some((data_file, read_limit)) = self.account_data_file() else {
             return Ok(None);
         };
@@ -346,11 +347,11 @@ impl AccountsFile {
                     split.data_path().unwrap()
                 }
             };
-            ArchiveFile::Owned(open_for_reading(path, true)?)
+            BulkReadFile::Owned(open_for_reading(path, true)?)
         } else {
-            ArchiveFile::Borrowed(data_file)
+            BulkReadFile::Borrowed(data_file)
         };
-        Ok(Some(OpenFileForArchive { file, read_limit }))
+        Ok(Some(OpenFileForBulkRead { file, read_limit }))
     }
 }
 
@@ -371,9 +372,9 @@ impl AccountsFileProvider {
     }
 }
 
-/// The access method to use when archiving an AccountsFile
+/// The access method to use when bulk-reading an AccountsFile
 #[derive(Debug)]
-enum ArchiveFile<'a> {
+enum BulkReadFile<'a> {
     /// Borrowed `AccountsFile` fd; lacks `O_DIRECT`, so reads go through the
     /// kernel page cache (incompatible with direct-I/O reads).
     Borrowed(&'a File),
@@ -381,23 +382,23 @@ enum ArchiveFile<'a> {
     Owned(File),
 }
 
-impl AsRef<File> for OpenFileForArchive<'_> {
+impl AsRef<File> for OpenFileForBulkRead<'_> {
     fn as_ref(&self) -> &File {
         match &self.file {
-            ArchiveFile::Borrowed(f) => f,
-            ArchiveFile::Owned(f) => f,
+            BulkReadFile::Borrowed(f) => f,
+            BulkReadFile::Owned(f) => f,
         }
     }
 }
 
-/// The account data file of an AccountsFile, opened for archiving
+/// The account data file of an AccountsFile, opened for a bulk read
 #[derive(Debug)]
-pub struct OpenFileForArchive<'a> {
-    file: ArchiveFile<'a>,
+pub struct OpenFileForBulkRead<'a> {
+    file: BulkReadFile<'a>,
     read_limit: FileSize,
 }
 
-impl OpenFileForArchive<'_> {
+impl OpenFileForBulkRead<'_> {
     /// Returns the length of the account data (excludes a split file's metadata).
     pub fn read_limit(&self) -> FileSize {
         self.read_limit
