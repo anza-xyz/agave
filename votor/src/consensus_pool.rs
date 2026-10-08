@@ -637,7 +637,7 @@ mod tests {
                 get_cluster_info(validator_keypairs[0].vote_keypair.insecure_clone());
             let root_block = Block {
                 slot: root_bank.slot(),
-                block_id: BlockId::from(root_bank.block_id().unwrap_or_default()),
+                block_id: root_bank.block_id().unwrap_or_default(),
             };
             let initial_parent_ready = (root_bank.slot().checked_add(1).unwrap(), root_block);
             Self {
@@ -2000,7 +2000,7 @@ mod tests {
         let parent_bank = ctx.bank_forks.read().unwrap().root_bank();
         let root_bank = create_bank(63, parent_bank, SlotLeader::new_unique());
         let root_block_id = BlockId::new_unique();
-        root_bank.set_block_id(Some(root_block_id.to_hash()));
+        root_bank.set_block_id(Some(root_block_id));
         root_bank.freeze();
         let root_block = Block {
             slot: root_bank.slot(),

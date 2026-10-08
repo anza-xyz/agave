@@ -15,7 +15,9 @@ use {
     agave_transaction_view::{
         transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
     },
-    agave_votor_messages::{certificate::Certificate, migration::MigrationStatus},
+    agave_votor_messages::{
+        certificate::Certificate, consensus_message::BlockId, migration::MigrationStatus,
+    },
     bytes::Bytes,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
@@ -1784,11 +1786,11 @@ fn process_bank_0(
         err @ BlockstoreProcessorError::InvalidTransaction(_) => panic!("{err}"),
         _ => BlockstoreProcessorError::FailedToReplayBank0,
     })?;
-    bank0.set_block_id(Some(
+    bank0.set_block_id(Some(BlockId::from(
         blockstore
             .get_block_id(bank0.slot(), migration_status)?
             .expect("block id for a full slot must exist"),
-    ));
+    )));
     bank0.freeze();
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
@@ -1915,7 +1917,8 @@ fn process_next_slots(
                 let parent_block_id = bank.block_id();
                 if migration_status.should_allow_block_markers(*next_slot)
                     && bank.slot() != 0
-                    && Some(next_meta.parent_block_id) != parent_block_id
+                    && let Some(block_id) = parent_block_id
+                    && next_meta.parent_block_id != block_id.to_hash()
                 {
                     warn!(
                         "startup replay deferring slot {next_slot}: parent {} has block id {:?}, \
@@ -2434,10 +2437,12 @@ pub fn process_single_slot(
         err
     })?;
 
-    let block_id = blockstore
-        .get_block_id(slot, migration_status)
-        .expect("Blockstore operations must succeed")
-        .expect("Full block must have block id");
+    let block_id = BlockId::from(
+        blockstore
+            .get_block_id(slot, migration_status)
+            .expect("Blockstore operations must succeed")
+            .expect("Full block must have block id"),
+    );
     bank.set_block_id(Some(block_id));
     let verify_result = bank.freeze_and_verify_bank_hash(); // all banks handled by this routine are created from complete slots
 
@@ -6300,19 +6305,19 @@ pub mod tests {
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         let parent_bank = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
         parent_bank.set_block_id(Some(parent_block_id));
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&parent_bank);
         let mut parent_meta = SlotMeta::new(1, Some(0));
         parent_meta.next_slots = smallvec::smallvec![2, 3];
 
-        for (slot, block_id) in [(2, Hash::new_unique()), (3, parent_block_id)] {
+        for (slot, block_id) in [(2, BlockId::new_unique()), (3, parent_block_id)] {
             let mut meta = SlotMeta::new(slot, Some(1));
             meta.consumed = 1;
             meta.received = 1;
             meta.last_index = Some(0);
-            meta.parent_block_id = block_id;
+            meta.parent_block_id = block_id.to_hash();
             meta.replay_fec_set_index = 32;
             blockstore.put_meta(slot, &meta).unwrap();
         }

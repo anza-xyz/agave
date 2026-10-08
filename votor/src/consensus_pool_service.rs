@@ -714,12 +714,10 @@ impl ConsensusPoolService {
 fn root_block(root_bank: &Bank) -> Block {
     Block {
         slot: root_bank.slot(),
-        block_id: BlockId::from(
-            root_bank
-                .block_id()
-                // Once SIMD-0333 is active we can hard unwrap here
-                .unwrap_or_default(),
-        ),
+        block_id: root_bank
+            .block_id()
+            // Once SIMD-0333 is active we can hard unwrap here
+            .unwrap_or_default(),
     }
 }
 

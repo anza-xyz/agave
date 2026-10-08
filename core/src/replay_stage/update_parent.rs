@@ -79,7 +79,10 @@ pub(super) fn child_bank_replay_start(
     }
 
     // Genesis doesn't have a block id.
-    if parent_slot != 0 && Some(slot_meta.parent_block_id) != parent_bank.block_id() {
+    if parent_slot != 0
+        && let Some(parent_block_id) = parent_bank.block_id()
+        && parent_block_id.to_hash() != slot_meta.parent_block_id
+    {
         // There were duplicate blocks in this slot and we have the wrong one
         // replayed. Do not continue down this fork. If this fork ends up
         // being ParentReady, votor will repair the duplicate parent block and

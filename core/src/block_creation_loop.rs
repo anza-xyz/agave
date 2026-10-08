@@ -16,7 +16,7 @@ use {
     agave_bls_sigverify::rewards::RewardInput,
     agave_votor::{event::LeaderWindowInfo, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::{
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
@@ -241,8 +241,8 @@ enum StartLeaderError {
     ParentBlockIdMismatch {
         leader_slot: Slot,
         parent_slot: Slot,
-        expected: Hash,
-        actual: Option<Hash>,
+        expected: BlockId,
+        actual: Option<BlockId>,
     },
 
     /// PoH recorder failed while starting or completing a leader block.
@@ -611,7 +611,7 @@ fn produce_window(
         slot_metrics,
         start_slot,
         parent_block.slot,
-        Some(parent_block.block_id.to_hash()),
+        Some(parent_block.block_id),
         block_timer,
     )?;
 
@@ -1007,7 +1007,7 @@ fn handle_parent_ready(
     let old_parent_slot = optimistic_parent_block.slot;
     let Block {
         slot: new_parent_slot,
-        block_id: new_parent_hash,
+        block_id: new_parent_block_id,
     } = leader_window_info.parent_block;
 
     let bank = ctx
@@ -1032,7 +1032,7 @@ fn handle_parent_ready(
             slot,
             cleared_bank_id,
             parent_slot: new_parent_slot,
-            parent_block_id: new_parent_hash.to_hash(),
+            parent_block_id: new_parent_block_id.to_hash(),
         }))
     {
         warn!("UpdateParent entry notification send failed: {err:?}");
@@ -1044,7 +1044,7 @@ fn handle_parent_ready(
         slot_metrics,
         slot,
         new_parent_slot,
-        Some(new_parent_hash.to_hash()),
+        Some(new_parent_block_id),
         *block_timer,
         entry_bytes_consumed,
     )
@@ -1133,7 +1133,7 @@ fn start_leader_wait_for_parent_replay(
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     parent_slot: Slot,
-    parent_hash: Option<Hash>,
+    parent_block_id: Option<BlockId>,
     block_timer: Instant,
 ) -> Result<Arc<Bank>, StartLeaderError> {
     start_leader_wait_for_parent_replay_with_used_bytes(
@@ -1141,7 +1141,7 @@ fn start_leader_wait_for_parent_replay(
         slot_metrics,
         slot,
         parent_slot,
-        parent_hash,
+        parent_block_id,
         block_timer,
         0,
     )
@@ -1152,7 +1152,7 @@ fn start_leader_wait_for_parent_replay_with_used_bytes(
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     parent_slot: Slot,
-    parent_hash: Option<Hash>,
+    parent_block_id: Option<BlockId>,
     block_timer: Instant,
     entry_bytes_consumed: u64,
 ) -> Result<Arc<Bank>, StartLeaderError> {
@@ -1187,7 +1187,7 @@ fn start_leader_wait_for_parent_replay_with_used_bytes(
             slot_metrics,
             slot,
             parent_slot,
-            parent_hash,
+            parent_block_id,
             entry_bytes_consumed,
         ) {
             Ok(()) => {
@@ -1273,7 +1273,7 @@ fn maybe_start_leader(
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     parent_slot: Slot,
-    parent_hash: Option<Hash>,
+    parent_block_id: Option<BlockId>,
     entry_bytes_consumed: u64,
 ) -> Result<(), StartLeaderError> {
     if ctx.bank_forks.read().unwrap().get(slot).is_some() {
@@ -1289,7 +1289,7 @@ fn maybe_start_leader(
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     }
 
-    if let Some(expected) = parent_hash.filter(|hash| *hash != Hash::default()) {
+    if let Some(expected) = parent_block_id.filter(|block_id| *block_id != BlockId::default()) {
         let actual = parent_bank.block_id();
         if actual != Some(expected) {
             return Err(StartLeaderError::ParentBlockIdMismatch {
@@ -1642,7 +1642,7 @@ mod tests {
         let new_identity = Pubkey::new_unique();
         let genesis = create_genesis_config_with_leader(10_000, &old_identity, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
         root_bank.set_block_id(Some(parent_block_id));
         root_bank.freeze();
         let bank_forks = BankForks::new_rw_arc(root_bank);
@@ -1704,7 +1704,7 @@ mod tests {
             3,
             Block {
                 slot: 0,
-                block_id: BlockId::from(parent_block_id),
+                block_id: parent_block_id,
             },
             Instant::now(),
             &mut ctx,
@@ -2044,7 +2044,7 @@ mod tests {
         let my_pubkey = Pubkey::new_unique();
         let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
-        root_bank.set_block_id(Some(Hash::new_unique()));
+        root_bank.set_block_id(Some(BlockId::new_unique()));
         root_bank.freeze();
         let bank_forks = BankForks::new_rw_arc(root_bank);
         let root_bank = bank_forks.read().unwrap().root_bank();
@@ -2061,10 +2061,10 @@ mod tests {
         );
         new_parent.register_unique_recent_blockhash_for_test();
         new_parent.freeze();
-        new_parent.set_block_id(Some(new_parent_block_id.to_hash()));
+        new_parent.set_block_id(Some(new_parent_block_id));
         let new_parent_bank_id = new_parent.bank_id();
 
-        let optimistic_parent_hash = Hash::new_unique();
+        let optimistic_parent_block_id = BlockId::new_unique();
         let optimistic_parent = if optimistic_parent_slot == new_parent_slot {
             Arc::new(Bank::new_from_parent(
                 root_bank.clone(),
@@ -2081,7 +2081,7 @@ mod tests {
         };
         optimistic_parent.register_unique_recent_blockhash_for_test();
         optimistic_parent.freeze();
-        optimistic_parent.set_block_id(Some(optimistic_parent_hash));
+        optimistic_parent.set_block_id(Some(optimistic_parent_block_id));
         let optimistic_parent_bank_id = optimistic_parent.bank_id();
         assert_ne!(optimistic_parent_bank_id, new_parent_bank_id);
         assert_ne!(
@@ -2184,7 +2184,7 @@ mod tests {
             parent_ready,
             Block {
                 slot: optimistic_parent_slot,
-                block_id: BlockId::from(optimistic_parent_hash),
+                block_id: optimistic_parent_block_id,
             },
             vec![accumulated_tx.clone()],
             &mut Instant::now(),

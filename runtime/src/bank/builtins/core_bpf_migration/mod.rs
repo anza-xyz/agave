@@ -502,6 +502,7 @@ pub(crate) mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::consensus_message::BlockId,
         assert_matches::assert_matches,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -2330,7 +2331,7 @@ pub(crate) mod tests {
         );
 
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
         // Force flush the bank to create the account storage entry
         bank.squash();
         bank.force_flush_accounts_cache();
