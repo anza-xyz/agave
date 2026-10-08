@@ -11633,11 +11633,9 @@ dependencies = [
  "agave-feature-set",
  "rand 0.9.4",
  "semver 1.0.28",
- "serde",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-sanitize",
- "solana-serde-varint",
  "solana-wincode-varint",
  "wincode",
 ]

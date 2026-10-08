@@ -3,9 +3,7 @@ use solana_frozen_abi_macro::{StableAbi, frozen_abi};
 use {
     crate::{client_ids::ClientId, compute_commit},
     rand::{Rng, rng},
-    serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::Error as _},
     solana_sanitize::Sanitize,
-    solana_serde_varint as serde_varint,
     solana_wincode_varint::Leb128Int,
     std::{convert::TryInto, fmt, mem::MaybeUninit, str::FromStr},
     wincode::{
@@ -86,13 +84,8 @@ impl FromStr for Prerelease {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
-#[serde(transparent)]
-struct PackedMinor(
-    #[serde(with = "serde_varint")]
-    #[wincode(with = "Leb128Int<u16>")]
-    u16,
-);
+#[derive(Clone, Debug, PartialEq, SchemaRead, SchemaWrite)]
+struct PackedMinor(#[wincode(with = "Leb128Int<u16>")] u16);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PackedMinorPackError {
@@ -350,84 +343,17 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Version {
     }
 }
 
-#[derive(Deserialize, Serialize, SchemaRead, SchemaWrite)]
+#[derive(SchemaRead, SchemaWrite)]
 struct SerializedVersion {
-    #[serde(with = "serde_varint")]
     #[wincode(with = "Leb128Int<u16>")]
     major: u16,
-    #[serde(rename = "minor")]
     packed_minor: PackedMinor,
-    #[serde(with = "serde_varint")]
     #[wincode(with = "Leb128Int<u16>")]
     patch: u16,
     commit: u32,
     feature_set: u32,
-    #[serde(with = "serde_varint")]
     #[wincode(with = "Leb128Int<u16>")]
     client: u16,
-}
-
-impl Serialize for Version {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let &Version {
-            major,
-            minor,
-            patch,
-            commit,
-            feature_set,
-            ref client,
-            ref prerelease,
-        } = self;
-
-        let (packed_minor, patch) = PackedMinor::try_pack(minor, patch, prerelease)
-            .map_err(|err| S::Error::custom(format!("{err:?}")))?;
-        let client = u16::try_from(client.clone()).map_err(S::Error::custom)?;
-
-        let serialized_version = SerializedVersion {
-            major,
-            packed_minor,
-            patch,
-            commit,
-            feature_set,
-            client,
-        };
-
-        SerializedVersion::serialize(&serialized_version, serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Version {
-    fn deserialize<D>(deserializer: D) -> Result<Version, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let SerializedVersion {
-            major,
-            packed_minor,
-            patch,
-            commit,
-            feature_set,
-            client,
-        } = SerializedVersion::deserialize(deserializer)?;
-
-        let (minor, patch, prerelease) = packed_minor
-            .try_unpack(patch)
-            .map_err(|err| D::Error::custom(format!("{err:?}")))?;
-        let client = ClientId::from(client);
-
-        Ok(Version {
-            major,
-            minor,
-            patch,
-            commit,
-            feature_set,
-            client,
-            prerelease,
-        })
-    }
 }
 
 // Generates a random, always-serializable `Version`. `Version` has a packed
