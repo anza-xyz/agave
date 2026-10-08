@@ -10,7 +10,7 @@ use {
     solana_clock::Slot,
     solana_cost_model::cost_tracker::{SharedAllocatedAccountsDataSize, SharedBlockCost},
     solana_poh::poh_recorder::SharedLeaderState,
-    solana_runtime::bank::BankId,
+    solana_runtime::{bank::BankId, leader_schedule_utils::last_of_consecutive_leader_slots},
     std::{
         sync::{
             Arc,
@@ -203,17 +203,27 @@ impl ProgressTracker {
                 target_bank_time_ms: target_bank_time_ms(working_bank.ns_per_slot),
             }
         } else {
-            self.last_observed_bank_id = None;
+            // Detect the transition out of LEADER_READY so the scheduler learns
+            // that the working bank is gone, even if the window has expired.
+            let bank_was_cleared = self.last_observed_bank_id.take().is_some();
             self.limit_and_shared_block_cost = None;
             self.limit_and_shared_allocated_accounts_data_size = None;
             let (current_slot, current_slot_progress) =
                 if self.migration_status.is_alpenglow_enabled() {
                     let slot_info = self.alpenglow_slot_clock.load()?;
-                    alpenglow_slot_progress(
-                        slot_info.slot,
-                        slot_info.started_at.elapsed(),
-                        slot_info.slot_duration,
-                    )
+                    let elapsed = slot_info.started_at.elapsed();
+                    let remaining_slots =
+                        last_of_consecutive_leader_slots(slot_info.slot) - slot_info.slot + 1;
+                    let remaining_window_duration = slot_info
+                        .slot_duration
+                        .saturating_mul(remaining_slots as u32);
+                    // The estimate is only valid within the anchored window.
+                    // Wait for a new observation once the window expires, but
+                    // still report the transition away from a working bank.
+                    if elapsed >= remaining_window_duration && !bank_was_cleared {
+                        return None;
+                    }
+                    alpenglow_slot_progress(slot_info.slot, elapsed, slot_info.slot_duration)
                 } else {
                     let current_slot = slot_from_tick_height(tick_height, self.ticks_per_slot);
                     (
@@ -603,6 +613,76 @@ mod tests {
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.next_leader_slot, 4);
         assert_eq!(message.leader_range_end, 7);
+    }
+
+    #[test]
+    fn test_alpenglow_progress_stops_at_window_end() {
+        for (anchor_slot, slot_duration) in [
+            (4, Duration::from_secs(60)),
+            (5, Duration::from_secs(60)),
+            (7, Duration::from_secs(60)),
+            (4, Duration::ZERO),
+        ] {
+            let clock = SharedAlpenglowSlotClock::default();
+            let mut tracker = ProgressTracker::new(
+                Arc::default(),
+                SharedLeaderState::new(0, None, Some((24, 27))),
+                vec![],
+                DEFAULT_TICKS_PER_SLOT,
+                Arc::new(MigrationStatus::post_migration_status()),
+                clock.clone(),
+            );
+            let window_duration = slot_duration * (8 - anchor_slot) as u32;
+            clock.update(anchor_slot, Instant::now() - window_duration, slot_duration);
+            assert!(tracker.produce_progress_message().is_none());
+
+            // Reporting resumes only when another window is observed.
+            clock.update(8, Instant::now(), Duration::from_secs(60));
+            let (message, _) = tracker.produce_progress_message().unwrap();
+            assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
+            assert_eq!(message.current_slot, 8);
+            assert_eq!(message.current_slot_progress, 0);
+        }
+    }
+
+    #[test]
+    fn test_alpenglow_progress_with_expired_clock_and_working_bank() {
+        let bank = Arc::new(Bank::new_for_tests(
+            &solana_genesis_config::create_genesis_config(1).0,
+        ));
+        let clock = SharedAlpenglowSlotClock::default();
+        clock.update(
+            0,
+            Instant::now() - Duration::from_secs(4),
+            Duration::from_secs(1),
+        );
+        let mut shared_leader_state = SharedLeaderState::new(0, None, Some((0, 3)));
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            0,
+            None,
+            Some((0, 3)),
+        )));
+        let mut tracker = ProgressTracker::new(
+            Arc::default(),
+            shared_leader_state.clone(),
+            vec![],
+            DEFAULT_TICKS_PER_SLOT,
+            Arc::new(MigrationStatus::post_migration_status()),
+            clock,
+        );
+
+        let (message, _) = tracker.produce_progress_message().unwrap();
+        assert_eq!(message.leader_state, agave_scheduler_bindings::LEADER_READY);
+        assert_eq!(message.current_slot, bank.slot());
+        assert_eq!(message.current_slot_progress, 100);
+
+        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None, Some((4, 7)))));
+        let (message, _) = tracker.produce_progress_message().unwrap();
+        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
+        assert_eq!(message.current_slot, 3);
+        assert_eq!(message.current_slot_progress, 100);
+        assert!(tracker.produce_progress_message().is_none());
     }
 
     #[test]
