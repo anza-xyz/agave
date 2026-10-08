@@ -2128,6 +2128,46 @@ mod tests {
     }
 
     #[test]
+    fn test_recovery_parent_ready_keeps_anchored_window_time() {
+        let mut test_context = setup();
+        let root_bank = test_context.voting_context.sharable_banks.root();
+        let bank4 = test_context.create_block_and_send_block_event(4, root_bank);
+        test_context.send_parent_ready_event(4, test_context.local_context.genesis_block);
+        test_context.check_alpenglow_slot(4);
+        let anchor = test_context.shared_context.alpenglow_slot_clock.load();
+        let block4 = Block {
+            slot: 4,
+            block_id: BlockId::from(bank4.block_id().unwrap()),
+        };
+        let bank5 = test_context.create_block_and_send_block_event(5, bank4);
+        let block5 = Block {
+            slot: 5,
+            block_id: BlockId::from(bank5.block_id().unwrap()),
+        };
+
+        // Root advancement prunes readiness for slot 4 before asynchronous bank
+        // cleanup. Recovery can establish readiness for 5 while its parent is
+        // still available, but this must not restart the window's clock.
+        test_context.voting_context.vote_history.set_root(5);
+        assert_eq!(
+            test_context
+                .voting_context
+                .vote_history
+                .highest_parent_ready_slot(),
+            None
+        );
+        test_context.send_finalized_event(block5, true);
+        test_context.check_parent_ready_slot((5, block4));
+        assert_eq!(
+            test_context.shared_context.alpenglow_slot_clock.load(),
+            anchor
+        );
+
+        test_context.send_parent_ready_event(8, block5);
+        test_context.check_alpenglow_slot(8);
+    }
+
+    #[test]
     fn test_parent_ready_in_middle_of_window() {
         let mut test_context = setup();
 

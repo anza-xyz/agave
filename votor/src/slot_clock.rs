@@ -1,6 +1,7 @@
 use {
     arc_swap::ArcSwapOption,
     solana_clock::Slot,
+    solana_runtime::leader_schedule_utils::first_of_consecutive_leader_slots,
     std::{
         sync::Arc,
         time::{Duration, Instant},
@@ -25,8 +26,8 @@ pub struct SharedAlpenglowSlotClock(Arc<ArcSwapOption<AlpenglowSlotInfo>>);
 impl SharedAlpenglowSlotClock {
     /// Updates the latest observed leader window.
     ///
-    /// Duplicate or out-of-order events must not restart progress for the
-    /// current window.
+    /// Duplicate, out-of-order, or recovery events within an already observed
+    /// window must not restart progress, even if vote history was pruned.
     pub fn update(&self, slot: Slot, started_at: Instant, slot_duration: Duration) {
         let slot_info = Arc::new(AlpenglowSlotInfo {
             slot,
@@ -34,7 +35,10 @@ impl SharedAlpenglowSlotClock {
             slot_duration,
         });
         self.0.rcu(|current| {
-            if current.as_ref().is_some_and(|current| current.slot >= slot) {
+            if current.as_ref().is_some_and(|current| {
+                first_of_consecutive_leader_slots(current.slot)
+                    >= first_of_consecutive_leader_slots(slot)
+            }) {
                 current.clone()
             } else {
                 Some(slot_info.clone())
@@ -93,29 +97,57 @@ mod tests {
         clock.update(3, started_at, slot_duration);
         assert_eq!(clock.load(), Some(slot_info));
 
-        let next_started_at = started_at + slot_duration;
-        clock.update(5, next_started_at, Duration::from_millis(200));
+        // Recovery for a later slot in the same window must keep the anchor.
+        clock.update(5, started_at + slot_duration, Duration::from_millis(200));
+        clock.update(7, started_at + slot_duration * 3, slot_duration);
+        assert_eq!(clock.load(), Some(slot_info));
+
+        let next_started_at = started_at + slot_duration * 4;
+        clock.update(8, next_started_at, Duration::from_millis(200));
         assert_eq!(
             clock.load(),
             Some(AlpenglowSlotInfo {
-                slot: 5,
+                slot: 8,
                 started_at: next_started_at,
                 slot_duration: Duration::from_millis(200),
             })
         );
 
         let replacement_started_at = next_started_at + Duration::from_millis(2);
-        clock.update_leader(5, replacement_started_at, Duration::from_millis(200));
+        clock.update_leader(8, replacement_started_at, Duration::from_millis(200));
         assert_eq!(
             clock.load(),
             Some(AlpenglowSlotInfo {
-                slot: 5,
+                slot: 8,
                 started_at: replacement_started_at,
                 slot_duration: Duration::from_millis(200),
             })
         );
 
         clock.update_leader(4, started_at, slot_duration);
-        assert_eq!(clock.load().unwrap().slot, 5);
+        assert_eq!(clock.load().unwrap().slot, 8);
+    }
+
+    #[test]
+    fn test_shared_alpenglow_slot_clock_mid_window_recovery() {
+        let clock = SharedAlpenglowSlotClock::default();
+        let started_at = Instant::now();
+        let slot_duration = Duration::from_millis(200);
+
+        // A previously unobserved window can first be anchored by recovery.
+        clock.update(5, started_at, slot_duration);
+        let slot_info = clock.load().unwrap();
+        assert_eq!(slot_info.slot, 5);
+        clock.update(6, started_at + slot_duration, slot_duration);
+        clock.update(4, started_at + slot_duration, slot_duration);
+        assert_eq!(clock.load(), Some(slot_info));
+
+        // Local production may still replace the timer on a parent switch.
+        let replacement_started_at = started_at + slot_duration;
+        clock.update_leader(5, replacement_started_at, slot_duration);
+        assert_eq!(clock.load().unwrap().started_at, replacement_started_at);
+
+        clock.update(8, replacement_started_at + slot_duration, slot_duration);
+        assert_eq!(clock.load().unwrap().slot, 8);
     }
 }
