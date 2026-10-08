@@ -21,7 +21,8 @@ use {
 type RankMapCell = Arc<OnceCell<Arc<RpcRankMap>>>;
 
 pub struct RankMapCache {
-    // Only maps from finalized banks may be inserted.
+    // Only maps from finalized banks may be inserted. The bank's retained epoch stakes
+    // determine availability; a miss here is rebuilt from those stakes, including after restart.
     entries: LruCache<Epoch, RankMapCell>,
 }
 
