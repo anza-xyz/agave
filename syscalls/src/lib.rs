@@ -913,7 +913,6 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallTryFindProgramA
             bump_seed[0] = bump_seed[0].saturating_sub(1);
             invoke_context
                 .transaction_context
-                .accounts()
                 .compute_meter
                 .consume_checked(cost)?;
         }
@@ -2767,7 +2766,6 @@ impl<H: HasherImpl> BuiltinFunctionDefinition<InvokeContext<'_, '_>> for Syscall
                     ));
                 invoke_context
                     .transaction_context
-                    .accounts()
                     .compute_meter
                     .consume_checked(cost)?;
                 hasher.hash(bytes);

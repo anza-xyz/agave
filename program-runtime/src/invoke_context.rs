@@ -103,16 +103,12 @@ macro_rules! declare_process_instruction {
 impl ContextObject for InvokeContext<'_, '_> {
     fn consume(&mut self, amount: u64) {
         self.transaction_context
-            .accounts()
             .compute_meter
             .consume_unchecked(amount);
     }
 
     fn get_remaining(&self) -> u64 {
-        self.transaction_context
-            .accounts()
-            .compute_meter
-            .get_remaining()
+        self.transaction_context.compute_meter.get_remaining()
     }
 
     fn active_mapping_ptr(&mut self) -> ptr::NonNull<MemoryMapping> {
@@ -737,7 +733,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
     pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn std::error::Error>> {
         self.transaction_context
-            .accounts()
             .compute_meter
             .consume_checked(amount)
     }
@@ -745,7 +740,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn mock_set_remaining(&self, remaining: u64) {
         self.transaction_context
-            .accounts()
             .compute_meter
             .mock_set_remaining(remaining)
     }

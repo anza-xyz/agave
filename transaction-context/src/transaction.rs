@@ -127,6 +127,10 @@ pub struct TransactionContext<'ix_data> {
     transaction_frame: TransactionFrame,
     return_data_bytes: Vec<u8>,
     next_top_level_instruction_index: usize,
+    /// Instruction compute meter, for tracking compute units consumed against
+    /// the designated compute budget during program execution.
+    #[cfg(not(target_os = "solana"))]
+    pub compute_meter: ComputeMeter,
     #[cfg(not(target_os = "solana"))]
     pub(crate) rent: Rent,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
@@ -184,7 +188,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Self {
             accounts: Rc::new(TransactionAccounts::new_with_feature_flags(
                 transaction_accounts,
-                compute_meter,
                 drop_on_bail_out,
             )),
             instruction_stack_capacity,
@@ -194,6 +197,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             return_data_bytes: Vec::new(),
             transaction_frame,
             next_top_level_instruction_index: 0,
+            compute_meter,
             rent,
             instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
             deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
