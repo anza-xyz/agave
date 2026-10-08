@@ -41,9 +41,7 @@ use {
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsFileId, AtomicAccountsFileId},
-        utils::{
-            ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path, move_and_async_delete_path_contents,
-        },
+        utils::{ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path_contents},
     },
     solana_clock::Slot,
     solana_measure::{measure::Measure, measure_time, measure_us},
@@ -1761,31 +1759,6 @@ fn purge_bank_snapshots<'a>(bank_snapshots: impl IntoIterator<Item = &'a BankSna
 /// Remove the bank snapshot at this path
 pub fn purge_bank_snapshot(bank_snapshot_dir: impl AsRef<Path>) -> Result<()> {
     const FN_ERR: &str = "failed to purge bank snapshot";
-    // Migration: snapshots written by pre-storages-list versions kept an `accounts_hardlinks/`
-    // subdir of symlinks pointing at hardlink dirs under `<account_path>/snapshot/<slot>/`.
-    // Follow them so the hardlink dirs don't outlive the owning bank snapshot when we purge at
-    // runtime (startup-time cleanup catches any leftovers).
-    let accounts_hardlinks_dir = bank_snapshot_dir
-        .as_ref()
-        .join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
-    if accounts_hardlinks_dir.is_dir() {
-        let read_dir = fs::read_dir(&accounts_hardlinks_dir).map_err(|err| {
-            IoError::other(format!(
-                "{FN_ERR}: failed to read accounts hardlinks dir '{}': {err}",
-                accounts_hardlinks_dir.display(),
-            ))
-        })?;
-        for entry in read_dir {
-            let accounts_hardlink_dir = entry?.path();
-            let accounts_hardlink_dir = fs::read_link(&accounts_hardlink_dir).map_err(|err| {
-                IoError::other(format!(
-                    "{FN_ERR}: failed to read symlink '{}': {err}",
-                    accounts_hardlink_dir.display(),
-                ))
-            })?;
-            move_and_async_delete_path(&accounts_hardlink_dir);
-        }
-    }
     fs::remove_dir_all(&bank_snapshot_dir).map_err(|err| {
         IoError::other(format!(
             "{FN_ERR}: failed to remove dir '{}': {err}",
