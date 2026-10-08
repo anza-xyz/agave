@@ -1101,8 +1101,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
- "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand 0.7.3",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -9051,15 +9051,14 @@ dependencies = [
 
 [[package]]
 name = "solana-secp256k1-program"
-version = "3.0.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad4cf8232f7aef9ff2dd95d701f63e3c11909dec2400def5c361be29d24291e7"
+checksum = "3766ea35ea6a7406463857cbbc3c66ce1dba39327670d7689bff3389617997e1"
 dependencies = [
- "digest 0.10.7",
  "k256",
  "serde",
  "serde_derive",
- "sha3",
+ "solana-keccak-hasher",
  "solana-signature",
 ]
 
@@ -10668,7 +10667,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.1",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.0",
