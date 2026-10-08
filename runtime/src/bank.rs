@@ -1388,7 +1388,7 @@ impl Bank {
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut bank = Self::default_with_bank_rc(BankRc::new(accounts));
-        bank.ancestors = Ancestors::from(vec![bank.slot()]);
+        bank.ancestors = Ancestors::from(vec![(bank.slot(), bank.bank_id())]);
         bank.compute_budget = runtime_config.compute_budget;
         bank.store_transaction_signatures_in_status_cache =
             !runtime_config.skip_transaction_signatures_in_status_cache;
@@ -1625,8 +1625,11 @@ impl Bank {
 
         let (_, ancestors_time_us) = measure_us!({
             let mut ancestors = Vec::with_capacity(parent.ancestors.len() + 1);
-            ancestors.push(new.slot());
-            ancestors.extend(new.parents_iter().map(|parent| parent.slot()));
+            ancestors.push((new.slot(), new.bank_id()));
+            ancestors.extend(
+                new.parents_iter()
+                    .map(|parent| (parent.slot(), parent.bank_id())),
+            );
             new.ancestors = Ancestors::from(ancestors);
         });
 
@@ -2177,7 +2180,8 @@ impl Bank {
         let now = Instant::now();
         let slot = fields.slot;
         let epoch = fields.epoch_schedule.get_epoch(slot);
-        let ancestors = Ancestors::from(vec![slot]);
+        let bank_id = bank_rc.bank_id_generator.next();
+        let ancestors = Ancestors::from(vec![(slot, bank_id)]);
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
         let rewards_calculation_thread_pool = rewards_calculation_thread_pool();
@@ -2248,7 +2252,6 @@ impl Bank {
             .accounts_db
             .partitioned_epoch_rewards_config
             .stake_account_stores_per_block;
-        let bank_id = bank_rc.bank_id_generator.next();
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
@@ -4169,7 +4172,8 @@ impl Bank {
                 .map(|account| wincode::deserialize::<SlotHistory>(account.data()).unwrap())
                 .unwrap_or_default();
             if slot_history.check(self.slot()) == Check::Found {
-                let ancestors = Ancestors::from(self.proper_ancestors().collect::<Vec<_>>());
+                let mut ancestors = self.ancestors.clone();
+                ancestors.remove(&self.slot());
                 if let Some((account, _)) =
                     self.load_slow_with_fixed_root(&ancestors, &slot_history_id)
                 {
@@ -5433,7 +5437,7 @@ impl Bank {
         &self,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        let just_self: Ancestors = Ancestors::from(vec![self.slot()]);
+        let just_self: Ancestors = Ancestors::from(vec![(self.slot(), self.bank_id())]);
         if let Some((account, slot)) = self.load_slow_with_fixed_root(&just_self, pubkey)
             && slot == self.slot()
         {
@@ -6983,10 +6987,9 @@ impl Bank {
     ) -> Self {
         let slot = fields.slot;
         let epoch = fields.epoch_schedule.get_epoch(slot);
-        let ancestors = Ancestors::from(vec![slot]);
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc.accounts, &ancestors);
-
         let mut bank = Self::default_with_bank_rc(bank_rc);
+        let ancestors = Ancestors::from(vec![(slot, bank.bank_id())]);
+        let rent = Self::load_rent_from_account_for_snapshot_load(&bank.rc.accounts, &ancestors);
         bank.blockhash_queue = RwLock::new(fields.blockhash_queue);
         bank.ancestors = ancestors;
         bank.hash = RwLock::new(fields.hash);

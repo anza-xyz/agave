@@ -8300,8 +8300,7 @@ fn setup_banks_on_fork_to_remove(
         }
     }
 
-    let ancestors: Vec<_> = slots_on_fork.iter().map(|(s, _)| *s).collect();
-    let ancestors = Ancestors::from(ancestors);
+    let ancestors = Ancestors::from(slots_on_fork.clone());
 
     (bank_at_fork_tip, slots_on_fork, ancestors)
 }
@@ -13657,7 +13656,7 @@ fn test_new_for_txn_tests_system_transfer() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let bank_id = bank_rc.next_bank_id();
-    let ancestors = Ancestors::from(vec![parent_slot]);
+    let ancestors = Ancestors::from(vec![(parent_slot, bank_id)]);
     bank_rc
         .accounts
         .store_accounts((parent_slot, refs.as_slice()), bank_id, None, &ancestors);
@@ -13840,7 +13839,7 @@ fn test_new_for_block_tests_with_vote_account() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let bank_id = bank_rc.next_bank_id();
-    let ancestors = Ancestors::from(vec![parent_slot]);
+    let ancestors = Ancestors::from(vec![(parent_slot, bank_id)]);
     bank_rc
         .accounts
         .store_accounts((parent_slot, refs.as_slice()), bank_id, None, &ancestors);

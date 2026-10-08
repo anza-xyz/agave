@@ -1,5 +1,5 @@
 use {
-    crate::rolling_bit_field::RollingBitField,
+    crate::{bank_id::BankId, rolling_bit_field::RollingBitField},
     core::fmt::{Debug, Formatter},
     solana_clock::Slot,
 };
@@ -37,6 +37,17 @@ impl From<Vec<Slot>> for Ancestors {
         });
 
         result
+    }
+}
+
+impl From<Vec<(Slot, BankId)>> for Ancestors {
+    fn from(source: Vec<(Slot, BankId)>) -> Ancestors {
+        Ancestors::from(
+            source
+                .into_iter()
+                .map(|(slot, _bank_id)| slot)
+                .collect::<Vec<_>>(),
+        )
     }
 }
 
