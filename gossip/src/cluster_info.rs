@@ -1109,16 +1109,10 @@ impl ClusterInfo {
 
     // Returns the values f returns for the nodes' contact-infos, taking the crds
     // read lock once per chunk of nodes.
-    fn collect_nodes<T>(
-        &self,
-        mut f: impl FnMut(&Crds, &VersionedCrdsValue) -> Option<T>,
-    ) -> Vec<T> {
-        let mut cursor = NodesCursor::new(self.gossip.crds.read());
-        while !cursor.is_done() {
-            let crds = self.gossip.crds.read();
-            cursor.read_chunk(&crds, LOCK_CHUNK_SIZE, |value| f(&crds, value));
-        }
-        cursor.into_unique().map(|(_, value)| value).collect()
+    fn collect_nodes<T>(&self, f: impl FnMut(&Crds, &VersionedCrdsValue) -> Option<T>) -> Vec<T> {
+        NodesCursor::collect(&self.gossip.crds, f)
+            .map(|(_, value)| value)
+            .collect()
     }
 
     /// all validators that have a valid rpc port.
