@@ -12,7 +12,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_core::validator::{ValidatorConfig, ValidatorStartProgress},
     solana_download_utils::{DownloadProgressRecord, download_snapshot_archive},
-    solana_genesis_utils::download_then_check_genesis_hash,
+    solana_genesis_utils::{GenesisFetchError, download_then_check_genesis_hash},
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
@@ -376,7 +376,7 @@ pub fn attempt_download_genesis_and_snapshot(
     vote_account: &Pubkey,
     authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
 ) -> Result<(), String> {
-    download_then_check_genesis_hash(
+    if let Err(err) = download_then_check_genesis_hash(
         &rpc_contact_info
             .rpc()
             .ok_or_else(|| String::from("Invalid RPC address"))?,
@@ -386,7 +386,25 @@ pub fn attempt_download_genesis_and_snapshot(
         bootstrap_config.no_genesis_fetch,
         use_progress_bar,
         rpc_client,
-    )?;
+    ) {
+        match err {
+            GenesisFetchError::Local(err) => {
+                // The local genesis is missing or its hash does not match
+                // `expected_genesis_hash`, and no download can resolve it.
+                // This is not an RPC-node fault, and retrying cannot succeed:
+                // log a clear message and exit, leaving it to the operator to
+                // resolve the situation rather than overwriting the local
+                // genesis.
+                error!(
+                    "{err}. This is a fatal error: resolve the local genesis at {ledger_path:?}, \
+                     or adjust the `--no-genesis-fetch` / `--expected-genesis-hash` arguments as \
+                     applicable; the validator will not overwrite the local genesis"
+                );
+                exit(1);
+            }
+            GenesisFetchError::Downloaded(err) => return Err(err),
+        }
+    }
 
     if let Some(gossip) = gossip.take() {
         shutdown_gossip_service(gossip);
