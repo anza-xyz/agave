@@ -261,7 +261,7 @@ mod tests {
         )
         .unwrap();
         buf_reader
-            .set_file(files[0].as_ref(), storage.accounts.len() as u64)
+            .set_file(files[0].as_ref(), files[0].read_limit())
             .unwrap();
         let reader =
             AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut buf_reader)
@@ -373,7 +373,7 @@ mod tests {
         )
         .unwrap();
         file_reader
-            .set_file(files[0].as_ref(), storage.accounts.len() as u64)
+            .set_file(files[0].as_ref(), files[0].read_limit())
             .unwrap();
         let reader =
             AccountStorageReader::new(&storage, None, tombstones_filter, &mut file_reader).unwrap();
@@ -527,7 +527,7 @@ mod tests {
         for snapshot_slot in 0..slot_marked_dead {
             let obsolete_slot = Some(snapshot_slot);
             file_reader
-                .set_file(files[0].as_ref(), storage.accounts.len() as u64)
+                .set_file(files[0].as_ref(), files[0].read_limit())
                 .unwrap();
             let reader = AccountStorageReader::new(
                 &storage,
@@ -656,7 +656,7 @@ mod tests {
             4096 + MAX_PERMITTED_DATA_LENGTH as usize,
         );
         file_reader
-            .set_file(files[0].as_ref(), storage.accounts.len() as u64)
+            .set_file(files[0].as_ref(), files[0].read_limit())
             .unwrap();
         let storage_reader =
             AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut file_reader)

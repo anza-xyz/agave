@@ -13,7 +13,7 @@ use meta::StoredAccountMeta;
 use {
     crate::{
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-        accounts_file::{OpenFileForArchive, StoredAccountsInfo},
+        accounts_file::StoredAccountsInfo,
         storable_accounts::StorableAccounts,
         u64_align,
         utils::create_account_shared_data,
@@ -666,7 +666,8 @@ impl AppendVec {
         })
     }
 
-    /// Iterate over all accounts and call `callback` with each account.
+    /// Iterate over all accounts in the file already activated on `reader` (possibly a different
+    /// fd, e.g. direct-io, than this AppendVec's own) and call `callback` with each.
     ///
     /// `callback` parameters:
     /// * LogicalOffset: the logical offset of this account
@@ -674,22 +675,6 @@ impl AppendVec {
     ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
-    pub(crate) fn scan_accounts<'a>(
-        &'a self,
-        reader: &mut impl RequiredLenBufFileRead<'a>,
-        callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfo<'local>),
-    ) -> Result<()> {
-        reader.set_file(&self.file, self.len() as FileSize)?;
-        self.scan_accounts_with(reader, callback)
-    }
-
-    /// See [`scan_accounts`] for documentation.
-    ///
-    /// This fn differs in that it does not call `FileBufRead::set_file()` first, before scanning.
-    /// Instead, the *caller* is responsible for setting the file.
-    ///
-    /// This is used when generating snapshot archives, which may use a different file descriptor
-    /// than the one already open with this AppendVec instance (e.g. direct-io).
     pub(crate) fn scan_accounts_with<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
@@ -995,9 +980,8 @@ impl AppendVec {
         })
     }
 
-    /// Returns the way to access this accounts file when archiving
-    pub(crate) fn open_file_for_archive(&self) -> OpenFileForArchive<'_> {
-        OpenFileForArchive::Borrowed(&self.file)
+    pub(crate) fn file(&self) -> &File {
+        &self.file
     }
 }
 

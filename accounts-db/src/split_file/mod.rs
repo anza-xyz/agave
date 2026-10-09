@@ -527,7 +527,9 @@ impl SplitFile {
         Ok(())
     }
 
-    /// Iterate over all accounts and call `callback` with each account.
+    /// Iterate over all accounts and call `callback` with each account, reading account data
+    /// from the file already activated on `data_reader` (possibly a different fd, e.g. direct-io,
+    /// than this SplitFile's own data file).
     ///
     /// `callback` parameters:
     /// * LogicalOffset: the offset within the file of this account
@@ -547,9 +549,6 @@ impl SplitFile {
         let mut meta_reader =
             BufferedReader::<META_SCAN_BUFFER_SIZE>::new().with_file(meta_file, meta_file_len);
         meta_reader.consume_or_skip(META_HEADER_SIZE);
-        if let Some(data_file) = data_file {
-            data_reader.set_file(data_file, data_file_len)?;
-        }
 
         let mut required_meta_read_size = META_ENTRY_FIXED_SIZE;
         while meta_reader.get_file_offset() < meta_file_len {
@@ -1020,6 +1019,9 @@ mod tests {
         let split_readonly = split_writable.reopen_as_readonly().unwrap().unwrap();
         for split in [&split_writable, &split_readonly] {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let mut i = 0;
             split
                 .scan_accounts_with_data(&mut data_reader, |offset, stored_account| {
@@ -1095,6 +1097,9 @@ mod tests {
         let split_readonly = split_writable.reopen_as_readonly().unwrap().unwrap();
         for split in [&split_writable, &split_readonly] {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let mut i = 0;
             split
                 .scan_accounts_with_data(&mut data_reader, |offset, stored_account| {
@@ -1124,6 +1129,34 @@ mod tests {
             // ensure the scan visited all the accounts and didn't silently terminate
             assert_eq!(i, accounts.len());
         }
+    }
+
+    #[test]
+    fn test_scan_accounts_with_data_reads_callers_data_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let write_split = |name: &str| {
+            let split = SplitFile::new(temp_dir.path().join(name)).unwrap();
+            let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
+            let account = AccountSharedData::new(1, data_len, &Pubkey::default());
+            split
+                .write_accounts(&(0, [(Pubkey::new_unique(), account)].as_slice()))
+                .unwrap();
+            split
+        };
+        let main = write_split("main");
+        let other = write_split("other");
+        // Always scans `main`, which fails if the data file set on the reader comes from another
+        // split, since each split holds its account under a unique address.
+        let scan_main_reading_data_of = |source: &SplitFile| {
+            let mut reader = new_scan_accounts_reader();
+            reader.set_file(source.data_file().unwrap(), source.data_len())?;
+            let mut num_accounts = 0;
+            main.scan_accounts_with_data(&mut reader, |_, _| num_accounts += 1)?;
+            Ok::<_, SplitFileError>(num_accounts)
+        };
+
+        assert!(scan_main_reading_data_of(&other).is_err());
+        assert_eq!(scan_main_reading_data_of(&main).unwrap(), 1);
     }
 
     /// Test when the fixed portion of the meta entry is truncated.
@@ -1172,6 +1205,9 @@ mod tests {
         // test case: can_accounts_with_data()
         {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let err = split
                 .scan_accounts_with_data(&mut data_reader, |_, _| {})
                 .unwrap_err();
@@ -1228,6 +1264,9 @@ mod tests {
         // test case: scan_accounts_with_data()
         {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let err = split
                 .scan_accounts_with_data(&mut data_reader, |_, _| {})
                 .unwrap_err();
@@ -1289,6 +1328,9 @@ mod tests {
         // test case: scan_accounts_with_data()
         {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let err = split
                 .scan_accounts_with_data(&mut data_reader, |_, _| {})
                 .unwrap_err();
@@ -1342,6 +1384,9 @@ mod tests {
         // test case: scan_accounts_with_data()
         {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let err = split
                 .scan_accounts_with_data(&mut data_reader, |_, _| {})
                 .unwrap_err();
@@ -1406,6 +1451,9 @@ mod tests {
         // test case: scan_accounts_with_data()
         {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let err = split
                 .scan_accounts_with_data(&mut data_reader, |_, _| {})
                 .unwrap_err();
@@ -1470,6 +1518,9 @@ mod tests {
         // test case: scan_accounts_with_data()
         {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let err = split
                 .scan_accounts_with_data(&mut data_reader, |_, _| {})
                 .unwrap_err();
@@ -1520,6 +1571,9 @@ mod tests {
         // test case: scan_accounts_with_data()
         {
             let mut data_reader = new_scan_accounts_reader();
+            if let Some(data_file) = split.data_file() {
+                data_reader.set_file(data_file, split.data_len()).unwrap();
+            }
             let err = split
                 .scan_accounts_with_data(&mut data_reader, |_, _| {})
                 .unwrap_err();
