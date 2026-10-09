@@ -15,10 +15,14 @@ use {
 
 /// Max TPS per unstaked peer while total load is below
 /// `UNSTAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO` of capacity.
+<<<<<<< HEAD
 ///
 /// Kept equal to `MIN_UNSTAKED_TPS` for now, so the unstaked quota is the
 /// previous fixed 200 TPS at any load. Raising it is left to a follow-up.
 pub(crate) const MAX_UNSTAKED_TPS: u64 = 200;
+=======
+pub(crate) const MAX_UNSTAKED_TPS: u64 = 400;
+>>>>>>> a0ed616 (streamer: raise max unstaked TPS from 200 to 400 (#15611))
 /// Max TPS per unstaked peer once total load is above that threshold.
 const MIN_UNSTAKED_TPS: u64 = 200;
 const _: () = assert!(MIN_UNSTAKED_TPS <= MAX_UNSTAKED_TPS);
@@ -409,7 +413,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 10000,
             ),
-            20
+            40
         );
 
         load_ema
@@ -455,8 +459,13 @@ pub mod test {
         // Stake divisors below assume these window values.
         let full_staked_capacity = load_ema.max_load_in_throttling_window;
         assert_eq!(full_staked_capacity, 50_000);
+<<<<<<< HEAD
         assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 20);
         assert_eq!(load_ema.min_unstaked_load_in_throttling_window, 20);
+=======
+        assert_eq!(load_ema.max_unstaked_load_in_throttling_window, 40);
+        assert_eq!(load_ema.min_unstaked_load_in_throttling_window, 10);
+>>>>>>> a0ed616 (streamer: raise max unstaked TPS from 200 to 400 (#15611))
 
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
