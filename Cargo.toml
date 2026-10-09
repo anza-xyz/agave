@@ -313,7 +313,8 @@ prost-types = "0.14.4"
 protobuf-src = "1.1.0"
 protosol = "=12.0.0"
 qualifier_attr = { version = "0.2.2", default-features = false }
-quinn = "0.11.11"
+quinn = { package = "anza-quinn", version = "=0.11.11-issue2860.1" }
+quinn-proto = { package = "anza-quinn-proto", version = "=0.11.15-issue2860.1" }
 rand = "0.9.4"
 rand_chacha = "0.9.0"
 rayon = "1.12.0"
