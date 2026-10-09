@@ -1474,7 +1474,7 @@ mod test {
     fn test_upgradeable_program_deploayment() {
         let program_id = Pubkey::new_unique();
         let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start();
         let rpc_client = test_validator.get_rpc_client();
 
@@ -1501,7 +1501,7 @@ mod test {
     async fn test_nonblocking_upgradeable_program_deploayment() {
         let program_id = Pubkey::new_unique();
         let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start_async()
             .await;
         let rpc_client = test_validator.get_async_rpc_client();
@@ -1661,7 +1661,7 @@ mod test {
     async fn test_wait_for_program_with_unfunded_payer() {
         let program_id = Pubkey::new_unique();
         let (test_validator, _mint_keypair) = TestValidatorGenesis::default_for_tests()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start_async()
             .await;
 

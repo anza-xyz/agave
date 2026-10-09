@@ -62,7 +62,6 @@ members = [
     "program-binaries",
     "program-runtime",
     "program-test",
-    "programs/bpf-loader-tests",
     "programs/bpf_loader",
     "programs/compute-budget",
     "programs/compute-budget-bench",
