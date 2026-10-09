@@ -6,7 +6,8 @@ use {
         ledger_path::canonicalize_ledger_path,
         load_and_process_ledger_or_exit, open_genesis_config_by,
         output::{
-            CliBlockWithEntries, CliEntries, EncodedConfirmedBlockWithEntries,
+            CliBlockWithComponents, CliBlockWithEntries, CliEntries,
+            EncodedConfirmedBlockWithComponents, EncodedConfirmedBlockWithEntries,
             encode_confirmed_block,
         },
         parse_process_options,
@@ -35,7 +36,7 @@ use {
     solana_keypair::{Keypair, keypair_from_seed},
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
-        blockstore::Blockstore,
+        blockstore::{Blockstore, ConfirmedBlockComponent},
         blockstore_options::AccessType,
         shred::{ProcessShredsStats, Shred, Shredder},
     },
@@ -124,6 +125,7 @@ async fn block(
     slot: Slot,
     output_format: OutputFormat,
     show_entries: bool,
+    show_markers: bool,
     config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
@@ -131,9 +133,34 @@ async fn block(
         .map_err(|err| format!("Failed to connect to storage: {err:?}"))?;
 
     let confirmed_block = bigtable.get_confirmed_block(slot).await?;
+    let components = if show_markers {
+        let entries = bigtable.get_entries(slot).await?.collect();
+        let markers = match bigtable.get_block_markers(slot).await {
+            Ok(markers) => markers,
+            Err(solana_storage_bigtable::Error::BlockNotFound(_)) => vec![],
+            Err(err) => return Err(err.into()),
+        };
+        Some(reconstruct_block_components(
+            slot,
+            Hash::from_str(&confirmed_block.blockhash)?,
+            entries,
+            markers,
+        )?)
+    } else {
+        None
+    };
     let encoded_block = encode_confirmed_block(confirmed_block)?;
 
-    if show_entries {
+    if let Some(components) = components {
+        let cli_block = CliBlockWithComponents {
+            encoded_confirmed_block: EncodedConfirmedBlockWithComponents::try_from(
+                encoded_block,
+                components,
+            )?,
+            slot,
+        };
+        println!("{}", output_format.formatted_string(&cli_block));
+    } else if show_entries {
         let entries = bigtable.get_entries(slot).await?;
         let cli_block = CliBlockWithEntries {
             encoded_confirmed_block: EncodedConfirmedBlockWithEntries::try_from(
@@ -295,6 +322,58 @@ fn classify_alpenglow_block_markers(
         genesis,
         footer,
     }))
+}
+
+fn reconstruct_block_components(
+    slot: Slot,
+    blockhash: Hash,
+    mut entries: Vec<EntrySummary>,
+    block_markers: Vec<VersionedBlockMarker>,
+) -> Result<Vec<ConfirmedBlockComponent>, Box<dyn Error>> {
+    let Some(BlockMarkers {
+        header,
+        genesis,
+        footer,
+    }) = classify_alpenglow_block_markers(slot, block_markers)?
+    else {
+        return Ok((!entries.is_empty())
+            .then_some(ConfirmedBlockComponent::EntryBatch(entries))
+            .into_iter()
+            .collect());
+    };
+
+    let Some(alpentick) = entries.pop() else {
+        return Err(format!("Missing alpentick entry for Alpenglow slot {slot}").into());
+    };
+    if alpentick.num_transactions != 0 {
+        return Err(format!("Missing trailing alpentick entry for Alpenglow slot {slot}").into());
+    }
+    if let Some((index, _)) = entries
+        .iter()
+        .enumerate()
+        .find(|(_, entry)| entry.num_transactions == 0)
+    {
+        return Err(
+            format!("Unexpected non-trailing tick entry at index {index} for Alpenglow slot {slot}")
+                .into(),
+        );
+    }
+    if alpentick.hash != blockhash {
+        return Err(format!(
+            "Alpentick hash {} does not match blockhash {blockhash} for Alpenglow slot {slot}",
+            alpentick.hash,
+        )
+        .into());
+    }
+
+    let mut components = vec![ConfirmedBlockComponent::BlockMarker(header)];
+    components.extend(genesis.map(ConfirmedBlockComponent::BlockMarker));
+    if !entries.is_empty() {
+        components.push(ConfirmedBlockComponent::EntryBatch(entries));
+    }
+    components.push(ConfirmedBlockComponent::BlockMarker(footer));
+    components.push(ConfirmedBlockComponent::EntryBatch(vec![alpentick]));
+    Ok(components)
 }
 
 fn entries_from_summaries(
@@ -1255,6 +1334,12 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .long("show-entries")
                                 .required(false)
                                 .help("Display the transactions in their entries"),
+                        )
+                        .arg(
+                            Arg::with_name("show_markers")
+                                .long("show-markers")
+                                .required(false)
+                                .help("Display entries and block markers in component order"),
                         ),
                 )
                 .subcommand(
@@ -1596,13 +1681,20 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
         ("block", Some(arg_matches)) => {
             let slot = value_t_or_exit!(arg_matches, "slot", Slot);
             let show_entries = arg_matches.is_present("show_entries");
+            let show_markers = arg_matches.is_present("show_markers");
             let config = solana_storage_bigtable::LedgerStorageConfig {
                 read_only: true,
                 instance_name,
                 app_profile_id,
                 ..solana_storage_bigtable::LedgerStorageConfig::default()
             };
-            runtime.block_on(block(slot, output_format, show_entries, config))
+            runtime.block_on(block(
+                slot,
+                output_format,
+                show_entries,
+                show_markers,
+                config,
+            ))
         }
         ("entries", Some(arg_matches)) => {
             let slot = value_t_or_exit!(arg_matches, "slot", Slot);
@@ -1863,6 +1955,116 @@ mod tests {
     fn marker_is_genesis(marker: &VersionedBlockMarker) -> bool {
         let VersionedBlockMarker::V1(marker_v1) = marker;
         marker_v1.as_genesis_certificate().is_some()
+    }
+
+    #[test]
+    fn test_reconstruct_block_components() {
+        let slot = 42;
+        let parent_slot = slot - 1;
+        let blockhash = Hash::new_unique();
+        let entry = EntrySummary {
+            num_hashes: 1,
+            hash: Hash::new_unique(),
+            num_transactions: 1,
+            starting_transaction_index: 0,
+        };
+        let alpentick = EntrySummary {
+            num_hashes: 2,
+            hash: blockhash,
+            num_transactions: 0,
+            starting_transaction_index: 1,
+        };
+        let markers = vec![
+            VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                parent_slot,
+                parent_block_id: Hash::new_unique(),
+            }),
+            VersionedBlockMarker::from_genesis_cert_block_marker(GenesisCertBlockMarker {
+                slot,
+                block_id: BlockId::from(blockhash),
+                bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![1, 2, 3],
+            }),
+            VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+                bank_hash: Hash::new_unique(),
+                block_producer_time_nanos: 0,
+                block_user_agent: Vec::new(),
+                block_final_cert: None,
+                skip_reward_cert: None,
+                notar_reward_cert: None,
+            }),
+        ];
+
+        let components =
+            reconstruct_block_components(slot, blockhash, vec![entry, alpentick], markers).unwrap();
+        assert_eq!(components.len(), 5);
+        assert!(matches!(
+            &components[0],
+            ConfirmedBlockComponent::BlockMarker(marker) if marker_is_header(marker)
+        ));
+        assert!(matches!(
+            &components[1],
+            ConfirmedBlockComponent::BlockMarker(marker) if marker_is_genesis(marker)
+        ));
+        assert!(matches!(
+            &components[2],
+            ConfirmedBlockComponent::EntryBatch(entries)
+                if entries.len() == 1 && entries[0].hash == entry.hash
+        ));
+        assert!(matches!(
+            &components[3],
+            ConfirmedBlockComponent::BlockMarker(marker) if marker_is_footer(marker)
+        ));
+        assert!(matches!(
+            &components[4],
+            ConfirmedBlockComponent::EntryBatch(entries)
+                if entries.len() == 1 && entries[0].hash == alpentick.hash
+        ));
+    }
+
+    #[test]
+    fn test_reconstruct_legacy_block_components() {
+        let entry = EntrySummary {
+            num_hashes: 1,
+            hash: Hash::new_unique(),
+            num_transactions: 1,
+            starting_transaction_index: 0,
+        };
+
+        let components =
+            reconstruct_block_components(42, entry.hash, vec![entry], vec![]).unwrap();
+        assert!(matches!(
+            components.as_slice(),
+            [ConfirmedBlockComponent::EntryBatch(entries)]
+                if entries.len() == 1 && entries[0].hash == entry.hash
+        ));
+    }
+
+    #[test]
+    fn test_reconstruct_block_components_requires_alpentick() {
+        let slot = 42;
+        let markers = vec![
+            VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                parent_slot: slot - 1,
+                parent_block_id: Hash::new_unique(),
+            }),
+            VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+                bank_hash: Hash::new_unique(),
+                block_producer_time_nanos: 0,
+                block_user_agent: Vec::new(),
+                block_final_cert: None,
+                skip_reward_cert: None,
+                notar_reward_cert: None,
+            }),
+        ];
+
+        let err = reconstruct_block_components(slot, Hash::new_unique(), vec![], markers)
+            .err()
+            .unwrap();
+        assert_eq!(
+            err.to_string(),
+            "Missing alpentick entry for Alpenglow slot 42"
+        );
     }
 
     #[test]
