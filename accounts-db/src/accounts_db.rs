@@ -4218,7 +4218,7 @@ impl AccountsDb {
     }
 
     /// Can zero lamport accounts in `slot` be purged?
-    fn can_purge_zero_lamport_accounts(&self, slot: Slot) -> bool {
+    pub(crate) fn can_purge_zero_lamport_accounts(&self, slot: Slot) -> bool {
         self.latest_full_snapshot_slot()
             .is_none_or(|latest_full_snapshot_slot| slot <= latest_full_snapshot_slot)
     }
