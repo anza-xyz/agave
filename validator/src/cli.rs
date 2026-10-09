@@ -272,6 +272,7 @@ pub struct DefaultArgs {
     pub ledger_path: String,
 
     pub tower_storage: String,
+    #[deprecated(since = "4.5.0", note = "Unused")]
     pub send_transaction_service_config: send_transaction_service::Config,
 
     pub maximum_local_snapshot_age: String,
@@ -318,6 +319,7 @@ impl DefaultArgs {
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             maximum_local_snapshot_age: "2500".to_string(),
             tower_storage: "file".to_string(),
+            #[allow(deprecated)]
             send_transaction_service_config: send_transaction_service::Config::default(),
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
                 .to_string(),

@@ -22,7 +22,6 @@ agave-unstable-api = []
 
 [dependencies]
 agave-cpu-utils = { workspace = true }
-agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
@@ -60,7 +59,6 @@ solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-core = { workspace = true }
 solana-download-utils = { workspace = true }
-solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-faucet = { workspace = true }
 solana-genesis-utils = { workspace = true }
@@ -111,10 +109,7 @@ assert_matches = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
 scopeguard = { workspace = true }
-solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-program-option = { workspace = true }
-solana-program-pack = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-time-utils = { workspace = true }
 tempfile = { workspace = true }
