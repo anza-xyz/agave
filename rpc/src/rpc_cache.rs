@@ -1,10 +1,78 @@
 use {
-    solana_rpc_client_api::{config::RpcLargestAccountsFilter, response::RpcAccountBalance},
+    lru::LruCache,
+    solana_clock::Epoch,
+    solana_rpc_client_api::{
+        config::RpcLargestAccountsFilter,
+        response::{RpcAccountBalance, RpcRankMap, RpcRankMapEntry},
+    },
+    solana_runtime::{
+        bank::MAX_LEADER_SCHEDULE_STAKES,
+        epoch_stakes::{BLSPubkeyStakeEntry, VersionedEpochStakes},
+    },
     std::{
         collections::HashMap,
+        num::NonZeroUsize,
+        sync::Arc,
         time::{Duration, SystemTime},
     },
+    tokio::sync::OnceCell,
 };
+
+type RankMapCell = Arc<OnceCell<Arc<RpcRankMap>>>;
+
+pub struct RankMapCache {
+    // Only maps from finalized banks may be inserted. The bank's retained epoch stakes
+    // determine availability; a miss here is rebuilt from those stakes, including after restart.
+    entries: LruCache<Epoch, RankMapCell>,
+}
+
+impl Default for RankMapCache {
+    fn default() -> Self {
+        Self {
+            entries: LruCache::new(
+                NonZeroUsize::new(MAX_LEADER_SCHEDULE_STAKES as usize)
+                    .expect("at least one epoch's stakes are retained"),
+            ),
+        }
+    }
+}
+
+impl RankMapCache {
+    pub(crate) fn get_or_insert(&mut self, epoch: Epoch) -> RankMapCell {
+        Arc::clone(
+            self.entries
+                .get_or_insert(epoch, || Arc::new(OnceCell::new())),
+        )
+    }
+}
+
+pub(crate) fn rank_map_response(epoch: Epoch, stakes: &VersionedEpochStakes) -> Arc<RpcRankMap> {
+    let rank_map = stakes.bls_pubkey_to_rank_map();
+    let validators = rank_map
+        .iter()
+        .map(|(rank, entry)| {
+            // Keep the wire format explicit, and require a decision when the runtime adds fields.
+            let BLSPubkeyStakeEntry {
+                vote_account_pubkey,
+                node_pubkey,
+                bls_pubkey,
+                stake,
+            } = entry;
+            RpcRankMapEntry {
+                rank,
+                vote_pubkey: vote_account_pubkey.to_string(),
+                node_pubkey: node_pubkey.to_string(),
+                bls_pubkey_compressed: bs58::encode(bls_pubkey.to_bytes_compressed()).into_string(),
+                stake: *stake,
+            }
+        })
+        .collect();
+    Arc::new(RpcRankMap {
+        epoch,
+        total_stake: rank_map.total_stake(),
+        validators,
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct LargestAccountsCache {
@@ -61,6 +129,49 @@ impl LargestAccountsCache {
 #[cfg(test)]
 pub mod test {
     use super::*;
+
+    #[test]
+    fn test_rank_map_cache_epochs_and_eviction() {
+        let mut cache = RankMapCache::default();
+        let first = cache.get_or_insert(0);
+        assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
+        let second = cache.get_or_insert(1);
+        assert!(!Arc::ptr_eq(&first, &second));
+        for epoch in 2..MAX_LEADER_SCHEDULE_STAKES {
+            cache.get_or_insert(epoch);
+        }
+        // A hit keeps the first map resident while the least recently used epoch is evicted.
+        assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
+        cache.get_or_insert(MAX_LEADER_SCHEDULE_STAKES);
+        assert_eq!(cache.entries.len(), MAX_LEADER_SCHEDULE_STAKES as usize);
+        assert!(!cache.entries.contains(&1));
+        assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
+    }
+
+    #[tokio::test]
+    async fn test_rank_map_cache_initializes_once() {
+        let mut cache = RankMapCache::default();
+        let cell = cache.get_or_insert(0);
+        let response = Arc::new(RpcRankMap {
+            epoch: 0,
+            total_stake: 1.try_into().unwrap(),
+            validators: Vec::new(),
+        });
+        let (first, second) = tokio::join!(
+            cell.get_or_init(|| async {
+                tokio::task::yield_now().await;
+                Arc::clone(&response)
+            }),
+            cell.get_or_init(|| async { panic!("map should already be initialized") }),
+        );
+        assert!(Arc::ptr_eq(first, &response));
+        assert!(Arc::ptr_eq(second, &response));
+        assert!(Arc::ptr_eq(
+            cell.get_or_init(|| async { panic!("map should be cached") })
+                .await,
+            &response,
+        ));
+    }
 
     #[test]
     fn test_old_entries_expire() {

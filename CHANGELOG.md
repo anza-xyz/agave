@@ -15,6 +15,10 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
   `--enable-bigtable-ledger-upload`. Previously, the error would be logged and
   the process would continue without a Bigtable connection.
 #### Changes
+* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
+  for the epoch containing a requested slot, with an optional identity filter. Always queries
+  finalized state; there is no commitment parameter.
+* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
 ### Validator
 #### Breaking
 * Loading a snapshot that contains an invalid vote account is now a hard error. Previously such

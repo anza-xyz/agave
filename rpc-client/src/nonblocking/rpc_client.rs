@@ -2121,6 +2121,88 @@ impl RpcClient {
         self.send(RpcRequest::GetAgGenesisCert, Value::Null).await
     }
 
+    /// Returns the Alpenglow validator rank map for the epoch containing `slot`.
+    ///
+    /// Always queries finalized state, regardless of the client's default commitment.
+    ///
+    /// Returns `None` if the epoch is unavailable.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    ///
+    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let response = rpc_client.get_rank_map(certificate_slot).await?;
+    /// if let Some(rank_map) = response.value {
+    ///     for validator in rank_map.validators {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_rank_map(&self, slot: Slot) -> RpcResult<Option<RpcRankMap>> {
+        self.get_rank_map_with_config(slot, RpcRankMapConfig::default())
+            .await
+    }
+
+    /// Returns the Alpenglow validator rank map with an optional identity filter.
+    ///
+    /// Always queries finalized state. There is no commitment parameter.
+    ///
+    /// The filter preserves the validator's rank and the full map's total stake.
+    /// An unknown identity returns an empty validator list when the map is available.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    ///
+    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcRankMapConfig};
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let identity = "67omRD8GkXTi8daWceprtQABkDeEm3SZYHUCrthQGB9D";
+    /// let response = rpc_client.get_rank_map_with_config(
+    ///     certificate_slot,
+    ///     RpcRankMapConfig {
+    ///         identity: Some(identity.to_string()),
+    ///         ..RpcRankMapConfig::default()
+    ///     },
+    /// ).await?;
+    /// if let Some(rank_map) = response.value {
+    ///     if let Some(validator) = rank_map.validators.first() {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_rank_map_with_config(
+        &self,
+        slot: Slot,
+        config: RpcRankMapConfig,
+    ) -> RpcResult<Option<RpcRankMap>> {
+        self.send(RpcRequest::GetRankMap, json!([slot, config]))
+            .await
+    }
+
     /// Get block production for the current epoch.
     ///
     /// # RPC Reference

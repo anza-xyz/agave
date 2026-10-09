@@ -1850,6 +1850,80 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
     }
 
+    /// Returns the Alpenglow validator rank map for the epoch containing `slot`.
+    ///
+    /// Always queries finalized state, regardless of the client's default commitment.
+    ///
+    /// Returns `None` if the epoch is unavailable.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    ///
+    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let response = rpc_client.get_rank_map(certificate_slot)?;
+    /// if let Some(rank_map) = response.value {
+    ///     for validator in rank_map.validators {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_rank_map(&self, slot: Slot) -> RpcResult<Option<RpcRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_rank_map(slot))
+    }
+
+    /// Returns the Alpenglow validator rank map with an optional identity filter.
+    ///
+    /// Always queries finalized state. There is no commitment parameter.
+    ///
+    /// The filter preserves the validator's rank and the full map's total stake.
+    /// An unknown identity returns an empty validator list when the map is available.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    ///
+    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcRankMapConfig};
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let identity = "67omRD8GkXTi8daWceprtQABkDeEm3SZYHUCrthQGB9D";
+    /// let response = rpc_client.get_rank_map_with_config(
+    ///     certificate_slot,
+    ///     RpcRankMapConfig {
+    ///         identity: Some(identity.to_string()),
+    ///         ..RpcRankMapConfig::default()
+    ///     },
+    /// )?;
+    /// if let Some(rank_map) = response.value {
+    ///     if let Some(validator) = rank_map.validators.first() {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_rank_map_with_config(
+        &self,
+        slot: Slot,
+        config: RpcRankMapConfig,
+    ) -> RpcResult<Option<RpcRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_rank_map_with_config(slot, config))
+    }
+
     /// Get block production for the current epoch.
     ///
     /// # RPC Reference
@@ -4619,6 +4693,27 @@ mod tests {
             })
             .unwrap();
         assert_eq!(leader_with_config, expected_leader);
+    }
+
+    #[test]
+    fn test_get_rank_map_variants() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+
+        let response = rpc_client.get_rank_map(0).unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert!(response.value.is_none());
+
+        let response = rpc_client
+            .get_rank_map_with_config(
+                0,
+                RpcRankMapConfig {
+                    identity: None,
+                    min_context_slot: Some(1),
+                },
+            )
+            .unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert!(response.value.is_none());
     }
 
     #[test]
