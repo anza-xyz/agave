@@ -599,6 +599,7 @@ impl Shred {
 
     dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    #[cfg(test)]
     dispatch!(fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
 
     dispatch!(pub fn payload(&self) -> &Payload);
