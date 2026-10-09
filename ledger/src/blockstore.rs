@@ -5213,7 +5213,7 @@ impl Blockstore {
     fn get_slot_data_in_block<T>(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
         mut deserialize: impl FnMut(Vec<u8>) -> Result<Vec<T>>,
     ) -> Result<Vec<T>> {
@@ -5275,7 +5275,7 @@ impl Blockstore {
     fn get_slot_components_in_block(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<BlockComponent>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
@@ -5296,7 +5296,7 @@ impl Blockstore {
     fn get_slot_component_views_in_block(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<ParsedBlockComponent>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
@@ -5321,7 +5321,7 @@ impl Blockstore {
     fn get_slot_entries_in_block(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
@@ -5345,7 +5345,7 @@ impl Blockstore {
     fn get_slot_entry_views_in_block(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<EntryView<Bytes>>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
@@ -5374,7 +5374,7 @@ impl Blockstore {
         range: Range<u32>,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
-        self.get_slot_entries_in_block(slot, &vec![range], slot_meta)
+        self.get_slot_entries_in_block(slot, std::slice::from_ref(&range), slot_meta)
     }
 
     /// Returns a mapping from each elements of `slots` to a list of the
@@ -6367,9 +6367,12 @@ impl Blockstore {
         let Some(footer_fec_start) = final_fec_start.checked_sub(fec_set_size) else {
             return Ok(vec![]);
         };
-        let completed_ranges = std::iter::once(footer_fec_start..final_fec_start).collect();
-        let components =
-            self.get_slot_components_in_block(slot, &completed_ranges, /*slot_meta:*/ None)?;
+        let completed_range = footer_fec_start..final_fec_start;
+        let components = self.get_slot_components_in_block(
+            slot,
+            std::slice::from_ref(&completed_range),
+            /*slot_meta:*/ None,
+        )?;
         let [BlockComponent::BlockMarker(VersionedBlockMarker::V1(marker))] = components.as_slice()
         else {
             return Ok(vec![]);
