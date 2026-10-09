@@ -859,7 +859,7 @@ mod tests {
         let mut recovered_shreds = Vec::new();
         let mut recovered_data_shreds = Vec::new();
 
-        // Recovery sees insufficient parity shreds and cannot recover the FEC.
+        // Recovery sees insufficient shreds and cannot recover the FEC.
         assert_matches!(
             shred_recovery_context.recover(
                 coding_shreds,
@@ -867,7 +867,7 @@ mod tests {
                 &mut recovered_data_shreds,
             ),
             Err(Error::Erasure(
-                reed_solomon_erasure::Error::TooFewParityShards
+                reed_solomon_erasure::Error::TooFewShardsPresent
             ))
         );
         assert!(recovered_shreds.is_empty());
