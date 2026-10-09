@@ -1261,7 +1261,7 @@ fn test_account_not_found() {
             &keypair,
             &mint_keypair.pubkey()
         ),
-        Err(TransactionError::AccountNotFound)
+        Err(TransactionError::InvalidAccountForFee)
     );
     assert_eq!(bank.transaction_count(), 0);
     assert_eq!(bank.non_vote_transaction_count_since_restart(), 0);
@@ -1687,7 +1687,7 @@ fn test_debits_before_credits(relax_fee_payer_constraint: bool) {
     let tx2 = system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 1, Hash::new_unique());
     let txs = [tx0, tx1, tx2];
     let results = bank.process_transactions(txs.iter());
-    assert_eq!(results[0], Err(TransactionError::AccountNotFound));
+    assert_eq!(results[0], Err(TransactionError::InvalidAccountForFee));
     assert_eq!(results[2], Err(TransactionError::BlockhashNotFound));
 
     // Assert bad transactions aren't counted.
@@ -3460,12 +3460,12 @@ fn test_is_delta_with_no_committables() {
     let fail_tx =
         system_transaction::transfer(&keypair1, &keypair2.pubkey(), 1, bank.last_blockhash());
 
-    // Should fail with TransactionError::AccountNotFound, which means
+    // Should fail with TransactionError::InvalidAccountForFee, which means
     // the account which this tx operated on will not be committed. Thus
     // the bank is_delta should still be false
     assert_eq!(
         bank.process_transaction(&fail_tx),
-        Err(TransactionError::AccountNotFound)
+        Err(TransactionError::InvalidAccountForFee)
     );
 
     // Check the bank is_delta is still false
@@ -4868,7 +4868,10 @@ fn test_pre_post_transaction_balances() {
 
     // Failed transactions still produce balance sets
     // This is a TransactionError - not possible to charge fees
-    assert_matches!(commit_results[1], Err(TransactionError::AccountNotFound));
+    assert_matches!(
+        commit_results[1],
+        Err(TransactionError::InvalidAccountForFee)
+    );
     assert_eq!(transaction_balances_set.pre_balances[1], vec![0, 0, 1]);
     assert_eq!(transaction_balances_set.post_balances[1], vec![0, 0, 1]);
 
@@ -13099,10 +13102,16 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
     // otherwise, it is discarded as an error
     if relax_fee_payer_constraint {
         let committed = commit_results[0].as_ref().unwrap();
-        assert_eq!(committed.status, Err(TransactionError::AccountNotFound));
+        assert_eq!(
+            committed.status,
+            Err(TransactionError::InvalidAccountForFee)
+        );
         assert_eq!(committed.fee_details, FeeDetails::default());
     } else {
-        assert_eq!(commit_results[0], Err(TransactionError::AccountNotFound));
+        assert_eq!(
+            commit_results[0],
+            Err(TransactionError::InvalidAccountForFee)
+        );
     }
 
     // no fees have been accumulated

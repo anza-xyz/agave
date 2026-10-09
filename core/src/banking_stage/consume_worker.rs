@@ -1439,7 +1439,7 @@ pub(crate) mod external {
             assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
             assert_eq!(
                 responses[1].not_included_reason,
-                not_included_reasons::ACCOUNT_NOT_FOUND
+                not_included_reasons::INVALID_ACCOUNT_FOR_FEE
             );
 
             test_frame.free_batch(batch);

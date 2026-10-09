@@ -143,6 +143,15 @@ pub(crate) struct LoadedTransactionAccount {
     pub(crate) loaded_size: usize,
 }
 
+impl LoadedTransactionAccount {
+    fn new(account: AccountSharedData) -> Self {
+        Self {
+            loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(account.data().len()),
+            account,
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 #[cfg_attr(
@@ -218,20 +227,11 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 
     // Load an account either from our own store or accounts-db, with a wrapper type
     // that includes the effective size for loaded transaction data size accounting.
-    pub(crate) fn load_transaction_account(
+    pub(crate) fn load_account(
         &mut self,
         account_key: &Pubkey,
     ) -> Option<LoadedTransactionAccount> {
-        self.load_account(account_key)
-            .map(|account| LoadedTransactionAccount {
-                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(account.data().len()),
-                account,
-            })
-    }
-
-    // Load an account as above, with no LoadedTransactionAccount wrapper.
-    pub(crate) fn load_account(&mut self, account_key: &Pubkey) -> Option<AccountSharedData> {
-        match self.do_load(account_key) {
+        let account = match self.do_load(account_key) {
             // Exists, from AccountLoader.
             (Some(account), false) => Some(account),
             // Not allocated, but has an AccountLoader placeholder already.
@@ -247,7 +247,40 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
                     .insert(*account_key, AccountSharedData::default());
                 None
             }
-        }
+        };
+
+        account.map(LoadedTransactionAccount::new)
+    }
+
+    // Load a requied account before loaded transaction data size calculations begin.
+    // "Required" means that if this account does not exist or does not meet its filter,
+    // processing will abort before execution and the processing result will be Err or NoOp.
+    //
+    // This function is NOT SAFE to use for normal transaction account loading because None
+    // indicates in such a context that the account does not exist and is safe to write to.
+    pub(crate) fn preload_required_account(
+        &mut self,
+        account_key: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<LoadedTransactionAccount> {
+        let account = if let Some(account) = self.loaded_accounts.get(account_key) {
+            // Return None if this is a placeholder for a nonexistent account or if
+            // the load_filter predicate rejects it.
+            (account.lamports() > 0
+                && load_filter(account.lamports(), account.owner(), account.data().len()))
+            .then(|| account.clone())
+        } else {
+            let account = self
+                .callbacks
+                .get_account_shared_data_if(account_key, load_filter);
+            // Exists in accounts-db. Store it in AccountLoader for future loads.
+            if let Some(ref account) = account {
+                self.loaded_accounts.insert(*account_key, account.clone());
+            }
+            account
+        };
+
+        account.map(LoadedTransactionAccount::new)
     }
 
     // Internal helper for core loading logic to prevent code duplication. Returns a bool
@@ -255,7 +288,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     // &mut self to insert the account. Wrappers with &self ignore it.
     fn do_load(&self, account_key: &Pubkey) -> (Option<AccountSharedData>, bool) {
         if let Some(account) = self.loaded_accounts.get(account_key) {
-            // If lamports is 0, a previous transaction deallocated this account.
+            // If lamports is 0, a previous transaction closed this account, or it never existed.
             // We return None instead of the account we found so it can be created fresh.
             // We *never* remove accounts, or else we would fetch stale state from accounts-db.
             let option_account = if account.lamports() == 0 {
@@ -321,6 +354,18 @@ impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for Accoun
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.do_load(pubkey).0
     }
+
+    // We decline to implement this function because it must be used with care.
+    // Specifically, we can only filter accounts when a return of None would
+    // prevent transaction execution, not when it is acceptable to proceed as
+    // if the account did not exist.
+    fn get_account_shared_data_if(
+        &self,
+        _pubkey: &Pubkey,
+        _load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        unimplemented!("get_account_shared_data_if() is not available via AccountLoader")
+    }
 }
 
 /// Set the rent epoch to u64::MAX if the account is rent exempt.
@@ -339,6 +384,14 @@ pub fn update_rent_exempt_status_for_account(rent: &Rent, account: &mut AccountS
     {
         account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
     }
+}
+
+/// Load filter for fee-payer accounts. A fee-payer must exist and be a system account with no
+/// data or a nonce account; any other owner or data length fails `get_system_account_kind`.
+pub fn fee_payer_load_filter(lamports: u64, owner: &Pubkey, data_len: usize) -> bool {
+    lamports > 0
+        && solana_sdk_ids::system_program::check_id(owner)
+        && (data_len == 0 || data_len == NonceState::size())
 }
 
 /// Check whether the payer_account is capable of paying the fee. The
@@ -550,8 +603,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     {
                         // ...count programdata toward this transaction's total size.
                         loaded_tx_data_size.increase_calculated_data_size(
-                            TRANSACTION_ACCOUNT_BASE_SIZE
-                                .saturating_add(programdata_account.data().len()),
+                            programdata_account.loaded_size,
                             error_metrics,
                         )?;
                         additional_loaded_accounts.insert(programdata_address);
@@ -580,7 +632,10 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     }
 
     for (program_id, _) in message.program_instructions_iter() {
-        let Some(program_account) = account_loader.load_account(program_id) else {
+        let Some(program_account) = account_loader
+            .load_account(program_id)
+            .map(|loaded| loaded.account)
+        else {
             error_metrics.account_not_found += 1;
             return Err(TransactionError::ProgramAccountNotFound);
         };
@@ -610,7 +665,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
             loaded_size: 0,
             account: construct_instructions_account(message)?,
         })
-    } else if let Some(mut loaded_account) = account_loader.load_transaction_account(account_key) {
+    } else if let Some(mut loaded_account) = account_loader.load_account(account_key) {
         if is_writable {
             update_rent_exempt_status_for_account(rent, &mut loaded_account.account);
         }
@@ -2336,16 +2391,13 @@ mod tests {
         // test without stored account
         let mut account_loader: AccountLoader<_> = (&mock_bank).into();
         assert_eq!(
-            account_loader
-                .load_transaction_account(&fee_payer)
-                .unwrap()
-                .account,
+            account_loader.load_account(&fee_payer).unwrap().account,
             fee_payer_account
         );
 
         let mut account_loader: AccountLoader<_> = (&mock_bank).into();
         assert_eq!(
-            account_loader.load_account(&fee_payer).unwrap(),
+            account_loader.load_account(&fee_payer).unwrap().account,
             fee_payer_account
         );
 
@@ -2360,14 +2412,11 @@ mod tests {
         account_loader.load_account(&fee_payer).unwrap();
 
         assert_eq!(
-            account_loader
-                .load_transaction_account(&fee_payer)
-                .unwrap()
-                .account,
+            account_loader.load_account(&fee_payer).unwrap().account,
             fee_payer_account
         );
         assert_eq!(
-            account_loader.load_account(&fee_payer).unwrap(),
+            account_loader.load_account(&fee_payer).unwrap().account,
             fee_payer_account
         );
         assert_eq!(
@@ -2384,7 +2433,7 @@ mod tests {
             0,
         );
 
-        assert_eq!(account_loader.load_transaction_account(&fee_payer), None);
+        assert_eq!(account_loader.load_account(&fee_payer), None);
         assert_eq!(account_loader.load_account(&fee_payer), None);
         assert_eq!(account_loader.get_account_shared_data(&fee_payer), None);
     }

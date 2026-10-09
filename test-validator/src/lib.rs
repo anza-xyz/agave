@@ -1261,7 +1261,7 @@ impl TestValidator {
     /// programs added to genesis ain't immediately usable. Actively check "Program
     /// is not deployed" error for their availibility.
     ///
-    /// Returns `TransactionError::AccountNotFound` if the payer account is not funded.
+    /// Returns `TransactionError::InvalidAccountForFee` if the payer account is not funded.
     /// The caller is responsible for ensuring the payer account has sufficient funds.
     async fn wait_for_upgradeable_programs_deployed(
         &self,
@@ -1299,10 +1299,10 @@ impl TestValidator {
                             let err_string = format!("{e:?}");
                             if err_string.contains("Program is not deployed") {
                                 debug!("{program_id:?} - not deployed");
-                            } else if err_string.contains("AccountNotFound") {
+                            } else if err_string.contains("InvalidAccountForFee") {
                                 // Payer account not funded - this is a caller error
                                 return Err(RpcClientError::from(
-                                    TransactionError::AccountNotFound,
+                                    TransactionError::InvalidAccountForFee,
                                 ));
                             } else {
                                 // Assuming all other errors could only occur *after*
@@ -1677,12 +1677,12 @@ mod test {
             .wait_for_upgradeable_programs_deployed(&[&program_id], &unfunded_payer)
             .await;
 
-        // Verify it returns AccountNotFound error
+        // Verify it returns InvalidAccountForFee error
         let err = result.unwrap_err();
         assert!(matches!(
             *err.kind,
             solana_rpc_client_api::client_error::ErrorKind::TransactionError(
-                TransactionError::AccountNotFound
+                TransactionError::InvalidAccountForFee
             )
         ));
     }
