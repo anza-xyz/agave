@@ -8,6 +8,7 @@ use {
             metrics::{RewardsStoreMetrics, report_partitioned_reward_metrics},
             partitioned_epoch_rewards::EpochRewardPhase,
         },
+        reward_info::RewardInfo,
         stake_account::StakeAccount,
     },
     log::error,
@@ -228,12 +229,25 @@ impl Bank {
     /// Return the number of rewards inserted
     fn update_reward_history_in_partition(&self, stake_rewards: &[StakeReward]) -> usize {
         let mut rewards = self.rewards.write().unwrap();
-        rewards.reserve(stake_rewards.len());
+        // Reserve two entries per stake account
+        rewards.reserve(stake_rewards.len().saturating_mul(2));
         let initial_len = rewards.len();
         stake_rewards
             .iter()
-            .filter(|x| x.get_stake_reward() > 0)
-            .for_each(|x| rewards.push((x.stake_pubkey, x.stake_reward_info.into())));
+            .filter(|x| x.get_stake_reward() > 0 || x.block_reward_lamports > 0)
+            .for_each(|x| {
+                if x.get_stake_reward() > 0 {
+                    rewards.push((x.stake_pubkey, x.stake_reward_info.into()))
+                }
+                if x.block_reward_lamports > 0 {
+                    rewards.push((x.stake_pubkey, RewardInfo {
+                        reward_type: RewardType::BlockRevenueSharing,
+                        lamports: i64::try_from(x.block_reward_lamports).unwrap(),
+                        post_balance: x.stake_reward_info.post_balance,
+                        commission_bps: None,
+                    }));
+                }
+            });
         rewards.len().saturating_sub(initial_len)
     }
 
@@ -312,13 +326,13 @@ impl Bank {
                 reward_type,
                 lamports: i64::try_from(
                     partitioned_stake_reward.inflation.stake_reward
-                        + partitioned_stake_reward.block_reward,
                 )
                 .unwrap(),
                 post_balance: account.lamports(),
                 commission_bps: partitioned_stake_reward.inflation.commission_bps,
             },
             stake_account: account,
+            block_reward_lamports: partitioned_stake_reward.block_reward,
         })
     }
 
@@ -437,7 +451,6 @@ mod tests {
                 points::{CalculationEnvironment, DelegatedVoteState, PointValue, null_tracer},
                 redeem_rewards,
             },
-            reward_info::RewardInfo,
             stake_utils,
             sysvar_account::from_account,
         },
@@ -697,7 +710,8 @@ mod tests {
             } = bank.store_stake_accounts_in_partition(&partitioned_rewards, i as u64);
             let num_history_updates =
                 bank.update_reward_history_in_partition(&updated_stake_rewards);
-            assert_eq!(updated_stake_rewards.len(), num_history_updates);
+            assert!(num_history_updates <= updated_stake_rewards.len().saturating_mul(2));
+            assert!(num_history_updates >= updated_stake_rewards.len());
             total_inflation_rewards += stake_reward_lamports_minted;
             total_block_rewards += block_reward_lamports_distributed;
             total_num_updates += num_history_updates;
@@ -708,7 +722,7 @@ mod tests {
         // assert that all rewards are credited
         assert_eq!(total_inflation_rewards, expected_inflation_rewards);
         assert_eq!(total_block_rewards, expected_block_rewards);
-        assert_eq!(total_num_updates, expected_num);
+        assert_eq!(total_num_updates, expected_num * 2); // two entries per stake
         assert_eq!(
             total_num_updates,
             post_update_history_len - pre_update_history_len
@@ -722,38 +736,52 @@ mod tests {
                 create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
             let bank = Bank::new_for_tests(&genesis_config);
 
-            let mut expected_num = 100;
+            let num_stakes = 100;
 
-            let mut stake_rewards = (0..expected_num)
+            let mut stake_rewards = (0..num_stakes)
                 .map(|_| StakeReward::new_random(&bank.rent_collector.rent))
                 .collect::<Vec<_>>();
 
             let mut rng = rand::rng();
-            let i_zero = rng.random_range(0..expected_num);
+            let i_zero = rng.random_range(0..num_stakes);
             if zero_reward {
-                // pick one entry to have zero rewards so it gets ignored
+                // pick one entry to have zero inflation rewards so it gets ignored
                 stake_rewards[i_zero].stake_reward_info.lamports = 0;
+                // pick the last entry to have zero block rewards
+                stake_rewards.last_mut().unwrap().block_reward_lamports = 0;
             }
 
             let num_in_history = bank.update_reward_history_in_partition(&stake_rewards);
 
+            let mut reward_infos = stake_rewards.into_iter()
+                .flat_map(|x| [
+                    (x.stake_pubkey, RewardInfo::from(x.stake_reward_info)),
+                    (
+                        x.stake_pubkey,
+                        RewardInfo {
+                            reward_type: RewardType::BlockRevenueSharing,
+                            lamports: i64::try_from(x.block_reward_lamports).unwrap(),
+                            post_balance: x.stake_reward_info.post_balance,
+                            commission_bps: None,
+                        }
+                    )
+                ])
+                .collect::<Vec<_>>();
+
             if zero_reward {
-                stake_rewards.remove(i_zero);
-                // -1 because one of them had zero rewards and was ignored
-                expected_num -= 1;
+                reward_infos.remove(i_zero * 2);
+                reward_infos.pop();
             }
+            let expected_num = reward_infos.len();
 
             bank.rewards
                 .read()
                 .unwrap()
                 .iter()
-                .zip(stake_rewards.iter())
-                .for_each(|((k, reward_info), expected_stake_reward)| {
+                .zip(reward_infos.iter())
+                .for_each(|((k, reward_info), (expected_key, expected_reward_info))| {
                     assert_eq!(
-                        (
-                            &expected_stake_reward.stake_pubkey,
-                            &RewardInfo::from(expected_stake_reward.stake_reward_info),
-                        ),
+                        (expected_key, expected_reward_info),
                         (k, reward_info)
                     );
                 });
@@ -929,10 +957,11 @@ mod tests {
             stake_account: expected_stake_account,
             stake_reward_info: StakeRewardInfo {
                 reward_type: RewardType::Staking,
-                lamports: (stake_reward + block_reward) as i64,
+                lamports: stake_reward as i64,
                 post_balance: expected_lamports,
                 commission_bps: Some(commission_bps),
             },
+            block_reward_lamports: block_reward,
         };
         assert_eq!(
             Bank::build_updated_stake_reward(
@@ -1017,6 +1046,7 @@ mod tests {
                 post_balance: expected_lamports,
                 commission_bps: Some(commission_bps),
             },
+            block_reward_lamports: 0,
         };
         assert_eq!(
             Bank::build_updated_stake_reward(
