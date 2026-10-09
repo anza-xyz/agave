@@ -12,27 +12,23 @@ pub struct Repo {
 }
 
 impl Repo {
-    /// Resolve the GitHub repo from Buildkite's built-in `BUILDKITE_REPO`,
-    /// falling back to the agave repo when it is unset or unparseable.
+    /// Resolve the GitHub repo from Buildkite's built-in `BUILDKITE_REPO` or
+    /// GitHub Actions' built-in `GITHUB_REPOSITORY`, falling back to the agave
+    /// repo when neither is set or parseable.
     pub fn from_env() -> Self {
-        match env::var("BUILDKITE_REPO")
-            .ok()
-            .and_then(|url| Self::parse_github_url(&url))
-        {
-            Some(repo) => {
-                info!(
-                    "Resolved repo {}/{} from `BUILDKITE_REPO`",
-                    repo.owner, repo.name
-                );
-                repo
+        for var in ["BUILDKITE_REPO", "GITHUB_REPOSITORY"] {
+            if let Some(repo) = env::var(var)
+                .ok()
+                .and_then(|url| Self::parse_github_url(&url))
+            {
+                info!("Resolved repo {}/{} from `{var}`", repo.owner, repo.name);
+                return repo;
             }
-            None => {
-                info!("Falling back to default repo anza-xyz/agave");
-                Repo {
-                    owner: String::from("anza-xyz"),
-                    name: String::from("agave"),
-                }
-            }
+        }
+        info!("Falling back to default repo anza-xyz/agave");
+        Repo {
+            owner: String::from("anza-xyz"),
+            name: String::from("agave"),
         }
     }
 
@@ -101,6 +97,7 @@ mod tests {
             "git@github.com:anza-xyz/agave",
             "ssh://git@github.com/anza-xyz/agave.git",
             "  https://github.com/anza-xyz/agave.git/  ",
+            "anza-xyz/agave",
         ] {
             let repo =
                 Repo::parse_github_url(url).unwrap_or_else(|| panic!("failed to parse url: {url}"));
