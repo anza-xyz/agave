@@ -9882,7 +9882,6 @@ dependencies = [
 name = "solana-turbine"
 version = "4.5.0-alpha.2"
 dependencies = [
- "agave-feature-set",
  "agave-votor",
  "agave-votor-messages",
  "agave-wake-channel",
