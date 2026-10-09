@@ -2707,7 +2707,7 @@ mod tests {
         assert!(rv.is_none());
         let shredder = Shredder::new(slot, slot - 1, 0, 2).unwrap();
         let keypair = Keypair::new();
-        let index = 1;
+        let index = 32;
         let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &[],
@@ -2738,7 +2738,7 @@ mod tests {
                 Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
             })
             .collect();
-        assert_eq!(rv[0].index(), 1);
+        assert_eq!(rv[0].index(), index as u32);
         assert_eq!(rv[0].slot(), slot);
     }
 
