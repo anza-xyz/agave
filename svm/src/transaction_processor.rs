@@ -841,11 +841,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let fee_payer_address = message.fee_payer();
 
-        // We *must* use load_transaction_account() here because *this* is when the fee-payer
-        // is loaded for the transaction. Transaction loading skips the first account and
-        // loads (and thus inspects) all others normally.
-        let Some(mut loaded_fee_payer) =
-            account_loader.load_transaction_account(fee_payer_address, true)
+        let Some(mut loaded_fee_payer) = account_loader.load_transaction_account(fee_payer_address)
         else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
@@ -909,7 +905,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
 
         let Some(mut nonce_account) = account_loader
-            .load_transaction_account(nonce_address, true)
+            .load_transaction_account(nonce_address)
             .map(|loaded| loaded.account)
         else {
             error_counters.account_not_found += 1;
@@ -1504,7 +1500,7 @@ mod tests {
             bpf_loader, bpf_loader_upgradeable, loader_v4, native_loader, system_program, sysvar,
         },
         solana_signature::Signature,
-        solana_svm_callback::{AccountState, InvokeContextCallback},
+        solana_svm_callback::InvokeContextCallback,
         solana_svm_type_overrides::sync::atomic::Ordering,
         solana_system_interface::instruction as system_instruction,
         solana_sysvar_id::SysvarId,
@@ -1548,9 +1544,6 @@ mod tests {
     #[derive(Clone)]
     struct MockBankCallback {
         account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
-        #[allow(clippy::type_complexity)]
-        inspected_accounts:
-            Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
         feature_set: SVMFeatureSet,
     }
 
@@ -1558,7 +1551,6 @@ mod tests {
         fn default() -> Self {
             Self {
                 account_shared_data: Arc::default(),
-                inspected_accounts: Arc::default(),
                 feature_set: SVMFeatureSet::all_enabled(),
             }
         }
@@ -1573,24 +1565,6 @@ mod tests {
                 .unwrap()
                 .get(pubkey)
                 .cloned()
-        }
-
-        fn inspect_account(
-            &self,
-            address: &Pubkey,
-            account_state: AccountState,
-            is_writable: bool,
-        ) {
-            let account = match account_state {
-                AccountState::Dead => None,
-                AccountState::Alive(account) => Some(account.clone()),
-            };
-            self.inspected_accounts
-                .write()
-                .unwrap()
-                .entry(*address)
-                .or_default()
-                .push((account, is_writable));
         }
     }
 
@@ -3057,69 +3031,6 @@ mod tests {
                 )
             );
         }
-    }
-
-    // Ensure `TransactionProcessingCallback::inspect_account()` is called when
-    // validating the fee payer, since that's when the fee payer account is loaded.
-    #[test]
-    fn test_inspect_account_fee_payer() {
-        let lamports_per_signature = 5000;
-        let fee_payer_address = Pubkey::new_unique();
-        let fee_payer_account = AccountSharedData::new_rent_epoch(
-            123_000_000_000,
-            0,
-            &Pubkey::default(),
-            RENT_EXEMPT_RENT_EPOCH,
-        );
-        let mock_bank = MockBankCallback::default();
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(fee_payer_address, fee_payer_account.clone());
-        let mut account_loader = (&mock_bank).into();
-
-        let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
-            &[
-                ComputeBudgetInstruction::set_compute_unit_limit(2000u32),
-                ComputeBudgetInstruction::set_compute_unit_price(1_000_000_000),
-            ],
-            Some(&fee_payer_address),
-            &Hash::new_unique(),
-        ));
-
-        assert!(matches!(
-            TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
-                &message,
-                CheckedTransactionDetails::new(
-                    None,
-                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
-                        MockBankCallback::calculate_fee_details(&message, 5000, 0),
-                    ),
-                ),
-                &Hash::default(),
-                lamports_per_signature,
-                &Rent::default(),
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
-                false,
-                &mut TransactionErrorMetrics::default(),
-            ),
-            TransactionValidationResult::Loadable(_)
-        ));
-
-        // ensure the fee payer is an inspected account
-        let actual_inspected_accounts: Vec<_> = mock_bank
-            .inspected_accounts
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        assert_eq!(
-            actual_inspected_accounts.as_slice(),
-            &[(fee_payer_address, vec![(Some(fee_payer_account), true)])],
-        );
     }
 
     #[test]

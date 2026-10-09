@@ -22,7 +22,7 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget},
     solana_svm::transaction_processor::TransactionBatchProcessor,
-    solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::{Arc, RwLock},
@@ -61,9 +61,6 @@ impl ForkGraph for MockForkGraph {
 pub struct MockBankCallback {
     pub feature_set: SVMFeatureSet,
     pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
-    #[allow(clippy::type_complexity)]
-    pub inspected_accounts:
-        Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
 }
 
 impl InvokeContextCallback for MockBankCallback {}
@@ -75,19 +72,6 @@ impl TransactionProcessingCallback for MockBankCallback {
             .unwrap()
             .get(pubkey)
             .cloned()
-    }
-
-    fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {
-        let account = match account_state {
-            AccountState::Dead => None,
-            AccountState::Alive(account) => Some(account.clone()),
-        };
-        self.inspected_accounts
-            .write()
-            .unwrap()
-            .entry(*address)
-            .or_default()
-            .push((account, is_writable));
     }
 }
 

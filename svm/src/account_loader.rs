@@ -25,7 +25,7 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
         sysvar::{self, slot_history},
     },
-    solana_svm_callback::{AccountState, TransactionProcessingCallback},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, transaction_accounts::KeyedAccountSharedData},
@@ -216,43 +216,20 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    // Load an account either from our own store or accounts-db and inspect it on behalf of Bank.
-    // Inspection is required prior to any modifications to the account. This function is used
-    // by load_transaction() and validate_transaction_fee_payer() for that purpose. It returns
-    // a different type than other AccountLoader load functions, which should prevent accidental
-    // mix and match of them.
+    // Load an account either from our own store or accounts-db, with a wrapper type
+    // that includes the effective size for loaded transaction data size accounting.
     pub(crate) fn load_transaction_account(
         &mut self,
         account_key: &Pubkey,
-        is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
-        let account = self.load_account(account_key);
-
-        // Inspect prior to collecting rent, since rent collection can modify
-        // the account.
-        //
-        // Note that though rent collection is disabled, we still set the rent
-        // epoch of rent exempt if the account is rent-exempt but its rent epoch
-        // is not set to u64::MAX. In other words, an account can be updated
-        // during rent collection. Therefore, we must inspect prior to collecting rent.
-        self.callbacks.inspect_account(
-            account_key,
-            if let Some(ref account) = account {
-                AccountState::Alive(account)
-            } else {
-                AccountState::Dead
-            },
-            is_writable,
-        );
-
-        account.map(|account| LoadedTransactionAccount {
-            loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(account.data().len()),
-            account,
-        })
+        self.load_account(account_key)
+            .map(|account| LoadedTransactionAccount {
+                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(account.data().len()),
+                account,
+            })
     }
 
-    // Load an account as above, with no inspection and no LoadedTransactionAccount wrapper.
-    // This is a general purpose function suitable for usage outside initial transaction loading.
+    // Load an account as above, with no LoadedTransactionAccount wrapper.
     pub(crate) fn load_account(&mut self, account_key: &Pubkey) -> Option<AccountSharedData> {
         match self.do_load(account_key) {
             // Exists, from AccountLoader.
@@ -633,9 +610,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
             loaded_size: 0,
             account: construct_instructions_account(message)?,
         })
-    } else if let Some(mut loaded_account) =
-        account_loader.load_transaction_account(account_key, is_writable)
-    {
+    } else if let Some(mut loaded_account) = account_loader.load_transaction_account(account_key) {
         if is_writable {
             update_rent_exempt_status_for_account(rent, &mut loaded_account.account);
         }
@@ -725,7 +700,6 @@ mod tests {
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{
             borrow::Cow,
-            cell::RefCell,
             collections::{HashMap, HashSet},
             sync::Arc,
         },
@@ -741,9 +715,6 @@ mod tests {
     #[derive(Clone)]
     struct TestCallbacks {
         accounts_map: HashMap<Pubkey, AccountSharedData>,
-        #[allow(clippy::type_complexity)]
-        inspected_accounts:
-            RefCell<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>,
         feature_set: SVMFeatureSet,
     }
 
@@ -751,7 +722,6 @@ mod tests {
         fn default() -> Self {
             Self {
                 accounts_map: HashMap::default(),
-                inspected_accounts: RefCell::default(),
                 feature_set: SVMFeatureSet::all_enabled(),
             }
         }
@@ -760,23 +730,6 @@ mod tests {
     impl TransactionProcessingCallback for TestCallbacks {
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
             self.accounts_map.get(pubkey).cloned()
-        }
-
-        fn inspect_account(
-            &self,
-            address: &Pubkey,
-            account_state: AccountState,
-            is_writable: bool,
-        ) {
-            let account = match account_state {
-                AccountState::Dead => None,
-                AccountState::Alive(account) => Some(account.clone()),
-            };
-            self.inspected_accounts
-                .borrow_mut()
-                .entry(*address)
-                .or_default()
-                .push((account, is_writable));
         }
     }
 
@@ -2368,98 +2321,6 @@ mod tests {
         assert_eq!(account.lamports(), 1);
     }
 
-    // Ensure `TransactionProcessingCallback::inspect_account()` is called when
-    // loading accounts for transaction processing.
-    #[test]
-    fn test_inspect_account_non_fee_payer() {
-        let mut mock_bank = TestCallbacks::default();
-
-        let address0 = Pubkey::new_unique(); // <-- fee payer
-        let address1 = Pubkey::new_unique(); // <-- initially alive
-        let address2 = Pubkey::new_unique(); // <-- initially dead
-        let address3 = Pubkey::new_unique(); // <-- program
-
-        let mut account0 = AccountSharedData::default();
-        account0.set_lamports(1_000_000_000);
-        mock_bank.accounts_map.insert(address0, account0.clone());
-
-        let mut account1 = AccountSharedData::default();
-        account1.set_lamports(2_000_000_000);
-        mock_bank.accounts_map.insert(address1, account1.clone());
-
-        // account2 *not* added to the bank's accounts_map
-
-        let mut account3 = AccountSharedData::default();
-        account3.set_lamports(4_000_000_000);
-        account3.set_executable(true);
-        account3.set_owner(bpf_loader::id());
-        mock_bank.accounts_map.insert(address3, account3.clone());
-        let mut account_loader = (&mock_bank).into();
-
-        let message = Message {
-            account_keys: vec![address0, address1, address2, address3],
-            header: MessageHeader::default(),
-            instructions: vec![
-                CompiledInstruction {
-                    program_id_index: 3,
-                    accounts: vec![0],
-                    data: vec![],
-                },
-                CompiledInstruction {
-                    program_id_index: 3,
-                    accounts: vec![1, 2],
-                    data: vec![],
-                },
-                CompiledInstruction {
-                    program_id_index: 3,
-                    accounts: vec![1],
-                    data: vec![],
-                },
-            ],
-            recent_blockhash: Hash::new_unique(),
-        };
-        let sanitized_message = new_unchecked_sanitized_message(message);
-        let sanitized_transaction = SanitizedTransaction::new_for_tests(
-            sanitized_message,
-            vec![Signature::new_unique()],
-            false,
-        );
-        let validation_result =
-            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
-                loaded_fee_payer_account: LoadedTransactionAccount {
-                    account: account0.clone(),
-                    ..LoadedTransactionAccount::default()
-                },
-                ..ValidatedTransactionDetails::default()
-            });
-        let _load_results = load_transaction(
-            &mut account_loader,
-            &sanitized_transaction,
-            validation_result,
-            &mut TransactionErrorMetrics::default(),
-            &Rent::default(),
-        );
-
-        // ensure the loaded accounts are inspected
-        let mut actual_inspected_accounts: Vec<_> = mock_bank
-            .inspected_accounts
-            .borrow()
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        actual_inspected_accounts.sort_unstable_by_key(|a| a.0);
-
-        let mut expected_inspected_accounts = vec![
-            // *not* key0, since it is loaded during fee payer validation
-            (address1, vec![(Some(account1), true)]),
-            (address2, vec![(None, true)]),
-            (address3, vec![(Some(account3), false)]),
-        ];
-        expected_inspected_accounts.sort_unstable_by_key(|a| a.0);
-
-        assert_eq!(actual_inspected_accounts, expected_inspected_accounts,);
-    }
-
     #[test]
     fn test_account_loader_wrappers() {
         let fee_payer = Pubkey::new_unique();
@@ -2476,16 +2337,7 @@ mod tests {
         let mut account_loader: AccountLoader<_> = (&mock_bank).into();
         assert_eq!(
             account_loader
-                .load_transaction_account(&fee_payer, false)
-                .unwrap()
-                .account,
-            fee_payer_account
-        );
-
-        let mut account_loader: AccountLoader<_> = (&mock_bank).into();
-        assert_eq!(
-            account_loader
-                .load_transaction_account(&fee_payer, true)
+                .load_transaction_account(&fee_payer)
                 .unwrap()
                 .account,
             fee_payer_account
@@ -2509,14 +2361,7 @@ mod tests {
 
         assert_eq!(
             account_loader
-                .load_transaction_account(&fee_payer, false)
-                .unwrap()
-                .account,
-            fee_payer_account
-        );
-        assert_eq!(
-            account_loader
-                .load_transaction_account(&fee_payer, true)
+                .load_transaction_account(&fee_payer)
                 .unwrap()
                 .account,
             fee_payer_account
@@ -2539,14 +2384,7 @@ mod tests {
             0,
         );
 
-        assert_eq!(
-            account_loader.load_transaction_account(&fee_payer, false),
-            None
-        );
-        assert_eq!(
-            account_loader.load_transaction_account(&fee_payer, true),
-            None
-        );
+        assert_eq!(account_loader.load_transaction_account(&fee_payer), None);
         assert_eq!(account_loader.load_account(&fee_payer), None);
         assert_eq!(account_loader.get_account_shared_data(&fee_payer), None);
     }
