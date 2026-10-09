@@ -24,6 +24,7 @@ pub const MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION: i64 = MAX_ACCOUNT_DATA_LEN as
 pub const MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION: usize = 10 * 1_024;
 // Maximum cross-program invocation and instructions per transaction
 pub const MAX_INSTRUCTION_TRACE_LENGTH: usize = 64;
+pub const DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT: u32 = 200_000;
 
 #[cfg(test)]
 static_assertions::const_assert_eq!(
@@ -44,6 +45,11 @@ static_assertions::const_assert_eq!(
 static_assertions::const_assert_eq!(
     MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION,
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
+);
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+    solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
 );
 
 /// Index of an account inside of the transaction or an instruction.
