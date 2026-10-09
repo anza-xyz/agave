@@ -203,12 +203,10 @@ impl ProgressTracker {
                 target_bank_time_ms: target_bank_time_ms(working_bank.ns_per_slot),
             }
         } else {
-            // Detect the transition out of LEADER_READY so the scheduler learns
-            // that the working bank is gone, even if the window has expired.
-            let bank_was_cleared = self.last_observed_bank_id.take().is_some();
+            self.last_observed_bank_id = None;
             self.limit_and_shared_block_cost = None;
             self.limit_and_shared_allocated_accounts_data_size = None;
-            let (current_slot, current_slot_progress) =
+            let (current_slot, current_slot_progress, window_expired) =
                 if self.migration_status.is_alpenglow_enabled() {
                     let slot_info = self.alpenglow_slot_clock.load()?;
                     let elapsed = slot_info.started_at.elapsed();
@@ -218,27 +216,28 @@ impl ProgressTracker {
                         .slot_duration
                         .saturating_mul(remaining_slots as u32);
                     // The estimate is only valid within the anchored window.
-                    // Wait for a new observation once the window expires, but
-                    // still report the transition away from a working bank.
-                    if elapsed >= remaining_window_duration && !bank_was_cleared {
-                        return None;
-                    }
-                    alpenglow_slot_progress(slot_info.slot, elapsed, slot_info.slot_duration)
+                    // Stop reporting LEADER_STARTING when the anchored window expires.
+                    let window_expired = elapsed >= remaining_window_duration;
+                    let (slot, progress) =
+                        alpenglow_slot_progress(slot_info.slot, elapsed, slot_info.slot_duration);
+                    (slot, progress, window_expired)
                 } else {
                     let current_slot = slot_from_tick_height(tick_height, self.ticks_per_slot);
                     (
                         current_slot,
                         progress(current_slot, tick_height, self.ticks_per_slot),
+                        false,
                     )
                 };
 
             // No bank yet but we may already be inside our leader window.
-            let leader_state =
-                if (next_leader_range_start..=next_leader_range_end).contains(&current_slot) {
-                    agave_scheduler_bindings::LEADER_STARTING
-                } else {
-                    agave_scheduler_bindings::NOT_LEADER
-                };
+            let leader_state = if !window_expired
+                && (next_leader_range_start..=next_leader_range_end).contains(&current_slot)
+            {
+                agave_scheduler_bindings::LEADER_STARTING
+            } else {
+                agave_scheduler_bindings::NOT_LEADER
+            };
 
             ProgressMessage {
                 leader_state,
@@ -613,6 +612,22 @@ mod tests {
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.next_leader_slot, 4);
         assert_eq!(message.leader_range_end, 7);
+
+        alpenglow_slot_clock.update_leader(
+            4,
+            Instant::now() - Duration::from_secs(40),
+            Duration::from_secs(10),
+        );
+        let (message, _) = progress_tracker.produce_progress_message().unwrap();
+        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
+        assert_eq!(message.current_slot, 7);
+        assert_eq!(message.current_slot_progress, 100);
+
+        alpenglow_slot_clock.update(8, Instant::now(), Duration::from_secs(10));
+        let (message, _) = progress_tracker.produce_progress_message().unwrap();
+        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
+        assert_eq!(message.current_slot, 8);
+        assert_eq!(message.current_slot_progress, 0);
     }
 
     #[test]
@@ -634,9 +649,12 @@ mod tests {
             );
             let window_duration = slot_duration * (8 - anchor_slot) as u32;
             clock.update(anchor_slot, Instant::now() - window_duration, slot_duration);
-            assert!(tracker.produce_progress_message().is_none());
+            let (message, _) = tracker.produce_progress_message().unwrap();
+            assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
+            assert_eq!(message.current_slot, 7);
+            assert_eq!(message.current_slot_progress, 100);
 
-            // Reporting resumes only when another window is observed.
+            // A new observation replaces the capped progress estimate.
             clock.update(8, Instant::now(), Duration::from_secs(60));
             let (message, _) = tracker.produce_progress_message().unwrap();
             assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
@@ -682,7 +700,6 @@ mod tests {
         assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
         assert_eq!(message.current_slot, 3);
         assert_eq!(message.current_slot_progress, 100);
-        assert!(tracker.produce_progress_message().is_none());
     }
 
     #[test]
