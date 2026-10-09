@@ -39,6 +39,8 @@ Release channels have their own copy of this changelog:
 * Added `agave-validator --no-xdp-zero-copy` to explicitly select XDP copy mode. It conflicts
   with `--xdp-zero-copy` and `--no-xdp`.
 * The default full snapshot interval is now 200,000 slots.
+* XDP interface, address, and transmitter setup failures now report startup errors instead of
+  panicking.
 
 ### CLI
 

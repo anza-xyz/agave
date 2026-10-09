@@ -358,20 +358,17 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let (xdp_transmit_setup, report) = xdp_transmit_config
-            .clone()
-            .map(|xdp_config| {
-                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
-            })
-            .map_or((None, None), |(setup, report)| (Some(setup), Some(report)));
+        let xdp_transmit_setup_result = xdp_transmit_config.clone().map(|xdp_config| {
+            xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+        });
 
-        // we're done with caps needed to init xdp now. remove them from our process
+        // Drop temporary XDP capabilities before propagating any setup error.
         caps::set(None, CapSet::Effective, &retained_caps)
             .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        (xdp_transmit_setup, report)
+        xdp_transmit_setup_result.transpose()?.unzip()
     };
 
     #[cfg(not(target_os = "linux"))]
