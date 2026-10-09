@@ -15,10 +15,16 @@ use {
     },
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_signer::Signer,
-    std::{net::SocketAddr, sync::Arc},
+    std::{
+        net::SocketAddr,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    },
 };
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MaliciousRepairConfig {
     /// If set, respond maliciously for slots where `slot % frequency == 0`
     pub bad_shred_slot_frequency: Option<Slot>,
@@ -26,6 +32,8 @@ pub struct MaliciousRepairConfig {
     pub bad_shred_index_frequency: Option<u64>,
     /// If set, only respond maliciously for slots within this range (inclusive)
     pub slot_range: Option<(Slot, Slot)>,
+    /// If set, withhold block-ID shred repairs until this flag is enabled.
+    pub block_id_repairs_enabled: Option<Arc<AtomicBool>>,
 }
 
 pub struct MaliciousRepairHandler {
@@ -170,6 +178,26 @@ impl RepairHandler for MaliciousRepairHandler {
 
         // Fall back to normal response
         repair_response_packet_from_bytes(original_shred_bytes, dest, nonce)
+    }
+
+    fn run_window_request_for_block_id(
+        &self,
+        from_addr: &SocketAddr,
+        slot: Slot,
+        shred_index: u64,
+        block_id: Hash,
+        nonce: Nonce,
+    ) -> Option<PacketBatch> {
+        if self
+            .config
+            .block_id_repairs_enabled
+            .as_ref()
+            .is_some_and(|enabled| !enabled.load(Ordering::Relaxed))
+        {
+            return None;
+        }
+        self.standard_repair_handler
+            .run_window_request_for_block_id(from_addr, slot, shred_index, block_id, nonce)
     }
 
     fn run_orphan(

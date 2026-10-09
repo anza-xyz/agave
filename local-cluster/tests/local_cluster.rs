@@ -6118,10 +6118,14 @@ fn test_alpenglow_basic_equivocation() {
     let last_duplicate = 20;
     let duplicate_frequency = 2;
     let expected_duplicate_blocks = (last_duplicate / duplicate_frequency) as usize - 1;
+    // First require eager repair to expose the equivocation. Informed repair can otherwise
+    // fetch the canonical block before any conflicting shreds are stored.
+    let block_id_repairs_enabled = Arc::new(AtomicBool::new(false));
     a_validator_config.repair_handler_type = RepairHandlerType::Malicious(MaliciousRepairConfig {
         bad_shred_slot_frequency: Some(duplicate_frequency),
         bad_shred_index_frequency: Some(DATA_SHREDS_PER_FEC_BLOCK as u64),
         slot_range: Some((0, last_duplicate)),
+        block_id_repairs_enabled: Some(Arc::clone(&block_id_repairs_enabled)),
     });
 
     // Cluster config
@@ -6173,6 +6177,9 @@ fn test_alpenglow_basic_equivocation() {
         }
         sleep(Duration::from_secs(1));
     }
+
+    // Release informed repair responses now that the duplicate shreds have been observed.
+    block_id_repairs_enabled.store(true, Ordering::Relaxed);
 
     // Turn turbine back on, now the low-staked and unstaked nodes will be able to catch up
     node_b_turbine_mode.set(TurbineModeKind::Enabled);

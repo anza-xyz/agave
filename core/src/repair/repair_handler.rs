@@ -203,7 +203,7 @@ impl RepairHandlerType {
                 blockstore,
                 identity,
                 leader_schedule_cache,
-                *config,
+                config.clone(),
             )),
         }
     }
