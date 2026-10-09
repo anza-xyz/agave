@@ -331,6 +331,68 @@ mod tests {
         (blockstore, block_id, fec_set_roots)
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    #[test]
+    fn test_malicious_block_id_repair_gate() {
+        use {
+            solana_runtime::{bank::Bank, genesis_utils::create_genesis_config_with_leader},
+            solana_signer::Signer,
+            std::sync::atomic::{AtomicBool, Ordering},
+        };
+
+        let slot = 10;
+        let (blockstore, block_id, _) = setup_blockstore_with_complete_slot(slot, slot - 1, 10);
+        let expected_shred = blockstore.get_data_shred(slot, 0).unwrap().unwrap();
+        let identity = Arc::new(Keypair::new());
+        let genesis = create_genesis_config_with_leader(10_000, &identity.pubkey(), 1_000);
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let from_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
+        let nonce: Nonce = 12345;
+
+        for gate in [None, Some(Arc::new(AtomicBool::new(false)))] {
+            let handler_type = RepairHandlerType::Malicious(MaliciousRepairConfig {
+                block_id_repairs_enabled: gate.clone(),
+                ..MaliciousRepairConfig::default()
+            });
+            // Construct through the same path as ServeRepair, including the config clone.
+            let handler = handler_type.to_handler(
+                blockstore.clone(),
+                identity.clone(),
+                leader_schedule_cache.clone(),
+            );
+            if let Some(gate) = &gate {
+                assert!(
+                    handler
+                        .run_window_request_for_block_id(&from_addr, slot, 0, block_id, nonce)
+                        .is_none()
+                );
+                // Eager repair must remain available while informed repair is withheld.
+                assert!(
+                    handler
+                        .run_window_request(&from_addr, slot, 0, nonce)
+                        .is_some()
+                );
+                gate.store(true, Ordering::Relaxed);
+            }
+
+            let response = handler
+                .run_window_request_for_block_id(&from_addr, slot, 0, block_id, nonce)
+                .unwrap();
+            assert_eq!(response.len(), 1);
+            let packet = response.iter().next().unwrap();
+            assert_eq!(packet.meta().socket_addr(), from_addr);
+            let mut expected = expected_shred.clone();
+            expected.extend_from_slice(&nonce.to_le_bytes());
+            assert_eq!(packet.data(..).unwrap(), expected);
+            assert!(
+                handler
+                    .run_window_request_for_block_id(&from_addr, slot, 0, Hash::new_unique(), nonce)
+                    .is_none()
+            );
+        }
+    }
+
     #[test]
     fn test_run_fec_set_root() {
         let slot = 1000;
