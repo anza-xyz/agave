@@ -4315,7 +4315,7 @@ pub mod tests {
             if relax_fee_payer_constraint {
                 Ok(())
             } else {
-                Err(TransactionError::AccountNotFound)
+                Err(TransactionError::InvalidAccountForFee)
             }
         );
     }

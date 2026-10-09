@@ -155,7 +155,10 @@ pub(crate) mod external {
             runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
             transaction_meta::TransactionMeta,
         },
-        solana_svm::transaction_error_metrics::TransactionErrorMetrics,
+        solana_svm::{
+            account_loader::fee_payer_load_filter,
+            transaction_error_metrics::TransactionErrorMetrics,
+        },
         solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_transaction::TransactionError,
         std::{
@@ -510,7 +513,7 @@ pub(crate) mod external {
         ) {
             response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
             response.fee_payer_balance = working_bank
-                .get_account_with_fixed_root(transaction.fee_payer())
+                .get_account_with_fixed_root_if(transaction.fee_payer(), fee_payer_load_filter)
                 .map(|account| account.lamports())
                 .unwrap_or(0);
             response.balance_slot = working_bank.slot();

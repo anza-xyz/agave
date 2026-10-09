@@ -50,6 +50,7 @@ dev-context-only-utils = [
     "dep:solana-syscalls",
     "dep:solana-system-program",
     "solana-program-runtime/dev-context-only-utils",
+    "solana-svm-callback/dev-context-only-utils",
 ]
 dummy-for-ci-check = ["conformance", "metrics"]
 metrics = [
