@@ -40,7 +40,7 @@ pub enum VoteStateTargetVersion {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
-    V4(VoteStateV4),
+    V4(Box<VoteStateV4>),
     // New vote state versions will be added here...
 }
 
@@ -314,7 +314,7 @@ impl VoteStateHandler {
                     return Err(InstructionError::AccountNotRentExempt);
                 }
                 // Vote account is large enough to store the newest version of vote state
-                vote_account.set_state(&VoteStateVersions::V4(Box::new(v4)))
+                vote_account.set_state(&VoteStateVersions::V4(v4))
             }
         }
     }
@@ -556,6 +556,10 @@ impl VoteStateHandler {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new_v4(vote_state: VoteStateV4) -> Self {
+        Self::new_v4_boxed(Box::new(vote_state))
+    }
+
+    fn new_v4_boxed(vote_state: Box<VoteStateV4>) -> Self {
         Self {
             target_state: TargetVoteState::V4(vote_state),
         }
@@ -569,7 +573,7 @@ impl VoteStateHandler {
         versions: VoteStateVersions,
     ) -> Result<Self, InstructionError> {
         match versions {
-            VoteStateVersions::V4(state) => Ok(Self::new_v4(*state)),
+            VoteStateVersions::V4(state) => Ok(Self::new_v4_boxed(state)),
             VoteStateVersions::V3(_)
             | VoteStateVersions::V1_14_11(_)
             | VoteStateVersions::Uninitialized => Err(InstructionError::InvalidAccountData),
@@ -591,7 +595,7 @@ impl VoteStateHandler {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn unwrap_v4(self) -> VoteStateV4 {
         match self.target_state {
-            TargetVoteState::V4(v4) => v4,
+            TargetVoteState::V4(v4) => *v4,
         }
     }
 
@@ -601,7 +605,7 @@ impl VoteStateHandler {
     pub fn serialize_into(self, data: &mut [u8]) -> Result<(), InstructionError> {
         match self.target_state {
             TargetVoteState::V4(v4) => {
-                let versioned = VoteStateVersions::V4(Box::new(v4));
+                let versioned = VoteStateVersions::V4(v4);
                 bincode::serialize_into(data, &versioned)
                     .map_err(|_e| InstructionError::InvalidAccountData)
             }
@@ -612,7 +616,7 @@ impl VoteStateHandler {
         let mut data = Vec::with_capacity(VoteStateV4::size_of());
         match self.target_state {
             TargetVoteState::V4(v4) => {
-                let versioned = VoteStateVersions::V4(Box::new(v4));
+                let versioned = VoteStateVersions::V4(v4);
                 wincode::serialize_into(&mut data, &versioned)
                     .map_err(|_e| InstructionError::InvalidAccountData)?;
             }
