@@ -1,5 +1,7 @@
+#![allow(dead_code)]
+
 use {
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_bpf_loader_program::{Entrypoint, test_utils},
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
@@ -8,7 +10,9 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sbpf::program::BuiltinFunctionDefinition,
+    solana_sdk_ids::sysvar,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_sysvar_id::SysvarId,
 };
 
 #[derive(Clone, Copy)]
@@ -30,6 +34,23 @@ fn setup_features(feature_set: &mut SVMFeatureSet, loader_v3_features: LoaderV3F
         set_programdata_to_elf_length,
     } = loader_v3_features;
     feature_set.loader_v3_set_program_data_to_elf_length = set_programdata_to_elf_length;
+}
+
+pub fn create_sysvar_account<T>(value: &T) -> AccountSharedData
+where
+    T: wincode::Serialize<Src = T> + SysvarId,
+{
+    let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+    let canonical_data_len = match T::id() {
+        sysvar::clock::ID => solana_clock::SIZE,
+        sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
+        sysvar::rent::ID => solana_rent::SIZE,
+        id => panic!("unsupported sysvar: {id}"),
+    };
+    let required_data_len = canonical_data_len.max(serialized_len);
+    let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
+    wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
+    account
 }
 
 // 10 iterations is intentionally low: `mock_process_instruction` runs on a
@@ -142,4 +163,10 @@ pub fn process_instruction(
             test_utils::load_all_invoked_programs(invoke_context);
         },
     )
+}
+
+pub fn truncate_data(account: &mut AccountSharedData, len: usize) {
+    let mut data = account.data().to_vec();
+    data.truncate(len);
+    account.set_data_from_slice(&data);
 }
