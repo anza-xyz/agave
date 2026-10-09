@@ -326,7 +326,10 @@ pub(crate) mod tests {
         crate::{
             contact_info::ContactInfo,
             crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
-            duplicate_shred::{self, MAX_DUPLICATE_SHREDS, tests::new_rand_shred},
+            duplicate_shred::{
+                self, MAX_DUPLICATE_SHREDS,
+                tests::{new_rand_fec_set_index, new_rand_shred},
+            },
             epoch_slots::EpochSlots,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
@@ -491,7 +494,7 @@ pub(crate) mod tests {
         let keypair = Keypair::new();
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         let other_payload = {
             let other_shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
@@ -549,7 +552,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         let other_payload = {
             let other = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);

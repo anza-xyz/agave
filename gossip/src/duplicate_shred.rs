@@ -403,7 +403,7 @@ pub(crate) mod tests {
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::shred::{ProcessShredsStats, Shredder},
+        solana_ledger::shred::{DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shredder},
         solana_signature::Signature,
         solana_signer::Signer,
         solana_system_transaction::transfer,
@@ -427,6 +427,13 @@ pub(crate) mod tests {
         assert_eq!(dup_bytes.len(), DUPLICATE_SHRED_HEADER_SIZE);
         let dup_size = wincode::serialized_size(&dup).unwrap();
         assert_eq!(dup_size, DUPLICATE_SHRED_HEADER_SIZE as u64);
+    }
+
+    const FEC_SET_SIZE: u32 = DATA_SHREDS_PER_FEC_BLOCK as u32;
+
+    /// Random shred index at the start of a FEC set.
+    pub(crate) fn new_rand_fec_set_index<R: Rng>(rng: &mut R) -> u32 {
+        rng.random_range(0..1_000) * FEC_SET_SIZE
     }
 
     pub(crate) fn new_rand_shred<R: Rng>(
@@ -559,7 +566,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let shred1 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let shred2 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let leader_schedule = |s| {
@@ -599,7 +606,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let new_rand_shred = |rng: &mut _| match shred_type {
             ShredType::Data => new_rand_data_shred(rng, next_shred_index, &shredder, &leader, true),
             ShredType::Code => {
@@ -658,7 +665,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -723,7 +730,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -736,16 +743,21 @@ pub(crate) mod tests {
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true),
                 new_rand_data_shred(
                     &mut rng,
-                    // With Merkle shreds, last erasure batch is padded with
-                    // empty data shreds.
-                    next_shred_index + 30,
+                    // Next FEC set, past the LAST_SHRED_IN_SLOT shred above.
+                    next_shred_index + FEC_SET_SIZE,
                     &shredder,
                     &leader,
                     false,
                 ),
             ),
             (
-                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, true),
+                new_rand_data_shred(
+                    &mut rng,
+                    next_shred_index + 3 * FEC_SET_SIZE,
+                    &shredder,
+                    &leader,
+                    true,
+                ),
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true),
             ),
         ];
@@ -781,7 +793,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -792,19 +804,43 @@ pub(crate) mod tests {
         let test_cases = vec![
             (
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
-                new_rand_data_shred(&mut rng, next_shred_index + 1, &shredder, &leader, true),
+                new_rand_data_shred(
+                    &mut rng,
+                    next_shred_index + FEC_SET_SIZE,
+                    &shredder,
+                    &leader,
+                    true,
+                ),
             ),
             (
-                new_rand_data_shred(&mut rng, next_shred_index + 1, &shredder, &leader, true),
+                new_rand_data_shred(
+                    &mut rng,
+                    next_shred_index + FEC_SET_SIZE,
+                    &shredder,
+                    &leader,
+                    true,
+                ),
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
             ),
             (
-                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, false),
+                new_rand_data_shred(
+                    &mut rng,
+                    next_shred_index + 3 * FEC_SET_SIZE,
+                    &shredder,
+                    &leader,
+                    false,
+                ),
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
             ),
             (
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
-                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, false),
+                new_rand_data_shred(
+                    &mut rng,
+                    next_shred_index + 3 * FEC_SET_SIZE,
+                    &shredder,
+                    &leader,
+                    false,
+                ),
             ),
         ];
         for (shred1, shred2) in test_cases.into_iter() {
@@ -855,7 +891,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -907,7 +943,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -917,10 +953,20 @@ pub(crate) mod tests {
         };
         let coding_shreds =
             new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader);
-        let coding_shreds_different_fec =
-            new_rand_coding_shreds(&mut rng, next_shred_index + 1, 10, &shredder, &leader);
-        let coding_shreds_different_fec_and_size =
-            new_rand_coding_shreds(&mut rng, next_shred_index + 1, 13, &shredder, &leader);
+        let coding_shreds_different_fec = new_rand_coding_shreds(
+            &mut rng,
+            next_shred_index + FEC_SET_SIZE,
+            10,
+            &shredder,
+            &leader,
+        );
+        let coding_shreds_different_fec_and_size = new_rand_coding_shreds(
+            &mut rng,
+            next_shred_index + FEC_SET_SIZE,
+            13,
+            &shredder,
+            &leader,
+        );
 
         let test_cases = vec![
             // Different index, different fec set, same erasure meta
@@ -992,7 +1038,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1059,7 +1105,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1080,8 +1126,8 @@ pub(crate) mod tests {
 
         let (next_data_shreds, next_coding_shreds) = new_rand_shreds(
             &mut rng,
-            next_shred_index + 1,
-            next_shred_index + 1,
+            next_shred_index + FEC_SET_SIZE,
+            next_shred_index + FEC_SET_SIZE,
             10,
             &shredder,
             &leader,
@@ -1146,7 +1192,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..31_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1261,7 +1307,7 @@ pub(crate) mod tests {
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
