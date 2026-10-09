@@ -180,7 +180,7 @@ pub fn archive_snapshot(
 
                 // Queue the whole chunk for read-ahead before consuming any of
                 // it, so the io_uring pipeline can saturate across files.
-                for (storage, file) in &chunk {
+                for (_, file) in &chunk {
                     if let Some(file) = file {
                         chunk_reader
                             .add_file_to_prefetch(file.as_ref(), file.read_limit())

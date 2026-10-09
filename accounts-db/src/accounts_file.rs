@@ -339,7 +339,10 @@ impl AccountsFile {
         let file = if use_direct_io {
             let path = match self {
                 Self::AppendVec(av) => av.path(),
-                Self::Split(split) => split.data_path().unwrap(),
+                Self::Split(split) => {
+                    // SAFETY: A data file implies that its path is present as well.
+                    split.data_path().unwrap()
+                }
             };
             ArchiveFile::Owned(open_for_reading(path, true)?)
         } else {
