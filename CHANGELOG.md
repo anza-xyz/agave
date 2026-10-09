@@ -50,6 +50,7 @@ Release channels have their own copy of this changelog:
 
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
+* `solana-test-validator` no longer accepts the hidden `--advertised-ip` argument, which it ignored.
 
 #### Changes
 
