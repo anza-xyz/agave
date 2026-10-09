@@ -608,6 +608,16 @@ impl VoteStateHandler {
         }
     }
 
+    /// Serializes `Self` into a buffer using wincode for production purposes.
+    pub fn prod_serialize(self) -> Result<Vec<u8>, InstructionError> {
+        match self.target_state {
+            TargetVoteState::V4(v4) => {
+                let versioned = VoteStateVersions::V4(Box::new(v4));
+                wincode::serialize(&versioned).map_err(|_e| InstructionError::InvalidAccountData)
+            }
+        }
+    }
+
     #[cfg(test)]
     pub fn serialize(self) -> Vec<u8> {
         let mut data = vec![0; VoteStateV4::size_of()];

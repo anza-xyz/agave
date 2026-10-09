@@ -3,7 +3,7 @@ use {
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH,
@@ -15,6 +15,7 @@ use {
     std::{
         collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
         num::NonZero,
+        sync::Arc,
     },
     thiserror::Error,
 };
@@ -74,10 +75,10 @@ struct VoteState {
     handler: VoteStateHandler,
     /// How many lamports were stored in the account.
     lamports: u64,
-    /// How much space the account takes up.
-    space: usize,
     /// Who owns the account.
     owner: Pubkey,
+    /// The allocated account data length, including padding.
+    data_len: usize,
 }
 
 impl VoteState {
@@ -107,31 +108,27 @@ impl VoteState {
             vote_pubkey,
             handler,
             lamports: account.lamports(),
-            space: account.account().data().len(),
             owner: *account.owner(),
+            data_len: account.account().data().len(),
         })
     }
 
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
-        let mut updated_account = AccountSharedData::new_rent_epoch(
+        let mut data = self.handler.prod_serialize().ok()?;
+        if data.len() > self.data_len {
+            return None;
+        }
+        // Vote accounts must retain their allocated size to remain in the stakes cache.
+        data.resize(self.data_len, 0);
+        let data = Arc::new(data);
+        let updated_account = AccountSharedData::create_from_existing_shared_data(
             self.lamports,
-            self.space,
-            &self.owner,
+            data,
+            self.owner,
+            false,
             RENT_EXEMPT_RENT_EPOCH,
         );
-        match self
-            .handler
-            .serialize_into(updated_account.data_as_mut_slice())
-        {
-            Ok(()) => Some((self.vote_pubkey, updated_account)),
-            Err(e) => {
-                info!(
-                    "serializing account vote_pubkey={} failed with {e}",
-                    self.vote_pubkey
-                );
-                None
-            }
-        }
+        Some((self.vote_pubkey, updated_account))
     }
 
     /// Updates `votes` and `last_timestamp` in the vote state.
@@ -662,6 +659,45 @@ mod tests {
         let vote_accounts = bank.vote_accounts();
         let (_, vote_account) = vote_accounts.get(vote_pubkey).unwrap();
         vote_state_from_account(vote_account.account())
+    }
+
+    #[test]
+    fn test_vote_state_serialization_preserves_account_size_and_stakes_cache() {
+        let validator = ValidatorVoteKeypairs::new_rand();
+        let vote_pubkey = validator.vote_keypair.pubkey();
+        let stake = 100 * LAMPORTS_PER_SOL;
+        let genesis_config =
+            create_genesis_config_with_vote_accounts(1_000_000_000, &[validator], vec![stake])
+                .genesis_config;
+        let (bank, _bank_forks) = new_bank_for_tests(SlotLeader::new_unique(), &genesis_config);
+        let original_account = bank.get_account(&vote_pubkey).unwrap();
+        assert_eq!(original_account.data().len(), VoteStateV4::size_of());
+
+        // Both reward and final certificate updates use this serialization path.
+        for slot in 1..=2 {
+            let mut state = VoteState::try_new(&bank.vote_accounts(), vote_pubkey).unwrap();
+            state.maybe_update_votes(slot, slot as i64 * 1_000_000_000);
+            state.maybe_update_root(slot);
+            state.handler.increment_credits(bank.epoch(), 1);
+            state.lamports += 1;
+            let (pubkey, account) = state.serialize().unwrap();
+            assert_eq!(pubkey, vote_pubkey);
+            assert_eq!(account.data().len(), original_account.data().len());
+            assert!(VoteStateVersions::is_correct_size_and_initialized(
+                account.data()
+            ));
+            assert_eq!(account.lamports(), original_account.lamports() + slot);
+            assert_eq!(account.owner(), original_account.owner());
+
+            bank.store_accounts((bank.slot(), &[(&pubkey, &account)][..]), None);
+            let vote_accounts = bank.vote_accounts();
+            let (cached_stake, cached_account) = vote_accounts.get(&vote_pubkey).unwrap();
+            assert_eq!(*cached_stake, stake);
+            let handler = vote_state_from_account(cached_account.account());
+            assert_eq!(handler.last_voted_slot(), Some(slot));
+            assert_eq!(handler.root_slot(), Some(slot));
+            assert_eq!(handler.epoch_credits().last().unwrap().1, slot);
+        }
     }
 
     fn build_fast_finalization_cert(
