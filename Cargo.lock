@@ -9137,7 +9137,6 @@ dependencies = [
  "arc-swap",
  "assert_matches",
  "crossbeam-channel",
- "fs_extra",
  "gag",
  "itertools 0.15.0",
  "log",

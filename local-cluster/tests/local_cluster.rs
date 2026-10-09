@@ -131,6 +131,21 @@ fn create_test_validator_keys(keypairs: &[&str]) -> Vec<(ValidatorKeys, bool)> {
         .collect()
 }
 
+fn copy_ledger_for_fork(source: &Path, destination: &Path) {
+    // Copy only regular files and directories; skip symlinks and special files such as sockets.
+    fs::create_dir(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let destination = destination.join(entry.file_name());
+        let file_type = entry.file_type().unwrap();
+        if file_type.is_dir() {
+            copy_ledger_for_fork(&entry.path(), &destination);
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
 /// Smoke-tests the `new_with_equal_stakes()` startup path for a single-node cluster.
 #[test]
 #[serial]
@@ -3230,9 +3245,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     {
         // first copy from validator B's ledger
         std::fs::remove_dir_all(&validator_c_info.info.ledger_path).unwrap();
-        let mut opt = fs_extra::dir::CopyOptions::new();
-        opt.copy_inside = true;
-        fs_extra::dir::copy(&val_b_ledger_path, &val_c_ledger_path, &opt).unwrap();
+        copy_ledger_for_fork(&val_b_ledger_path, &val_c_ledger_path);
         // Remove B's tower in C's new copied ledger
         remove_tower(&val_c_ledger_path, &validator_b_pubkey);
 
@@ -4470,9 +4483,7 @@ fn test_slot_hash_expiry() {
     {
         info!("Copying A's ledger to B");
         std::fs::remove_dir_all(&b_info.info.ledger_path).unwrap();
-        let mut opt = fs_extra::dir::CopyOptions::new();
-        opt.copy_inside = true;
-        fs_extra::dir::copy(&a_ledger_path, &b_ledger_path, &opt).unwrap();
+        copy_ledger_for_fork(&a_ledger_path, &b_ledger_path);
 
         // remove A's tower in B's new copied ledger
         info!("Removing A's tower in B's ledger dir");
@@ -4792,9 +4803,7 @@ fn test_duplicate_with_pruned_ancestor() {
         {
             // Copy majority fork
             std::fs::remove_dir_all(&our_node_info.info.ledger_path).unwrap();
-            let mut opt = fs_extra::dir::CopyOptions::new();
-            opt.copy_inside = true;
-            fs_extra::dir::copy(&majority_ledger_path, &our_node_ledger_path, &opt).unwrap();
+            copy_ledger_for_fork(&majority_ledger_path, &our_node_ledger_path);
             remove_tower(&our_node_ledger_path, &majority_pubkey);
         }
 
