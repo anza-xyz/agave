@@ -173,7 +173,7 @@ impl<K: ShredLayout> Shred<K, Verified> {
     /// Takes bytes erasure recovery rebuilt as a verified shred.
     ///
     /// What the leader signed is the Merkle root of the whole FEC set, and
-    /// [`recover`](crate::recover::recover) only hands bytes here once the tree over the rebuilt
+    /// [`rebuild_fec_set`](crate::recover::rebuild_fec_set) only hands bytes here once the tree over the rebuilt
     /// batch hashes to the root the surviving shreds carry. The signature copied into these bytes
     /// is therefore the leader's over them, checked the same way a received shred's was.
     pub(crate) fn assume_recovered(bytes: Bytes) -> Result<Self, ParseError> {

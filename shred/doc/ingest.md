@@ -33,7 +33,7 @@ flowchart TB
     verified -->|"resign(keypair)"| verified
     verified --> batch["insert batch"]
     column("blockstore column") -->|from_blockstore| batch
-    batch -->|"recover(data, code)"| rebuilt["Recovery, Provenance::Recovered"]
+    batch -->|"rebuild_fec_set(data, code)"| rebuilt["FecSet, rebuilt shreds Provenance::Recovered"]
     rebuilt --> batch
 ```
 

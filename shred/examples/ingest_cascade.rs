@@ -13,7 +13,8 @@ use {
         fixtures,
         kind::{Data, ShredLayout},
         policy::AdmissionPolicy,
-        recover::recover,
+        provenance::Provenance,
+        recover::rebuild_fec_set,
         shred::{AnyShred, CodeShred, DataShred, Shred, parse_repair, parse_turbine},
         shred_variant::ShredKind,
         shredder::{BatchPosition, FecSet, FecSetSpec},
@@ -173,9 +174,20 @@ fn main() {
         holed.data.len(),
         holed.code.len(),
     );
-    let recovered = recover(&holed.data, &holed.code)
-        .expect("half a batch is enough to rebuild the other half");
-    for shred in &recovered.data {
+    let rebuilt = rebuild_fec_set(&holed.data, &holed.code)
+        .expect("half a batch is enough to rebuild the whole of it");
+    // The set comes back whole; the shreds that were missing are the ones marked as recovered.
+    let recovered_data: Vec<_> = rebuilt
+        .data
+        .into_iter()
+        .filter(|shred| shred.provenance() == Provenance::Recovered)
+        .collect();
+    let recovered_code: Vec<_> = rebuilt
+        .code
+        .into_iter()
+        .filter(|shred| shred.provenance() == Provenance::Recovered)
+        .collect();
+    for shred in &recovered_data {
         println!(
             "recovered    data index={} provenance={:?} parent_offset={} data={} bytes",
             shred.index(),
@@ -184,7 +196,7 @@ fn main() {
             shred.data().len(),
         );
     }
-    for shred in &recovered.code {
+    for shred in &recovered_code {
         println!(
             "recovered    code index={} provenance={:?} {}:{} position={}",
             shred.index(),
@@ -197,17 +209,16 @@ fn main() {
 
     // Recovery is only sound if a rebuilt shred is the shred the leader sent, byte for byte: it
     // carries the leader's signature over the batch's Merkle root, and nothing later re-checks it.
-    let rebuilt = recovered
-        .data
+    let recovered = recovered_data
         .iter()
         .map(Shred::bytes)
-        .chain(recovered.code.iter().map(Shred::bytes));
-    let count = recovered.data.len().saturating_add(recovered.code.len());
+        .chain(recovered_code.iter().map(Shred::bytes));
+    let count = recovered_data.len().saturating_add(recovered_code.len());
     println!(
         "identical    rebuilt bytes match the {} lost shreds: {}",
         holed.lost.len(),
         count == holed.lost.len()
-            && rebuilt
+            && recovered
                 .zip(&holed.lost)
                 .all(|(rebuilt, lost)| rebuilt == lost),
     );
@@ -215,8 +226,8 @@ fn main() {
     // Rebuilt shreds go back into the same insert batch as the ones that arrived over a socket and
     // the one read out of a column. They share a vector because provenance is a field rather than a
     // type parameter, and each shred still says where it came from once it is in there.
-    data.extend(recovered.data);
-    code.extend(recovered.code);
+    data.extend(recovered_data);
+    code.extend(recovered_code);
     println!(
         "batch        {} data shreds, {} code shreds",
         data.len(),

@@ -29,5 +29,12 @@ solana-signature = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
+[dev-dependencies]
+agave-fec-set-recovery = { path = ".", features = ["agave-unstable-api"] }
+assert_matches = { workspace = true }
+rand = { workspace = true }
+solana-keypair = { workspace = true }
+test-case = { workspace = true }
+
 [lints]
 workspace = true

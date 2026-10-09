@@ -154,13 +154,18 @@ dependencies = [
 name = "agave-fec-set-recovery"
 version = "4.5.0-alpha.0"
 dependencies = [
+ "agave-fec-set-recovery",
  "agave-shred-verify",
  "agave-shred-wire-format",
  "agave-shredder",
+ "assert_matches",
  "bytes",
+ "rand 0.9.4",
  "reed-solomon-erasure",
  "solana-hash",
+ "solana-keypair",
  "solana-signature",
+ "test-case",
  "thiserror 2.0.20",
  "wincode",
 ]

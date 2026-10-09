@@ -7,7 +7,7 @@ each recording where it was made.
 flowchart LR
     wire["wire bytes"] -->|"parse_turbine"| received["Received(Turbine)<br/>Received(Repair)"]
     wire -->|"parse_repair"| received
-    partial["Partial FEC set"] -->|"recover"| recovered["Recovered"]
+    partial["Partial FEC set"] -->|"rebuild_fec_set"| recovered["Recovered"]
     column["blockstore column"] -->|"from_blockstore"| stored["Blockstore"]
     entries["serialized entries"] -->|"FecSet::build"| produced["BlockProduction"]
 

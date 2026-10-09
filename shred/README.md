@@ -26,7 +26,7 @@ only what it needs:
 | `agave-shred-wire-format` | `wire-format/` | the layout: section boundaries, readers and writers over bytes. |
 | `agave-shred-verify` | `verify/` | the Merkle tree over an erasure batch, ed25519 signatures |
 | `agave-shredder` | `shredder/` | builds and signs an erasure batches |
-| `agave-fec-set-recovery` | `fec-set-recovery/` | rebuilds an erasure batch's missing shreds with Reed-Solomon. |
+| `agave-fec-set-recovery` | `fec-set-recovery/` | rebuilds a whole erasure batch from any 32 of its shreds with Reed-Solomon. |
 | `agave-shred` | `.` | the typestate shred lifecycle state machine |
 
 ---
