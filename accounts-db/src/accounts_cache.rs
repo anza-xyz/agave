@@ -176,46 +176,67 @@ impl CachedAccount {
     }
 }
 
-/// Maps each pubkey to (max_slot, ref_count) where max_slot is the highest slot at which the
-/// pubkey has been written into the cache, and ref_count is the number of SlotCache entries that
-/// currently hold the pubkey. max_slot may be stale after a removal; callers must handle a
-/// look-up miss on max_slot by falling back to scanning all slots in the cache (see load_latest)
+/// An `AccountsCacheIndex` entry for one pubkey
+#[derive(Debug)]
+struct AccountsCacheIndexEntry {
+    /// the highest slot at which the pubkey has been written into the cache. May be stale after a
+    /// removal; callers must handle a look-up miss on max_slot by falling back to scanning all
+    /// slots in the cache (see load_latest)
+    max_slot: Slot,
+    /// the number of SlotCache entries that currently hold the pubkey
+    ref_count: u32,
+    /// the account stored at `max_slot`, while that slot's cache still holds it
+    newest: Option<Arc<CachedAccount>>,
+}
+
+/// Maps each pubkey to its `AccountsCacheIndexEntry`
 #[derive(Debug, Default)]
 struct AccountsCacheIndex {
-    entries: DashMap<Pubkey, (Slot, u32), ahash::RandomState>,
+    entries: DashMap<Pubkey, AccountsCacheIndexEntry, ahash::RandomState>,
     // The number of unique pubkeys in the index, for reporting purposes. This is to avoid having to
     // lock each shard of the entries dashmap to count unique keys on demand
     num_unique_pubkeys: AtomicU64,
 }
 
 impl AccountsCacheIndex {
-    /// Inserts an entry into the index. If the entry is already present, increase the ref count
-    fn insert(&self, pubkey: &Pubkey, slot: Slot) {
-        self.entries
-            .entry(*pubkey)
-            .and_modify(|(stored_slot, ref_count)| {
-                *stored_slot = slot.max(*stored_slot);
-                *ref_count += 1;
-            })
-            .or_insert_with(|| {
-                self.num_unique_pubkeys.fetch_add(1, Ordering::Relaxed);
-                (slot, 1)
-            });
+    /// Records `account` as stored at `slot`. `is_new_key` says whether this was the pubkey's
+    /// first store into `slot`, which is what the ref count counts. `newest` is replaced even on
+    /// an overwrite within `max_slot`, since the old `Arc` is no longer that slot's version.
+    fn insert(&self, pubkey: &Pubkey, slot: Slot, account: &Arc<CachedAccount>, is_new_key: bool) {
+        let mut entry = self.entries.entry(*pubkey).or_insert_with(|| {
+            self.num_unique_pubkeys.fetch_add(1, Ordering::Relaxed);
+            AccountsCacheIndexEntry {
+                max_slot: slot,
+                ref_count: 0,
+                newest: None,
+            }
+        });
+        if is_new_key {
+            entry.ref_count += 1;
+        }
+        if slot >= entry.max_slot {
+            entry.max_slot = slot;
+            entry.newest = Some(Arc::clone(account));
+        }
     }
 
-    /// Decrement the reference count for each pubkey in `pubkeys`. Removes an entry entirely if
-    /// the count reaches zero. `max_slot` is not updated; it will become stale if the removed slot
-    /// is the highest slot. Returns a vec of pubkeys removed from the index.
-    fn remove(&self, pubkeys: impl IntoIterator<Item = Pubkey>) -> Vec<Pubkey> {
+    /// Decrement the reference count for each pubkey in `pubkeys`, which left `slot`'s cache.
+    /// Removes an entry entirely if the count reaches zero. `max_slot` is not updated; it will
+    /// become stale if the removed slot is the highest slot, and `newest` is dropped with it.
+    /// Returns a vec of pubkeys removed from the index.
+    fn remove(&self, slot: Slot, pubkeys: impl IntoIterator<Item = Pubkey>) -> Vec<Pubkey> {
         let mut removed_pubkeys = Vec::new();
         for pubkey in pubkeys {
             let Entry::Occupied(mut occupied_entry) = self.entries.entry(pubkey) else {
                 // If this has happened the index is corrupted
                 panic!("pubkey {pubkey} not found in cache index during remove");
             };
-            let (_, ref_count) = occupied_entry.get_mut();
-            *ref_count -= 1;
-            if *ref_count == 0 {
+            let entry = occupied_entry.get_mut();
+            if entry.max_slot == slot {
+                entry.newest = None;
+            }
+            entry.ref_count -= 1;
+            if entry.ref_count == 0 {
                 occupied_entry.remove_entry();
                 self.num_unique_pubkeys.fetch_sub(1, Ordering::Relaxed);
                 removed_pubkeys.push(pubkey);
@@ -224,11 +245,13 @@ impl AccountsCacheIndex {
         removed_pubkeys
     }
 
-    /// Returns the recorded max slot for `pubkey`, or `None` if the pubkey is not present in the
-    /// cache. Note: the account is not necessarily in this slot if it was removed during flush
-    /// This is just the maximum slot that it could be found in during search
-    fn max_slot_for_pubkey(&self, pubkey: &Pubkey) -> Option<Slot> {
-        self.entries.get(pubkey).map(|entry| entry.0)
+    /// Returns the recorded max slot for `pubkey` and, while that slot's cache still holds it,
+    /// the account stored there. `None` if the pubkey is not present in the cache. Note: without
+    /// the account, the slot is just the maximum slot that it could be found in during search
+    fn max_slot_for_pubkey(&self, pubkey: &Pubkey) -> Option<(Slot, Option<Arc<CachedAccount>>)> {
+        self.entries
+            .get(pubkey)
+            .map(|entry| (entry.max_slot, entry.newest.clone()))
     }
 }
 
@@ -302,12 +325,7 @@ impl AccountsCache {
                 .clone());
 
         let (item, is_new_key) = slot_cache.insert(pubkey, account);
-        if is_new_key {
-            // Only update the index when the pubkey is new to this slot. Overwrites within the
-            // same slot (is_new_key = false) cannot update the index because the ref count was
-            // already incremented when the pubkey was first stored in this slot
-            self.index.insert(pubkey, slot);
-        }
+        self.index.insert(pubkey, slot, &item, is_new_key);
         item
     }
 
@@ -323,9 +341,10 @@ impl AccountsCache {
         // If this slot was a root, it has now left the cache, so stop tracking it as unflushed.
         self.unflushed_roots.write().unwrap().remove(&slot);
 
-        result
-            .as_ref()
-            .map(|slot_cache| self.index.remove(slot_cache.iter().map(|item| *item.key())))
+        result.as_ref().map(|slot_cache| {
+            self.index
+                .remove(slot, slot_cache.iter().map(|item| *item.key()))
+        })
     }
 
     /// Finds the newest write-cache entry for `pubkey` visible from `ancestors`. Searches
@@ -338,7 +357,15 @@ impl AccountsCache {
         ancestors: &Ancestors,
     ) -> Option<(Arc<CachedAccount>, Slot)> {
         // Exit early if the pubkey isn't in the cache
-        let index_max_slot = self.index.max_slot_for_pubkey(pubkey)?;
+        let (index_max_slot, newest) = self.index.max_slot_for_pubkey(pubkey)?;
+
+        // No cached version sits above `index_max_slot`, so if it is visible it is the answer
+        // and no slot cache is searched
+        if let Some(newest) = newest
+            && ancestors.contains_key(&index_max_slot)
+        {
+            return Some((newest, index_max_slot));
+        }
 
         // Ancestors take priority over roots regardless of slot. Walk them in descending order,
         // skipping those above the newest cached version, and return the first (highest) that has it.
@@ -565,23 +592,41 @@ mod tests {
 
     #[test]
     fn test_cache_index_insert_and_max_slot() {
-        let index = AccountsCacheIndex::default();
+        let cache = AccountsCache::default();
         let pubkey = Pubkey::new_unique();
+        let account = |lamports| AccountSharedData::new(lamports, 0, &Pubkey::default());
+        // the recorded max slot, and the lamports of the account recorded there
+        let max_slot_for_pubkey = |pubkey: &Pubkey| {
+            cache
+                .index
+                .max_slot_for_pubkey(pubkey)
+                .map(|(max_slot, newest)| {
+                    (max_slot, newest.map(|newest| newest.account.lamports()))
+                })
+        };
 
         // Initially empty
-        assert!(index.max_slot_for_pubkey(&pubkey).is_none());
+        assert!(max_slot_for_pubkey(&pubkey).is_none());
 
         // Insert at slot 5
-        index.insert(&pubkey, 5);
-        assert_eq!(index.max_slot_for_pubkey(&pubkey), Some(5));
+        cache.store(5, &pubkey, account(5));
+        assert_eq!(max_slot_for_pubkey(&pubkey), Some((5, Some(5))));
 
-        // Insert same pubkey at a higher slot updates max_slot
-        index.insert(&pubkey, 10);
-        assert_eq!(index.max_slot_for_pubkey(&pubkey), Some(10));
+        // Insert same pubkey at a higher slot updates max_slot and the account recorded there
+        cache.store(10, &pubkey, account(10));
+        assert_eq!(max_slot_for_pubkey(&pubkey), Some((10, Some(10))));
 
-        // Insert same pubkey at a lower slot does not decrease max_slot
-        index.insert(&pubkey, 3);
-        assert_eq!(index.max_slot_for_pubkey(&pubkey), Some(10));
+        // Insert same pubkey at a lower slot does not decrease max_slot or replace the account
+        cache.store(3, &pubkey, account(3));
+        assert_eq!(max_slot_for_pubkey(&pubkey), Some((10, Some(10))));
+
+        // An overwrite within max_slot replaces the account
+        cache.store(10, &pubkey, account(11));
+        assert_eq!(max_slot_for_pubkey(&pubkey), Some((10, Some(11))));
+
+        // Removing max_slot's cache leaves max_slot behind as a bound, with no account
+        let _ = cache.remove_slot(10);
+        assert_eq!(max_slot_for_pubkey(&pubkey), Some((10, None)));
     }
 
     #[test]
@@ -603,7 +648,13 @@ mod tests {
         let removed = cache.remove_slot(1);
         assert!(removed.is_some());
         drop(removed);
-        assert_eq!(cache.index.max_slot_for_pubkey(&pk), Some(5));
+        assert_eq!(
+            cache
+                .index
+                .max_slot_for_pubkey(&pk)
+                .map(|(max_slot, _newest)| max_slot),
+            Some(5)
+        );
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
 
         // Remove and drop slot 5 — entry should still exist (count goes from 2 to 1)
@@ -712,6 +763,53 @@ mod tests {
         let ancestors = Ancestors::from(vec![5, 15]);
         let result = cache.load_latest(&pk, &ancestors);
         assert!(result.is_none());
+    }
+
+    /// A slot below the lowest ancestor is only visible when it is a root: an unpurged dead
+    /// fork's slot can sit there too.
+    #[test]
+    fn test_load_latest_ignores_unrooted_slot_below_min_ancestor() {
+        let cache = AccountsCache::default();
+        let pk = Pubkey::new_unique();
+
+        // slot 10 is on a dead fork: stored, never rooted, not yet purged
+        cache.store(10, &pk, AccountSharedData::new(10, 0, &Pubkey::default()));
+
+        let ancestors = Ancestors::from(vec![15, 20]);
+        assert!(cache.load_latest(&pk, &ancestors).is_none());
+
+        // rooting the slot is what makes it visible
+        cache.add_root(10);
+        assert_eq!(
+            cache
+                .load_latest(&pk, &ancestors)
+                .map(|(_account, slot)| slot),
+            Some(10)
+        );
+    }
+
+    /// Flushing `max_slot` must stop the index offering that account, while the pubkey is still
+    /// cached at a lower slot.
+    #[test]
+    fn test_load_latest_after_max_slot_leaves_the_cache() {
+        let cache = AccountsCache::default();
+        let pk = Pubkey::new_unique();
+
+        for slot in [10, 20] {
+            cache.store(
+                slot,
+                &pk,
+                AccountSharedData::new(slot, 0, &Pubkey::default()),
+            );
+            cache.add_root(slot);
+        }
+
+        // slot 20 flushes and leaves the cache, so only slot 10 is still cached
+        let _ = cache.remove_slot(20);
+
+        let (account, slot) = cache.load_latest(&pk, &Ancestors::from(vec![25])).unwrap();
+        assert_eq!(slot, 10);
+        assert_eq!(account.account.lamports(), 10);
     }
 
     #[test]
