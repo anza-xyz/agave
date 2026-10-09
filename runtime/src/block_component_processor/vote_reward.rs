@@ -3,7 +3,7 @@ use {
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
@@ -16,6 +16,7 @@ use {
     std::{
         collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
         num::NonZero,
+        sync::Arc,
     },
     thiserror::Error,
 };
@@ -75,8 +76,6 @@ struct VoteState {
     handler: VoteStateHandler,
     /// How many lamports were stored in the account.
     lamports: u64,
-    /// How much space the account takes up.
-    space: usize,
     /// Who owns the account.
     owner: Pubkey,
 }
@@ -108,31 +107,20 @@ impl VoteState {
             vote_pubkey,
             handler,
             lamports: account.lamports(),
-            space: account.account().data().len(),
             owner: *account.owner(),
         })
     }
 
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
-        let mut updated_account = AccountSharedData::new_rent_epoch(
+        let data = Arc::new(self.handler.serialize().ok()?);
+        let updated_account = AccountSharedData::create_from_existing_shared_data(
             self.lamports,
-            self.space,
-            &self.owner,
+            data,
+            self.owner,
+            false,
             RENT_EXEMPT_RENT_EPOCH,
         );
-        match self
-            .handler
-            .serialize_into(updated_account.data_as_mut_slice())
-        {
-            Ok(()) => Some((self.vote_pubkey, updated_account)),
-            Err(e) => {
-                info!(
-                    "serializing account vote_pubkey={} failed with {e}",
-                    self.vote_pubkey
-                );
-                None
-            }
-        }
+        Some((self.vote_pubkey, updated_account))
     }
 
     /// Updates `votes` and `last_timestamp` in the vote state.

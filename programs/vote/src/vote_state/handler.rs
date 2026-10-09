@@ -608,11 +608,22 @@ impl VoteStateHandler {
         }
     }
 
+    pub fn serialize(self) -> Result<Vec<u8>, InstructionError> {
+        let mut data = Vec::with_capacity(VoteStateV4::size_of());
+        match self.target_state {
+            TargetVoteState::V4(v4) => {
+                let versioned = VoteStateVersions::V4(Box::new(v4));
+                wincode::serialize_into(&mut data, &versioned)
+                    .map_err(|_e| InstructionError::InvalidAccountData)?;
+            }
+        }
+        data.resize(VoteStateV4::size_of(), 0);
+        Ok(data)
+    }
+
     #[cfg(test)]
-    pub fn serialize(self) -> Vec<u8> {
-        let mut data = vec![0; VoteStateV4::size_of()];
-        self.serialize_into(&mut data).unwrap();
-        data
+    pub fn test_serialize(self) -> Vec<u8> {
+        self.serialize().unwrap()
     }
 }
 
@@ -1037,6 +1048,15 @@ mod tests {
             assert_eq!(result, voter);
             assert!(!handler.authorized_voters().is_empty());
         }
+    }
+
+    #[test_case(VoteStateV4::default(); "default")]
+    #[test_case(get_max_sized_vote_state_v4(); "max_size")]
+    fn test_serialize(vote_state: VoteStateV4) {
+        let handler = VoteStateHandler::new_v4(vote_state);
+        let mut expected = vec![0; VoteStateV4::size_of()];
+        handler.clone().serialize_into(&mut expected).unwrap();
+        assert_eq!(handler.test_serialize(), expected);
     }
 
     #[test_case(
