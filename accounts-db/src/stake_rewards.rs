@@ -24,6 +24,7 @@ pub struct StakeReward {
     pub stake_pubkey: Pubkey,
     pub stake_reward_info: StakeRewardInfo,
     pub stake_account: AccountSharedData,
+    pub block_reward_lamports: u64,
 }
 
 impl StakeReward {
@@ -118,6 +119,7 @@ impl StakeReward {
 
         let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let reward_lamports: i64 = rng.random_range(1..200);
+        let block_reward_lamports: u64 = rng.random_range(1..200);
         let validator_stake_account = create_stake_account(
             &validator_staking_keypair.pubkey(),
             &validator_voting_keypair.pubkey(),
@@ -134,8 +136,8 @@ impl StakeReward {
                 post_balance: 0,         /* unused atm */
                 commission_bps: Some(0), /* unused but tests require some value */
             },
-
             stake_account: validator_stake_account,
+            block_reward_lamports,
         }
     }
 

@@ -145,6 +145,8 @@ pub struct RpcEpochConfig {
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
+    #[serde(default)]
+    pub separate_block_reward: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
