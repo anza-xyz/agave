@@ -1,19 +1,12 @@
 //! Futex-based wakeups for [`crossbeam_channel`] channels.
 //!
-//! Crossbeam's blocking `recv()` and `select!` park threads through a per-channel `SyncWaker`: a
-//! mutex-protected list that every blocking receiver joins and leaves, and that every sender must
-//! lock to wake anyone, holding the lock across the wake syscall. With many producers and many
-//! consumers on a channel that is usually empty, that mutex becomes the bottleneck.
+//! Blocking crossbeam receivers park through a per-channel `SyncWaker`, whose mutex every sender
+//! must take to wake them. When consumers keep draining the channels and going back to sleep,
+//! which can happen even at high throughput, that mutex can become a bottleneck. Here receivers
+//! only call `try_recv()` and sleep on a [`WakeEvent`] instead.
 //!
-//! Even at high producer throughput, however, consumers that keep up can repeatedly drain the
-//! channels and sleep. Frequent sleep/wake transitions can therefore cause contention even at high
-//! throughput, and degrade it. The futex wake event avoids crossbeam's per-channel wake mutexes in
-//! this regime.
-//!
-//! This crate keeps the crossbeam channel as the queue. Receivers only call `try_recv()`, so they
-//! never join crossbeam's receiver waker list. Receiver sleeping and waking go through a
-//! [`WakeEvent`]. [`Sender::send`] can still block on crossbeam when the queue is full. Any number
-//! of channels can feed one event, letting a consumer wait on several channels without `select!`.
+//! [`Sender::send`] can still block on crossbeam when the queue is full. Several channels can feed
+//! one [`WakeEvent`], so a consumer can wait on all of them without `select!`.
 //!
 //! # Multiple channels
 //!
@@ -25,8 +18,8 @@
 //! Every sleeping consumer on an event must also poll every channel on that event. `wake_one()` can
 //! wake any sleeper; if that consumer does not poll the channel with new data, it can go back to
 //! sleep while the data's intended consumer remains asleep. Use separate events for consumers that
-//! drain different sets of channels, and only use [`Receiver::recv`] on an event with a single
-//! channel.
+//! drain different sets of channels. Shared-event channels return a [`SharedEventReceiver`], which
+//! supports polling but does not expose a blocking `recv()` method.
 //!
 //! # Synchronization protocol
 //!
@@ -53,6 +46,7 @@ use std::sync::atomic::AtomicUsize;
 use {
     crossbeam_utils::Backoff,
     std::{
+        marker::PhantomData,
         mem,
         sync::{
             Arc,
@@ -216,10 +210,6 @@ impl<T> Sender<T> {
     pub fn capacity(&self) -> Option<usize> {
         self.inner.capacity()
     }
-
-    pub fn wake_event(&self) -> &Arc<WakeEvent> {
-        &self.shared.wake_event
-    }
 }
 
 impl<T> Clone for Sender<T> {
@@ -242,23 +232,24 @@ impl<T> Drop for Sender<T> {
     }
 }
 
-/// Wrapper around [`crossbeam_channel::Receiver`] that avoids contention by using a futex to sleep
-/// waiting for messages when the channel is empty.
-pub struct Receiver<T> {
+pub struct SingleChannelEvent;
+pub struct MultiChannelEvent;
+
+/// Receiver for a channel with its own wake event, created by [`bounded`].
+pub type Receiver<T> = ReceiverImpl<T, SingleChannelEvent>;
+
+/// Receiver for a channel sharing a wake event, created by [`bounded_with_wake_event`].
+pub type SharedEventReceiver<T> = ReceiverImpl<T, MultiChannelEvent>;
+
+pub struct ReceiverImpl<T, Mode> {
     inner: crossbeam_channel::Receiver<T>,
     shared: Arc<Shared>,
+    _mode: PhantomData<Mode>,
 }
 
-impl<T> Receiver<T> {
+impl<T, Mode> ReceiverImpl<T, Mode> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         self.inner.try_recv()
-    }
-
-    /// Blocking receive on this channel alone. Only use this with an event dedicated to this
-    /// channel. Consumers sharing an event across several channels must all poll them through
-    /// [`WakeEvent::recv_with`], so whichever consumer is woken can receive the queued message.
-    pub fn recv(&self) -> Result<T, RecvError> {
-        self.shared.wake_event.recv_with(|| self.inner.try_recv())
     }
 
     pub fn len(&self) -> usize {
@@ -272,17 +263,28 @@ impl<T> Receiver<T> {
     pub fn capacity(&self) -> Option<usize> {
         self.inner.capacity()
     }
+}
 
+impl<T> Receiver<T> {
+    /// Blocks until a message is available or all senders are disconnected.
+    pub fn recv(&self) -> Result<T, RecvError> {
+        self.shared.wake_event.recv_with(|| self.inner.try_recv())
+    }
+}
+
+impl<T> SharedEventReceiver<T> {
+    /// Returns the event shared by this channel and its peers.
     pub fn wake_event(&self) -> &Arc<WakeEvent> {
         &self.shared.wake_event
     }
 }
 
-impl<T> Clone for Receiver<T> {
+impl<T, Mode> Clone for ReceiverImpl<T, Mode> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
             shared: Arc::clone(&self.shared),
+            _mode: PhantomData,
         }
     }
 }
@@ -291,17 +293,27 @@ impl<T> Clone for Receiver<T> {
 ///
 /// Panics if `capacity` is zero.
 pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
-    bounded_with_wake_event(capacity, Arc::new(WakeEvent::default()))
+    bounded_inner(capacity, Arc::new(WakeEvent::default()))
 }
 
 /// Creates a channel of the given capacity on `event`.
+///
+/// Every consumer must poll all channels on this event through [`WakeEvent::recv_with`].
+/// The returned [`SharedEventReceiver`] only supports nonblocking receives.
 ///
 /// Panics if `capacity` is zero: a zero-capacity crossbeam channel hands each message directly to a
 /// receiver, and this crate wakes a receiver only after the send has completed.
 pub fn bounded_with_wake_event<T>(
     capacity: usize,
     event: Arc<WakeEvent>,
-) -> (Sender<T>, Receiver<T>) {
+) -> (Sender<T>, SharedEventReceiver<T>) {
+    bounded_inner(capacity, event)
+}
+
+fn bounded_inner<T, Mode>(
+    capacity: usize,
+    event: Arc<WakeEvent>,
+) -> (Sender<T>, ReceiverImpl<T, Mode>) {
     assert_ne!(capacity, 0, "channel capacity must be nonzero");
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
     let shared = Arc::new(Shared {
@@ -313,9 +325,10 @@ pub fn bounded_with_wake_event<T>(
             inner: sender,
             shared: Arc::clone(&shared),
         },
-        Receiver {
+        ReceiverImpl {
             inner: receiver,
             shared,
+            _mode: PhantomData,
         },
     )
 }
@@ -324,56 +337,23 @@ pub fn bounded_with_wake_event<T>(
 mod tests {
     use {
         super::*,
-        std::{
-            sync::{atomic::AtomicBool, mpsc},
-            thread,
-            time::{Duration, Instant},
-        },
+        std::{sync::atomic::AtomicBool, thread},
     };
 
-    const TEST_TIMEOUT: Duration = Duration::from_secs(10);
     const NUM_RECEIVERS: usize = 4;
 
-    fn spawn_with_result<T: Send + 'static>(
-        f: impl FnOnce() -> T + Send + 'static,
-    ) -> mpsc::Receiver<T> {
-        let (sender, receiver) = mpsc::channel();
-        thread::spawn(move || {
-            let _ = sender.send(f());
-        });
-        receiver
-    }
-
-    fn recv_result<T>(receiver: &mpsc::Receiver<T>) -> T {
-        receiver
-            .recv_timeout(TEST_TIMEOUT)
-            .expect("worker did not finish")
-    }
-
     fn wait_for_waiters(event: &WakeEvent, expected: usize) {
-        let started = Instant::now();
-        loop {
-            let observed = event.waiters.load(Ordering::Relaxed);
-            if observed == expected {
-                return;
-            }
-            assert!(
-                started.elapsed() < TEST_TIMEOUT,
-                "expected {expected} registered waiters, observed {observed}"
-            );
+        while event.waiters.load(Ordering::Relaxed) != expected {
             thread::yield_now();
         }
     }
 
     #[test]
     fn test_wake_before_wait() {
-        let done = spawn_with_result(|| {
-            let event = WakeEvent::default();
-            let waiter = event.register_waiter();
-            event.wake_one();
-            waiter.wait();
-        });
-        recv_result(&done);
+        let event = WakeEvent::default();
+        let waiter = event.register_waiter();
+        event.wake_one();
+        waiter.wait();
     }
 
     #[test]
@@ -386,7 +366,7 @@ mod tests {
             (0..NUM_RECEIVERS)
                 .map(|_| {
                     let receiver = receiver.clone();
-                    spawn_with_result(move || receiver.recv())
+                    thread::spawn(move || receiver.recv())
                 })
                 .collect::<Vec<_>>()
         };
@@ -397,14 +377,14 @@ mod tests {
             sender1.send(()).unwrap();
         }
         for consumer in consumers {
-            assert_eq!(recv_result(&consumer), Ok(()));
+            assert_eq!(consumer.join().unwrap(), Ok(()));
         }
 
         let consumers = spawn_consumers();
         wait_for_waiters(&receiver.shared.wake_event, NUM_RECEIVERS);
         drop(sender1);
         for consumer in consumers {
-            assert_eq!(recv_result(&consumer), Err(RecvError));
+            assert_eq!(consumer.join().unwrap(), Err(RecvError));
         }
     }
 
@@ -417,16 +397,15 @@ mod tests {
 
         let (sender, receiver) = bounded(1);
         let shared = Arc::clone(&receiver.shared);
-        let producer = spawn_with_result(move || {
+        let producer = thread::spawn(move || {
             for i in 0..NUM_MESSAGES {
                 wait_for_waiters(&shared.wake_event, 1);
                 sender.send(i).unwrap();
             }
         });
-        let consumer =
-            spawn_with_result(move || std::iter::from_fn(|| receiver.recv().ok()).count());
-        assert_eq!(recv_result(&consumer), NUM_MESSAGES);
-        recv_result(&producer);
+        let consumer = thread::spawn(move || std::iter::from_fn(|| receiver.recv().ok()).count());
+        assert_eq!(consumer.join().unwrap(), NUM_MESSAGES);
+        producer.join().unwrap();
     }
 
     #[test]
@@ -437,7 +416,7 @@ mod tests {
             .map(|_| {
                 let event = Arc::clone(&event);
                 let exit = Arc::clone(&exit);
-                spawn_with_result(move || {
+                thread::spawn(move || {
                     event.recv_with::<()>(|| {
                         if exit.load(Ordering::Relaxed) {
                             Err(TryRecvError::Disconnected)
@@ -453,7 +432,7 @@ mod tests {
         exit.store(true, Ordering::Relaxed);
         event.wake_all();
         for consumer in consumers {
-            assert_eq!(recv_result(&consumer), Err(RecvError));
+            assert_eq!(consumer.join().unwrap(), Err(RecvError));
         }
     }
     #[derive(Debug, PartialEq, Eq)]
@@ -462,7 +441,10 @@ mod tests {
         B(&'static str),
     }
 
-    fn poll_both(ra: &Receiver<u32>, rb: &Receiver<&'static str>) -> Result<Work, TryRecvError> {
+    fn poll_both(
+        ra: &SharedEventReceiver<u32>,
+        rb: &SharedEventReceiver<&'static str>,
+    ) -> Result<Work, TryRecvError> {
         match ra.try_recv() {
             Ok(value) => Ok(Work::A(value)),
             Err(TryRecvError::Empty) => rb.try_recv().map(Work::B),
@@ -482,7 +464,7 @@ mod tests {
                 .map(|_| {
                     let event = Arc::clone(&event);
                     let (ra, rb) = (ra.clone(), rb.clone());
-                    spawn_with_result(move || event.recv_with(|| poll_both(&ra, &rb)).unwrap())
+                    thread::spawn(move || event.recv_with(|| poll_both(&ra, &rb)).unwrap())
                 })
                 .collect::<Vec<_>>();
 
@@ -494,7 +476,7 @@ mod tests {
                 }
             }
             for consumer in consumers {
-                assert_eq!(recv_result(&consumer), expected);
+                assert_eq!(consumer.join().unwrap(), expected);
             }
         }
     }
@@ -508,7 +490,7 @@ mod tests {
             .map(|_| {
                 let event = Arc::clone(&event);
                 let (ra, rb) = (ra.clone(), rb.clone());
-                spawn_with_result(move || event.recv_with(|| poll_both(&ra, &rb)))
+                thread::spawn(move || event.recv_with(|| poll_both(&ra, &rb)))
             })
             .collect::<Vec<_>>();
 
@@ -516,7 +498,7 @@ mod tests {
         // Channel A is still connected; dropping B's last sender must wake every consumer.
         drop(sb);
         for consumer in consumers {
-            assert_eq!(recv_result(&consumer), Err(RecvError));
+            assert_eq!(consumer.join().unwrap(), Err(RecvError));
         }
     }
 
@@ -531,7 +513,7 @@ mod tests {
                 let event = Arc::clone(&event);
                 let exit = Arc::clone(&exit);
                 let (ra, rb) = (ra.clone(), rb.clone());
-                spawn_with_result(move || {
+                thread::spawn(move || {
                     event.recv_with(|| {
                         if exit.load(Ordering::Relaxed) {
                             Err(TryRecvError::Disconnected)
@@ -547,7 +529,7 @@ mod tests {
         exit.store(true, Ordering::Relaxed);
         event.wake_all();
         for consumer in consumers {
-            assert_eq!(recv_result(&consumer), Err(RecvError));
+            assert_eq!(consumer.join().unwrap(), Err(RecvError));
         }
     }
 }
