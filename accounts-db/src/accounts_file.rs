@@ -344,11 +344,22 @@ impl AccountsFile {
                     path
                 }
             };
-            open_for_reading(path, true).map(|file| Some(OpenFileForArchive::Owned(file)))
+            open_for_reading(path, true).map(|file| {
+                Some(OpenFileForArchive {
+                    file: ArchiveFile::Owned(file),
+                    read_limit: self.account_data_file().1,
+                })
+            })
         } else {
             Ok(match self {
-                Self::AppendVec(av) => Some(av.open_file_for_archive()),
-                Self::Split(split) => split.data_file().map(OpenFileForArchive::Borrowed),
+                Self::AppendVec(av) => Some(OpenFileForArchive {
+                    file: ArchiveFile::Borrowed(av.file()),
+                    read_limit: av.len() as FileSize,
+                }),
+                Self::Split(split) => split.data_file().map(|data_file| OpenFileForArchive {
+                    file: ArchiveFile::Borrowed(data_file),
+                    read_limit: split.data_len(),
+                }),
             })
         }
     }
