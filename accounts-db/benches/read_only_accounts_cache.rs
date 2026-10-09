@@ -43,9 +43,9 @@ const NUM_READERS_WRITERS: &[usize] = &[
     32, 64,
 ];
 
-/// Account data sizes to bench for eviction. 4 KiB gives the ~700k entries of mainnet-beta's
-/// 3 GB cache, and 200 bytes gives ~9.6M small accounts, ~14x as many per shard.
-const EVICT_ACCOUNT_DATA_SIZES: &[usize] = &[200, 4096];
+/// Account data sizes to bench for eviction. Empty accounts maximize entries
+/// per shard; 4 KiB approximates the ~700k entries of mainnet-beta's 3 GB cache.
+const EVICT_ACCOUNT_DATA_SIZES: &[usize] = &[0, 4096];
 
 /// Account counts for one data size.
 struct EvictSizes {
@@ -129,7 +129,7 @@ impl EvictSizes {
 
 /// Benchmarks one pass of the read-only cache evictor's work. Each iteration
 /// refills from the default low limit to the high limit, then times eviction
-/// back to the low limit. Each eviction samples one random shard, so the
+/// back to the low limit. Each eviction scans one random shard, so the
 /// result tracks accounts per shard.
 fn bench_read_only_accounts_cache_eviction_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("read_only_accounts_cache_eviction_throughput");
