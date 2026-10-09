@@ -48,6 +48,14 @@ pub fn command<'a>() -> App<'a, 'a> {
                         ),
                 ),
         )
+        .subcommand(
+            SubCommand::with_name("disable-rocksdb-wal")
+                .about("Disable the rocksdb write-ahead-wal (WAL) for the Blockstore"),
+        )
+        .subcommand(
+            SubCommand::with_name("enable-rocksdb-wal")
+                .about("Enable the rocksdb write-ahead-wal (WAL) for the Blockstore"),
+        )
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
@@ -62,6 +70,18 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
                     .await?
                     .blockstore_purge(maximum_purge_slot)
                     .await
+            })?;
+        }
+        ("disable-rocksdb-wal", _) => {
+            let admin_client = admin_rpc_service::connect(ledger_path);
+            admin_rpc_service::runtime().block_on(async move {
+                admin_client.await?.blockstore_configure_wal(false).await
+            })?;
+        }
+        ("enable-rocksdb-wal", _) => {
+            let admin_client = admin_rpc_service::connect(ledger_path);
+            admin_rpc_service::runtime().block_on(async move {
+                admin_client.await?.blockstore_configure_wal(true).await
             })?;
         }
         _ => unreachable!(),
