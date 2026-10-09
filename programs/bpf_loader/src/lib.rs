@@ -94,23 +94,17 @@ pub(crate) fn process_instruction_inner<'a>(
     if native_loader::check_id(&owner_id) {
         let program_id = instruction_context.get_program_key()?;
         return if bpf_loader_upgradeable::check_id(program_id) {
-            invoke_context
-                .compute_meter
-                .consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
+            invoke_context.consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
             process_loader_upgradeable_instruction(invoke_context)
         } else if bpf_loader::check_id(program_id) {
-            invoke_context
-                .compute_meter
-                .consume_checked(DEFAULT_LOADER_COMPUTE_UNITS)?;
+            invoke_context.consume_checked(DEFAULT_LOADER_COMPUTE_UNITS)?;
             ic_logger_msg!(
                 log_collector,
                 "BPF loader management instructions are no longer supported",
             );
             Err(InstructionError::UnsupportedProgramId)
         } else if bpf_loader_deprecated::check_id(program_id) {
-            invoke_context
-                .compute_meter
-                .consume_checked(DEPRECATED_LOADER_COMPUTE_UNITS)?;
+            invoke_context.consume_checked(DEPRECATED_LOADER_COMPUTE_UNITS)?;
             ic_logger_msg!(log_collector, "Deprecated loader is no longer supported");
             Err(InstructionError::UnsupportedProgramId)
         } else {
@@ -1369,7 +1363,7 @@ mod tests {
             LoaderV3Features::all_enabled(),
             Err(InstructionError::ProgramFailedToComplete),
             |invoke_context| {
-                invoke_context.compute_meter.mock_set_remaining(0);
+                invoke_context.mock_set_remaining(0);
                 test_utils::load_all_invoked_programs(invoke_context);
             },
         );

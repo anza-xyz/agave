@@ -107,7 +107,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let is_vote_authorize_with_bls_enabled = is_vote_authorize_with_bls_enabled(invoke_context);
     let consume_pop_compute_units = || {
         invoke_context
-            .compute_meter
             .consume_checked(BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS)
             .map_err(|_| InstructionError::ComputationalBudgetExceeded)
     };

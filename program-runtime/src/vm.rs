@@ -112,12 +112,10 @@ macro_rules! create_vm {
         let stack_size = $program.get_config().stack_size();
         let heap_size = invoke_context.get_compute_budget().heap_size;
         let heap_cost_result =
-            invoke_context
-                .compute_meter
-                .consume_checked($crate::__private::calculate_heap_cost(
-                    heap_size,
-                    invoke_context.get_execution_cost().heap_cost,
-                ));
+            invoke_context.consume_checked($crate::__private::calculate_heap_cost(
+                heap_size,
+                invoke_context.get_execution_cost().heap_cost,
+            ));
         let $vm = heap_cost_result.and_then(|_| {
             let (mut stack, mut heap) = $crate::__private::MEMORY_POOL
                 .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
