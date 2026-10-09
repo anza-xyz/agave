@@ -251,18 +251,6 @@ mod tests {
 
         storage.write_accounts(&(slot, &accounts[..])).unwrap();
 
-        if matches!(provider, AccountsFileProvider::Split) {
-            for use_direct_io in [false, true] {
-                assert!(
-                    storage
-                        .accounts
-                        .open_file_for_archive(use_direct_io)
-                        .unwrap()
-                        .is_none()
-                );
-            }
-        }
-
         let files = open_storage_files(iter::once(&storage), false)
             .collect::<io::Result<Vec<_>>>()
             .unwrap();
@@ -284,9 +272,61 @@ mod tests {
             reader.len_for_archive(),
             2 * AppendVec::calculate_stored_size(10)
         );
+    }
+
+    #[test_case(false)]
+    #[test_case(true)]
+    fn test_archive_split_without_data_file(use_direct_io: bool) {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AccountStorageEntry::new(
+            temp_dir.path(),
+            0,
+            11,
+            1_000_000,
+            AccountsFileProvider::Split,
+        );
+        let pubkey = Pubkey::new_unique();
+        let account = AccountSharedData::new(1, 10, &Pubkey::default());
+        storage
+            .write_accounts(&(0, &[(&pubkey, &account)][..]))
+            .unwrap();
+
+        let files = open_storage_files(iter::once(&storage), use_direct_io)
+            .collect::<io::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].is_none());
+
+        let mut buf_reader = storage_file_buf_reader(
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
+            false,
+            &IoSetupState::default(),
+        )
+        .unwrap();
+        let reader =
+            AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut buf_reader)
+                .unwrap();
         let mut output = Vec::new();
         reader.write_to(&mut output).unwrap();
-        assert_eq!(output.len(), 2 * AppendVec::calculate_stored_size(10));
+        assert_eq!(output.len(), AppendVec::calculate_stored_size(10));
+
+        let archive_path = temp_dir.path().join("archive");
+        fs::write(&archive_path, output).unwrap();
+        let archived =
+            AccountsFile::new_for_startup(FileInfo::new_from_path(archive_path).unwrap()).unwrap();
+        let mut count = 0;
+        archived
+            .scan_accounts(
+                &mut accounts_file::new_scan_accounts_reader(),
+                |_, stored| {
+                    count += 1;
+                    assert_eq!(*stored.pubkey, pubkey);
+                    assert_eq!(stored.lamports, account.lamports());
+                    assert_eq!(stored.data, account.data());
+                },
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test_matrix(
