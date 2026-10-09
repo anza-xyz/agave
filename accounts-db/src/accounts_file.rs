@@ -336,26 +336,16 @@ impl AccountsFile {
         let Some((data_file, read_limit)) = self.account_data_file() else {
             return Ok(None);
         };
-        if use_direct_io {
+        let file = if use_direct_io {
             let path = match self {
                 Self::AppendVec(av) => av.path(),
-                Self::Split(split) => {
-                    // A data file implies that its path is present as well.
-                    split.data_path().unwrap()
-                }
+                Self::Split(split) => split.data_path().unwrap(),
             };
-            open_for_reading(path, true).map(|file| {
-                Some(OpenFileForArchive {
-                    file: ArchiveFile::Owned(file),
-                    read_limit,
-                })
-            })
+            ArchiveFile::Owned(open_for_reading(path, true)?)
         } else {
-            Ok(Some(OpenFileForArchive {
-                file: ArchiveFile::Borrowed(data_file),
-                read_limit,
-            }))
-        }
+            ArchiveFile::Borrowed(data_file)
+        };
+        Ok(Some(OpenFileForArchive { file, read_limit }))
     }
 }
 
