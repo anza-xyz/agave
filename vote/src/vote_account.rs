@@ -162,6 +162,10 @@ impl VoteAccount {
         account.set_data_from_slice(&data);
         VoteAccount::try_from(account).unwrap()
     }
+
+    pub fn into_data(self) -> Arc<Vec<u8>> {
+        self.account().data_clone()
+    }
 }
 
 impl VoteAccounts {

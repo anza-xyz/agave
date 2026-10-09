@@ -4995,13 +4995,13 @@ impl Bank {
             // `unimplemented!()`, but this is only done internally to accounts-db;
             // every impl passed to `store_accounts()` is a wrapper over `AccountSharedData`.
             accounts.account_for_geyser(i, |pubkey, account| {
-                self.stakes_cache.check_and_store(
+                let _old_vote_account = self.stakes_cache.check_and_store(
                     pubkey,
                     account,
                     new_warmup_cooldown_rate_epoch,
                     in_epoch_rewards_period,
                     remove_inactive_stakes,
-                )
+                );
             })
         });
         self.store_accounts_without_stakes_cache(accounts, thread_pool_for_loading_accounts);
@@ -5012,6 +5012,26 @@ impl Bank {
             .stats
             .stakes_cache_check_and_store_us
             .fetch_add(m.as_us(), Relaxed);
+    }
+
+    pub fn store_account_return_old(
+        &self,
+        pubkey: &Pubkey,
+        account: &AccountSharedData,
+    ) -> Option<VoteAccount> {
+        assert!(!self.freeze_started());
+        let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let in_epoch_rewards_period = self.in_epoch_rewards_period();
+        let remove_inactive_stakes = self.feature_set.snapshot().remove_inactive_stakes;
+        let ret = self.stakes_cache.check_and_store(
+            pubkey,
+            account,
+            new_warmup_cooldown_rate_epoch,
+            in_epoch_rewards_period,
+            remove_inactive_stakes,
+        );
+        self.store_account_without_stakes_cache(pubkey, account);
+        ret
     }
 
     fn store_account_without_stakes_cache(&self, pubkey: &Pubkey, account: &AccountSharedData) {
