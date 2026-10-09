@@ -10372,10 +10372,7 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3766ea35ea6a7406463857cbbc3c66ce1dba39327670d7689bff3389617997e1"
 dependencies = [
- "bincode",
  "k256",
- "serde",
- "serde_derive",
  "solana-instruction 4.0.0",
  "solana-keccak-hasher",
  "solana-sdk-ids",

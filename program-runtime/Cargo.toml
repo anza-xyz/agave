@@ -85,7 +85,7 @@ solana-keypair = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-secp256k1-program = { workspace = true, features = ["bincode"] }
+solana-secp256k1-program = { workspace = true, features = ["wincode"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
