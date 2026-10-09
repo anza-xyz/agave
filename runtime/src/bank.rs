@@ -5215,6 +5215,7 @@ impl Bank {
         self.add_active_builtin_programs();
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn create_program_runtime_environment(
         &self,
         feature_set: &FeatureSet,
