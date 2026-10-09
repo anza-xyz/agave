@@ -25,8 +25,6 @@ pub enum BlockstoreError {
     WincodeRead(#[from] wincode::ReadError),
     #[error("serialization wincode error: {0}")]
     WincodeWrite(#[from] wincode::WriteError),
-    #[error("fs extra error: {0}")]
-    FsExtraError(#[from] fs_extra::error::Error),
     #[error("slot cleaned up")]
     SlotCleanedUp,
     #[error("unpack error: {0}")]
