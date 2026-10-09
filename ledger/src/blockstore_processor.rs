@@ -4333,7 +4333,7 @@ pub mod tests {
             assert_matches!(
                 res,
                 Err(BlockstoreProcessorError::InvalidTransaction(
-                    TransactionError::AccountNotFound
+                    TransactionError::InvalidAccountForFee
                 ))
             );
         }

@@ -189,7 +189,9 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_callback::{
+        AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
+    },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_syscalls::create_program_runtime_environment,
@@ -6876,9 +6878,19 @@ impl InvokeContextCallback for Bank {
     }
 }
 
-impl TransactionProcessingCallback for Bank {
+impl AccountLoadCallback for Bank {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.get_account(pubkey)
+    }
+}
+
+impl TransactionProcessingCallback for Bank {
+    fn get_account_shared_data_if(
+        &self,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        self.get_account_if(pubkey, load_filter)
     }
 }
 

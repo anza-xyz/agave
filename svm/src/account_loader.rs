@@ -28,7 +28,7 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
         sysvar::{self, slot_history},
     },
-    solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_callback::{AccountLoadCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, transaction_accounts::KeyedAccountSharedData},
@@ -146,6 +146,15 @@ pub(crate) struct LoadedTransactionAccount {
     pub(crate) loaded_size: usize,
 }
 
+impl LoadedTransactionAccount {
+    fn new(account: AccountSharedData) -> Self {
+        Self {
+            loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(account.data().len()),
+            account,
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 #[cfg_attr(
@@ -182,18 +191,18 @@ pub struct NoOpTransaction {
 
 // This is an internal SVM type that tracks account changes throughout a
 // transaction batch and obviates the need to load accounts from accounts-db
-// more than once. It effectively wraps an `impl TransactionProcessingCallback`
-// type, and itself implements `TransactionProcessingCallback`, behaving
+// more than once. It effectively wraps an `impl AccountLoadCallback`
+// type, and itself implements `AccountLoadCallback`, behaving
 // exactly like the implementor of the trait, but also returning up-to-date
 // account states mid-batch.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
+pub(crate) struct AccountLoader<'a, CB: AccountLoadCallback> {
     loaded_accounts: AHashMap<Pubkey, AccountSharedData>,
     callbacks: &'a CB,
     pub(crate) feature_set: &'a SVMFeatureSet,
 }
 
-impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
+impl<'a, CB: AccountLoadCallback> AccountLoader<'a, CB> {
     // create a new AccountLoader for the transaction batch
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new_with_loaded_accounts_capacity(
@@ -221,20 +230,11 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 
     // Load an account either from our own store or accounts-db, with a wrapper type
     // that includes the effective size for loaded transaction data size accounting.
-    pub(crate) fn load_transaction_account(
+    pub(crate) fn load_account(
         &mut self,
         account_key: &Pubkey,
     ) -> Option<LoadedTransactionAccount> {
-        self.load_account(account_key)
-            .map(|account| LoadedTransactionAccount {
-                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(account.data().len()),
-                account,
-            })
-    }
-
-    // Load an account as above, with no LoadedTransactionAccount wrapper.
-    pub(crate) fn load_account(&mut self, account_key: &Pubkey) -> Option<AccountSharedData> {
-        match self.do_load(account_key) {
+        let account = match self.do_load(account_key) {
             // Exists, from AccountLoader.
             (Some(account), false) => Some(account),
             // Not allocated, but has an AccountLoader placeholder already.
@@ -250,15 +250,53 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
                     .insert(*account_key, AccountSharedData::default());
                 None
             }
-        }
-    }
+        };
 
+        account.map(LoadedTransactionAccount::new)
+    }
+}
+
+impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
+    /// Load a required account before loaded transaction data size calculations begin.
+    /// "Required" means that if this account does not exist or does not meet its filter,
+    /// processing will abort before execution and the processing result will be Err or NoOp.
+    ///
+    /// This function is NOT SAFE to use for normal transaction account loading because None
+    /// indicates in such a context that the account does not exist and is safe to write to.
+    pub(crate) fn preload_required_account(
+        &mut self,
+        account_key: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<LoadedTransactionAccount> {
+        let account = if let Some(account) = self.loaded_accounts.get(account_key) {
+            // Return None if this is a placeholder for a nonexistent account or if
+            // the load_filter predicate rejects it. We check lamports to be robust
+            // in case load_filter does not check lamports itself.
+            (account.lamports() > 0
+                && load_filter(account.lamports(), account.owner(), account.data().len()))
+            .then(|| account.clone())
+        } else {
+            let account = self
+                .callbacks
+                .get_account_shared_data_if(account_key, load_filter);
+            // Exists in accounts-db. Store it in AccountLoader for future loads.
+            if let Some(ref account) = account {
+                self.loaded_accounts.insert(*account_key, account.clone());
+            }
+            account
+        };
+
+        account.map(LoadedTransactionAccount::new)
+    }
+}
+
+impl<'a, CB: AccountLoadCallback> AccountLoader<'a, CB> {
     // Internal helper for core loading logic to prevent code duplication. Returns a bool
     // indicating whether an accounts-db lookup was performed, which allows wrappers with
     // &mut self to insert the account. Wrappers with &self ignore it.
     fn do_load(&self, account_key: &Pubkey) -> (Option<AccountSharedData>, bool) {
         if let Some(account) = self.loaded_accounts.get(account_key) {
-            // If lamports is 0, a previous transaction deallocated this account.
+            // If lamports is 0, a previous transaction closed this account, or it never existed.
             // We return None instead of the account we found so it can be created fresh.
             // We *never* remove accounts, or else we would fetch stale state from accounts-db.
             let option_account = if account.lamports() == 0 {
@@ -316,11 +354,11 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 }
 
-// Program loaders and parsers require a type that impls TransactionProcessingCallback,
+// Program loaders and parsers require a type that impls AccountLoadCallback,
 // because they are used in both SVM and by Bank. We impl it, with the consequence
 // that if we fall back to accounts-db, we cannot store the state for future loads.
 // In practice, all accounts we load this way will already be in our accounts store.
-impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for AccountLoader<'_, CB> {
+impl<CB: AccountLoadCallback> AccountLoadCallback for AccountLoader<'_, CB> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.do_load(pubkey).0
     }
@@ -342,6 +380,14 @@ pub fn update_rent_exempt_status_for_account(rent: &Rent, account: &mut AccountS
     {
         account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
     }
+}
+
+/// Load filter for fee-payer accounts. A fee-payer must exist and be a system account with no
+/// data or a nonce account; any other owner or data length fails `get_system_account_kind`.
+pub fn fee_payer_load_filter(lamports: u64, owner: &Pubkey, data_len: usize) -> bool {
+    lamports > 0
+        && solana_sdk_ids::system_program::check_id(owner)
+        && (data_len == 0 || data_len == NonceState::size())
 }
 
 /// Check whether the payer_account is capable of paying the fee. The
@@ -399,7 +445,7 @@ pub fn validate_fee_payer(
     )
 }
 
-pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
+pub(crate) fn load_transaction<CB: AccountLoadCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     validation_result: TransactionValidationResult,
@@ -498,7 +544,7 @@ impl From<LoadedTransactionDataSize> for u32 {
     }
 }
 
-fn load_transaction_accounts<CB: TransactionProcessingCallback>(
+fn load_transaction_accounts<CB: AccountLoadCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
@@ -553,8 +599,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     {
                         // ...count programdata toward this transaction's total size.
                         loaded_tx_data_size.increase_calculated_data_size(
-                            TRANSACTION_ACCOUNT_BASE_SIZE
-                                .saturating_add(programdata_account.data().len()),
+                            programdata_account.loaded_size,
                             error_metrics,
                         )?;
                         additional_loaded_accounts.insert(programdata_address);
@@ -583,7 +628,10 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     }
 
     for (program_id, _) in message.program_instructions_iter() {
-        let Some(program_account) = account_loader.load_account(program_id) else {
+        let Some(program_account) = account_loader
+            .load_account(program_id)
+            .map(|loaded| loaded.account)
+        else {
             error_metrics.account_not_found += 1;
             return Err(TransactionError::ProgramAccountNotFound);
         };
@@ -598,7 +646,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     Ok(loaded_transaction_accounts)
 }
 
-fn load_transaction_account<CB: TransactionProcessingCallback>(
+fn load_transaction_account<CB: AccountLoadCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     account_key: &Pubkey,
@@ -613,7 +661,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
             loaded_size: 0,
             account: construct_instructions_account(message)?,
         })
-    } else if let Some(mut loaded_account) = account_loader.load_transaction_account(account_key) {
+    } else if let Some(mut loaded_account) = account_loader.load_account(account_key) {
         if is_writable {
             update_rent_exempt_status_for_account(rent, &mut loaded_account.account);
         }
@@ -691,7 +739,7 @@ mod tests {
         },
         solana_signature::Signature,
         solana_signer::Signer,
-        solana_svm_callback::TransactionProcessingCallback,
+        solana_svm_callback::AccountLoadCallback,
         solana_system_transaction::transfer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::{
@@ -727,7 +775,7 @@ mod tests {
         }
     }
 
-    impl TransactionProcessingCallback for TestCallbacks {
+    impl AccountLoadCallback for TestCallbacks {
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
             self.accounts_map.get(pubkey).cloned()
         }
@@ -2336,16 +2384,13 @@ mod tests {
         // test without stored account
         let mut account_loader: AccountLoader<_> = (&mock_bank).into();
         assert_eq!(
-            account_loader
-                .load_transaction_account(&fee_payer)
-                .unwrap()
-                .account,
+            account_loader.load_account(&fee_payer).unwrap().account,
             fee_payer_account
         );
 
         let mut account_loader: AccountLoader<_> = (&mock_bank).into();
         assert_eq!(
-            account_loader.load_account(&fee_payer).unwrap(),
+            account_loader.load_account(&fee_payer).unwrap().account,
             fee_payer_account
         );
 
@@ -2360,14 +2405,11 @@ mod tests {
         account_loader.load_account(&fee_payer).unwrap();
 
         assert_eq!(
-            account_loader
-                .load_transaction_account(&fee_payer)
-                .unwrap()
-                .account,
+            account_loader.load_account(&fee_payer).unwrap().account,
             fee_payer_account
         );
         assert_eq!(
-            account_loader.load_account(&fee_payer).unwrap(),
+            account_loader.load_account(&fee_payer).unwrap().account,
             fee_payer_account
         );
         assert_eq!(
@@ -2384,7 +2426,6 @@ mod tests {
             0,
         );
 
-        assert_eq!(account_loader.load_transaction_account(&fee_payer), None);
         assert_eq!(account_loader.load_account(&fee_payer), None);
         assert_eq!(account_loader.get_account_shared_data(&fee_payer), None);
     }
