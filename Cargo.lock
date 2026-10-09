@@ -11790,19 +11790,19 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-sdk"
-version = "8.0.1"
+version = "8.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a18fd5e2a38748586f3e91010ab21acc3d3c10e1f64848b5d1e8943ac3f2ca70"
+checksum = "78a601443971629485248f27272ca2456c94e8aca559ce6e44b8335f11e80ed4"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.23.1",
  "bincode",
  "bytemuck",
  "curve25519-dalek 4.1.3",
+ "getrandom 0.2.15",
  "hkdf",
  "itertools 0.15.0",
  "merlin",
- "rand 0.8.6",
  "serde",
  "serde_derive",
  "serde_json",
