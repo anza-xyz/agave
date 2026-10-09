@@ -71,6 +71,12 @@ impl LoadedGeyserPlugin {
     /// must be compatible with this host's Rust toolchain and interface types. It must
     /// stop all background work that uses the library before its destructor returns,
     /// including when `on_load` fails or `on_unload` has not been called.
+    ///
+    /// The caller must also ensure that any library-backed references or values
+    /// obtained from the plugin are no longer used and have been dropped before
+    /// this wrapper unloads the library. This includes the `&'static str` returned
+    /// by the plugin's `name()` method and errors with plugin-defined vtables.
+    /// Their Rust types do not track the lifetime of a dynamically loaded library.
     pub unsafe fn new(
         library: Library,
         plugin: Box<dyn GeyserPlugin>,
