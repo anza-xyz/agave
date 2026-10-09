@@ -6459,22 +6459,6 @@ impl Bank {
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 
-        if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id())
-            && let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
-                &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
-                &feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
-                self.feature_set
-                    .snapshot()
-                    .relax_programdata_account_check_migration,
-                "replace_spl_token_with_p_token",
-            )
-        {
-            warn!(
-                "Failed to replace SPL Token with p-token buffer '{}': {e}",
-                feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
-            );
-        }
-
         if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5::id())
             && let Err(e) = self.upgrade_core_bpf_program(
                 &solana_sdk_ids::stake::id(),
