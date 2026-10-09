@@ -15,6 +15,10 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 
 #### Changes
 
+* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
+  for the epoch containing a requested slot, with an optional identity filter. Always queries
+  finalized state; there is no commitment parameter.
+* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
 * `getTransaction` now accepts `minContextSlot`, and `getSignatureStatuses` now accepts `commitment`
   and `minContextSlot`, in their config objects. Both return `MinContextSlotNotReached` (-32016) when
   the node's context slot at the requested commitment is below the minimum. `getSignatureStatuses`

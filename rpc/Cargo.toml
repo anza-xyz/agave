@@ -45,9 +45,10 @@ jsonrpc-http-server = { workspace = true }
 jsonrpc-pubsub = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
+lru = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
 soketto = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
