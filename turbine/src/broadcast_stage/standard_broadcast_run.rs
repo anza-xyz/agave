@@ -158,7 +158,9 @@ impl StandardBroadcastRun {
             ) {
                 Ok(chained_merkle_root) => chained_merkle_root,
                 // This is a snapshot slot that we don't have the shreds for. Use the block id from the snapshot
-                Err(Error::UnknownLastIndex(_)) | Err(Error::UnknownSlotMeta(_)) => parent_block_id,
+                Err(Error::UnknownLastIndex(_)) | Err(Error::UnknownSlotMeta(_)) => {
+                    parent_block_id.to_hash()
+                }
                 Err(e) => panic!(
                     "Unexpected error while producing leader block for {}: {e:?}",
                     bank.slot()
@@ -168,10 +170,10 @@ impl StandardBroadcastRun {
 
         self.slot = bank.slot();
         self.parent = bank.parent_slot();
-        self.parent_block_id = parent_block_id;
+        self.parent_block_id = parent_block_id.to_hash();
         self.parent_for_double_merkle = Block {
             slot: bank.parent_slot(),
-            block_id: BlockId::from(parent_block_id),
+            block_id: parent_block_id,
         };
         self.chained_merkle_root = chained_merkle_root;
         self.double_merkle_leaves.clear();
@@ -850,7 +852,7 @@ mod test {
         assert!(Arc::ptr_eq(&header_shreds, &transmit_shreds));
         assert_eq!(
             deshred_component(&header_shreds),
-            BlockComponent::new_block_header(parent_bank.slot(), parent_block_id),
+            BlockComponent::new_block_header(parent_bank.slot(), parent_block_id.to_hash()),
         );
         let header_data_shred = header_shreds.iter().find(|shred| shred.is_data()).unwrap();
         let flags = layout::get_flags(header_data_shred.payload().as_ref()).unwrap();
@@ -1103,7 +1105,7 @@ mod test {
 
         // Step 2: Make a transmission for another bank that interrupts the transmission for
         // slot 1
-        bank1.set_block_id(Some(Hash::new_unique()));
+        bank1.set_block_id(Some(BlockId::new_unique()));
         let bank2 = new_child_bank(&bank1, 2);
         let interrupted_slot = standard_broadcast_run.slot;
         // Interrupting the slot should cause the unfinished_slot and stats to reset

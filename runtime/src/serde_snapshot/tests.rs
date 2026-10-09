@@ -20,6 +20,7 @@ mod serde_snapshot_tests {
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::consensus_message::BlockId,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
@@ -39,7 +40,6 @@ mod serde_snapshot_tests {
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
-        solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         std::{
@@ -900,7 +900,7 @@ mod serde_snapshot_tests {
 
         let accounts_db = &bank2.rc.accounts.accounts_db;
 
-        bank2.set_block_id(Some(Hash::default()));
+        bank2.set_block_id(Some(BlockId::default()));
         bank2.squash();
         bank2.force_flush_accounts_cache();
 
@@ -976,7 +976,7 @@ mod serde_snapshot_tests {
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         bank0.squash();
         let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
         bank.freeze();
         bank.rc.accounts.add_root(bank.slot());
         bank.force_flush_accounts_cache();
@@ -1055,7 +1055,7 @@ mod serde_snapshot_tests {
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();
         }
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // Set extra field
         bank.fee_rate_governor.lamports_per_signature = 7000;

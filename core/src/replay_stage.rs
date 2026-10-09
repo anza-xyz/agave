@@ -1713,7 +1713,7 @@ impl ReplayStage {
         );
         assert!(genesis_bank.is_frozen());
 
-        if genesis_bank.block_id() != Some(genesis_block.block_id.to_hash()) {
+        if genesis_bank.block_id() != Some(genesis_block.block_id) {
             panic!(
                 "{my_pubkey}: Attempting to enable alpenglow but we have the wrong version of the \
                  genesis block our version: ({}, {:?}), certified version ({genesis_block:?})",
@@ -2476,7 +2476,7 @@ impl ReplayStage {
         };
         let block = event.block();
 
-        if bank_forks.read().unwrap().block_id(block.slot) == Some(block.block_id.to_hash()) {
+        if bank_forks.read().unwrap().block_id(block.slot) == Some(block.block_id) {
             // Nothing to switch
             *pending_switch = None;
             return Ok(());
@@ -2519,7 +2519,7 @@ impl ReplayStage {
             let parent_slot = slot_meta
                 .parent_slot
                 .expect("Full slots must have a parent");
-            let parent_block_id = slot_meta.parent_block_id;
+            let parent_block_id = BlockId::from(slot_meta.parent_block_id);
 
             if bank_forks.read().unwrap().block_id(parent_slot) == Some(parent_block_id)
                 // Genesis cannot be duplicate
@@ -2534,7 +2534,7 @@ impl ReplayStage {
             }
 
             // Check the next ancestor
-            ancestor_block_id = parent_block_id;
+            ancestor_block_id = parent_block_id.to_hash();
             ancestor_slot = parent_slot;
         }
 
@@ -4055,7 +4055,8 @@ impl ReplayStage {
                 let block_id = process_active_banks_context
                     .blockstore
                     .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
-                    .expect("Blockstore operations must succeed");
+                    .expect("Blockstore operations must succeed")
+                    .map(BlockId::from);
                 debug_assert!(block_id.is_some() || !bank.should_replay_from_blockstore());
                 if block_id.is_some() {
                     bank.set_block_id(block_id);
@@ -4418,7 +4419,7 @@ impl ReplayStage {
             end_slot,
             parent_block: Block {
                 slot: bank.slot(),
-                block_id: BlockId::from(block_id),
+                block_id,
             },
             block_timer: Instant::now(),
         };
@@ -4595,10 +4596,10 @@ impl ReplayStage {
 
                         let genesis_block = Block {
                             slot: genesis_slot,
-                            block_id: BlockId::from(genesis_bank.block_id().expect(
+                            block_id: genesis_bank.block_id().expect(
                                 "It is impossible for block id to not be known at this point, as \
                                  a descendant of this block has reached super oc status",
-                            )),
+                            ),
                         };
                         migration_status.set_genesis_block(genesis_block);
                     }
@@ -4755,7 +4756,7 @@ impl ReplayStage {
             progress
                 .get_hash(last_voted_slot)
                 .expect("Must exist for us to have frozen descendant"),
-            block_id,
+            block_id.to_hash(),
         );
         // Since we are updating our tower we need to update associated caches for previously computed
         // slots as well.

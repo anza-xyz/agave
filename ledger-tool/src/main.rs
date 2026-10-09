@@ -1317,7 +1317,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
                 &keypair,
                 &tick_entries,
                 /*is_last_in_slot:*/ true,
-                chained_merkle_root,
+                chained_merkle_root.to_hash(),
                 /*next_shred_index:*/ 0,
                 /*next_code_index:*/ 0,
                 &mut ProcessShredsStats::default(),

@@ -638,7 +638,7 @@ pub struct BankFieldsToSerialize {
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: AccountsLtHash,
-    pub block_id: Hash,
+    pub block_id: BlockId,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -800,7 +800,7 @@ impl BankFieldsToSerialize {
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
             accounts_lt_hash: AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS])),
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
         }
     }
 }
@@ -6739,18 +6739,18 @@ impl Bank {
         &self.fee_structure
     }
 
-    pub fn parent_block_id(&self) -> Option<Hash> {
+    pub fn parent_block_id(&self) -> Option<BlockId> {
         self.parent().and_then(|p| p.block_id())
     }
 
-    pub fn block_id(&self) -> Option<Hash> {
-        self.block_id.read().unwrap().map(|b| b.to_hash())
+    pub fn block_id(&self) -> Option<BlockId> {
+        self.block_id.read().unwrap().map(|b| b)
     }
 
-    pub fn set_block_id(&self, block_id: Option<Hash>) {
+    pub fn set_block_id(&self, block_id: Option<BlockId>) {
         let mut block_id_w = self.block_id.write().unwrap();
-        debug_assert!(block_id_w.is_none() || block_id_w.map(|b| b.to_hash()) == block_id);
-        *block_id_w = block_id.map(BlockId::from)
+        debug_assert!(block_id_w.is_none() || *block_id_w == block_id);
+        *block_id_w = block_id
     }
 
     pub fn compute_budget(&self) -> Option<ComputeBudget> {
@@ -6873,7 +6873,7 @@ impl Bank {
             // as parent's block id is not available for the calculation below.
             // Must freeze() to ensure bank hash has been calculated.
             bank.freeze();
-            bank.set_block_id(Some(bank.hash()));
+            bank.set_block_id(Some(BlockId::from(bank.hash())));
             return;
         };
 
@@ -6885,8 +6885,10 @@ impl Bank {
 
         // must freeze() to ensure bank hash has been calculated
         bank.freeze();
-        let block_id =
-            solana_sha256_hasher::hashv(&[parent_block_id.as_ref(), bank.hash().as_ref()]);
+        let block_id = BlockId::from(solana_sha256_hasher::hashv(&[
+            parent_block_id.as_bytes(),
+            bank.hash().as_ref(),
+        ]));
         bank.set_block_id(Some(block_id));
     }
 

@@ -5747,7 +5747,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     while !bank0.is_complete() {
         bank0.register_default_tick_for_test();
     }
-    bank0.set_block_id(Some(Hash::from([7u8; 32])));
+    bank0.set_block_id(Some(BlockId::from(Hash::from([7u8; 32]))));
     let leader_for_snapshot_restore = *bank0.leader();
 
     let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -13108,7 +13108,7 @@ fn test_parent_block_id() {
     let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
     let parent_bank = Bank::new_for_tests(&genesis_config);
     let (parent_bank, _bank_forks) = parent_bank.wrap_with_bank_forks_for_tests();
-    let parent_block_id = Some(Hash::new_unique());
+    let parent_block_id = Some(BlockId::new_unique());
     parent_bank.set_block_id(parent_block_id);
 
     // Create child from parent and ensure parent block ID links back to the
@@ -13428,7 +13428,7 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
 
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.rent_collector.rent = wrong_rent.clone();
-    bank.set_block_id(Some(Hash::default()));
+    bank.set_block_id(Some(BlockId::default()));
 
     // Serialize bank to snapshot
     let mut buf = vec![];
@@ -13478,7 +13478,7 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     bank.set_hashes_per_tick(Some(LEGACY_HASHES_PER_TICK));
-    bank.set_block_id(Some(Hash::default()));
+    bank.set_block_id(Some(BlockId::default()));
 
     let mut buf = vec![];
     crate::serde_snapshot::bank_to_stream(
@@ -13523,7 +13523,7 @@ fn test_calculate_and_set_block_id_for_dcou() {
     // scenario 1: block id already set
     {
         let bank = create_simple_test_bank(123);
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         bank.set_block_id(Some(block_id));
         Bank::calculate_and_set_block_id_for_dcou(&bank);
         assert_eq!(bank.block_id(), Some(block_id));
@@ -13533,7 +13533,7 @@ fn test_calculate_and_set_block_id_for_dcou() {
     {
         let (genesis_config, _) = create_genesis_config(123);
         let (bank1, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let block_id1 = Hash::new_unique();
+        let block_id1 = BlockId::new_unique();
         // oldest ancestor must have block_id set
         bank1.set_block_id(Some(block_id1));
         bank1.fill_bank_with_ticks_for_tests();
@@ -13543,8 +13543,8 @@ fn test_calculate_and_set_block_id_for_dcou() {
 
         // ensure expected block_id is correct
         assert_eq!(
-            bank2.block_id(),
-            Some(hashv(&[block_id1.as_ref(), bank2.hash().as_ref()])),
+            bank2.block_id().unwrap().to_hash(),
+            hashv(&[block_id1.as_bytes(), bank2.hash().as_ref()]),
         );
     }
 
@@ -13553,7 +13553,7 @@ fn test_calculate_and_set_block_id_for_dcou() {
         let (genesis_config, _) = create_genesis_config(123);
         let (mut bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // oldest ancestor must have block id set
-        bank.set_block_id(Some(Hash::new_unique()));
+        bank.set_block_id(Some(BlockId::new_unique()));
         for _ in 0..7 {
             bank.fill_bank_with_ticks_for_tests();
             bank = Arc::new(new_from_parent(bank));
@@ -13564,11 +13564,11 @@ fn test_calculate_and_set_block_id_for_dcou() {
         // we don't calculate the expected parent block id
         // out-of-band, since scenario 2 covers that
         assert_eq!(
-            bank.block_id(),
-            Some(hashv(&[
-                bank.parent_block_id().unwrap().as_ref(),
+            bank.block_id().unwrap().to_hash(),
+            hashv(&[
+                bank.parent_block_id().unwrap().as_bytes(),
                 bank.hash().as_ref(),
-            ])),
+            ]),
         );
     }
 
@@ -13583,7 +13583,7 @@ fn test_calculate_and_set_block_id_for_dcou() {
         let expected_block_id = bank.hash();
 
         Bank::calculate_and_set_block_id_for_dcou(&bank);
-        assert_eq!(bank.block_id(), Some(expected_block_id));
+        assert_eq!(bank.block_id().unwrap().to_hash(), expected_block_id);
     }
 }
 
