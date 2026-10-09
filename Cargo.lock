@@ -1400,8 +1400,7 @@ dependencies = [
 [[package]]
 name = "blstrs"
 version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a8a8ed6fefbeef4a8c7b460e4110e12c5e22a5b7cf32621aae6ad650c4dcf29"
+source = "git+https://github.com/anza-xyz/blstrs?rev=a1faffa3420bdaf4102425c43f00cdd815d4f145#a1faffa3420bdaf4102425c43f00cdd815d4f145"
 dependencies = [
  "blst",
  "byte-slice-cast",
