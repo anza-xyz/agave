@@ -274,7 +274,12 @@ impl BankClient {
         Self::new_shared(Arc::new(bank))
     }
 
-    pub fn set_sysvar_for_tests<T: wincode::Serialize<Src = T> + SysvarId>(&self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
+    {
         self.bank.set_sysvar_for_tests(sysvar);
     }
 

@@ -2727,7 +2727,9 @@ impl Bank {
 
     pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
     where
-        T: wincode::Serialize<Src = T> + SysvarId,
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
     {
         self.update_sysvar_account(&T::id(), |account| {
             create_account(
