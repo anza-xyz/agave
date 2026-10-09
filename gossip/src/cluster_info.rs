@@ -1232,42 +1232,47 @@ impl ClusterInfo {
         }
     }
 
-    // If the network entrypoint hasn't been discovered yet, add it to the crds table
+    // If the network entrypoint hasn't been discovered yet, add it to the crds table.
+    // Also returns the entrypoint's address when it is pulled, so that the caller
+    // can push our contact info to it.
     fn append_entrypoint_to_pulls<T: Iterator<Item = (SocketAddr, CrdsFilter)> + Clone>(
         &self,
         thread_pool: &ThreadPool,
         max_bloom_filter_bytes: usize,
         pulls: T,
-    ) -> impl Iterator<Item = (SocketAddr, CrdsFilter)> + use<T> {
+    ) -> (
+        impl Iterator<Item = (SocketAddr, CrdsFilter)> + use<T>,
+        Option<SocketAddr>,
+    ) {
         const THROTTLE_DELAY: u64 = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2;
         let mut pulls = pulls.peekable();
+        let has_peers = pulls.peek().is_some();
         let entrypoint = {
             let mut entrypoints = self.entrypoints.write();
             let Some(entrypoint) = entrypoints.choose_mut(&mut rand::rng()) else {
-                return Either::Left(pulls);
+                return (Either::Left(pulls), None);
             };
-            if pulls.peek().is_some() {
+            let Some(entrypoint_gossip) = entrypoint.gossip() else {
+                return (Either::Left(pulls), None);
+            };
+            if has_peers {
                 let now = timestamp();
                 if now <= entrypoint.wallclock().saturating_add(THROTTLE_DELAY) {
-                    return Either::Left(pulls);
+                    return (Either::Left(pulls), None);
                 }
                 entrypoint.set_wallclock(now);
-                if let Some(entrypoint_gossip) = entrypoint.gossip()
-                    && self
-                        .time_gossip_read_lock("entrypoint", &self.stats.entrypoint)
-                        .get_nodes_contact_info()
-                        .any(|node| node.gossip() == Some(entrypoint_gossip))
-                {
-                    // Found the entrypoint, no need to pull from it.
-                    return Either::Left(pulls);
-                }
             }
-            let Some(entrypoint) = entrypoint.gossip() else {
-                return Either::Left(pulls);
-            };
-            entrypoint
+            entrypoint_gossip
         };
-        let filters = if pulls.peek().is_none() {
+        let known = self
+            .time_gossip_read_lock("entrypoint", &self.stats.entrypoint)
+            .get_nodes_contact_info()
+            .any(|node| node.gossip() == Some(entrypoint));
+        if has_peers && known {
+            // Found the entrypoint, no need to pull from it.
+            return (Either::Left(pulls), None);
+        }
+        let filters = if !has_peers {
             let _st = ScopedTimer::from(&self.stats.entrypoint2);
             Either::Left(
                 self.gossip
@@ -1279,7 +1284,11 @@ impl ClusterInfo {
             Either::Right(pulls.clone().map(|(_, filter)| filter))
         };
         self.stats.pull_from_entrypoint_count.add_relaxed(1);
-        Either::Right(pulls.chain(repeat(entrypoint).zip(filters)))
+        let unknown_entrypoint = (!known).then_some(entrypoint);
+        (
+            Either::Right(pulls.chain(repeat(entrypoint).zip(filters))),
+            unknown_entrypoint,
+        )
     }
 
     fn new_pull_requests(
@@ -1316,12 +1325,20 @@ impl ClusterInfo {
         let pings = pings
             .into_iter()
             .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
-        self.append_entrypoint_to_pulls(thread_pool, max_bloom_filter_bytes, pulls)
-            .map(move |(gossip_addr, filter)| {
-                let request = Protocol::PullRequest(filter, self_info.clone());
-                (gossip_addr, request)
-            })
-            .chain(pings)
+        let (pulls, unknown_entrypoint) =
+            self.append_entrypoint_to_pulls(thread_pool, max_bloom_filter_bytes, pulls);
+        // Push our contact info to an entrypoint that does not know us yet.
+        let intro = unknown_entrypoint.map(|addr| {
+            (
+                addr,
+                Protocol::PushMessage(keypair.pubkey(), vec![self_info.clone()]),
+            )
+        });
+        let pulls = pulls.map(move |(gossip_addr, filter)| {
+            let request = Protocol::PullRequest(filter, self_info.clone());
+            (gossip_addr, request)
+        });
+        intro.into_iter().chain(pulls).chain(pings)
     }
 
     pub fn flush_push_queue(&self) {
@@ -2672,6 +2689,7 @@ mod tests {
             panic,
             sync::Arc,
         },
+        test_case::test_case,
     };
     const DEFAULT_NUM_QUIC_ENDPOINTS: NonZeroUsize =
         NonZeroUsize::new(DEFAULT_QUIC_ENDPOINTS).unwrap();
@@ -2690,6 +2708,7 @@ mod tests {
             Vec<(SocketAddr, Protocol)>, // Pull requests
         ) {
             self.new_pull_requests(thread_pool, gossip_validators, stakes)
+                .filter(|(_, protocol)| !matches!(protocol, Protocol::PushMessage(..)))
                 .partition_map(|(addr, protocol)| {
                     if let Protocol::PingMessage(ping) = protocol {
                         Either::Left((addr, ping))
@@ -3559,6 +3578,77 @@ mod tests {
         assert_eq!(pings.len(), 1);
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
         assert_eq!(*cluster_info.entrypoints.read(), vec![entrypoint]);
+    }
+
+    #[test_case(false; "without_cached_pong")]
+    #[test_case(true; "with_cached_pong")]
+    fn test_push_contact_info_to_unknown_entrypoint(cached_pong: bool) {
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let node_keypair = Arc::new(Keypair::new());
+        let cluster_info = ClusterInfo::new(
+            ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
+            node_keypair,
+            SocketAddrSpace::Unspecified,
+        );
+        let mut entrypoint = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        entrypoint
+            .set_gossip(socketaddr!("127.0.0.2:1234"))
+            .unwrap();
+        let entrypoint_addr = entrypoint.gossip().unwrap();
+        let pushes = |cluster_info: &ClusterInfo| {
+            cluster_info
+                .new_pull_requests(&thread_pool, None, &HashMap::new())
+                .filter_map(|(addr, msg)| match msg {
+                    Protocol::PushMessage(from, values) => Some((addr, from, values)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // The entrypoint's contact info is not in CRDS: our contact info is pushed to it.
+        let mut entrypoint_entry = ContactInfo::new_gossip_entry_point(&entrypoint_addr);
+        entrypoint_entry.set_wallclock(0); // never throttled
+        cluster_info.set_entrypoint(entrypoint_entry);
+        let [(addr, from, values)] = pushes(&cluster_info).try_into().unwrap();
+        assert_eq!(addr, entrypoint_addr);
+        assert_eq!(from, cluster_info.id());
+        let [value] = values.try_into().unwrap();
+        assert_eq!(value.contact_info().unwrap().pubkey(), &cluster_info.id());
+
+        // The entrypoint's contact info is in CRDS, with or without a pong: nothing is pushed.
+        let entrypoint_pubkey = *entrypoint.pubkey();
+        cluster_info.insert_info(entrypoint);
+        if cached_pong {
+            cluster_info.ping_cache.lock().unwrap().mock_pong(
+                entrypoint_pubkey,
+                entrypoint_addr,
+                Instant::now(),
+            );
+        }
+        cluster_info.entrypoints.write()[0].set_wallclock(0); // never throttled
+        assert!(pushes(&cluster_info).is_empty());
+    }
+
+    #[test]
+    fn test_entrypoint_without_gossip_addr_is_skipped() {
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let node_keypair = Arc::new(Keypair::new());
+        let cluster_info = ClusterInfo::new(
+            ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
+            node_keypair,
+            SocketAddrSpace::Unspecified,
+        );
+        // `--entrypoint 0.0.0.0:8001` passes the CLI check but not the socket
+        // sanitizer, so the entry has no gossip address to pull from or push to.
+        let entrypoint = ContactInfo::new_gossip_entry_point(&socketaddr!("0.0.0.0:8001"));
+        assert_eq!(entrypoint.gossip(), None);
+        cluster_info.set_entrypoint(entrypoint);
+        assert_eq!(
+            cluster_info
+                .new_pull_requests(&thread_pool, None, &HashMap::new())
+                .count(),
+            0
+        );
     }
 
     #[test]
