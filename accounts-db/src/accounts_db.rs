@@ -32,10 +32,11 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            AccountStorage, AccountStoragesOrderer, ShrinkInProgress,
+            AccountStorage, AccountStoragesOrderer, NextItem, ShrinkInProgress,
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         account_storage_entry::AccountStorageEntry,
+        account_storage_reader::{ACCOUNT_STORAGE_MAX_BUFFER_SIZE, storage_file_buf_reader},
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
             AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
@@ -64,10 +65,14 @@ use {
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         utils::{self, create_account_shared_data},
     },
-    agave_fs::buffered_reader::RequiredLenBufFileRead,
+    agave_fs::{
+        buffered_reader::{FileBufRead as _, RequiredLenBufFileRead},
+        io_setup::IoSetupState,
+    },
     ahash::{HashMapExt as _, HashSetExt as _},
     bv::BitVec,
     dashmap::DashMap,
+    itertools::Itertools as _,
     log::*,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -848,6 +853,9 @@ pub struct AccountsDb {
     /// storage format to use for new storages
     accounts_file_provider: AccountsFileProvider,
 
+    /// read storages with direct I/O when generating the index
+    use_direct_io: bool,
+
     /// index scan filtering for shrinking
     scan_filter_for_shrinking: ScanFilter,
 
@@ -999,6 +1007,7 @@ impl AccountsDb {
             is_bank_drop_callback_enabled: AtomicBool::default(),
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
             accounts_file_provider: accounts_db_config.accounts_file_provider,
+            use_direct_io: accounts_db_config.use_direct_io,
             latest_full_snapshot_slot: SeqLock::new(None),
             last_swept_full_snapshot_slot: AtomicU64::new(0),
             max_cleaned_root: AtomicU64::new(0),
@@ -4852,6 +4861,49 @@ impl AccountsDb {
             .store(slot, Ordering::Relaxed);
     }
 
+    /// Generates the index for `storages`, queuing each chunk of their files for read-ahead
+    /// before scanning it.
+    fn generate_index_for_storages<'a>(
+        &self,
+        storages: impl Iterator<Item = NextItem<'a>>,
+        accum: &mut IndexGenerationAccumulator,
+        num_processed: &AtomicU64,
+    ) {
+        // Caps the open fds per thread.
+        const OPEN_FILES_CHUNK_SIZE: usize = 64;
+        // Direct I/O keeps the single read of each storage out of the page cache, so the growing
+        // index allocates without kernel reclaim.
+        let use_direct_io = self.use_direct_io;
+        let io_setup = IoSetupState::default().with_direct_io(use_direct_io);
+        let mut buf_reader =
+            storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, false, &io_setup)
+                .expect("create storage reader");
+        let mut chunk = Vec::with_capacity(OPEN_FILES_CHUNK_SIZE);
+        for storages_chunk in &storages.chunks(OPEN_FILES_CHUNK_SIZE) {
+            chunk.clear();
+            chunk.extend(storages_chunk.map(|item| {
+                let file = item.storage.accounts.open_file_for_bulk_read(use_direct_io);
+                (item, file.expect("open storage file"))
+            }));
+            // Re-binding scopes the reader's file borrows to this chunk.
+            let mut reader = buf_reader.rebind().expect("rebind storage reader");
+            for (_, file) in &chunk {
+                let (file, read_limit) = (file.as_ref(), file.read_limit());
+                reader
+                    .add_file_to_prefetch(file, read_limit)
+                    .expect("prefetch storage file");
+            }
+            for (item, file) in &chunk {
+                let (file, read_limit) = (file.as_ref(), file.read_limit());
+                reader.set_file(file, read_limit).expect("set storage file");
+                self.generate_index_for_slot(&mut reader, accum, item.original_index, item.storage);
+                num_processed.fetch_add(1, Ordering::Relaxed);
+            }
+            buf_reader = reader.rebind().expect("rebind storage reader");
+        }
+    }
+
+    /// Scans `storage` from the file already activated on `reader`.
     fn generate_index_for_slot<'a>(
         &self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
@@ -4889,7 +4941,7 @@ impl AccountsDb {
         // counter per account and use that for the write version.
         let mut write_version_for_geyser = 0;
         let num_obsolete_accounts_skipped = storage
-            .scan_accounts(reader, None, |offset, account| {
+            .scan_accounts_with(reader, None, |offset, account| {
                 let data_len = account.data.len();
                 stored_size_alive += storage.accounts.calculate_stored_size(data_len);
                 let is_account_zero_lamport = account.is_zero_lamport();
@@ -5030,17 +5082,11 @@ impl AccountsDb {
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
                             let mut thread_accum = IndexGenerationAccumulator::new();
-                            let mut reader = accounts_file::new_scan_accounts_reader();
-                            for next_item in storages_orderer.iter() {
-                                let storage = next_item.storage;
-                                self.generate_index_for_slot(
-                                    &mut reader,
-                                    &mut thread_accum,
-                                    next_item.original_index,
-                                    storage,
-                                );
-                                num_processed.fetch_add(1, Ordering::Relaxed);
-                            }
+                            self.generate_index_for_storages(
+                                storages_orderer.iter(),
+                                &mut thread_accum,
+                                &num_processed,
+                            );
                             thread_accum
                         })
                 })

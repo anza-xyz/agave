@@ -401,6 +401,7 @@ pub fn get_accounts_db_config(
         scan_filter_for_shrinking,
         num_background_threads: None,
         accounts_file_provider,
+        use_direct_io: !arg_matches.is_present("no_accounts_db_snapshots_direct_io"),
     }
 }
 

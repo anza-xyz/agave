@@ -2,7 +2,7 @@ use {
     crate::{
         account_info::Offset,
         account_storage_entry::AccountStorageEntry,
-        accounts_file::OpenFileForArchive,
+        accounts_file::OpenFileForBulkRead,
         append_vec::{AppendVec, AppendVecAccountWriter},
     },
     agave_fs::{
@@ -72,14 +72,14 @@ pub fn storage_file_buf_reader<'a>(
 }
 
 /// Lazy iterator yielding a file handle for each storage suitable for
-/// archive-style reads matching `use_direct_io` (see [`OpenFileForArchive`]).
+/// bulk reads matching `use_direct_io` (see [`OpenFileForBulkRead`]).
 pub fn open_storage_files<'s>(
     storages: impl IntoIterator<Item = &'s AccountStorageEntry> + 's,
     use_direct_io: bool,
-) -> impl Iterator<Item = io::Result<OpenFileForArchive<'s>>> + 's {
+) -> impl Iterator<Item = io::Result<OpenFileForBulkRead<'s>>> + 's {
     storages
         .into_iter()
-        .map(move |storage| storage.accounts.open_file_for_archive(use_direct_io))
+        .map(move |storage| storage.accounts.open_file_for_bulk_read(use_direct_io))
 }
 
 /// Should tombstones be included or excluded when reading from storage?

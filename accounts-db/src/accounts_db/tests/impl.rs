@@ -98,6 +98,16 @@ fn create_store_for_shrink_tests(
     (temp_dir, store)
 }
 
+fn generate_index_for_storage(
+    db: &AccountsDb,
+    storage: &AccountStorageEntry,
+    accum: &mut IndexGenerationAccumulator,
+) {
+    let mut reader = accounts_file::new_scan_accounts_reader();
+    storage.accounts.set_file_on_reader(&mut reader).unwrap();
+    db.generate_index_for_slot(&mut reader, accum, 0, storage);
+}
+
 #[test]
 #[should_panic(expected = "Accounts may only be stored once per slot:")]
 fn test_generate_index_duplicates_within_slot() {
@@ -121,9 +131,63 @@ fn test_generate_index_duplicates_within_slot() {
 
     assert!(!db.accounts_index.contains(&pubkey));
     let storage = db.get_storage_for_slot(slot0).unwrap();
-    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
-    db.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
+    generate_index_for_storage(&db, &storage, &mut accum);
+}
+
+#[test]
+fn test_generate_index_with_direct_io() {
+    // Sizes go just under and over the 4 KiB direct I/O alignment and past the 1 MiB read size.
+    const DATA_LENS: [usize; 6] = [0, 1, 4095, 4097, 100_000, 3 * 1024 * 1024 + 17];
+    let generate_index = |use_direct_io| {
+        let db = AccountsDb::new_for_tests_with_config(
+            Vec::new(),
+            AccountsDbConfig {
+                use_direct_io,
+                ..DEFAULT_ACCOUNTS_DB_CONFIG
+            },
+        );
+        for slot in 0..8 {
+            let accounts: Vec<_> = DATA_LENS
+                .iter()
+                .enumerate()
+                .map(|(i, data_len)| {
+                    // The first pubkey repeats in every slot, so the index sees duplicates.
+                    let pubkey = Pubkey::from([if i == 0 { 0 } else { slot as u8 + 1 }; 32]);
+                    let mut pubkey_bytes = pubkey.to_bytes();
+                    pubkey_bytes[31] = i as u8;
+                    let lamports = slot * 1000 + i as u64 + 1;
+                    let account = AccountSharedData::new(lamports, *data_len, &Pubkey::default());
+                    (Pubkey::from(pubkey_bytes), account)
+                })
+                .collect();
+            let accounts: Vec<_> = accounts.iter().map(|(k, a)| (k, a)).collect();
+            let store = db.create_store(slot, 8 * 1024 * 1024);
+            store.write_accounts(&(slot, &accounts[..])).unwrap();
+            db.storage.insert(Arc::new(store));
+        }
+        let info = db.generate_index(None, false);
+        let alive: Vec<_> = (0..8)
+            .map(|slot| {
+                let storage = db.get_storage_for_slot(slot).unwrap();
+                (storage.num_alive_accounts(), storage.num_alive_bytes())
+            })
+            .collect();
+        (info, alive)
+    };
+
+    let (direct, direct_alive) = generate_index(true);
+    let (buffered, buffered_alive) = generate_index(false);
+    assert_eq!(direct.accounts_data_len, buffered.accounts_data_len);
+    assert_eq!(
+        direct.calculated_capitalization,
+        buffered.calculated_capitalization
+    );
+    assert_eq!(
+        direct.calculated_accounts_lt_hash.0.checksum(),
+        buffered.calculated_accounts_lt_hash.0.checksum()
+    );
+    assert_eq!(direct_alive, buffered_alive);
 }
 
 #[test]
@@ -5337,9 +5401,8 @@ fn test_calculate_storage_count_and_alive_bytes() {
     accounts.storage.insert(Arc::new(storage));
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
-    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
-    accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
+    generate_index_for_storage(&accounts, &storage, &mut accum);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 1);
     let expected_stored_size = storage.accounts.calculate_stored_size(account.data().len());
     assert_eq!(
@@ -5355,9 +5418,8 @@ fn test_calculate_storage_count_and_alive_bytes_0_accounts() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     // empty store
     let storage = accounts.create_store(0, 1);
-    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
-    accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
+    generate_index_for_storage(&accounts, &storage, &mut accum);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 0);
     assert_eq!(storage.num_alive_bytes.load(Ordering::Relaxed), 0);
     assert_eq!(storage.num_stored_bytes(), 0);
@@ -5392,9 +5454,8 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
         .write_accounts(&(slot0, &[(&keys[0], &account1), (&keys[1], &account2)][..]))
         .unwrap();
 
-    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
-    accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
+    generate_index_for_storage(&accounts, &storage, &mut accum);
     assert_eq!(storage.num_alive_accounts.load(Ordering::Relaxed), 2);
     let expected_stored_size = storage
         .accounts
@@ -5456,9 +5517,8 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         .unwrap()
         .mark_accounts_obsolete(accounts_to_mark_obsolete.iter().cloned(), slot0 + 1);
 
-    let mut reader = accounts_file::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::new();
-    accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
+    generate_index_for_storage(&accounts, &storage, &mut accum);
     assert_eq!(
         accum.num_obsolete_accounts_skipped,
         num_accounts_to_mark_obsolete as u64
