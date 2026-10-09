@@ -124,8 +124,9 @@ impl Config {
     /// - using the "wss" scheme if the RPC URL has an "https" scheme, or the
     ///   "ws" scheme if the RPC URL has an "http" scheme.
     ///
-    /// If `json_rpc_url` cannot be parsed as a URL then this function returns
-    /// the empty string.
+    /// If `json_rpc_url` cannot be parsed as a URL, or its port is `65535` so
+    /// that adding 1 would overflow, then this function returns the empty
+    /// string.
     pub fn compute_websocket_url(json_rpc_url: &str) -> String {
         let json_rpc_url: Option<Url> = json_rpc_url.parse().ok();
         if json_rpc_url.is_none() {
@@ -138,7 +139,12 @@ impl Config {
             .set_scheme(if is_secure { "wss" } else { "ws" })
             .expect("unable to set scheme");
         if let Some(port) = json_rpc_url.port() {
-            let port = port.checked_add(1).expect("port out of range");
+            // A json_rpc_url with port 65535 has no valid websocket port
+            // (65536 overflows u16); return the empty string rather than
+            // panicking, consistent with the unparseable-URL case above.
+            let Some(port) = port.checked_add(1) else {
+                return "".to_string();
+            };
             ws_url.set_port(Some(port)).expect("unable to set port");
         }
         ws_url.to_string()
@@ -193,5 +199,12 @@ mod test {
         );
 
         assert_eq!(Config::compute_websocket_url("garbage"), String::new());
+
+        // Port 65535 has no valid websocket port (65536 overflows u16); the
+        // function must return the empty string rather than panic.
+        assert_eq!(
+            Config::compute_websocket_url("http://example.com:65535"),
+            String::new()
+        );
     }
 }
