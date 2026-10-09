@@ -433,7 +433,6 @@ dependencies = [
  "qualifier_attr",
  "rand 0.9.4",
  "rayon",
- "scopeguard",
  "serde",
  "serde_json",
  "serde_yaml",

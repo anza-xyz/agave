@@ -106,6 +106,15 @@ pub fn execute(
     }
 
     let run_args = RunArgs::from_clap_arg_match(matches)?;
+    // Canonicalize ledger path to avoid issues with symlink creation
+    let ledger_path = create_and_canonicalize_directory(&run_args.ledger_path).map_err(|err| {
+        format!(
+            "failed to create and canonicalize ledger path '{}': {err}",
+            run_args.ledger_path.display(),
+        )
+    })?;
+    let mut ledger_lock = ledger_lockfile(&ledger_path);
+    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
     let cli::thread_args::NumThreadConfig {
         accounts_db_background_threads,
@@ -412,7 +421,6 @@ pub fn execute(
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");
 
-    let ledger_path = run_args.ledger_path;
     let blockstore_cleanup_strategy = BlockstoreCleanupStrategy::from_clap_arg_match(matches)?;
 
     let debug_keys: Option<Arc<HashSet<_>>> = if matches.is_present("debug_key") {
@@ -897,9 +905,6 @@ pub fn execute(
                 .to_string())?;
         }
     }
-
-    let mut ledger_lock = ledger_lockfile(&ledger_path);
-    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
     let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
     let admin_service_post_init = Arc::new(RwLock::new(None));

@@ -108,7 +108,6 @@ assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
-scopeguard = { workspace = true }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-time-utils = { workspace = true }
