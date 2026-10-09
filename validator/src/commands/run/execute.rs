@@ -175,17 +175,9 @@ pub fn execute(
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
             .expect("invalid dynamic_port_range");
 
-    let advertised_ip = matches
-        .value_of("advertised_ip")
-        .map(|advertised_ip| {
-            solana_net_utils::parse_host(advertised_ip)
-                .map_err(|err| format!("failed to parse --advertised-ip: {err}"))
-        })
-        .transpose()?;
-
-    let advertised_ip = if let Some(cli_ip) = advertised_ip {
-        cli_ip
-    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
+    let advertised_ip = if !bind_addresses.active().is_unspecified()
+        && !bind_addresses.active().is_loopback()
+    {
         bind_addresses.active()
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
@@ -463,23 +455,8 @@ pub fn execute(
             .collect(),
     ));
 
-    if bind_addresses.len() > 1 {
-        for (flag, msg) in [
-            (
-                "advertised_ip",
-                "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
-                 validator will advertise the first --bind-address as this node's public IP \
-                 address.",
-            ),
-            (
-                "public_tpu_addr",
-                "--public-tpu-address can not be used in a multihoming context",
-            ),
-        ] {
-            if matches.is_present(flag) {
-                Err(String::from(msg))?;
-            }
-        }
+    if bind_addresses.len() > 1 && matches.is_present("public_tpu_addr") {
+        Err("--public-tpu-address can not be used in a multihoming context")?;
     }
 
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
