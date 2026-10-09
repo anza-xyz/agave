@@ -126,6 +126,10 @@ impl Bank {
             }
         }
 
+        // The count equals the sum of the updates spawned (one per account) below.
+        self.accounts_lt_hash_async_progress
+            .add_deduped_count(accounts.len());
+
         // A closure that does the loading and spawning, so code is shared
         // whether using the thread_pool_for_loading_accounts or not.
         let load_then_spawn = |index| {
@@ -291,9 +295,9 @@ impl AccountsLtHashAsyncProgress {
         max_updates_count: usize,
         updates: impl IntoIterator<Item = AccountsLtHashUpdate>,
     ) {
-        // Count first, so a worker cannot drive the pending count below zero.
-        // Transaction processing threads all write this count, so they bump it
-        // once per call rather than once per update.
+        // Count the upper bound before queueing, so a worker cannot drive the pending
+        // count below zero. Updating the counter per call rather than per account
+        // minimizes contention among the threads sharing the counter.
         self.num_jobs_pending
             .fetch_add(max_updates_count, Ordering::Relaxed);
         let manager = accounts_lt_hash_manager();
@@ -317,6 +321,13 @@ impl AccountsLtHashAsyncProgress {
         }
     }
 
+    /// Adds `count` to the pending jobs count.
+    ///
+    /// Call this once before a series of `spawn_deduped()` calls, with the sum of their updates.
+    fn add_deduped_count(&self, count: usize) {
+        self.num_jobs_pending.fetch_add(count, Ordering::Relaxed);
+    }
+
     /// Spawns `updates` for asynchronous hashing.
     ///
     /// Returns without waiting for the hashing. The updates skip the queue, so the
@@ -324,16 +335,9 @@ impl AccountsLtHashAsyncProgress {
     /// at most once. Updates already in the queue stay there.
     ///
     /// Call this only before the first `enqueue_for_dedup()` or after the last, so the
-    /// two paths never interleave.
-    fn spawn_deduped(
-        self: &Arc<Self>,
-        updates: impl IntoIterator<Item = AccountsLtHashUpdate, IntoIter: ExactSizeIterator>,
-    ) {
+    /// two paths never interleave. Count `updates` with `add_deduped_count()` first.
+    fn spawn_deduped(self: &Arc<Self>, updates: impl IntoIterator<Item = AccountsLtHashUpdate>) {
         let thread_pool = accounts_hasher_thread_pool();
-        let updates = updates.into_iter();
-        // Count first, so a worker cannot drive the pending count below zero.
-        self.num_jobs_pending
-            .fetch_add(updates.len(), Ordering::Relaxed);
         for update in updates {
             Arc::clone(self).spawn(thread_pool, update);
         }
@@ -1376,6 +1380,7 @@ mod tests {
                 AccountsLtHashAsyncProgress::process(&mut expected_lt_hash, update.clone());
             }
             if spawn {
+                async_progress.add_deduped_count(updates.len());
                 async_progress.spawn_deduped(updates);
             } else {
                 async_progress.enqueue_for_dedup(updates.len(), updates);
