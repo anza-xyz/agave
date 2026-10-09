@@ -408,13 +408,15 @@ mod tests {
             })
             .collect();
 
+        let next_shred_index = 384;
+        let next_code_index = next_shred_index;
         let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
-            369,                                        // next_shred_index
-            776,                                        // next_code_index
+            next_shred_index,
+            next_code_index,
             &mut ProcessShredsStats::default(),
         );
         for shred in [data_shreds, coding_shreds].into_iter().flatten() {
@@ -598,8 +600,8 @@ mod tests {
             .collect_vec();
 
         let chained_merkle_root = Hash::new_from_array(rand::rng().random());
-        let next_shred_index = 10;
-        let next_code_index = 5;
+        let next_shred_index = 32;
+        let next_code_index = next_shred_index;
 
         // Shred using entries directly
         let (data_shreds_entries, coding_shreds_entries) = shredder
@@ -662,7 +664,7 @@ mod tests {
             })
             .collect();
 
-        let start_index = 0x12;
+        let start_index = 0x20;
         let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
