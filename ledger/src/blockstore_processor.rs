@@ -5739,7 +5739,7 @@ pub mod tests {
                 false,
                 Hash::default(),
                 next_shred_index,
-                0,
+                next_shred_index, // next_code_index
                 &mut ProcessShredsStats::default(),
             )
             .into_iter()
@@ -5757,7 +5757,7 @@ pub mod tests {
                     false,
                     Hash::default(),
                     next_shred_index,
-                    0,
+                    next_shred_index, // next_code_index
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()
@@ -5772,7 +5772,7 @@ pub mod tests {
                     true, // last in slot
                     Hash::default(),
                     next_shred_index,
-                    0,
+                    next_shred_index, // next_code_index
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()
@@ -5789,7 +5789,7 @@ pub mod tests {
                     false,
                     Hash::default(),
                     next_shred_index,
-                    0,
+                    next_shred_index, // next_code_index
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()
@@ -5804,7 +5804,7 @@ pub mod tests {
                     true, // last in slot
                     Hash::default(),
                     next_shred_index,
-                    0,
+                    next_shred_index, // next_code_index
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()

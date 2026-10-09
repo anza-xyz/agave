@@ -1762,8 +1762,8 @@ fn test_should_insert_data_shred() {
             &[],
             true,
             Hash::default(), // merkle_root
-            6,               // next_shred_index,
-            6,               // next_code_index
+            32,              // next_shred_index,
+            32,              // next_code_index
             &mut ProcessShredsStats::default(),
         )
         .0;
@@ -1822,8 +1822,8 @@ fn test_should_insert_data_shred() {
             &entries,
             true,
             Hash::default(), // merkle_root
-            last_idx,        // next_shred_index,
-            last_idx,        // next_code_index
+            last_idx + 1,    // next_shred_index,
+            last_idx + 1,    // next_code_index
             &mut ProcessShredsStats::default(),
         )
         .0;
@@ -2053,7 +2053,7 @@ fn test_merkle_root_metas_coding() {
     );
 
     // Add a shred from different fec set
-    let new_index = index + 31;
+    let new_index = index + 32;
     let (_, coding_shreds) = setup_erasure_shreds_with_index(slot, parent_slot, 10, new_index);
     let new_coding_shred = coding_shreds[0].clone();
 
@@ -2117,8 +2117,8 @@ fn test_merkle_root_metas_data() {
 
     let parent_slot = 0;
     let slot = 1;
-    let index = 11;
-    let fec_set_index = 11;
+    let index = 32;
+    let fec_set_index = 32;
     let (data_shreds, _) = setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
     let data_shred = data_shreds[0].clone();
 
@@ -2257,7 +2257,7 @@ fn test_merkle_root_metas_data() {
 
     let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
     let keypair = Keypair::new();
-    let new_index = fec_set_index + 31;
+    let new_index = fec_set_index + 32;
     // Add a shred from different fec set
     let new_data_shred = shredder
         .make_shreds_from_data_slice(
