@@ -9,6 +9,7 @@ use {
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
+        pubkeys::NodePubkey,
         unverified_vote_message::UnverifiedCertificate,
     },
     agave_votor_transport::endpoint::BanSender,
@@ -19,19 +20,18 @@ use {
         iter::{IntoParallelIterator, ParallelIterator},
     },
     solana_measure::measure::Measure,
-    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::collections::{HashMap, HashSet},
 };
 
 pub(super) struct CertPayload {
     pub(super) cert: UnverifiedCertificate,
-    pub(super) sender_identity_pubkey: Pubkey,
+    pub(super) sender: NodePubkey,
 }
 
 struct CertVerifyOutcome {
     verified_cert: Option<Certificate>,
-    failures: Vec<(BlsCertVerifyError, Pubkey)>,
+    failures: Vec<(BlsCertVerifyError, NodePubkey)>,
 }
 
 /// Verifies certificates and sends the verified certificates to the consensus pool.
@@ -43,7 +43,7 @@ struct CertVerifyOutcome {
 /// [`verified_certs_set`] and grouped certs with the same [`CertificateType`]. Each group is
 /// verified until the first valid candidate is found.
 pub(super) fn verify_and_send_certificates(
-    my_pubkey: &Pubkey,
+    my_pubkey: &NodePubkey,
     verified_certs_set: &mut HashSet<CertificateType>,
     cert_groups: HashMap<CertificateType, Vec<CertPayload>>,
     root_bank: &Bank,
@@ -118,10 +118,10 @@ fn verify_cert_groups(
         stats.certs_to_sig_verify += num_certs_attempted as u64;
         stats.redundant_certs_skipped += num_certs.saturating_sub(num_certs_attempted) as u64;
 
-        for (err, sender_identity_pubkey) in outcome.failures {
+        for (err, sender) in outcome.failures {
             stats.banning_validator += 1;
-            ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
-            info!("bls_cert_sigverify: banned sender={sender_identity_pubkey} due to error {err}");
+            ban_sender.ban(sender.0, BAN_TIMEOUT);
+            info!("bls_cert_sigverify: banned sender={sender} due to error {err}");
             stats.certificate_verification_failed += 1;
         }
 
@@ -148,7 +148,7 @@ fn verify_cert_group(certs: Vec<CertPayload>, root_bank: &Bank) -> CertVerifyOut
                     failures,
                 };
             }
-            Err(err) => failures.push((err, cert_payload.sender_identity_pubkey)),
+            Err(err) => failures.push((err, cert_payload.sender)),
         }
     }
 

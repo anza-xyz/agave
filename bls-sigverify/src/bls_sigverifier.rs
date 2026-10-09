@@ -19,6 +19,7 @@ use {
         certificate::CertificateType,
         consensus_message::Block,
         migration::MigrationStatus,
+        pubkeys::NodePubkey,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
         },
@@ -215,8 +216,9 @@ impl SigVerifier {
                 continue;
             }
 
+            let my_pubkey = NodePubkey(self.cluster_info.id());
             let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_inputs(
-                &self.cluster_info.id(),
+                &my_pubkey,
                 &datagrams_buffer,
                 &mut votes_buffer,
                 certificates
@@ -234,7 +236,7 @@ impl SigVerifier {
 
     fn verify_and_send_inputs(
         &mut self,
-        my_pubkey: &Pubkey,
+        my_pubkey: &NodePubkey,
         datagrams: &[Datagram],
         votes_buffer: &mut HashMap<VotePayloadToSign, Batch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
@@ -301,7 +303,7 @@ impl SigVerifier {
         &mut self,
         cert_groups: &mut HashMap<CertificateType, Vec<CertPayload>>,
         cert: UnverifiedCertificate,
-        sender_identity_pubkey: Pubkey,
+        sender: NodePubkey,
     ) {
         if self.verified_certs.contains(&cert.cert_type) {
             self.stats.num_verified_certs_received += 1;
@@ -314,15 +316,12 @@ impl SigVerifier {
         cert_groups
             .entry(cert.cert_type)
             .or_default()
-            .push(CertPayload {
-                cert,
-                sender_identity_pubkey,
-            });
+            .push(CertPayload { cert, sender });
     }
 
     fn extract_and_filter_msgs(
         &mut self,
-        my_pubkey: &Pubkey,
+        my_pubkey: &NodePubkey,
         datagrams: &[Datagram],
         votes_buffer: &mut HashMap<VotePayloadToSign, Batch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
@@ -335,15 +334,11 @@ impl SigVerifier {
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
-        for Datagram {
-            peer_pubkey: sender_identity_pubkey,
-            message,
-            ..
-        } in datagrams
-        {
+        for datagram in datagrams {
+            let sender = NodePubkey(datagram.peer_pubkey);
             num_pkts = num_pkts.saturating_add(1);
             let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
-                message.as_ref(),
+                datagram.message.as_ref(),
                 packet_config(),
                 my_shred_version,
             ) else {
@@ -356,7 +351,7 @@ impl SigVerifier {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
                     self.extract_and_filter_vote(
                         my_pubkey,
-                        *sender_identity_pubkey,
+                        sender,
                         migration_slot,
                         max_vote_slot,
                         root_bank,
@@ -374,7 +369,7 @@ impl SigVerifier {
                         self.stats.cert_too_far_in_future += 1;
                         continue;
                     }
-                    self.add_certificate_to_group(&mut cert_groups, cert, *sender_identity_pubkey);
+                    self.add_certificate_to_group(&mut cert_groups, cert, sender);
                 }
             }
         }
@@ -402,14 +397,15 @@ impl SigVerifier {
                 self.stats.cert_too_far_in_future += 1;
                 continue;
             }
-            let Some(sender_identity_pubkey) = self
+            let Some(sender) = self
                 .leader_schedule
                 .slot_leader_at(carrier_slot, Some(root_bank))
                 .map(|leader| leader.id)
             else {
                 continue;
             };
-            self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
+            let sender = NodePubkey(sender);
+            self.add_certificate_to_group(&mut cert_groups, certificate, sender);
         }
         self.stats.num_pkts += num_pkts;
         cert_groups
@@ -417,8 +413,8 @@ impl SigVerifier {
 
     fn extract_and_filter_vote(
         &mut self,
-        my_pubkey: &Pubkey,
-        sender_identity_pubkey: Pubkey,
+        my_pubkey: &NodePubkey,
+        sender: NodePubkey,
         migration_slot: Option<Slot>,
         max_vote_slot: Slot,
         root_bank: &Bank,
@@ -426,7 +422,7 @@ impl SigVerifier {
         unverified_vote: UnverifiedVoteMessage,
     ) {
         // votes from self take a different pathway.
-        if &sender_identity_pubkey == my_pubkey {
+        if &sender == my_pubkey {
             self.stats.num_keep_vote_failed += 1;
             return;
         }
@@ -452,7 +448,7 @@ impl SigVerifier {
             // Votes are allowed at or below the root if they are useful for rewards
             cmp::Ordering::Less | cmp::Ordering::Equal => {
                 if !rewards_wants_vote(
-                    my_pubkey,
+                    &my_pubkey.0,
                     &self.leader_schedule,
                     root_slot,
                     &unverified_vote.vote,
@@ -477,7 +473,7 @@ impl SigVerifier {
                     self.stats.num_keep_vote_failed += 1;
                     return;
                 };
-                match self.keep_vote(&rank_map, unverified_vote, sender_identity_pubkey) {
+                match self.keep_vote(&rank_map, unverified_vote, sender) {
                     Some((payload, sender_vote_account_pubkey)) => {
                         let batch = Batch::new(
                             vote_payload_to_sign,
@@ -494,7 +490,7 @@ impl SigVerifier {
             }
             Entry::Occupied(mut e) => {
                 let batch = e.get_mut();
-                match self.keep_vote(batch.rank_map(), unverified_vote, sender_identity_pubkey) {
+                match self.keep_vote(batch.rank_map(), unverified_vote, sender) {
                     Some((payload, sender_vote_account_pubkey)) => {
                         batch.push(payload, sender_vote_account_pubkey);
                     }
@@ -511,20 +507,18 @@ impl SigVerifier {
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
         msg: UnverifiedVoteMessage,
-        sender_identity_pubkey: Pubkey,
+        sender: NodePubkey,
     ) -> Option<(UnverifiedVotePayload, Pubkey)> {
-        let (rank, entry) = rank_map
-            .get_ranked_entry_for_node(&sender_identity_pubkey)
-            .or_else(|| {
-                self.stats.discard_vote_invalid_rank += 1;
-                None
-            })?;
+        let (rank, entry) = rank_map.get_ranked_entry_for_node(&sender.0).or_else(|| {
+            self.stats.discard_vote_invalid_rank += 1;
+            None
+        })?;
         match self.vote_pool.try_add_vote(&msg, rank, rank_map.len()) {
             Ok(()) => Some((
                 UnverifiedVotePayload {
                     vote_message: msg,
                     sender_bls_pubkey: entry.bls_pubkey,
-                    sender_identity_pubkey,
+                    sender,
                     stake: entry.stake,
                     rank,
                 },
@@ -536,10 +530,8 @@ impl SigVerifier {
             }
             Err(VotePoolError::Invalid) => {
                 self.stats.invalid_vote_banning_validator += 1;
-                self.ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
-                info!(
-                    "bls_sigverifier: banned sender={sender_identity_pubkey} due to invalid vote"
-                );
+                self.ban_sender.ban(sender.0, BAN_TIMEOUT);
+                info!("bls_sigverifier: banned sender={sender} due to invalid vote");
                 None
             }
         }

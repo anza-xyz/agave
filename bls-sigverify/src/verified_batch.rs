@@ -14,7 +14,7 @@ use {
             send_votes_to_rewards,
         },
     },
-    agave_votor_messages::vote::Vote,
+    agave_votor_messages::{pubkeys::NodePubkey, vote::Vote},
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -49,11 +49,11 @@ impl VerifiedBatch {
         self,
         root_bank: &Bank,
         leader_schedule: &LeaderScheduleCache,
-        my_pubkey: &Pubkey,
+        my_pubkey: &NodePubkey,
         channels: &SigVerifierChannels,
         stats: &mut VoteSenderStats,
     ) -> Result<(), SigVerifyVoteError> {
-        if rewards_wants_vote(my_pubkey, leader_schedule, root_bank.slot(), &self.vote) {
+        if rewards_wants_vote(&my_pubkey.0, leader_schedule, root_bank.slot(), &self.vote) {
             send_votes_to_rewards(
                 my_pubkey,
                 self.aggregates.clone(),
