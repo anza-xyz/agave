@@ -230,8 +230,11 @@ impl AccountsFile {
         &'a self,
         reader: &mut impl FileBufRead<'a>,
     ) -> io::Result<()> {
-        let (file, read_limit) = self.account_data_file();
-        reader.set_file(file, read_limit)
+        if let Some((file, read_limit)) = self.account_data_file() {
+            reader.set_file(file, read_limit)
+        } else {
+            Ok(())
+        }
     }
 
     /// Scans the file already activated on the reader, preserving archive read-ahead and I/O mode.
@@ -314,15 +317,11 @@ impl AccountsFile {
         }
     }
 
-    /// Returns the file holding the account data and its length; a split file without a data file
-    /// returns its meta file with length 0.
-    fn account_data_file(&self) -> (&File, FileSize) {
+    /// Returns the file holding the account data and its length.
+    fn account_data_file(&self) -> Option<(&File, FileSize)> {
         match self {
-            Self::AppendVec(av) => (av.file(), av.len() as FileSize),
-            Self::Split(split) => match split.data_file() {
-                Some(data_file) => (data_file, split.data_len()),
-                None => (split.meta_file(), 0),
-            },
+            Self::AppendVec(av) => Some((av.file(), av.len() as FileSize)),
+            Self::Split(split) => split.data_file().map(|data_file| (data_file, split.data_len())),
         }
     }
 
@@ -347,7 +346,7 @@ impl AccountsFile {
             open_for_reading(path, true).map(|file| {
                 Some(OpenFileForArchive {
                     file: ArchiveFile::Owned(file),
-                    read_limit: self.account_data_file().1,
+                    read_limit: self.account_data_file().unwrap().1,
                 })
             })
         } else {
