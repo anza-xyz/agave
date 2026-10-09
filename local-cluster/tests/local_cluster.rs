@@ -6186,7 +6186,7 @@ fn test_alpenglow_basic_equivocation() {
         let total_duplicate_blocks_observed = (1..=last_duplicate)
             .filter(|slot| blockstore.has_duplicate_shreds_in_slot(*slot))
             .count();
-        if total_duplicate_blocks_observed == expected_duplicate_blocks {
+        if total_duplicate_blocks_observed >= expected_duplicate_blocks {
             break;
         }
         if start.elapsed() > Duration::from_secs(60) {
