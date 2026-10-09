@@ -1252,8 +1252,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes 0.14.100",
- "rand 0.7.3",
- "rand_core 0.5.1",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -4413,9 +4413,9 @@ dependencies = [
 
 [[package]]
 name = "light-poseidon"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47a1ccadd0bb5a32c196da536fd72c59183de24a055f6bf0513bf845fefab862"
+checksum = "29d3992daf44efce5f36b8e61dc5373ee5ff7485cc59d02f5d8afac8a57067eb"
 dependencies = [
  "ark-bn254",
  "ark-ff",
@@ -9481,9 +9481,9 @@ dependencies = [
 
 [[package]]
 name = "solana-poseidon"
-version = "5.0.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "854d28fdcdc6b8442684bb06826d82ea5da945ffa7202a6aea95e5fca0ac5a94"
+checksum = "3a066cf8c003a052ee6cab5e639174b4ddb395d38816dc6fb33d1b86fd2cd13a"
 dependencies = [
  "ark-bn254",
  "light-poseidon",
