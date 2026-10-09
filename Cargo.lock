@@ -11461,6 +11461,7 @@ dependencies = [
  "bencher",
  "bs58",
  "bytes",
+ "clap 2.33.3",
  "crossbeam-channel",
  "itertools 0.15.0",
  "lazy-lru",
@@ -11469,6 +11470,7 @@ dependencies = [
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
+ "scopeguard",
  "solana-clock",
  "solana-cluster-type",
  "solana-cost-model",
@@ -11486,6 +11488,7 @@ dependencies = [
  "solana-perf",
  "solana-poh",
  "solana-pubkey 4.4.0",
+ "solana-rayon-threadlimit",
  "solana-rpc",
  "solana-rpc-client-api",
  "solana-runtime",
@@ -11500,6 +11503,7 @@ dependencies = [
  "solana-turbine",
  "test-case",
  "thiserror 2.0.21",
+ "tikv-jemallocator",
  "wincode",
 ]
 
