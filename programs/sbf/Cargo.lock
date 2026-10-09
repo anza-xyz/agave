@@ -324,7 +324,6 @@ name = "agave-validator"
 version = "4.5.0-alpha.2"
 dependencies = [
  "agave-cpu-utils",
- "agave-feature-set",
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
@@ -362,7 +361,6 @@ dependencies = [
  "solana-commitment-config",
  "solana-core",
  "solana-download-utils",
- "solana-entry",
  "solana-epoch-schedule",
  "solana-faucet",
  "solana-genesis-utils",
