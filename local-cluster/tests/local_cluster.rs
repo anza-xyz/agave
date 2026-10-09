@@ -4296,27 +4296,20 @@ fn find_latest_replayed_slot_from_ledger(
     }
 }
 
-/// Baseline partition/recovery smoke test for the generic cluster-partition harness.
-/// Stricter fork-choice assertions are covered by separate partition tests.
-#[test]
-#[serial]
-fn test_cluster_partition_1_1_1() {
-    run_test_cluster_partition(3, false);
-}
-
 /// Partition/recovery test for Alpenglow
 #[test]
 #[serial]
 fn test_cluster_partition_1_1_1_alpenglow() {
-    run_test_cluster_partition(3, true);
+    run_test_cluster_partition(3);
 }
 
-fn run_test_cluster_partition(num_partitions: usize, is_alpenglow: bool) {
+fn run_test_cluster_partition(num_partitions: usize) {
     let empty = |_: &mut LocalCluster, _: &mut ()| {};
     let on_partition_resolved = |cluster: &mut LocalCluster, _: &mut ()| {
         cluster.check_for_new_roots(16, "PARTITION_TEST", SocketAddrSpace::Unspecified);
     };
     let partition_sizes = vec![1; num_partitions];
+    let is_alpenglow = true;
     run_cluster_partition(
         &partition_sizes,
         None,
