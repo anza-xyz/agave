@@ -181,7 +181,7 @@ strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
-wincode = { workspace = true, features = ["smallvec"] }
+wincode = { workspace = true, features = ["smallvec", "alloc"] }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
