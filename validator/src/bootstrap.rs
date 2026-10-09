@@ -32,7 +32,6 @@ use {
         collections::{HashMap, HashSet, hash_map::RandomState},
         net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
         path::Path,
-        process::exit,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -74,7 +73,7 @@ fn verify_reachable_ports(
     cluster_entrypoint: &ContactInfo,
     validator_config: &ValidatorConfig,
     socket_addr_space: &SocketAddrSpace,
-) -> bool {
+) -> Result<bool, String> {
     let verify_address = |addr: &Option<SocketAddr>| -> bool {
         addr.as_ref()
             .map(|addr| socket_addr_space.check(addr))
@@ -99,7 +98,7 @@ fn verify_reachable_ports(
         &cluster_entrypoint.gossip().unwrap(),
         &udp_sockets,
     ) {
-        return false;
+        return Ok(false);
     }
 
     let mut tcp_listeners = vec![];
@@ -109,10 +108,9 @@ fn verify_reachable_ports(
             ("RPC pubsub", rpc_pubsub_addr, node.info.rpc_pubsub()),
         ] {
             if verify_address(public_addr) {
-                tcp_listeners.push(TcpListener::bind(bind_addr).unwrap_or_else(|err| {
-                    error!("Unable to bind to tcp {bind_addr:?} for {purpose}: {err}");
-                    exit(1);
-                }));
+                tcp_listeners.push(TcpListener::bind(bind_addr).map_err(|err| {
+                    format!("unable to bind to tcp {bind_addr:?} for {purpose}: {err}")
+                })?);
             }
         }
     }
@@ -122,7 +120,10 @@ fn verify_reachable_ports(
         tcp_listeners.push(ip_echo);
     }
 
-    solana_net_utils::verify_all_reachable_tcp(&cluster_entrypoint.gossip().unwrap(), tcp_listeners)
+    Ok(solana_net_utils::verify_all_reachable_tcp(
+        &cluster_entrypoint.gossip().unwrap(),
+        tcp_listeners,
+    ))
 }
 
 fn is_known_validator(id: &Pubkey, known_validators: &Option<HashSet<Pubkey>>) -> bool {
@@ -372,9 +373,6 @@ pub fn attempt_download_genesis_and_snapshot(
     maximum_snapshot_download_abort: u64,
     download_abort_count: &mut u64,
     snapshot_hash: Option<SnapshotHash>,
-    identity_keypair: &Arc<Keypair>,
-    vote_account: &Pubkey,
-    authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
 ) -> Result<(), String> {
     download_then_check_genesis_hash(
         &rpc_contact_info
@@ -410,30 +408,6 @@ pub fn attempt_download_genesis_and_snapshot(
         rpc_contact_info,
     )?;
 
-    if let Some(url) = bootstrap_config.check_vote_account.as_ref() {
-        let rpc_client = RpcClient::new(url);
-        check_vote_account(
-            &rpc_client,
-            &identity_keypair.pubkey(),
-            vote_account,
-            &authorized_voter_keypairs
-                .read()
-                .unwrap()
-                .iter()
-                .map(|k| k.pubkey())
-                .collect::<Vec<_>>(),
-        )
-        .unwrap_or_else(|err| {
-            // Consider failures here to be more likely due to user error (eg,
-            // incorrect `agave-validator` command-line arguments) rather than the
-            // RPC node failing.
-            //
-            // Power users can always use the `--no-check-vote-account` option to
-            // bypass this check entirely
-            error!("{err}");
-            exit(1);
-        });
-    }
     Ok(())
 }
 
@@ -448,14 +422,14 @@ fn ping(addr: &SocketAddr) -> Option<Duration> {
 
 // Populates `vetted_rpc_nodes` with a list of RPC nodes that are ready to be
 // used for downloading latest snapshots and/or the genesis block. Guaranteed to
-// find at least one viable node or terminate the process.
+// find at least one viable node or return an error.
 fn get_vetted_rpc_nodes(
     vetted_rpc_nodes: &mut Vec<(ContactInfo, Option<SnapshotHash>, RpcClient)>,
     cluster_info: &Arc<ClusterInfo>,
     validator_config: &ValidatorConfig,
     blacklisted_rpc_nodes: &mut HashSet<Pubkey>,
     bootstrap_config: &RpcBootstrapConfig,
-) {
+) -> Result<(), String> {
     while vetted_rpc_nodes.is_empty() {
         let rpc_node_details = match get_rpc_nodes(
             cluster_info,
@@ -465,12 +439,11 @@ fn get_vetted_rpc_nodes(
         ) {
             Ok(rpc_node_details) => rpc_node_details,
             Err(err) => {
-                error!(
+                return Err(format!(
                     "Failed to get RPC nodes: {err}. Consider checking system clock, removing \
                      `--no-port-check`, or adjusting `--known-validator ...` arguments as \
                      applicable"
-                );
-                exit(1);
+                ));
             }
         };
 
@@ -546,6 +519,7 @@ fn get_vetted_rpc_nodes(
         );
         blacklisted_rpc_nodes.extend(newly_blacklisted_rpc_nodes.into_inner().unwrap());
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -565,24 +539,29 @@ pub fn rpc_bootstrap(
     minimal_snapshot_download_speed: f32,
     maximum_snapshot_download_abort: u64,
     socket_addr_space: SocketAddrSpace,
-) {
+) -> Result<(), String> {
     if do_port_check {
         let mut order: Vec<_> = (0..cluster_entrypoints.len()).collect();
         order.shuffle(&mut rng());
-        if order.into_iter().all(|i| {
-            !verify_reachable_ports(
+        let mut reachable = false;
+        for i in order {
+            reachable = verify_reachable_ports(
                 node,
                 &cluster_entrypoints[i],
                 validator_config,
                 &socket_addr_space,
-            )
-        }) {
-            exit(1);
+            )?;
+            if reachable {
+                break;
+            }
+        }
+        if !reachable {
+            return Err("no cluster entrypoint could reach this node's ports".to_string());
         }
     }
 
     if bootstrap_config.no_genesis_fetch && bootstrap_config.no_snapshot_fetch {
-        return;
+        return Ok(());
     }
 
     let total_snapshot_download_time = Instant::now();
@@ -622,7 +601,7 @@ pub fn rpc_bootstrap(
             validator_config,
             &mut blacklisted_rpc_nodes,
             &bootstrap_config,
-        );
+        )?;
         // `vetted_rpc_nodes` is sorted by ping ascending, so take the first
         // entry. `pop()` would take the highest-ping peer.
         let (rpc_contact_info, snapshot_hash, rpc_client) = vetted_rpc_nodes.remove(0);
@@ -643,9 +622,6 @@ pub fn rpc_bootstrap(
             maximum_snapshot_download_abort,
             &mut download_abort_count,
             snapshot_hash,
-            identity_keypair,
-            vote_account,
-            authorized_voter_keypairs.clone(),
         );
         snapshot_download_time += snapshot_download_start.elapsed();
         match download_result {
@@ -681,6 +657,27 @@ pub fn rpc_bootstrap(
         ("download_abort_count", download_abort_count, i64),
         ("blacklisted_nodes_count", blacklisted_rpc_nodes.len(), i64),
     );
+
+    // Consider failures here to be more likely due to user error (eg,
+    // incorrect `agave-validator` command-line arguments) rather than the
+    // RPC node failing.
+    //
+    // Power users can always use the `--no-check-vote-account` option to
+    // bypass this check entirely
+    if let Some(url) = bootstrap_config.check_vote_account.as_ref() {
+        check_vote_account(
+            &RpcClient::new(url),
+            &identity_keypair.pubkey(),
+            vote_account,
+            &authorized_voter_keypairs
+                .read()
+                .unwrap()
+                .iter()
+                .map(|k| k.pubkey())
+                .collect::<Vec<_>>(),
+        )?;
+    }
+    Ok(())
 }
 
 /// Get RPC peer node candidates to download from.
