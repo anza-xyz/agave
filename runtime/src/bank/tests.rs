@@ -1844,6 +1844,7 @@ fn test_interleaving_locks() {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
+            None,
         )
         .0;
     assert!(commit_results[0].is_ok());
@@ -1937,6 +1938,7 @@ fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_sema
             ExecutionRecordingConfig::new_single_setting(true),
             &mut ExecuteTimings::default(),
             None,
+            None,
         )
         .0;
 
@@ -2001,6 +2003,7 @@ fn test_load_and_execute_commit_transactions_failure() {
             &batch,
             ExecutionRecordingConfig::new_single_setting(true),
             &mut ExecuteTimings::default(),
+            None,
             None,
         )
         .0;
@@ -2074,6 +2077,7 @@ fn test_load_and_execute_commit_transactions_success() {
             &batch,
             ExecutionRecordingConfig::new_single_setting(true),
             &mut ExecuteTimings::default(),
+            None,
             None,
         )
         .0;
@@ -2329,6 +2333,7 @@ fn test_status_cache_ignores_nonce(case: NonceTestCase, separate_nonce: bool) {
         vec![result],
         &ProcessedTransactionCounts::default(),
         &mut ExecuteTimings::default(),
+        None,
     );
 
     let is_message_hash_in_status_cache = bank
@@ -4847,6 +4852,7 @@ fn test_pre_post_transaction_balances() {
             enable_transaction_balance_recording: true,
         },
         &mut ExecuteTimings::default(),
+        None,
         None,
     );
 
@@ -8880,6 +8886,7 @@ fn test_tx_log_order() {
             },
             &mut ExecuteTimings::default(),
             None,
+            None,
         )
         .0;
 
@@ -8993,6 +9000,7 @@ fn test_tx_return_data() {
                     enable_transaction_balance_recording: false,
                 },
                 &mut ExecuteTimings::default(),
+                None,
                 None,
             )
             .0;
@@ -12450,6 +12458,7 @@ fn test_temporary_account_execute_and_commit() {
         ExecutionRecordingConfig::default(),
         &mut ExecuteTimings::default(),
         None,
+        None,
     );
 
     assert_eq!(commit_results.len(), 2);
@@ -12536,6 +12545,7 @@ fn test_temporary_account_recreated_execute_and_commit() {
         &batch,
         ExecutionRecordingConfig::default(),
         &mut ExecuteTimings::default(),
+        None,
         None,
     );
 
@@ -12791,9 +12801,13 @@ fn test_new_for_txn_tests_system_transfer() {
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let bank_id = bank_rc.next_bank_id();
     let ancestors = Ancestors::from(vec![(parent_slot, bank_id)]);
-    bank_rc
-        .accounts
-        .store_accounts((parent_slot, refs.as_slice()), bank_id, None, &ancestors);
+    bank_rc.accounts.store_accounts(
+        (parent_slot, refs.as_slice()),
+        bank_id,
+        None,
+        None,
+        &ancestors,
+    );
     bank_rc.accounts.accounts_db.add_root(parent_slot);
 
     let mut epoch_stakes = HashMap::new();
@@ -12974,9 +12988,13 @@ fn test_new_for_block_tests_with_vote_account() {
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let bank_id = bank_rc.next_bank_id();
     let ancestors = Ancestors::from(vec![(parent_slot, bank_id)]);
-    bank_rc
-        .accounts
-        .store_accounts((parent_slot, refs.as_slice()), bank_id, None, &ancestors);
+    bank_rc.accounts.store_accounts(
+        (parent_slot, refs.as_slice()),
+        bank_id,
+        None,
+        None,
+        &ancestors,
+    );
     bank_rc.accounts.accounts_db.add_root(parent_slot);
 
     let vote_accounts_map = HashMap::from([(vote_pubkey, (1_000_000, vote_acct))]);
@@ -13092,6 +13110,7 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
+            None,
         )
         .0;
 
@@ -13117,5 +13136,127 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
     assert_eq!(
         bank.capitalization(),
         bank.calculate_capitalization_for_tests()
+    );
+}
+
+#[test]
+fn test_commit_transactions_notifies_geyser_txn_index() {
+    use solana_accounts_db::accounts_update_notifier_interface::{
+        AccountForGeyser, AccountsUpdateNotifierInterface,
+    };
+
+    #[derive(Debug, Default)]
+    struct RecordingNotifier {
+        // (pubkey, txn_index) for every runtime account update, in order.
+        updates: Mutex<Vec<(Pubkey, Option<usize>)>>,
+    }
+
+    impl AccountsUpdateNotifierInterface for RecordingNotifier {
+        fn snapshot_notifications_enabled(&self) -> bool {
+            false
+        }
+
+        fn notify_account_update(
+            &self,
+            _slot: Slot,
+            _bank_id: BankId,
+            _account: &AccountSharedData,
+            _txn: &Option<&SanitizedTransaction>,
+            pubkey: &Pubkey,
+            _write_version: u64,
+            txn_index: Option<usize>,
+        ) {
+            self.updates.lock().unwrap().push((*pubkey, txn_index));
+        }
+
+        fn notify_account_restore_from_snapshot(
+            &self,
+            _slot: Slot,
+            _write_version: u64,
+            _account: &AccountForGeyser<'_>,
+        ) {
+        }
+
+        fn notify_end_of_restore_from_snapshot(&self) {}
+    }
+
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let notifier = Arc::new(RecordingNotifier::default());
+    let (bank, _bank_forks) = Bank::new_from_genesis(
+        &genesis_config,
+        Arc::new(RuntimeConfig::default()),
+        vec![],
+        None,
+        BankTestConfig::default().accounts_db_config,
+        Some(notifier.clone()),
+        Some(SlotLeader::new_unique()),
+        Arc::default(),
+        None,
+        None,
+    )
+    .wrap_with_bank_forks_for_tests();
+
+    let amount = genesis_config.rent.minimum_balance(0);
+    // Same fee payer, so commit one at a time with the indexes they'd carry in a block
+    let recipients = [Keypair::new(), Keypair::new()];
+    let expected_indexes = [17usize, 23usize];
+    for (recipient, expected_index) in recipients.iter().zip(expected_indexes) {
+        // Drop whatever genesis and earlier transfers recorded.
+        notifier.updates.lock().unwrap().clear();
+
+        let batch = bank.prepare_batch_for_tests(vec![system_transaction::transfer(
+            &mint_keypair,
+            &recipient.pubkey(),
+            amount,
+            genesis_config.hash(),
+        )]);
+        let commit_results = bank
+            .load_execute_and_commit_transactions(
+                &batch,
+                ExecutionRecordingConfig::new_single_setting(false),
+                &mut ExecuteTimings::default(),
+                None,
+                Some(&[expected_index]),
+            )
+            .0;
+        assert!(commit_results[0].is_ok(), "{commit_results:?}");
+
+        let updates = notifier.updates.lock().unwrap().clone();
+        assert!(!updates.is_empty(), "expected geyser notifications");
+        // Every account this transaction wrote carries its index.
+        for (pubkey, txn_index) in &updates {
+            assert_eq!(
+                *txn_index,
+                Some(expected_index),
+                "account {pubkey} reported {txn_index:?}"
+            );
+        }
+    }
+
+    // With no indexes supplied, the same path reports none.
+    notifier.updates.lock().unwrap().clear();
+    let carol = Keypair::new();
+    let batch = bank.prepare_batch_for_tests(vec![system_transaction::transfer(
+        &mint_keypair,
+        &carol.pubkey(),
+        amount,
+        genesis_config.hash(),
+    )]);
+    let commit_results = bank
+        .load_execute_and_commit_transactions(
+            &batch,
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+            None,
+        )
+        .0;
+    assert!(commit_results[0].is_ok(), "{commit_results:?}");
+    let updates = notifier.updates.lock().unwrap().clone();
+    assert!(!updates.is_empty(), "expected geyser notifications");
+    assert!(
+        updates
+            .iter()
+            .all(|(_pubkey, txn_index)| txn_index.is_none())
     );
 }

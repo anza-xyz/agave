@@ -92,6 +92,7 @@ impl TestSetup {
                 ExecutionRecordingConfig::new_single_setting(false),
                 &mut ExecuteTimings::default(),
                 None,
+                None,
             )
             .0
             .remove(0);

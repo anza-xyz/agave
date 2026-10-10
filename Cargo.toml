@@ -647,6 +647,8 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
+# TODO: drop once anza-xyz/agave-sdk#190 is released
+agave-geyser-plugin-interface = { git = "https://github.com/cbpodd/agave-sdk", rev = "f5d18c6661a868e6f801addade8832852dd5ae72" }
 # for details, see https://github.com/anza-xyz/crossbeam/commit/5ee1c6ec671d94db14ed9238eb99e59a84555aad
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "5ee1c6ec671d94db14ed9238eb99e59a84555aad" }
 librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }

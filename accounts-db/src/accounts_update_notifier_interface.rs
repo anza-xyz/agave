@@ -20,6 +20,7 @@ pub trait AccountsUpdateNotifierInterface: std::fmt::Debug {
         txn: &Option<&SanitizedTransaction>,
         pubkey: &Pubkey,
         write_version: u64,
+        txn_index: Option<usize>,
     );
 
     /// Notified when the AccountsDb is initialized at start when restored
