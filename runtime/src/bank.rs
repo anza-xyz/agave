@@ -7090,6 +7090,10 @@ impl Bank {
             accounts_data_size_initial,
         );
 
+        if bank.get_alpenglow_genesis_certificate().is_some() {
+            bank.set_is_alpenglow();
+        }
+
         bank.apply_activated_features();
         if bank.feature_set.snapshot().remove_inactive_stakes {
             bank.stakes_cache.remove_inert_stake_delegations(
@@ -7116,6 +7120,26 @@ impl Bank {
             bank.block_height.saturating_sub(1),
             null_tracer(),
         );
+
+        // The Alpenglow clock update detects an epoch boundary through the
+        // parent bank, which this bank does not have: apply the boundary
+        // rule (the epoch starts at the parent's footer timestamp) here.
+        if bank.is_alpenglow() && parent_epoch != bank.epoch() {
+            let clock = bank.clock();
+            let clock = sysvar::clock::Clock {
+                epoch_start_timestamp: clock.unix_timestamp,
+                ..clock
+            };
+            bank.update_sysvar_account(&sysvar::clock::id(), |account| {
+                create_account(
+                    &clock,
+                    bank.inherit_specially_retained_account_fields(account),
+                )
+            });
+            bank.transaction_processor.reset_sysvar_cache();
+            bank.transaction_processor
+                .fill_missing_sysvar_cache_entries(&bank);
+        }
 
         bank
     }
