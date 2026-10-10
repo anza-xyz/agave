@@ -291,6 +291,9 @@ pub struct IndexGenerationInfo {
     pub calculated_accounts_lt_hash: AccountsLtHash,
     /// The capitalization, in lamports, calculated during index generation.
     pub calculated_capitalization: u64,
+    /// Every stake program account seen in the storages, sorted, no repeats.
+    /// Old versions count too, so some may not be stake accounts any more.
+    pub stake_pubkeys: Vec<Pubkey>,
 }
 
 /// Accumulator for the values produced while generating the index
@@ -319,6 +322,8 @@ struct IndexGenerationAccumulator {
     num_obsolete_accounts_skipped: u64,
     /// The number of zero-lamport pubkeys found in this slot
     num_zero_lamport_pubkeys: u64,
+    /// Stake program accounts seen by this thread
+    stake_pubkeys: Vec<Pubkey>,
     slot_arena: IndexGenerationSlotArena,
 }
 impl IndexGenerationAccumulator {
@@ -336,6 +341,7 @@ impl IndexGenerationAccumulator {
             capitalization: 0,
             num_obsolete_accounts_skipped: 0,
             num_zero_lamport_pubkeys: 0,
+            stake_pubkeys: Vec::new(),
             slot_arena: IndexGenerationSlotArena::default(),
         }
     }
@@ -356,6 +362,7 @@ impl IndexGenerationAccumulator {
             .expect("capitalization cannot overflow");
         self.num_obsolete_accounts_skipped += other.num_obsolete_accounts_skipped;
         self.num_zero_lamport_pubkeys += other.num_zero_lamport_pubkeys;
+        self.stake_pubkeys.append(&mut other.stake_pubkeys);
     }
 }
 
@@ -4869,6 +4876,7 @@ impl AccountsDb {
         // Batches this thread's account lt-hashes across all its storages; merged
         // into other accumulators in `accumulate`.
         let lt_hash_acc = &mut accum.lt_hash_acc;
+        let stake_pubkeys = &mut accum.stake_pubkeys;
 
         let geyser_notifier = self
             .accounts_update_notifier
@@ -4893,6 +4901,9 @@ impl AccountsDb {
                 if !is_account_zero_lamport {
                     accounts_data_len += data_len as u64;
                     all_accounts_are_zero_lamports = false;
+                    if solana_sdk_ids::stake::check_id(account.owner()) {
+                        stake_pubkeys.push(*account.pubkey);
+                    }
                 } else {
                     // Collect zero-lamport pubkeys so they can be added to `uncleaned_pubkeys`
                     // after the scan, for clean to examine and remove.
@@ -5333,10 +5344,14 @@ impl AccountsDb {
                 total_accum.capitalization,
             );
         };
+        let mut stake_pubkeys = total_accum.stake_pubkeys;
+        stake_pubkeys.par_sort_unstable();
+        stake_pubkeys.dedup();
         IndexGenerationInfo {
             accounts_data_len: total_accum.accounts_data_len,
             calculated_accounts_lt_hash: AccountsLtHash(accounts_lt_hash),
             calculated_capitalization,
+            stake_pubkeys,
         }
     }
 

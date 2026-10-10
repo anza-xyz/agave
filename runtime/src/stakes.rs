@@ -44,12 +44,6 @@ pub(crate) use serde_stakes::DeserializableDelegationStakes;
 pub use serde_stakes::SerdeStakesToStakeFormat;
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Invalid delegation: {0}")]
-    InvalidDelegation(Pubkey),
-    #[error(transparent)]
-    InvalidStakeAccount(#[from] stake_account::Error),
-    #[error("Stake account not found: {0}")]
-    StakeAccountNotFound(Pubkey),
     #[error("Vote account mismatch: {0}")]
     VoteAccountMismatch(Pubkey),
     #[error("Vote account not cached: {0}")]
@@ -202,8 +196,7 @@ impl StakesCache {
 }
 
 /// The generic type T is either Delegation or StakeAccount.
-/// [`Stakes<Delegation>`] is equivalent to the old code and is used for backward
-/// compatibility in [`crate::bank::BankFieldsToDeserialize`].
+/// [`Stakes<Delegation>`] is the snapshot layout. Only tests build it.
 /// But banks cache [`Stakes<StakeAccount>`] which includes the entire stake
 /// account and StakeStateV2 deserialized from the account. Doing so, will remove
 /// the need to load the stake account from accounts-db when working with
@@ -349,32 +342,39 @@ impl Stakes<StakeAccount> {
         }
     }
 
-    /// Creates a Stake<StakeAccount> from DeserializableDelegationStakes by loading the
-    /// full account state for respective stake pubkeys. get_account function
-    /// should return the account at the respective slot where stakes where
-    /// cached.
+    /// Builds the stakes cache from the stake accounts in accounts-db.
+    /// `stake_pubkeys` lists the stake program accounts. Ones that are gone
+    /// or not delegated are skipped. Vote accounts, epoch and stake history
+    /// come from `stakes`. `get_account` must load accounts at the snapshot
+    /// slot.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn load_from_deserialized_delegations<F>(
+    pub(crate) fn load_from_accounts<F>(
         stakes: DeserializableDelegationStakes,
+        stake_pubkeys: Vec<Pubkey>,
         get_account: F,
     ) -> Result<Self, Error>
     where
         F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
-        let stake_delegations = stakes
-            .stake_delegations
+        let stake_delegations = stake_pubkeys
             .into_par_iter()
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
             // collect()/collect_vec_list() and then imbl::HashMap::from_iter(collected.into_iter()),
             // but it does it in background threads, so effectively it's faster.
-            .try_fold(ImblHashMap::new, |mut map, (pubkey, delegation)| {
-                let Some(stake_account) = get_account(&pubkey) else {
-                    return Err(Error::StakeAccountNotFound(pubkey));
+            .try_fold(ImblHashMap::new, |mut map, pubkey| {
+                // Skip accounts that are gone or no longer delegated.
+                let Some(account) = get_account(&pubkey) else {
+                    return Ok(map);
+                };
+
+                // Skip invalid delegations.
+                let Ok(stake_account) = StakeAccount::try_from(account) else {
+                    return Ok(map);
                 };
 
                 // Assert that all valid vote-accounts referenced in stake delegations are already
                 // contained in `stakes.vote_account`.
-                let voter_pubkey = &delegation.voter_pubkey;
+                let voter_pubkey = &stake_account.delegation().voter_pubkey;
                 if stakes.vote_accounts.get(voter_pubkey).is_none()
                     && let Some(account) = get_account(voter_pubkey)
                     && VoteStateVersions::is_correct_size_and_initialized(account.data())
@@ -384,15 +384,8 @@ impl Stakes<StakeAccount> {
                     return Err(Error::VoteAccountNotCached(*voter_pubkey));
                 }
 
-                let stake_account = StakeAccount::try_from(stake_account)?;
-                // Sanity check that the delegation is consistent with what is
-                // stored in the account.
-                if stake_account.delegation() == &delegation {
-                    map.insert(pubkey, stake_account);
-                    Ok(map)
-                } else {
-                    Err(Error::InvalidDelegation(pubkey))
-                }
+                map.insert(pubkey, stake_account);
+                Ok(map)
             })
             .try_reduce(ImblHashMap::new, |a, b| Ok(a.union(b)))?;
 
@@ -1552,12 +1545,60 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_load_from_deserialized_delegations_ignores_reserved_bytes() {
+    fn test_load_from_accounts_keeps_only_delegated_stake_accounts() {
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
             create_staked_node_accounts(10, &Rent::default());
-        let StakeStateV2::Stake(_, stake, _) = stake_account.state().unwrap() else {
-            unreachable!()
+        let undelegated_pubkey = Pubkey::new_unique();
+        let undelegated_account =
+            AccountSharedData::new(1, StakeStateV2::size_of(), &stake::program::id());
+        let other_pubkey = Pubkey::new_unique();
+        let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let missing_pubkey = Pubkey::new_unique();
+        let accounts = [
+            (vote_pubkey, vote_account.clone()),
+            (stake_pubkey, stake_account),
+            (undelegated_pubkey, undelegated_account),
+            (other_pubkey, other_account),
+        ];
+        let get_account = |pubkey: &Pubkey| {
+            accounts
+                .iter()
+                .find(|(key, _)| key == pubkey)
+                .map(|(_, account)| account.clone())
         };
+        let mut vote_accounts = VoteAccounts::default();
+        vote_accounts.insert(
+            vote_pubkey,
+            VoteAccount::try_from(vote_account).unwrap(),
+            || 0,
+        );
+        let deserialized = DeserializableDelegationStakes {
+            vote_accounts,
+            stake_delegations: vec![],
+            unused: 0,
+            epoch: 0,
+            stake_history: StakeHistory::default(),
+        };
+        // The list may repeat a key and may include accounts that are
+        // not delegations.
+        let stake_pubkeys = vec![
+            stake_pubkey,
+            stake_pubkey,
+            undelegated_pubkey,
+            other_pubkey,
+            missing_pubkey,
+        ];
+        let stakes = Stakes::load_from_accounts(deserialized, stake_pubkeys, get_account).unwrap();
+        assert_eq!(
+            stakes.stake_delegations().keys().collect::<Vec<_>>(),
+            vec![&stake_pubkey]
+        );
+    }
+
+    #[test]
+    fn test_load_from_accounts_rejects_uncached_vote_account() {
+        let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
+            create_staked_node_accounts(10, &Rent::default());
         let get_account = |pubkey: &Pubkey| {
             if *pubkey == vote_pubkey {
                 Some(vote_account.clone())
@@ -1567,36 +1608,16 @@ pub(crate) mod tests {
                 None
             }
         };
-        let deserialized = |delegation: Delegation| {
-            let mut vote_accounts = VoteAccounts::default();
-            vote_accounts.insert(
-                vote_pubkey,
-                VoteAccount::try_from(vote_account.clone()).unwrap(),
-                || 0,
-            );
-            DeserializableDelegationStakes {
-                vote_accounts,
-                stake_delegations: vec![(stake_pubkey, delegation)],
-                unused: 0,
-                epoch: 0,
-                stake_history: StakeHistory::default(),
-            }
+        let deserialized = DeserializableDelegationStakes {
+            vote_accounts: VoteAccounts::default(),
+            stake_delegations: vec![],
+            unused: 0,
+            epoch: 0,
+            stake_history: StakeHistory::default(),
         };
-
-        // A snapshot written with the old `warmup_cooldown_rate` bytes loads.
-        let mut delegation = stake.delegation;
-        delegation._reserved = 0.25f64.to_le_bytes();
-        let stakes =
-            Stakes::load_from_deserialized_delegations(deserialized(delegation), get_account)
-                .unwrap();
-        assert!(stakes.stake_delegations().contains_key(&stake_pubkey));
-
-        // The other fields are still checked.
-        let mut delegation = stake.delegation;
-        delegation.stake += 1;
         assert!(matches!(
-            Stakes::load_from_deserialized_delegations(deserialized(delegation), get_account),
-            Err(Error::InvalidDelegation(pubkey)) if pubkey == stake_pubkey
+            Stakes::load_from_accounts(deserialized, vec![stake_pubkey], get_account),
+            Err(Error::VoteAccountNotCached(pubkey)) if pubkey == vote_pubkey
         ));
     }
 }

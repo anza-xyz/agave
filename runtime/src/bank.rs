@@ -2175,6 +2175,7 @@ impl Bank {
         leader_for_tests: Option<SlotLeader>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_data_size_initial: u64,
+        stake_pubkeys: Vec<Pubkey>,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     ) -> Self {
         let now = Instant::now();
@@ -2185,18 +2186,15 @@ impl Bank {
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
         let rewards_calculation_thread_pool = rewards_calculation_thread_pool();
-        // For backward compatibility, we can only serialize and deserialize
-        // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
-        // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
-        // from Stakes<Delegation> by reading the full account state from
-        // accounts-db. Note that it is crucial that these accounts are loaded
-        // at the right slot and match precisely with serialized Delegations.
+        // The stake delegations come from the stake accounts found while
+        // building the accounts index, not from the list in the snapshot.
+        // Vote accounts, epoch and stake history still come from the snapshot.
         //
         // Note that we are disabling the read cache while we populate the stakes cache.
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
         let (stakes, stakes_time) = measure_time!(
-            Stakes::load_from_deserialized_delegations(fields.stakes, |pubkey| {
+            Stakes::load_from_accounts(fields.stakes, stake_pubkeys, |pubkey| {
                 let (account, _slot) = bank_rc
                     .accounts
                     .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;

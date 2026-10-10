@@ -791,6 +791,7 @@ pub(crate) fn reconstruct_bank_from_fields(
         leader_for_tests,
         debug_keys,
         reconstructed_accounts_db_info.accounts_data_len,
+        reconstructed_accounts_db_info.stake_pubkeys,
         epoch_stakes,
     );
 
@@ -894,6 +895,8 @@ pub struct ReconstructedAccountsDbInfo {
     pub calculated_accounts_lt_hash: AccountsLtHash,
     /// The capitalization, in lamports, calculated during index generation.
     pub calculated_capitalization: u64,
+    /// Stake program accounts found while building the index.
+    pub stake_pubkeys: Vec<Pubkey>,
     pub bank_hash_stats: BankHashStats,
 }
 
@@ -951,6 +954,7 @@ fn reconstruct_accountsdb_from_fields(
         accounts_data_len,
         calculated_accounts_lt_hash,
         calculated_capitalization,
+        stake_pubkeys,
     } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
@@ -960,6 +964,7 @@ fn reconstruct_accountsdb_from_fields(
             accounts_data_len,
             calculated_accounts_lt_hash,
             calculated_capitalization,
+            stake_pubkeys,
             bank_hash_stats: snapshot_bank_hash_info.stats,
         },
     ))

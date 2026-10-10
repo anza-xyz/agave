@@ -166,6 +166,33 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
 }
 
 #[test]
+fn test_generate_index_collects_stake_pubkeys() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let stake_owner = solana_sdk_ids::stake::id();
+    let staked = Pubkey::from([1; 32]);
+    let closed = Pubkey::from([2; 32]);
+    let other = Pubkey::from([3; 32]);
+    let stake_account = AccountSharedData::new(1, 0, &stake_owner);
+    let closed_account = AccountSharedData::new(0, 0, &stake_owner);
+    let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+    // Write the same accounts in two slots so the list has repeats.
+    let data = [
+        (&staked, &stake_account),
+        (&closed, &closed_account),
+        (&other, &other_account),
+    ];
+    for slot in [0, 1] {
+        let store = db.create_store(slot, 1000);
+        store.write_accounts(&(slot, &data[..])).unwrap();
+        db.storage.insert(Arc::new(store));
+    }
+
+    let result = db.generate_index(None, false);
+    assert_eq!(result.stake_pubkeys, vec![staked]);
+}
+
+#[test]
 fn test_accountsdb_add_root() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key = Pubkey::default();
