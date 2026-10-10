@@ -274,7 +274,7 @@ pub const DEFAULT_VAT_TO_BURN_PER_EPOCH: u64 =
 
 /// The off-curve account where we store the Alpenglow clock. The clock sysvar has seconds
 /// resolution while the Alpenglow clock has nanosecond resolution.
-static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
+pub(crate) static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
     let (pubkey, _) =
         Pubkey::find_program_address(&[b"alpenclock"], &agave_feature_set::alpenglow::id());
     pubkey
