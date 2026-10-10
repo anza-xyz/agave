@@ -1,4 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
+#[cfg(feature = "dev-context-only-utils")]
+use solana_account::ReadableAccount;
 use {
     solana_account::AccountSharedData, solana_precompile_error::PrecompileError,
     solana_pubkey::Pubkey,
@@ -35,4 +37,22 @@ pub trait InvokeContextCallback {
 /// Runtime callbacks for transaction processing.
 pub trait TransactionProcessingCallback {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData>;
+
+    #[cfg(not(feature = "dev-context-only-utils"))]
+    fn get_account_shared_data_if(
+        &self,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData>;
+
+    #[cfg(feature = "dev-context-only-utils")]
+    fn get_account_shared_data_if(
+        &self,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        self.get_account_shared_data(pubkey).filter(|account| {
+            load_filter(account.lamports(), account.owner(), account.data().len())
+        })
+    }
 }

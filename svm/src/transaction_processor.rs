@@ -3,8 +3,8 @@ use {
         account_loader::{
             AccountLoader, CheckedTransactionDetails, FeesOnlyTransaction, LoadedTransaction,
             NoOpTransaction, TransactionCheckResult, TransactionLoadResult,
-            TransactionValidationResult, ValidatedTransactionDetails, load_transaction,
-            update_rent_exempt_status_for_account, validate_fee_payer,
+            TransactionValidationResult, ValidatedTransactionDetails, fee_payer_load_filter,
+            load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
         },
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
@@ -845,10 +845,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let fee_payer_address = message.fee_payer();
 
-        let Some(mut loaded_fee_payer) = account_loader.load_transaction_account(fee_payer_address)
+        // The load filter lets accounts-db skip reading the data of accounts that cannot be
+        // fee-payers. A nonexistent fee-payer is reported as invalid.
+        let Some(mut loaded_fee_payer) =
+            account_loader.preload_required_account(fee_payer_address, fee_payer_load_filter)
         else {
-            error_counters.account_not_found += 1;
-            return Err(TransactionError::AccountNotFound);
+            error_counters.invalid_account_for_fee += 1;
+            return Err(TransactionError::InvalidAccountForFee);
         };
 
         let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
@@ -909,7 +912,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
 
         let Some(mut nonce_account) = account_loader
-            .load_transaction_account(nonce_address)
+            .load_account(nonce_address)
             .map(|loaded| loaded.account)
         else {
             error_counters.account_not_found += 1;
@@ -2581,7 +2584,7 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
         let mut error_counters = TransactionErrorMetrics::default();
 
-        let expected_error = TransactionError::AccountNotFound;
+        let expected_error = TransactionError::InvalidAccountForFee;
         let expected_result = if relax_fee_payer_constraint {
             TransactionValidationResult::NoOp(NoOpTransaction {
                 validation_error: expected_error,
@@ -2607,7 +2610,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.account_not_found.0, 1);
+        assert_eq!(error_counters.invalid_account_for_fee.0, 1);
         assert_eq!(actual_result, expected_result);
     }
 

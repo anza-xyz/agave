@@ -6936,6 +6936,14 @@ impl TransactionProcessingCallback for Bank {
             .load_with_fixed_root(&self.ancestors, pubkey, None::<fn(_, &_, _) -> _>)
             .map(|(account, _slot)| account)
     }
+
+    fn get_account_shared_data_if(
+        &self,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        self.get_account_with_fixed_root_if(pubkey, load_filter)
+    }
 }
 
 impl fmt::Debug for Bank {

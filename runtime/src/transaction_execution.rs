@@ -522,7 +522,10 @@ mod tests {
         );
 
         let committed = commit_results[0].as_ref().unwrap();
-        assert_eq!(committed.status, Err(TransactionError::AccountNotFound));
+        assert_eq!(
+            committed.status,
+            Err(TransactionError::InvalidAccountForFee)
+        );
         assert_eq!(committed.executed_units, compute);
 
         let tx_costs =
