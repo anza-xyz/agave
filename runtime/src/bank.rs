@@ -4104,16 +4104,24 @@ impl Bank {
                             loaded_accounts_data_size,
                         )
                     }
-                    ProcessedTransaction::FeesOnly(fees_only_tx) => (
-                        vec![],
-                        Err(fees_only_tx.load_error),
-                        Some(fees_only_tx.fee_details.total_fee()),
-                        None,
-                        None,
-                        None,
-                        executed_units,
-                        loaded_accounts_data_size,
-                    ),
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                        let post_simulation_accounts = fees_only_tx
+                            .rollback_accounts
+                            .iter()
+                            .take(number_of_accounts)
+                            .cloned()
+                            .collect();
+                        (
+                            post_simulation_accounts,
+                            Err(fees_only_tx.load_error),
+                            Some(fees_only_tx.fee_details.total_fee()),
+                            None,
+                            None,
+                            None,
+                            executed_units,
+                            loaded_accounts_data_size,
+                        )
+                    }
                     ProcessedTransaction::NoOp(no_op_tx) => (
                         vec![],
                         Err(no_op_tx.validation_error),
