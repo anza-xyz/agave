@@ -371,6 +371,21 @@ pub struct LoadAndExecuteTransactionsOutput {
     pub balance_collector: Option<BalanceCollector>,
 }
 
+/// Result of simulating one transaction of an ordered, atomic batch.
+/// See [`Bank::simulate_transaction_batch_unchecked`].
+#[derive(Debug, PartialEq, Eq)]
+pub struct BatchSimulationResult {
+    /// Execution status of the transaction. Transactions that were processed before a later
+    /// transaction in the batch failed report [`TransactionError::CommitCancelled`].
+    pub result: Result<()>,
+    /// Compute units consumed by execution (zero if the transaction was not executed).
+    pub units_consumed: u64,
+    /// Bytes of account data loaded by execution (zero if the transaction was not executed).
+    pub loaded_accounts_data_size: u32,
+    /// Fee-payer balance after execution, if the transaction was executed.
+    pub fee_payer_post_balance: Option<u64>,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct TransactionSimulationResult {
     pub result: Result<()>,
@@ -3947,6 +3962,24 @@ impl Bank {
         )
     }
 
+    /// Prepare a transaction batch from a list of transactions without locking accounts
+    pub fn prepare_unlocked_batch<'a, 'b, Tx: SVMMessage>(
+        &'a self,
+        transactions: &'b [Tx],
+    ) -> TransactionBatch<'a, 'b, Tx> {
+        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
+        let lock_results = transactions
+            .iter()
+            .map(|transaction| {
+                validate_account_locks(transaction.account_keys(), tx_account_lock_limit)
+            })
+            .collect();
+        let mut batch =
+            TransactionBatch::new(lock_results, self, OwnedOrBorrowed::Borrowed(transactions));
+        batch.set_needs_unlock(false);
+        batch
+    }
+
     /// Prepare a transaction batch from a single transaction without locking accounts
     pub fn prepare_unlocked_batch_from_single_tx<'a, Tx: SVMMessage>(
         &'a self,
@@ -4160,6 +4193,117 @@ impl Bank {
             pre_token_balances,
             post_token_balances,
         }
+    }
+
+    /// Simulates an ordered batch of transactions atomically without committing any state.
+    ///
+    /// Each transaction observes the account state written by the transactions preceding it
+    /// in the batch. A failing transaction is dropped (no fee is charged) and fails the whole
+    /// batch: transactions processed before the failure report
+    /// [`TransactionError::CommitCancelled`], and transactions after it are not attempted.
+    ///
+    /// Does not check whether the bank is frozen. Returns `None` if the bank is being retired
+    /// and no longer admits transaction execution.
+    pub fn simulate_transaction_batch_unchecked<Tx: TransactionWithMeta>(
+        &self,
+        transactions: &[Tx],
+    ) -> Option<Vec<BatchSimulationResult>> {
+        let execution_guard = self.try_enter_transaction_execution()?;
+
+        let slot_history_id = sysvar::slot_history::id();
+        let account_overrides = transactions
+            .iter()
+            .find(|transaction| {
+                transaction
+                    .account_keys()
+                    .iter()
+                    .any(|key| *key == slot_history_id)
+            })
+            .map(|transaction| {
+                self.get_account_overrides_for_simulation(&transaction.account_keys())
+            })
+            .unwrap_or_default();
+        let batch = self.prepare_unlocked_batch(transactions);
+        let mut timings = ExecuteTimings::default();
+
+        let LoadAndExecuteTransactionsOutput {
+            processing_results,
+            balance_collector,
+            ..
+        } = execution_guard.load_and_execute_transactions(
+            &batch,
+            self.max_processing_age(),
+            &mut timings,
+            &mut TransactionErrorMetrics::default(),
+            TransactionProcessingConfig {
+                account_overrides: Some(&account_overrides),
+                log_messages_bytes_limit: None,
+                limit_to_load_programs: true,
+                recording_config: ExecutionRecordingConfig {
+                    enable_cpi_recording: false,
+                    enable_log_recording: false,
+                    enable_return_data_recording: false,
+                    enable_transaction_balance_recording: true,
+                },
+                drop_on_failure: true,
+                all_or_nothing: true,
+                strict_nonce_size_check: true,
+                drop_noop_transactions: true,
+                drop_bail_out_transactions: true,
+            },
+        );
+        drop(execution_guard);
+
+        debug!("simulate_transaction_batch: {timings:?}");
+
+        // Post balances are recorded per attempted transaction, in batch order. Transactions
+        // that were never attempted (aborted by an earlier failure) have no entry.
+        let post_balances = balance_collector
+            .map(|balance_collector| balance_collector.into_vecs().1)
+            .unwrap_or_default();
+
+        Some(
+            processing_results
+                .into_iter()
+                .enumerate()
+                .map(|(index, processing_result)| match processing_result {
+                    Ok(processed_tx) => {
+                        let units_consumed = processed_tx.executed_units();
+                        let loaded_accounts_data_size = processed_tx.loaded_accounts_data_size();
+                        let result = match processed_tx {
+                            ProcessedTransaction::Executed(executed_tx) => {
+                                executed_tx.execution_details.status
+                            }
+                            ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                                Err(fees_only_tx.load_error)
+                            }
+                            ProcessedTransaction::NoOp(no_op_tx) => Err(no_op_tx.validation_error),
+                        };
+                        let fee_payer_post_balance = result
+                            .is_ok()
+                            .then(|| {
+                                post_balances
+                                    .get(index)
+                                    .and_then(|balances| balances.first())
+                                    .copied()
+                            })
+                            .flatten();
+                        BatchSimulationResult {
+                            result,
+                            units_consumed,
+                            loaded_accounts_data_size,
+                            fee_payer_post_balance,
+                        }
+                    }
+                    Err(error) => BatchSimulationResult {
+                        result: Err(error),
+                        units_consumed: 0,
+                        loaded_accounts_data_size: 0,
+                        fee_payer_post_balance: None,
+                    },
+                })
+                .collect(),
+        )
     }
 
     fn get_account_overrides_for_simulation(&self, account_keys: &AccountKeys) -> AccountOverrides {
