@@ -266,7 +266,9 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .required(false)
                                 .help(
                                     "Maximum length of the upgradeable program [default: the \
-                                     length of the original deployed program]",
+                                     length of the original deployed program]. Once SIMD-0433 is \
+                                     active, upgrades resize the program data account to fit the \
+                                     new program, releasing any extra length",
                                 ),
                         )
                         .arg(
@@ -307,7 +309,11 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("no_auto_extend")
                                 .long("no-auto-extend")
                                 .takes_value(false)
-                                .help("Don't automatically extend the program's data account size"),
+                                .help(
+                                    "Don't automatically extend the program's data account size \
+                                     (Deprecated: has no effect once SIMD-0433 is active, as \
+                                     upgrades resize the account automatically)",
+                                ),
                         )
                         .arg(
                             Arg::with_name("skip_feature_verify")
@@ -640,7 +646,9 @@ impl ProgramSubCommands for App<'_, '_> {
                 .subcommand(
                     SubCommand::with_name("extend")
                         .about(
-                            "Extend the length of an upgradeable program to deploy larger programs",
+                            "Extend the length of an upgradeable program to deploy larger \
+                             programs. Not needed once SIMD-0433 is active, as upgrades resize \
+                             the program data account automatically",
                         )
                         .arg(
                             Arg::with_name("program_id")
@@ -744,6 +752,12 @@ pub fn parse_program_subcommand(
             let max_sign_attempts = value_of(matches, "max_sign_attempts").unwrap();
 
             let auto_extend = !matches.is_present("no_auto_extend");
+            if !auto_extend {
+                eprintln!(
+                    "Warning: --no-auto-extend is deprecated and has no effect once SIMD-0433 is \
+                     active, as upgrades resize the program data account automatically"
+                );
+            }
 
             let skip_feature_verify = matches.is_present("skip_feature_verify");
 
@@ -2984,6 +2998,14 @@ async fn extend_program_data_if_needed(
     program_id: &Pubkey,
     program_len: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let feature_set = fetch_feature_set(rpc_client).await?;
+    let feature_snapshot = feature_set.snapshot();
+
+    if feature_snapshot.loader_v3_set_program_data_to_elf_length {
+        // SIMD-0433: Upgrade resizes the program data account to the new ELF.
+        return Ok(());
+    }
+
     let program_data_address = get_program_data_address(program_id);
 
     let Some(program_data_account) = rpc_client
@@ -3026,9 +3048,6 @@ async fn extend_program_data_if_needed(
 
     let mut additional_bytes =
         u32::try_from(additional_bytes).expect("`u32` is big enough to hold an account size");
-
-    let feature_set = fetch_feature_set(rpc_client).await?;
-    let feature_snapshot = feature_set.snapshot();
 
     if feature_snapshot.loader_v3_minimum_extend_program_size {
         // SIMD-0431: Have to bump `additional_bytes` to satisfy either the
