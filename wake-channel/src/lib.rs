@@ -1,35 +1,52 @@
 //! Futex-based wakeups for [`crossbeam_channel`] channels.
 //!
-//! When throughput is high and perf matters the most, this code is basically zero cost. When
-//! throughput is low, the futex based protocol described below kicks in, which is much more
-//! performant than crossbeam's `SyncWaker` (which, among other things, uses a mutex contended at
-//! every wake up by all senders and receivers).
+//! Blocking crossbeam receivers park through a per-channel `SyncWaker`, whose mutex every sender
+//! must take to wake them. When consumers keep draining the channels and going back to sleep,
+//! which can happen even at high throughput, that mutex can become a bottleneck. Here receivers
+//! only call `try_recv()` and sleep on a [`WakeEvent`] instead.
+//!
+//! [`Sender::send`] can still block on crossbeam when the queue is full. Several channels can feed
+//! one [`WakeEvent`], so a consumer can wait on all of them without `select!`.
+//!
+//! # Multiple channels
+//!
+//! [`WakeEvent::recv_with`] takes a poll closure, so a consumer can poll any number of channels of
+//! different types and fold them into one result. Every channel polled inside one `recv_with` call
+//! must have been created on that same event: a channel on another event never wakes this event's
+//! sleepers.
+//!
+//! Every sleeping consumer on an event must also poll every channel on that event. `wake_one()` can
+//! wake any sleeper; if that consumer does not poll the channel with new data, it can go back to
+//! sleep while the data's intended consumer remains asleep. Use separate events for consumers that
+//! drain different sets of channels. Shared-event channels return a [`SharedEventReceiver`], which
+//! supports polling but does not expose a blocking `recv()` method.
 //!
 //! # Synchronization protocol
 //!
-//! Receivers sleep waiting for new messages when a channel is empty. After the underlying channel's
-//! `try_recv()` returns `Empty`, a receiver registers a waiter and calls `try_recv()` again before
-//! sleeping. If the channel is not empty anymore, the receiver returns the message immediately. If
-//! the channel is still empty, the receiver sleeps until a sender wakes it up.
+//! Receivers sleep waiting for new messages when the channels are empty. After the caller-supplied
+//! `poll()` returns `Empty`, a receiver registers a waiter and calls `poll()` again before
+//! sleeping. If any channel is not empty anymore, the receiver returns the message immediately. If
+//! the channels are still empty, the receiver sleeps until a sender wakes it up.
 //!
-//! When a sender sends a message, it enqueues it into the channel and calls `wake_one()`. If no
-//! receivers are sleeping, `wake_one()` _does nothing_. If any receivers are sleeping, one is woken
-//! up so it can process the message.
+//! When a sender sends a message, it enqueues it into one of the channels and calls `wake_one()`.
+//! If no receivers are sleeping, `wake_one()` _does nothing_. If any receivers are sleeping, one is
+//! woken up so it can process the message.
 //!
 //! The fences in `register_waiter()` and `wake_*()` allow the "`wake_one()` does nothing"
-//! optimization, guaranteeing that either a receiver's second `try_recv()` observes a message, or
-//! the sender observes the registered waiter and so can wake it.
+//! optimization, guaranteeing that either a receiver's second `poll()` observes a message, or the
+//! sender observes the registered waiter and so can wake it.
 
 #![cfg(feature = "agave-unstable-api")]
 
+pub use crossbeam_channel::{RecvError, SendError, TryRecvError, TrySendError};
 #[cfg(feature = "shuttle-test")]
 use shuttle::sync::atomic::AtomicUsize;
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::atomic::AtomicUsize;
 use {
-    crossbeam_channel::{RecvError, SendError, TryRecvError},
     crossbeam_utils::Backoff,
     std::{
+        marker::PhantomData,
         mem,
         sync::{
             Arc,
@@ -40,9 +57,13 @@ use {
 
 /// Helper to coordinate sleeping and waking between senders and receivers.
 ///
+/// Consumers block in [`WakeEvent::recv_with`]; [`Receiver::recv`] is the single-channel instance.
+/// Several channels can share one event through [`bounded_with_wake_event`]; every consumer
+/// sleeping on the event must then poll all of them, since a wake can go to any of them.
+///
 /// See the crate docs for the synchronization protocol.
 #[derive(Default)]
-struct WakeEvent {
+pub struct WakeEvent {
     // waiters wait until the cookie changes
     cookie: AtomicU32,
     // number of waiters currently waiting on the cookie
@@ -54,7 +75,7 @@ impl WakeEvent {
     fn register_waiter(&self) -> WakeWaiter<'_> {
         let cookie = self.cookie.load(Ordering::Relaxed);
         self.waiters.fetch_add(1, Ordering::Relaxed);
-        // see Receiver::recv() on why this is needed
+        // see WakeEvent::recv_with() on why this is needed
         fence(Ordering::SeqCst);
         WakeWaiter {
             event: self,
@@ -62,8 +83,10 @@ impl WakeEvent {
         }
     }
 
-    fn wake_one(&self) {
-        // see Receiver::recv() on why this is needed
+    /// Wakes one sleeping receiver, if any. Call it _after_ making visible the change the
+    /// receiver's poll looks for.
+    pub fn wake_one(&self) {
+        // see WakeEvent::recv_with() on why this is needed
         fence(Ordering::SeqCst);
         if self.waiters.load(Ordering::Relaxed) != 0 {
             self.cookie.fetch_add(1, Ordering::Relaxed);
@@ -71,12 +94,57 @@ impl WakeEvent {
         }
     }
 
-    fn wake_all(&self) {
-        // see Receiver::recv() on why this is needed
+    /// Wakes every sleeping receiver, if any. For conditions all receivers must observe, such as a
+    /// channel disconnect or an exit flag. Call it _after_ making the condition visible.
+    pub fn wake_all(&self) {
+        // see WakeEvent::recv_with() on why this is needed
         fence(Ordering::SeqCst);
         if self.waiters.load(Ordering::Relaxed) != 0 {
             self.cookie.fetch_add(1, Ordering::Relaxed);
             atomic_wait::wake_all(&self.cookie);
+        }
+    }
+
+    /// Blocks until `poll` returns something other than `Err(TryRecvError::Empty)`.
+    ///
+    /// `poll` must observe every condition that should end the wait: data, a disconnect, an exit
+    /// flag. Every producer of such a condition must call [`wake_one`](Self::wake_one) or
+    /// [`wake_all`](Self::wake_all) on this event after making it visible.
+    /// `Err(TryRecvError::Disconnected)` from `poll` ends the wait with `Err(RecvError)`.
+    ///
+    /// All consumers sleeping on this event must poll the same set of channels. Otherwise a send
+    /// can wake a consumer that cannot receive the message, leaving the intended consumer asleep.
+    pub fn recv_with<T>(
+        &self,
+        mut poll: impl FnMut() -> Result<T, TryRecvError>,
+    ) -> Result<T, RecvError> {
+        loop {
+            let backoff = Backoff::new();
+            loop {
+                match poll() {
+                    Ok(value) => return Ok(value),
+                    Err(TryRecvError::Disconnected) => return Err(RecvError),
+                    Err(TryRecvError::Empty) if backoff.is_completed() => break,
+                    Err(TryRecvError::Empty) => backoff.snooze(),
+                }
+            }
+
+            // There's a potential race in the window between getting `Empty` above, and registering
+            // the waiter below. A sender might queue a message in the meantime, `wake_one()` might
+            // observe `wake_event.waiters == 0` and skip the wake syscall (optimization to avoid
+            // one syscall per message when the channel has large bursts when it's not empty).
+            //
+            // So below we check again, this time _after_ calling `register_waiter()` and so with
+            // `wake_event.waiters` guaranteed to be non zero. The paired fences (see
+            // `register_waiter()` and `wake_*()`) guarantee that either this check observes a
+            // message into the channel (or `Disconnected`), or the sender sees us in `wait()` and
+            // wakes us.
+            let waiter = self.register_waiter();
+            match poll() {
+                Ok(value) => return Ok(value),
+                Err(TryRecvError::Disconnected) => return Err(RecvError),
+                Err(TryRecvError::Empty) => waiter.wait(),
+            }
         }
     }
 }
@@ -104,7 +172,7 @@ impl Drop for WakeWaiter<'_> {
 }
 
 struct Shared {
-    wake_event: WakeEvent,
+    wake_event: Arc<WakeEvent>,
     // Used to keep track of the number of senders. Each sender drops its underlying channel handle
     // before decrementing this count, so the last sender to decrement it can wake all waiters with
     // the channel already disconnected.
@@ -123,6 +191,24 @@ impl<T> Sender<T> {
         self.inner.send(value)?;
         self.shared.wake_event.wake_one();
         Ok(())
+    }
+
+    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+        self.inner.try_send(value)?;
+        self.shared.wake_event.wake_one();
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
     }
 }
 
@@ -146,60 +232,92 @@ impl<T> Drop for Sender<T> {
     }
 }
 
-/// Wrapper around [`crossbeam_channel::Receiver`] that avoids contention by using a futex to sleep
-/// waiting for messages when the channel is empty.
-pub struct Receiver<T> {
+pub struct SingleChannelEvent;
+pub struct MultiChannelEvent;
+
+/// Receiver for a channel with its own wake event, created by [`bounded`].
+pub type Receiver<T> = ReceiverImpl<T, SingleChannelEvent>;
+
+/// Receiver for a channel sharing a wake event, created by [`bounded_with_wake_event`].
+pub type SharedEventReceiver<T> = ReceiverImpl<T, MultiChannelEvent>;
+
+pub struct ReceiverImpl<T, Mode> {
     inner: crossbeam_channel::Receiver<T>,
     shared: Arc<Shared>,
+    _mode: PhantomData<Mode>,
 }
 
-impl<T> Receiver<T> {
-    pub fn recv(&self) -> Result<T, RecvError> {
-        loop {
-            let backoff = Backoff::new();
-            loop {
-                match self.inner.try_recv() {
-                    Ok(value) => return Ok(value),
-                    Err(TryRecvError::Disconnected) => return Err(RecvError),
-                    Err(TryRecvError::Empty) if backoff.is_completed() => break,
-                    Err(TryRecvError::Empty) => backoff.snooze(),
-                }
-            }
+impl<T, Mode> ReceiverImpl<T, Mode> {
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+        self.inner.try_recv()
+    }
 
-            // There's a potential race in the window between getting `Empty` above, and registering
-            // the waiter below. A sender might queue a message in the meantime, `wake_one()` might
-            // observe `wake_event.waiters == 0` and skip the wake syscall (optimization to avoid
-            // one syscall per message when the channel has large bursts when it's not empty).
-            //
-            // So below we check again, this time _after_ calling `register_waiter()` and so with
-            // `wake_event.waiters` guaranteed to be non zero. The paired fences (see
-            // `register_waiter()` and `wake_*()`) guarantee that either this check observes a
-            // message into the channel (or `Disconnected`), or the sender sees us in `wait()` and
-            // wakes us.
-            let waiter = self.shared.wake_event.register_waiter();
-            match self.inner.try_recv() {
-                Ok(value) => return Ok(value),
-                Err(TryRecvError::Disconnected) => return Err(RecvError),
-                Err(TryRecvError::Empty) => waiter.wait(),
-            }
-        }
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
     }
 }
 
-impl<T> Clone for Receiver<T> {
+impl<T> Receiver<T> {
+    /// Blocks until a message is available or all senders are disconnected.
+    pub fn recv(&self) -> Result<T, RecvError> {
+        self.shared.wake_event.recv_with(|| self.inner.try_recv())
+    }
+}
+
+impl<T> SharedEventReceiver<T> {
+    /// Returns the event shared by this channel and its peers.
+    pub fn wake_event(&self) -> &Arc<WakeEvent> {
+        &self.shared.wake_event
+    }
+}
+
+impl<T, Mode> Clone for ReceiverImpl<T, Mode> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
             shared: Arc::clone(&self.shared),
+            _mode: PhantomData,
         }
     }
 }
 
+/// Creates a channel of the given capacity on its own [`WakeEvent`].
+///
+/// Panics if `capacity` is zero.
 pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+    bounded_inner(capacity, Arc::new(WakeEvent::default()))
+}
+
+/// Creates a channel of the given capacity on `event`.
+///
+/// Every consumer must poll all channels on this event through [`WakeEvent::recv_with`].
+/// The returned [`SharedEventReceiver`] only supports nonblocking receives.
+///
+/// Panics if `capacity` is zero: a zero-capacity crossbeam channel hands each message directly to a
+/// receiver, and this crate wakes a receiver only after the send has completed.
+pub fn bounded_with_wake_event<T>(
+    capacity: usize,
+    event: Arc<WakeEvent>,
+) -> (Sender<T>, SharedEventReceiver<T>) {
+    bounded_inner(capacity, event)
+}
+
+fn bounded_inner<T, Mode>(
+    capacity: usize,
+    event: Arc<WakeEvent>,
+) -> (Sender<T>, ReceiverImpl<T, Mode>) {
     assert_ne!(capacity, 0, "channel capacity must be nonzero");
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
     let shared = Arc::new(Shared {
-        wake_event: WakeEvent::default(),
+        wake_event: event,
         num_senders: AtomicUsize::new(1),
     });
     (
@@ -207,9 +325,10 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
             inner: sender,
             shared: Arc::clone(&shared),
         },
-        Receiver {
+        ReceiverImpl {
             inner: receiver,
             shared,
+            _mode: PhantomData,
         },
     )
 }
@@ -218,8 +337,16 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
 mod tests {
     use {
         super::*,
-        std::{sync::Barrier, thread},
+        std::{sync::atomic::AtomicBool, thread},
     };
+
+    const NUM_RECEIVERS: usize = 4;
+
+    fn wait_for_waiters(event: &WakeEvent, expected: usize) {
+        while event.waiters.load(Ordering::Relaxed) != expected {
+            thread::yield_now();
+        }
+    }
 
     #[test]
     fn test_wake_before_wait() {
@@ -231,35 +358,178 @@ mod tests {
 
     #[test]
     fn test_wake_receivers_and_disconnect() {
-        const NUM_RECEIVERS: usize = 4;
-
         let (sender, receiver) = bounded(NUM_RECEIVERS);
+        // Testing sender-clone lifecycle (num_senders).
         let sender1 = sender.clone();
         drop(sender);
-        let barrier = Arc::new(Barrier::new(NUM_RECEIVERS + 1));
-        let handles = (0..NUM_RECEIVERS)
+        let spawn_consumers = || {
+            (0..NUM_RECEIVERS)
+                .map(|_| {
+                    let receiver = receiver.clone();
+                    thread::spawn(move || receiver.recv())
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let consumers = spawn_consumers();
+        wait_for_waiters(&receiver.shared.wake_event, NUM_RECEIVERS);
+        for _ in 0..NUM_RECEIVERS {
+            sender1.send(()).unwrap();
+        }
+        for consumer in consumers {
+            assert_eq!(consumer.join().unwrap(), Ok(()));
+        }
+
+        let consumers = spawn_consumers();
+        wait_for_waiters(&receiver.shared.wake_event, NUM_RECEIVERS);
+        drop(sender1);
+        for consumer in consumers {
+            assert_eq!(consumer.join().unwrap(), Err(RecvError));
+        }
+    }
+
+    // Exercise sends racing with receiver sleep: the receiver may find a message on its second
+    // poll, observe a changed cookie before blocking, or be woken from a kernel wait. Scheduling
+    // determines which paths occur; this checks progress, not coverage of every path.
+    #[test]
+    fn test_repeated_sends_after_waiter_registration() {
+        const NUM_MESSAGES: usize = 1_000;
+
+        let (sender, receiver) = bounded(1);
+        let shared = Arc::clone(&receiver.shared);
+        let producer = thread::spawn(move || {
+            for i in 0..NUM_MESSAGES {
+                wait_for_waiters(&shared.wake_event, 1);
+                sender.send(i).unwrap();
+            }
+        });
+        let consumer = thread::spawn(move || std::iter::from_fn(|| receiver.recv().ok()).count());
+        assert_eq!(consumer.join().unwrap(), NUM_MESSAGES);
+        producer.join().unwrap();
+    }
+
+    #[test]
+    fn test_exit_flag_wakes_all_receivers() {
+        let event = Arc::new(WakeEvent::default());
+        let exit = Arc::new(AtomicBool::new(false));
+        let consumers = (0..NUM_RECEIVERS)
             .map(|_| {
-                let receiver = receiver.clone();
-                let barrier = Arc::clone(&barrier);
+                let event = Arc::clone(&event);
+                let exit = Arc::clone(&exit);
                 thread::spawn(move || {
-                    receiver.recv().unwrap();
-                    barrier.wait();
-                    assert!(receiver.recv().is_err());
+                    event.recv_with::<()>(|| {
+                        if exit.load(Ordering::Relaxed) {
+                            Err(TryRecvError::Disconnected)
+                        } else {
+                            Err(TryRecvError::Empty)
+                        }
+                    })
                 })
             })
             .collect::<Vec<_>>();
 
-        while receiver.shared.wake_event.waiters.load(Ordering::Relaxed) != NUM_RECEIVERS {
-            thread::yield_now();
+        wait_for_waiters(&event, NUM_RECEIVERS);
+        exit.store(true, Ordering::Relaxed);
+        event.wake_all();
+        for consumer in consumers {
+            assert_eq!(consumer.join().unwrap(), Err(RecvError));
         }
-        for _ in 0..NUM_RECEIVERS {
-            sender1.send(()).unwrap();
-        }
-        barrier.wait();
-        drop(sender1);
+    }
+    #[derive(Debug, PartialEq, Eq)]
+    enum Work {
+        A(u32),
+        B(&'static str),
+    }
 
-        for handle in handles {
-            handle.join().unwrap();
+    fn poll_both(
+        ra: &SharedEventReceiver<u32>,
+        rb: &SharedEventReceiver<&'static str>,
+    ) -> Result<Work, TryRecvError> {
+        match ra.try_recv() {
+            Ok(value) => Ok(Work::A(value)),
+            Err(TryRecvError::Empty) => rb.try_recv().map(Work::B),
+            Err(err) => Err(err),
+        }
+    }
+
+    #[test]
+    fn test_receivers_wake_on_either_channel() {
+        let event = Arc::new(WakeEvent::default());
+        let (sa, ra) = bounded_with_wake_event::<u32>(NUM_RECEIVERS, Arc::clone(&event));
+        let (sb, rb) = bounded_with_wake_event::<&'static str>(NUM_RECEIVERS, Arc::clone(&event));
+
+        // Each consumer receives once, so every registered consumer must make progress.
+        for expected in [Work::A(7), Work::B("b")] {
+            let consumers = (0..NUM_RECEIVERS)
+                .map(|_| {
+                    let event = Arc::clone(&event);
+                    let (ra, rb) = (ra.clone(), rb.clone());
+                    thread::spawn(move || event.recv_with(|| poll_both(&ra, &rb)).unwrap())
+                })
+                .collect::<Vec<_>>();
+
+            wait_for_waiters(&event, NUM_RECEIVERS);
+            for _ in 0..NUM_RECEIVERS {
+                match expected {
+                    Work::A(value) => sa.try_send(value).unwrap(),
+                    Work::B(value) => sb.try_send(value).unwrap(),
+                }
+            }
+            for consumer in consumers {
+                assert_eq!(consumer.join().unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_channel_disconnect_wakes_all_shared_event_receivers() {
+        let event = Arc::new(WakeEvent::default());
+        let (_sa, ra) = bounded_with_wake_event::<u32>(1, Arc::clone(&event));
+        let (sb, rb) = bounded_with_wake_event::<&'static str>(1, Arc::clone(&event));
+        let consumers = (0..NUM_RECEIVERS)
+            .map(|_| {
+                let event = Arc::clone(&event);
+                let (ra, rb) = (ra.clone(), rb.clone());
+                thread::spawn(move || event.recv_with(|| poll_both(&ra, &rb)))
+            })
+            .collect::<Vec<_>>();
+
+        wait_for_waiters(&event, NUM_RECEIVERS);
+        // Channel A is still connected; dropping B's last sender must wake every consumer.
+        drop(sb);
+        for consumer in consumers {
+            assert_eq!(consumer.join().unwrap(), Err(RecvError));
+        }
+    }
+
+    #[test]
+    fn test_exit_flag_wakes_all_shared_event_receivers() {
+        let event = Arc::new(WakeEvent::default());
+        let (_sa, ra) = bounded_with_wake_event::<u32>(1, Arc::clone(&event));
+        let (_sb, rb) = bounded_with_wake_event::<&'static str>(1, Arc::clone(&event));
+        let exit = Arc::new(AtomicBool::new(false));
+        let consumers = (0..NUM_RECEIVERS)
+            .map(|_| {
+                let event = Arc::clone(&event);
+                let exit = Arc::clone(&exit);
+                let (ra, rb) = (ra.clone(), rb.clone());
+                thread::spawn(move || {
+                    event.recv_with(|| {
+                        if exit.load(Ordering::Relaxed) {
+                            Err(TryRecvError::Disconnected)
+                        } else {
+                            poll_both(&ra, &rb)
+                        }
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        wait_for_waiters(&event, NUM_RECEIVERS);
+        exit.store(true, Ordering::Relaxed);
+        event.wake_all();
+        for consumer in consumers {
+            assert_eq!(consumer.join().unwrap(), Err(RecvError));
         }
     }
 }
