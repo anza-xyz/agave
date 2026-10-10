@@ -184,7 +184,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 
     #[cfg(feature = "metrics")]
     load_program_metrics.submit_datapoint(&mut execute_timings.details);
-    loaded_program.update_access_slot(current_slot);
     Some(Arc::new(loaded_program))
 }
 
