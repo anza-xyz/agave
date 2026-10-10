@@ -58,7 +58,7 @@ use {
     solana_sha256_hasher::hashv,
     solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
-    solana_streamer::streamer::PacketBatchSender,
+    solana_streamer::streamer::{PacketBatchSender, StreamerReceiveStats},
     solana_time_utils::timestamp,
     std::{
         cmp::Reverse,
@@ -1538,6 +1538,7 @@ impl ServeRepair {
         mut self,
         requests_receiver: Receiver<PacketBatch>,
         response_sender: PacketBatchSender,
+        receiver_stats: Arc<StreamerReceiveStats>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
@@ -1577,6 +1578,7 @@ impl ServeRepair {
                     const REPORT_INTERVAL: Duration = Duration::from_secs(2);
                     if last_print.elapsed() > REPORT_INTERVAL {
                         self.report_reset_stats(&mut stats);
+                        receiver_stats.report();
                         last_print = Instant::now();
                     }
                 }
@@ -3826,5 +3828,79 @@ mod tests {
             RepairProtocol::WindowIndex { .. }
         ));
         assert_eq!(stats.dropped_requests_load_shed_sigverify, 0);
+    }
+
+    #[test]
+    fn test_serve_repair_listener_reports_receiver_stats() {
+        const CHILD_ENV: &str = "AGAVE_SERVE_REPAIR_STATS_TEST_CHILD";
+
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "repair::serve_repair::tests::test_serve_repair_listener_reports_receiver_stats",
+            ])
+            .env(CHILD_ENV, "1")
+            .status()
+            .unwrap();
+
+            assert!(status.success(), "isolated receiver stats test failed");
+            return;
+        }
+
+        agave_logger::setup_with("info");
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        let serve_repair = ServeRepair::new_for_test(
+            Arc::new(new_test_cluster_info()),
+            bank_forks,
+            Arc::new(RwLock::new(HashSet::new())),
+        );
+
+        let (_request_sender, request_receiver) = bounded::<PacketBatch>(1);
+        let (response_sender, _response_receiver) = bounded::<PacketBatch>(1);
+
+        let receiver_stats = Arc::new(StreamerReceiveStats::new("serve_repair_receiver_test"));
+
+        receiver_stats.packets_count.store(5, Ordering::Relaxed);
+        receiver_stats
+            .packet_batches_count
+            .store(2, Ordering::Relaxed);
+
+        let exit = Arc::new(AtomicBool::new(false));
+
+        let listener = serve_repair.listen(
+            request_receiver,
+            response_sender,
+            Arc::clone(&receiver_stats),
+            Arc::clone(&exit),
+        );
+
+        let start = Instant::now();
+
+        let stats_reported = loop {
+            if receiver_stats.packets_count.load(Ordering::Relaxed) == 0
+                && receiver_stats.packet_batches_count.load(Ordering::Relaxed) == 0
+            {
+                break true;
+            }
+
+            if start.elapsed() >= Duration::from_secs(10) {
+                break false;
+            }
+
+            std::thread::sleep(Duration::from_millis(50));
+        };
+
+        exit.store(true, Ordering::Relaxed);
+        listener.join().unwrap();
+
+        assert!(
+            stats_reported,
+            "Serve repair listener should periodically report receiver statistics"
+        );
     }
 }

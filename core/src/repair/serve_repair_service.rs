@@ -37,6 +37,7 @@ impl ServeRepairService {
         stats_reporter_sender: Sender<Box<dyn FnOnce() + Send>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        let receiver_stats = Arc::new(StreamerReceiveStats::new("serve_repair_receiver"));
         let (request_sender, request_receiver) = EvictingSender::new_bounded(REQUEST_CHANNEL_SIZE);
         let serve_repair_socket = Arc::new(serve_repair_socket);
         let t_receiver = streamer::receiver(
@@ -44,7 +45,7 @@ impl ServeRepairService {
             serve_repair_socket.clone(),
             exit.clone(),
             request_sender,
-            Arc::new(StreamerReceiveStats::new("serve_repair_receiver")),
+            receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             false,                          // is_staked_service
         );
@@ -56,7 +57,7 @@ impl ServeRepairService {
             socket_addr_space,
             Some(stats_reporter_sender),
         );
-        let t_listen = serve_repair.listen(request_receiver, response_sender, exit);
+        let t_listen = serve_repair.listen(request_receiver, response_sender, receiver_stats, exit);
 
         let thread_hdls = vec![t_receiver, t_responder, t_listen];
         Self { thread_hdls }
