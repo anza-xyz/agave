@@ -7393,30 +7393,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-bpf-loader-program-tests"
-version = "4.5.0-alpha.2"
-dependencies = [
- "agave-feature-set",
- "assert_matches",
- "solana-account",
- "solana-bpf-loader-program",
- "solana-clock",
- "solana-instruction 4.0.0",
- "solana-instruction-error 3.1.0",
- "solana-keypair",
- "solana-loader-v3-interface",
- "solana-program-test",
- "solana-pubkey 4.4.0",
- "solana-sdk-ids",
- "solana-signer",
- "solana-system-interface",
- "solana-transaction",
- "solana-transaction-error",
- "test-case",
- "wincode",
-]
-
-[[package]]
 name = "solana-bucket-map"
 version = "4.5.0-alpha.2"
 dependencies = [
