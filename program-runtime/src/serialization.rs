@@ -820,31 +820,32 @@ mod tests {
                     transaction_accounts
                 );
                 if instruction_accounts.len() > MAX_ACCOUNTS_PER_INSTRUCTION {
-                    // Special case implementation of configure_next_instruction_for_tests()
-                    // which avoids the overflow when constructing the dedup_map
-                    // by simply not filling it.
+                    // Oversized instructions are rejected before serialization.
                     let dedup_map = vec![u8::MAX; num_transaction_accounts];
-                    invoke_context
-                        .transaction_context
-                        .configure_instruction_at_index(
-                            0,
-                            0,
-                            instruction_accounts,
-                            dedup_map,
-                            Cow::Owned(instruction_data.clone()),
-                            Some(0),
-                        )
-                        .unwrap();
-                } else {
-                    invoke_context
-                        .transaction_context
-                        .configure_top_level_instruction_for_tests(
-                            0,
-                            instruction_accounts,
-                            instruction_data.clone(),
-                        )
-                        .unwrap();
+                    assert_eq!(
+                        invoke_context
+                            .transaction_context
+                            .configure_instruction_at_index(
+                                0,
+                                0,
+                                instruction_accounts,
+                                dedup_map,
+                                Cow::Owned(instruction_data.clone()),
+                                Some(0),
+                            ),
+                        Err(InstructionError::MaxAccountsExceeded),
+                        "{name} test case failed",
+                    );
+                    continue;
                 }
+                invoke_context
+                    .transaction_context
+                    .configure_top_level_instruction_for_tests(
+                        0,
+                        instruction_accounts,
+                        instruction_data.clone(),
+                    )
+                    .unwrap();
                 invoke_context.push().unwrap();
                 let instruction_context = invoke_context
                     .transaction_context

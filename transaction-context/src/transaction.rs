@@ -4,7 +4,7 @@ use crate::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT;
 use {
     crate::{
         DropOnBailOut, IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
-        MAX_ACCOUNT_DATA_LEN, MAX_ACCOUNTS_PER_TRANSACTION,
+        MAX_ACCOUNT_DATA_LEN, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_ACCOUNTS_PER_TRANSACTION,
         instruction::{InstructionContext, InstructionFrame},
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
         vm_addresses::{
@@ -384,6 +384,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_data: Cow<'ix_data, [u8]>,
         caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
+        // The deduplication map reserves u8::MAX for an absent account, and
+        // the SBF parameter ABI reserves it as the non-duplicate marker.
+        if instruction_accounts.len() > MAX_ACCOUNTS_PER_INSTRUCTION {
+            return Err(InstructionError::MaxAccountsExceeded);
+        }
+
         debug_assert_eq!(
             deduplication_map.len(),
             usize::from(self.get_number_of_accounts()).min(MAX_ACCOUNTS_PER_TRANSACTION)
