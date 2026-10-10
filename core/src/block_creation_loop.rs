@@ -2078,41 +2078,18 @@ mod tests {
 
         let new_parent_slot = 1;
         let new_parent_block_id = BlockId::new_unique();
-        let new_parent = Bank::new_from_parent_with_bank_forks(
+        let optimistic_parent_hash = Hash::new_unique();
+        let optimistic_parent = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             root_bank.clone(),
             SlotLeader::new_unique(),
-            new_parent_slot,
+            optimistic_parent_slot,
         );
-        new_parent.register_unique_recent_blockhash_for_test();
-        new_parent.freeze();
-        new_parent.set_block_id(Some(new_parent_block_id.to_hash()));
-        let new_parent_bank_id = new_parent.bank_id();
-
-        let optimistic_parent_hash = Hash::new_unique();
-        let optimistic_parent = if optimistic_parent_slot == new_parent_slot {
-            Arc::new(Bank::new_from_parent(
-                root_bank.clone(),
-                SlotLeader::new_unique(),
-                optimistic_parent_slot,
-            ))
-        } else {
-            Bank::new_from_parent_with_bank_forks(
-                &bank_forks,
-                root_bank.clone(),
-                SlotLeader::new_unique(),
-                optimistic_parent_slot,
-            )
-        };
         optimistic_parent.register_unique_recent_blockhash_for_test();
         optimistic_parent.freeze();
         optimistic_parent.set_block_id(Some(optimistic_parent_hash));
         let optimistic_parent_bank_id = optimistic_parent.bank_id();
-        assert_ne!(optimistic_parent_bank_id, new_parent_bank_id);
-        assert_ne!(
-            optimistic_parent.last_blockhash(),
-            new_parent.last_blockhash()
-        );
+        let optimistic_parent_blockhash = optimistic_parent.last_blockhash();
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
@@ -2192,6 +2169,27 @@ mod tests {
                 optimistic_bank_id,
             ))
             .unwrap();
+
+        // The new parent arrives with the parent ready; when it replaces the optimistic parent at
+        // the same slot, the optimistic parent is cleared first
+        if optimistic_parent_slot == new_parent_slot {
+            bank_forks
+                .write()
+                .unwrap()
+                .clear_bank(optimistic_parent_slot, false);
+        }
+        let new_parent = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            root_bank.clone(),
+            SlotLeader::new_unique(),
+            new_parent_slot,
+        );
+        new_parent.register_unique_recent_blockhash_for_test();
+        new_parent.freeze();
+        new_parent.set_block_id(Some(new_parent_block_id.to_hash()));
+        let new_parent_bank_id = new_parent.bank_id();
+        assert_ne!(optimistic_parent_bank_id, new_parent_bank_id);
+        assert_ne!(optimistic_parent_blockhash, new_parent.last_blockhash());
 
         let parent_ready_started_at = Instant::now();
         let parent_ready = LeaderWindowInfo {

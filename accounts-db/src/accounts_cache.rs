@@ -1,5 +1,5 @@
 use {
-    crate::ancestors::Ancestors,
+    crate::{ancestors::Ancestors, bank_id::BankId},
     dashmap::{DashMap, mapref::entry::Entry},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
@@ -38,6 +38,8 @@ impl MaxFlushedRoot {
 
 #[derive(Debug)]
 pub struct SlotCache {
+    /// The bank that stored the accounts in this slot
+    bank_id: BankId,
     cache: DashMap<Pubkey, Arc<CachedAccount>, ahash::RandomState>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
@@ -249,8 +251,9 @@ pub struct AccountsCache {
 }
 
 impl AccountsCache {
-    pub fn new_inner(&self) -> Arc<SlotCache> {
+    pub fn new_inner(&self, bank_id: BankId) -> Arc<SlotCache> {
         Arc::new(SlotCache {
+            bank_id,
             cache: DashMap::default(),
             same_account_writes: AtomicU64::default(),
             same_account_writes_size: AtomicU64::default(),
@@ -287,6 +290,7 @@ impl AccountsCache {
     pub fn store(
         &self,
         slot: Slot,
+        bank_id: BankId,
         pubkey: &Pubkey,
         account: AccountSharedData,
     ) -> Arc<CachedAccount> {
@@ -298,8 +302,12 @@ impl AccountsCache {
             self
                 .cache
                 .entry(slot)
-                .or_insert_with(|| self.new_inner())
+                .or_insert_with(|| self.new_inner(bank_id))
                 .clone());
+        debug_assert_eq!(
+            slot_cache.bank_id, bank_id,
+            "slot {slot} already holds accounts stored by another bank"
+        );
 
         let (item, is_new_key) = slot_cache.insert(pubkey, account);
         if is_new_key {
@@ -481,6 +489,7 @@ mod tests {
         let inserted_slot = 0;
         cache.store(
             inserted_slot,
+            BankId::new(inserted_slot),
             &Pubkey::new_unique(),
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
@@ -498,6 +507,7 @@ mod tests {
         let inserted_slot = 0;
         cache.store(
             inserted_slot,
+            BankId::new(inserted_slot),
             &Pubkey::new_unique(),
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
@@ -519,6 +529,7 @@ mod tests {
 
         cache.store(
             slot,
+            BankId::new(slot),
             &pubkey,
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
@@ -527,6 +538,7 @@ mod tests {
 
         cache.store(
             slot,
+            BankId::new(slot),
             &pubkey,
             AccountSharedData::new(2, 0, &Pubkey::default()),
         );
@@ -534,6 +546,7 @@ mod tests {
 
         cache.store(
             slot,
+            BankId::new(slot),
             &other_pubkey,
             AccountSharedData::new(3, 0, &Pubkey::default()),
         );
@@ -592,10 +605,25 @@ mod tests {
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 0);
 
         // Store pubkey into 3 different slots
-        cache.store(1, &pk, AccountSharedData::new(1, 0, &Pubkey::default()));
+        cache.store(
+            1,
+            BankId::new(1),
+            &pk,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
-        cache.store(5, &pk, AccountSharedData::new(5, 0, &Pubkey::default()));
-        cache.store(3, &pk, AccountSharedData::new(3, 0, &Pubkey::default()));
+        cache.store(
+            5,
+            BankId::new(5),
+            &pk,
+            AccountSharedData::new(5, 0, &Pubkey::default()),
+        );
+        cache.store(
+            3,
+            BankId::new(3),
+            &pk,
+            AccountSharedData::new(3, 0, &Pubkey::default()),
+        );
         // Same pubkey across 3 slots — still only 1 unique pubkey
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
 
@@ -629,9 +657,24 @@ mod tests {
         let pk2 = Pubkey::new_unique();
 
         // pk1 in slots 1 and 3; pk2 only in slot 1
-        cache.store(1, &pk1, AccountSharedData::new(1, 0, &Pubkey::default()));
-        cache.store(1, &pk2, AccountSharedData::new(1, 0, &Pubkey::default()));
-        cache.store(3, &pk1, AccountSharedData::new(1, 0, &Pubkey::default()));
+        cache.store(
+            1,
+            BankId::new(1),
+            &pk1,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
+        cache.store(
+            1,
+            BankId::new(1),
+            &pk2,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
+        cache.store(
+            3,
+            BankId::new(3),
+            &pk1,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
 
         // Before removal: both pubkeys are in the index
         assert!(cache.index.max_slot_for_pubkey(&pk1).is_some());
@@ -678,6 +721,7 @@ mod tests {
         for &slot in ancestor_slots {
             cache.store(
                 slot,
+                BankId::new(slot),
                 &pk,
                 AccountSharedData::new(slot, 0, &Pubkey::default()),
             );
@@ -685,6 +729,7 @@ mod tests {
         for &slot in root_slots {
             cache.store(
                 slot,
+                BankId::new(slot),
                 &pk,
                 AccountSharedData::new(slot, 0, &Pubkey::default()),
             );
@@ -707,7 +752,12 @@ mod tests {
         let pk = Pubkey::new_unique();
 
         // Store an account at slot 10, but don't add it as an ancestor or root.
-        cache.store(10, &pk, AccountSharedData::new(10, 0, &Pubkey::default()));
+        cache.store(
+            10,
+            BankId::new(10),
+            &pk,
+            AccountSharedData::new(10, 0, &Pubkey::default()),
+        );
 
         let ancestors = Ancestors::from(vec![5, 15]);
         let result = cache.load_latest(&pk, &ancestors);
@@ -719,7 +769,12 @@ mod tests {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
 
-        cache.store(10, &pk, AccountSharedData::new(100, 0, &Pubkey::default()));
+        cache.store(
+            10,
+            BankId::new(10),
+            &pk,
+            AccountSharedData::new(100, 0, &Pubkey::default()),
+        );
         cache.add_root(10);
         // A flush finishes a slot with `remove_slot`, which drops both its cache and its
         // unflushed-root tracking; call it directly here to stand in for that flush.
@@ -771,9 +826,19 @@ mod tests {
     fn test_remove_slot_drops_unflushed_root() {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
-        cache.store(1, &pk, AccountSharedData::new(1, 0, &Pubkey::default()));
+        cache.store(
+            1,
+            BankId::new(1),
+            &pk,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
         cache.add_root(1);
-        cache.store(2, &pk, AccountSharedData::new(2, 0, &Pubkey::default()));
+        cache.store(
+            2,
+            BankId::new(2),
+            &pk,
+            AccountSharedData::new(2, 0, &Pubkey::default()),
+        );
         cache.add_root(2);
 
         // remove_slot drops slot 1 from both the cache and the tracked roots, leaving slot 2.

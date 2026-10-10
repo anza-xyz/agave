@@ -5106,13 +5106,16 @@ pub mod tests {
     ) -> result::Result<(), BlockstoreProcessorError> {
         let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
         let mut progress = ConfirmationProgress::new(prev_entry_hash);
-        confirm_slot_entries_with_pool_for_tests(
+        let result = confirm_slot_entries_with_pool_for_tests(
             &pool,
             bank,
             slot_entries,
             slot_full,
             &mut progress,
-        )
+        );
+        // Shut the pool down so its schedulers release `bank`
+        pool.uninstalled_from_bank_forks();
+        result
     }
 
     fn create_test_transactions(
@@ -6332,7 +6335,7 @@ pub mod tests {
         assert_eq!(pending_slots.len(), 1);
         assert_eq!(pending_slots[0].1.slot(), 3);
 
-        let mut pending_slots = Vec::new();
+        pending_slots.clear();
         process_next_slots(
             &parent_bank,
             &parent_meta,

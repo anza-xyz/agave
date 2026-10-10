@@ -3757,12 +3757,12 @@ mod tests {
             );
         }
 
-        // Use new_from_parent (not _with_bank_forks) - we can't insert two banks at same slot
-        let bank_fork2 = Arc::new(Bank::new_from_parent(
+        let bank_fork2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
             bank.clone(),
             SlotLeader::default(),
-            next_epoch_slot,
-        ));
+            next_epoch_slot + 1,
+        );
         {
             let cache = bank_fork2.epoch_rewards_calculation_cache.lock().unwrap();
             assert!(

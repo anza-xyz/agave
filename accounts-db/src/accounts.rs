@@ -532,7 +532,7 @@ impl Accounts {
             }
         }
 
-        accounts_db.store_accounts_unfrozen(accounts, ancestors);
+        accounts_db.store_accounts_unfrozen(accounts, bank_id, ancestors);
     }
 
     /// Add a slot to root.  Root slots cannot be purged
