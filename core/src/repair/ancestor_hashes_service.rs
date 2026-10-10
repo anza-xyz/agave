@@ -1276,18 +1276,23 @@ mod test {
             }
 
             // Set up repair request receiver threads
+            let receiver_stats = Arc::new(StreamerReceiveStats::new("repair_request_receiver"));
+
             let t_request_receiver = streamer::receiver(
                 "solRcvrTest".to_string(),
                 Arc::new(responder_node.sockets.serve_repair),
                 exit.clone(),
                 requests_sender,
-                Arc::new(StreamerReceiveStats::new("repair_request_receiver")),
-                Some(Duration::from_millis(1)), // coalesce
+                Arc::clone(&receiver_stats),
+                Some(Duration::from_millis(1)),
                 false,
             );
-            let t_listen =
-                responder_serve_repair.listen(requests_receiver, response_sender, exit.clone());
-
+            let t_listen = responder_serve_repair.listen(
+                requests_receiver,
+                response_sender,
+                receiver_stats,
+                exit.clone(),
+            );
             Self {
                 t_request_receiver,
                 t_listen,
