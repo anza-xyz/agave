@@ -40,7 +40,7 @@ pub enum VoteStateTargetVersion {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
-    V4(VoteStateV4),
+    V4(Box<VoteStateV4>),
     // New vote state versions will be added here...
 }
 
@@ -314,7 +314,7 @@ impl VoteStateHandler {
                     return Err(InstructionError::AccountNotRentExempt);
                 }
                 // Vote account is large enough to store the newest version of vote state
-                vote_account.set_state(&VoteStateVersions::V4(Box::new(v4)))
+                vote_account.set_state(&VoteStateVersions::V4(v4))
             }
         }
     }
@@ -556,6 +556,10 @@ impl VoteStateHandler {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new_v4(vote_state: VoteStateV4) -> Self {
+        Self::new_v4_boxed(Box::new(vote_state))
+    }
+
+    pub(crate) fn new_v4_boxed(vote_state: Box<VoteStateV4>) -> Self {
         Self {
             target_state: TargetVoteState::V4(vote_state),
         }
@@ -569,7 +573,7 @@ impl VoteStateHandler {
         versions: VoteStateVersions,
     ) -> Result<Self, InstructionError> {
         match versions {
-            VoteStateVersions::V4(state) => Ok(Self::new_v4(*state)),
+            VoteStateVersions::V4(state) => Ok(Self::new_v4_boxed(state)),
             VoteStateVersions::V3(_)
             | VoteStateVersions::V1_14_11(_)
             | VoteStateVersions::Uninitialized => Err(InstructionError::InvalidAccountData),
@@ -591,7 +595,7 @@ impl VoteStateHandler {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn unwrap_v4(self) -> VoteStateV4 {
         match self.target_state {
-            TargetVoteState::V4(v4) => v4,
+            TargetVoteState::V4(v4) => *v4,
         }
     }
 
@@ -601,7 +605,7 @@ impl VoteStateHandler {
     pub fn serialize_into(self, data: &mut [u8]) -> Result<(), InstructionError> {
         match self.target_state {
             TargetVoteState::V4(v4) => {
-                let versioned = VoteStateVersions::V4(Box::new(v4));
+                let versioned = VoteStateVersions::V4(v4);
                 bincode::serialize_into(data, &versioned)
                     .map_err(|_e| InstructionError::InvalidAccountData)
             }
@@ -624,10 +628,10 @@ pub(crate) fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> 
 pub(crate) fn try_convert_to_vote_state_v4(
     versioned: VoteStateVersions,
     vote_pubkey: &Pubkey,
-) -> Result<VoteStateV4, InstructionError> {
+) -> Result<Box<VoteStateV4>, InstructionError> {
     match versioned {
         VoteStateVersions::Uninitialized => Err(InstructionError::UninitializedAccount),
-        VoteStateVersions::V1_14_11(state) => Ok(VoteStateV4 {
+        VoteStateVersions::V1_14_11(state) => Ok(Box::new(VoteStateV4 {
             node_pubkey: state.node_pubkey,
             authorized_withdrawer: state.authorized_withdrawer,
             inflation_rewards_collector: *vote_pubkey,
@@ -641,8 +645,8 @@ pub(crate) fn try_convert_to_vote_state_v4(
             authorized_voters: state.authorized_voters.clone(),
             epoch_credits: state.epoch_credits,
             last_timestamp: state.last_timestamp,
-        }),
-        VoteStateVersions::V3(state) => Ok(VoteStateV4 {
+        })),
+        VoteStateVersions::V3(state) => Ok(Box::new(VoteStateV4 {
             node_pubkey: state.node_pubkey,
             authorized_withdrawer: state.authorized_withdrawer,
             inflation_rewards_collector: *vote_pubkey,
@@ -656,8 +660,8 @@ pub(crate) fn try_convert_to_vote_state_v4(
             authorized_voters: state.authorized_voters,
             epoch_credits: state.epoch_credits,
             last_timestamp: state.last_timestamp,
-        }),
-        VoteStateVersions::V4(state) => Ok(*state),
+        })),
+        VoteStateVersions::V4(state) => Ok(state),
     }
 }
 
@@ -1410,7 +1414,7 @@ mod tests {
 
             let versioned = VoteStateVersions::V3(Box::new(v3));
             let migrated = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
-            let migrated_handler = VoteStateHandler::new_v4(migrated);
+            let migrated_handler = VoteStateHandler::new_v4_boxed(migrated);
             assert_eq!(migrated_handler.commission(), n);
             assert_eq!(
                 migrated_handler
@@ -1550,7 +1554,7 @@ mod tests {
             }
 
             let versioned = VoteStateVersions::V4(Box::new(initial_vote_state_v4.clone()));
-            let vote_state_v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            let vote_state_v4 = *try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
 
             // Should be an exact copy.
             assert_eq!(vote_state_v4, initial_vote_state_v4);
@@ -1606,7 +1610,7 @@ mod tests {
             };
             let versioned = VoteStateVersions::V1_14_11(Box::new(v1));
             let v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
-            let mut handler = VoteStateHandler::new_v4(v4);
+            let mut handler = VoteStateHandler::new_v4_boxed(v4);
             assert_purge(&mut handler);
         }
 
@@ -1618,7 +1622,7 @@ mod tests {
             };
             let versioned = VoteStateVersions::V3(Box::new(v3));
             let v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
-            let mut handler = VoteStateHandler::new_v4(v4);
+            let mut handler = VoteStateHandler::new_v4_boxed(v4);
             assert_purge(&mut handler);
         }
     }

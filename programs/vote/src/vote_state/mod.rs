@@ -46,7 +46,7 @@ fn get_vote_state_handler_checked(
             }
             let vote_state =
                 handler::try_convert_to_vote_state_v4(versioned, vote_account.get_key())?;
-            Ok(VoteStateHandler::new_v4(vote_state))
+            Ok(VoteStateHandler::new_v4_boxed(vote_state))
         }
     }
 }
@@ -975,7 +975,7 @@ pub fn deposit_delegator_rewards<S: std::hash::BuildHasher>(
         // SIMD-0123 requires an *initialized v4*.
         let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
         if let VoteStateVersions::V4(vote_state_v4) = versioned {
-            Ok(VoteStateHandler::new_v4(*vote_state_v4))
+            Ok(VoteStateHandler::new_v4_boxed(vote_state_v4))
         } else {
             Err(InstructionError::InvalidAccountData)
         }
