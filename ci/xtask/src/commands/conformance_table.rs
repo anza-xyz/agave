@@ -28,6 +28,8 @@ pub struct TableEntry {
 const AGAVE: &str = "agave-conformance";
 const SVM: &str = "solana-svm-conformance";
 
+const HARNESS_DIRS: &[(&str, &str)] = &[("conformance", AGAVE), ("svm-conformance", SVM)];
+
 /// Static fixture-set table: (fixtures_dir, anchor_crate, harness_package,
 /// harness_bin). Harnesses are `dev-bins` workspace binaries.
 const FIXTURE_ANCHORS: &[(&str, &str, &str, &str)] = &[
@@ -141,18 +143,33 @@ fn anchor_direct_deps(anchor: &str) -> Result<HashSet<String>> {
     Ok(deps)
 }
 
-/// Pure selection logic: returns entries for fixture sets whose anchor or any
-/// of its direct normal deps appear in `changed_crates`.
+fn changed_harnesses(changed_files: &[String]) -> HashSet<&'static str> {
+    HARNESS_DIRS
+        .iter()
+        .filter(|(dir, _)| {
+            changed_files
+                .iter()
+                .any(|f| f.starts_with(&format!("{dir}/")))
+        })
+        .map(|&(_, package)| package)
+        .collect()
+}
+
+/// Pure selection logic: returns entries for fixture sets whose harness
+/// package appears in `changed_harnesses`, or whose anchor or any of its direct
+/// normal deps appear in `changed_crates`.
 /// Extracted as a pure function so it can be unit-tested without I/O.
 pub fn select_entries(
     changed_crates: &HashSet<String>,
+    changed_harnesses: &HashSet<&str>,
     anchor_deps: &HashMap<String, HashSet<String>>,
 ) -> Vec<TableEntry> {
     let mut entries = Vec::new();
     for &(fixtures_dir, anchor, package, bin) in FIXTURE_ANCHORS {
         let empty = HashSet::new();
         let deps = anchor_deps.get(anchor).unwrap_or(&empty);
-        let matched = changed_crates.iter().any(|c| deps.contains(c));
+        let matched =
+            changed_harnesses.contains(package) || changed_crates.iter().any(|c| deps.contains(c));
         if matched {
             info!("selected: {fixtures_dir} (harness={package}/{bin})");
             entries.push(table_entry(fixtures_dir, package, bin));
@@ -211,6 +228,8 @@ pub async fn run(args: CommandArgs) -> Result<()> {
     } else {
         let changed_crates = changed_files_to_crates(&changed_files)?;
         info!("changed crates: {changed_crates:?}");
+        let changed_harnesses = changed_harnesses(&changed_files);
+        info!("changed harnesses: {changed_harnesses:?}");
 
         // Precompute dep sets for each unique anchor (deduplicated).
         let mut anchor_deps: HashMap<String, HashSet<String>> = HashMap::new();
@@ -220,7 +239,7 @@ pub async fn run(args: CommandArgs) -> Result<()> {
             }
         }
 
-        select_entries(&changed_crates, &anchor_deps)
+        select_entries(&changed_crates, &changed_harnesses, &anchor_deps)
     };
 
     println!("{}", serde_json::to_string(&entries)?);
@@ -253,7 +272,7 @@ mod tests {
     fn test_no_changes_selects_nothing() {
         let changed = HashSet::new();
         let anchor_deps = make_anchor_deps(&[("solana-svm", &["solana-svm", "some-dep"])]);
-        let entries = select_entries(&changed, &anchor_deps);
+        let entries = select_entries(&changed, &HashSet::new(), &anchor_deps);
         assert!(entries.is_empty());
     }
 
@@ -261,7 +280,7 @@ mod tests {
     fn test_anchor_itself_selects_fixture() {
         let changed = ["solana-svm".to_string()].into();
         let anchor_deps = make_anchor_deps(&[("solana-svm", &["solana-svm", "some-dep"])]);
-        let entries = select_entries(&changed, &anchor_deps);
+        let entries = select_entries(&changed, &HashSet::new(), &anchor_deps);
         assert_eq!(fixture_dirs(&entries), vec!["instr"]);
     }
 
@@ -269,7 +288,7 @@ mod tests {
     fn test_direct_dep_selects_fixture() {
         let changed = ["some-dep".to_string()].into();
         let anchor_deps = make_anchor_deps(&[("solana-svm", &["solana-svm", "some-dep"])]);
-        let entries = select_entries(&changed, &anchor_deps);
+        let entries = select_entries(&changed, &HashSet::new(), &anchor_deps);
         assert_eq!(fixture_dirs(&entries), vec!["instr"]);
     }
 
@@ -277,7 +296,7 @@ mod tests {
     fn test_unrelated_crate_selects_nothing() {
         let changed = ["totally-unrelated-crate".to_string()].into();
         let anchor_deps = make_anchor_deps(&[("solana-svm", &["solana-svm", "some-dep"])]);
-        let entries = select_entries(&changed, &anchor_deps);
+        let entries = select_entries(&changed, &HashSet::new(), &anchor_deps);
         assert!(entries.is_empty());
     }
 
@@ -289,7 +308,7 @@ mod tests {
             "solana-program-runtime",
             &["solana-program-runtime", "dep-a"],
         )]);
-        let entries = select_entries(&changed, &anchor_deps);
+        let entries = select_entries(&changed, &HashSet::new(), &anchor_deps);
         let dirs = fixture_dirs(&entries);
         assert!(dirs.contains(&"elf_loader"), "expected elf_loader");
         assert!(dirs.contains(&"syscall"), "expected syscall");
@@ -306,7 +325,7 @@ mod tests {
             ("solana-svm", &["solana-svm"]),
             ("solana-runtime", &["solana-runtime"]),
         ]);
-        let entries = select_entries(&changed, &anchor_deps);
+        let entries = select_entries(&changed, &HashSet::new(), &anchor_deps);
         let dirs = fixture_dirs(&entries);
         assert!(dirs.contains(&"instr"), "expected instr");
         assert!(dirs.contains(&"txn"), "expected txn");
@@ -358,5 +377,35 @@ mod tests {
             "ci/test-stable.sh".to_string(),
             "ci/xtask/src/commands/mod.rs".to_string(),
         ]));
+    }
+
+    #[test]
+    fn test_harness_changes_select_harness_fixtures() {
+        let changed = changed_harnesses(&["conformance/src/txn.rs".to_string()]);
+        assert_eq!(changed, [AGAVE].into());
+        let entries = select_entries(&HashSet::new(), &changed, &HashMap::new());
+        assert_eq!(
+            fixture_dirs(&entries),
+            vec!["txn", "block", "cost", "gossip"]
+        );
+
+        let changed = changed_harnesses(&["svm-conformance/Cargo.toml".to_string()]);
+        assert_eq!(changed, [SVM].into());
+        let entries = select_entries(&HashSet::new(), &changed, &HashMap::new());
+        assert_eq!(
+            fixture_dirs(&entries),
+            vec!["instr", "elf_loader", "syscall", "vm_serialization"]
+        );
+    }
+
+    #[test]
+    fn test_non_harness_files_are_not_harness_changes() {
+        assert!(
+            changed_harnesses(&[
+                "svm/src/conformance.rs".to_string(),
+                "conformance.md".to_string(),
+            ])
+            .is_empty()
+        );
     }
 }
