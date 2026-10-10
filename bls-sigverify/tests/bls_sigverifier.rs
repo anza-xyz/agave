@@ -17,7 +17,7 @@ use {
     },
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
-        consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
+        consensus_message::{Block, ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
         unverified_vote_message::UnverifiedCertificate,
         vote::Vote,
@@ -59,19 +59,6 @@ use {
     tokio::sync::mpsc,
 };
 
-fn new_vote_aggregate(bank: &Bank, mut msg: VoteMessage) -> VoteAggregate {
-    let rank_map = bank
-        .epoch_stakes_from_slot(msg.vote.slot())
-        .unwrap()
-        .bls_pubkey_to_rank_map();
-    msg.stake = rank_map
-        .get_pubkey_stake_entry(msg.rank as usize)
-        .unwrap()
-        .stake;
-    let max_validators = rank_map.len();
-    VoteAggregate::new_from_verified_vote(max_validators, msg)
-}
-
 struct TestContext {
     service: Option<JoinHandle<()>>,
     exit: Arc<AtomicBool>,
@@ -97,8 +84,15 @@ impl TestContext {
     }
 
     fn new_with_config(pool_capacity: usize, migration_status: MigrationStatus) -> Self {
+        Self::new_with_num_validators(pool_capacity, migration_status, 10)
+    }
+
+    fn new_with_num_validators(
+        pool_capacity: usize,
+        migration_status: MigrationStatus,
+        num_validators: usize,
+    ) -> Self {
         let (channel_to_pool, pool_receiver) = bounded(pool_capacity);
-        let num_validators = 10;
         let validator_keypairs = (0..num_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -189,6 +183,42 @@ impl TestContext {
         for datagram in datagrams {
             self.packet_sender.send(datagram).unwrap();
         }
+    }
+
+    fn vote_datagrams(&self, vote: Vote, ranks: impl Iterator<Item = usize>) -> Vec<Datagram> {
+        ranks
+            .map(|rank| {
+                let message = create_signed_vote_message(
+                    &self.sharable_banks.root(),
+                    &self.validator_keypairs,
+                    self.cluster_info.my_shred_version(),
+                    vote,
+                    rank,
+                );
+                message_to_datagram(
+                    &ConsensusMessage::Vote(message),
+                    self.cluster_info.my_shred_version(),
+                    self.validator_keypairs[rank].node_keypair.pubkey(),
+                )
+            })
+            .collect()
+    }
+
+    fn assert_repair_votes(&self, slot: Slot, ranks: impl Iterator<Item = usize>) {
+        let expected = ranks
+            .map(|rank| self.validator_keypairs[rank].vote_keypair.pubkey())
+            .collect::<HashSet<_>>();
+        let mut actual = HashSet::new();
+        let deadline = Instant::now() + RECEIVE_TIMEOUT;
+        while actual.len() < expected.len() {
+            let (received_slot, pubkeys) = self.repair_receiver.recv_deadline(deadline).unwrap();
+            assert_eq!(received_slot, slot);
+            for pubkey in pubkeys.as_slice() {
+                assert!(actual.insert(*pubkey), "duplicate repair vote");
+            }
+        }
+        assert_eq!(actual, expected);
+        expect_no_receive(&self.repair_receiver);
     }
 
     fn send_certificate(&self, slot: Slot, certificate: UnverifiedCertificate) {
@@ -386,96 +416,38 @@ fn test_old_blockstore_certificate_is_filtered() {
 #[test]
 fn test_blssigverifier_send_packets() {
     let ctx = TestContext::new();
-
-    let vote_rank1 = 2;
-    let cert_ranks = [0, 2, 3, 4, 5, 7, 8, 9];
     let cert_type = CertificateType::Finalize(4);
-    let vote_message1 = create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_finalization_vote(5),
-        vote_rank1,
-    );
     let cert = test_create_base2_certificate(
         &ctx.bls_keypairs(),
         ctx.cluster_info.my_shred_version(),
         cert_type,
-        &cert_ranks,
+        &[0, 2, 3, 4, 5, 7, 8, 9],
     );
-    let messages1 = [
-        (
-            ConsensusMessage::Vote(vote_message1),
-            ctx.validator_keypairs[vote_rank1].node_keypair.pubkey(),
-        ),
-        (ConsensusMessage::Certificate(cert), Pubkey::new_unique()),
-    ];
-
-    ctx.send_datagrams(messages_to_datagrams(
-        &messages1,
-        ctx.cluster_info.my_shred_version(),
-    ));
-    assert_eq!(receive_batches(&ctx.pool_receiver, 2).len(), 2);
-    {
-        let (slot, pubkeys) = ctx.repair_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-        assert_eq!(slot, 5);
-        assert_eq!(
-            pubkeys.as_slice(),
-            &[ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey()]
+    // Each group supplies enough stake to trigger verification.
+    for (vote, num_votes) in [
+        (Vote::new_finalization_vote(5), 6),
+        (Vote::new_unique_notar(6), 4),
+        (Vote::new_unique_notar_fallback(7), 6),
+    ] {
+        let mut datagrams = ctx.vote_datagrams(vote, 0..num_votes);
+        let num_certs = usize::from(vote.slot() == 5);
+        if num_certs == 1 {
+            datagrams.push(message_to_datagram(
+                &ConsensusMessage::Certificate(cert.clone()),
+                ctx.cluster_info.my_shred_version(),
+                Pubkey::new_unique(),
+            ));
+        }
+        ctx.send_datagrams(datagrams);
+        let (aggregates, certificates) = receive_messages(&ctx.pool_receiver, num_votes, num_certs);
+        assert_verified_votes(
+            &aggregates,
+            &(0..num_votes).map(|rank| (vote, rank)).collect::<Vec<_>>(),
         );
-    }
-
-    let vote_rank2 = 3;
-    let vote_message2 = create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_unique_notar(6),
-        vote_rank2,
-    );
-    let messages2 = [(
-        ConsensusMessage::Vote(vote_message2),
-        ctx.validator_keypairs[vote_rank2].node_keypair.pubkey(),
-    )];
-    ctx.send_datagrams(messages_to_datagrams(
-        &messages2,
-        ctx.cluster_info.my_shred_version(),
-    ));
-
-    assert_eq!(receive_batches(&ctx.pool_receiver, 1).len(), 1);
-    {
-        let (slot, pubkeys) = ctx.repair_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-        assert_eq!(slot, 6);
-        assert_eq!(
-            pubkeys.as_slice(),
-            &[ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey()]
-        );
-    }
-
-    let vote_rank3 = 9;
-    let vote_message3 = create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_unique_notar_fallback(7),
-        vote_rank3,
-    );
-    let messages3 = [(
-        ConsensusMessage::Vote(vote_message3),
-        ctx.validator_keypairs[vote_rank3].node_keypair.pubkey(),
-    )];
-    ctx.send_datagrams(messages_to_datagrams(
-        &messages3,
-        ctx.cluster_info.my_shred_version(),
-    ));
-    assert_eq!(receive_batches(&ctx.pool_receiver, 1).len(), 1);
-    {
-        let (slot, pubkeys) = ctx.repair_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-        assert_eq!(slot, 7);
-        assert_eq!(
-            pubkeys.as_slice(),
-            &[ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey()]
-        );
+        if num_certs == 1 {
+            assert_eq!(certificates[0].cert_type, cert_type);
+        }
+        ctx.assert_repair_votes(vote.slot(), 0..num_votes);
     }
 }
 
@@ -556,83 +528,33 @@ fn test_shred_version_mismatch() {
 
 #[test]
 fn test_blssigverifier_send_packets_channel_full() {
-    agave_logger::setup();
     let ctx = TestContext::new_with_config(1, MigrationStatus::post_migration_status());
+    let vote1 = Vote::new_finalization_vote(5);
+    let vote2 = Vote::new_unique_notar_fallback(6);
+    ctx.send_datagrams(ctx.vote_datagrams(vote1, 0..6));
 
-    let msg1_rank = 0;
-    let msg2_rank = 2;
-    let msg1 = create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_finalization_vote(5),
-        msg1_rank,
-    );
-    let msg2 = create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_unique_notar_fallback(6),
-        msg2_rank,
-    );
-    ctx.send_datagrams(messages_to_datagrams(
-        &[(
-            ConsensusMessage::Vote(msg1.clone()),
-            ctx.validator_keypairs[msg1_rank].node_keypair.pubkey(),
-        )],
-        ctx.cluster_info.my_shred_version(),
-    ));
-
-    // Repair is notified after the pool send, so this confirms the cap-1
-    // channel is full before the second vote is submitted.
-    let (slot, _) = ctx.repair_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-    assert_eq!(slot, 5);
+    // Repair follows the pool send, confirming the capacity-one channel is full.
+    ctx.assert_repair_votes(5, 0..6);
     assert_eq!(ctx.pool_receiver.len(), 1);
-
-    ctx.send_datagrams(messages_to_datagrams(
-        &[(
-            ConsensusMessage::Vote(msg2.clone()),
-            ctx.validator_keypairs[msg2_rank].node_keypair.pubkey(),
-        )],
-        ctx.cluster_info.my_shred_version(),
-    ));
-    // The second vote cannot reach repair until its blocked pool send completes.
+    ctx.send_datagrams(ctx.vote_datagrams(vote2, 0..6));
     expect_no_receive(&ctx.repair_receiver);
-    let m1_recv = ctx.pool_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-    let m2_recv = ctx.pool_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-    let (slot, _) = ctx.repair_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-    assert_eq!(slot, 6);
-    expect_no_receive(&ctx.pool_receiver);
 
-    // Both messages were eventually delivered (no silent drop).
-    let bank = ctx.sharable_banks.root();
-    let batch1 = SigVerifiedBatch::Votes(vec![new_vote_aggregate(&bank, msg1)]);
-    let batch2 = SigVerifiedBatch::Votes(vec![new_vote_aggregate(&bank, msg2)]);
-    assert_eq!(m1_recv, batch1);
-    assert_eq!(m2_recv, batch2);
+    let (aggregates, _) = receive_messages(&ctx.pool_receiver, 12, 0);
+    let expected = [vote1, vote2]
+        .into_iter()
+        .flat_map(|vote| (0..6).map(move |rank| (vote, rank)))
+        .collect::<Vec<_>>();
+    assert_verified_votes(&aggregates, &expected);
+    ctx.assert_repair_votes(6, 0..6);
 }
 
 #[test]
 fn test_blssigverifier_send_packets_receiver_closed() {
     let mut ctx = TestContext::new();
-
-    // Close the pool receiver to simulate a disconnected channel.
     let (_, replacement) = bounded(1);
     drop(std::mem::replace(&mut ctx.pool_receiver, replacement));
 
-    let rank = 0;
-    let msg = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_finalization_vote(5),
-        rank,
-    ));
-    let messages = [(msg, ctx.validator_keypairs[rank].node_keypair.pubkey())];
-    ctx.send_datagrams(messages_to_datagrams(
-        &messages,
-        ctx.cluster_info.my_shred_version(),
-    ));
+    ctx.send_datagrams(ctx.vote_datagrams(Vote::new_finalization_vote(5), 0..6));
     let deadline = Instant::now() + RECEIVE_TIMEOUT;
     while !ctx.service.as_ref().unwrap().is_finished() {
         assert!(
@@ -648,7 +570,7 @@ fn test_blssigverifier_send_packets_receiver_closed() {
 fn test_blssigverifier_verify_votes_all_valid() {
     let ctx = TestContext::new();
 
-    let num_votes = 5;
+    let num_votes = 4;
     let mut packets = Vec::with_capacity(num_votes);
     let vote = Vote::new_skip_vote(42);
     let vote_payload = get_vote_payload_to_sign(vote, ctx.cluster_info.my_shred_version());
@@ -682,37 +604,34 @@ fn test_blssigverifier_verify_votes_all_valid() {
 fn test_blssigverifier_verify_votes_across_batches() {
     let ctx = TestContext::new();
     let vote = Vote::new_skip_vote(42);
-    let num_votes = 3;
-    for rank in 0..num_votes {
-        let message = ConsensusMessage::Vote(create_signed_vote_message(
-            &ctx.sharable_banks.root(),
-            &ctx.validator_keypairs,
-            ctx.cluster_info.my_shred_version(),
-            vote,
-            rank,
-        ));
-        ctx.send_datagrams(vec![message_to_datagram(
-            &message,
-            ctx.cluster_info.my_shred_version(),
-            ctx.validator_keypairs[rank].node_keypair.pubkey(),
-        )]);
-        // Metrics are sent after the pool output. Wait before submitting the
-        // next vote to ensure it is processed in a separate batch.
-        ctx.metrics_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
+    // Votes accumulate across service iterations until safe-to-skip (40%) is reached.
+    for rank in 0..3 {
+        ctx.send_datagrams(ctx.vote_datagrams(vote, rank..rank + 1));
+        expect_no_receive(&ctx.pool_receiver);
+        expect_no_receive(&ctx.metrics_receiver);
     }
-    let (aggregates, _) = receive_messages(&ctx.pool_receiver, num_votes, 0);
+    ctx.send_datagrams(ctx.vote_datagrams(vote, 3..4));
+    let (aggregates, _) = receive_messages(&ctx.pool_receiver, 4, 0);
     assert_verified_votes(
         &aggregates,
-        &(0..num_votes).map(|rank| (vote, rank)).collect::<Vec<_>>(),
+        &(0..4).map(|rank| (vote, rank)).collect::<Vec<_>>(),
     );
+    ctx.metrics_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
+
+    // The next votes wait for the larger skip-certificate threshold (60%).
+    ctx.send_datagrams(ctx.vote_datagrams(vote, 4..5));
+    expect_no_receive(&ctx.pool_receiver);
+    ctx.send_datagrams(ctx.vote_datagrams(vote, 5..6));
+    let (aggregates, _) = receive_messages(&ctx.pool_receiver, 2, 0);
+    assert_verified_votes(&aggregates, &[(vote, 4), (vote, 5)]);
 }
 
 #[test]
 fn test_blssigverifier_verify_votes_two_distinct_messages() {
     let ctx = TestContext::new();
 
-    let num_votes_group1 = 3;
-    let num_votes_group2 = 4;
+    let num_votes_group1 = 4;
+    let num_votes_group2 = 5;
     let num_votes = num_votes_group1 + num_votes_group2;
     let mut packets = Vec::with_capacity(num_votes);
 
@@ -783,8 +702,8 @@ fn test_blssigverifier_verify_votes_two_distinct_messages() {
 fn test_blssigverifier_verify_votes_invalid_in_two_distinct_messages() {
     let ctx = TestContext::new();
 
-    let num_votes = 5;
-    let invalid_rank = 3; // This voter will sign vote 2 with an invalid signature.
+    let num_votes = 9;
+    let invalid_rank = 5; // This voter will sign vote 2 with an invalid signature.
     let mut packets = Vec::with_capacity(num_votes);
 
     let vote1 = Vote::new_skip_vote(42);
@@ -798,8 +717,8 @@ fn test_blssigverifier_verify_votes_invalid_in_two_distinct_messages() {
         let rank = i as u16;
         let bls_keypair = &validator_keypair.bls_keypair;
 
-        // Split the votes: Ranks 0, 1 sign vote 1. Ranks 2, 3, 4 sign vote 2.
-        let (vote, payload) = if i < 2 {
+        // Split the votes: Ranks 0..4 sign vote 1; ranks 4..9 sign vote 2.
+        let (vote, payload) = if i < 4 {
             (vote1, &vote1_payload)
         } else {
             (vote2, &vote2_payload)
@@ -828,7 +747,7 @@ fn test_blssigverifier_verify_votes_invalid_in_two_distinct_messages() {
     let (aggregates, _) = receive_messages(&ctx.pool_receiver, num_votes - 1, 0);
     let expected = (0..num_votes)
         .filter(|&rank| rank != invalid_rank as usize)
-        .map(|rank| (if rank < 2 { vote1 } else { vote2 }, rank))
+        .map(|rank| (if rank < 4 { vote1 } else { vote2 }, rank))
         .collect::<Vec<_>>();
     assert_verified_votes(&aggregates, &expected);
 }
@@ -837,7 +756,7 @@ fn test_blssigverifier_verify_votes_invalid_in_two_distinct_messages() {
 fn test_blssigverifier_verify_votes_one_invalid_signature() {
     let ctx = TestContext::new();
 
-    let num_votes = 5;
+    let num_votes = 4;
     let invalid_rank = 2;
     let mut packets = Vec::with_capacity(num_votes);
 
@@ -1021,7 +940,7 @@ fn test_verify_mixed_valid_batch() {
     let ctx = TestContext::new();
 
     let mut packets = Vec::new();
-    let num_votes = 2;
+    let num_votes = 4;
 
     let vote = Vote::new_skip_vote(42);
     let vote_payload = get_vote_payload_to_sign(vote, ctx.cluster_info.my_shred_version());
@@ -1272,33 +1191,29 @@ fn test_same_type_certs_try_next_candidate_after_failure() {
 #[test]
 fn test_banlist_not_updated_for_valid_vote_and_cert() {
     let mut ctx = TestContext::new();
-
-    let rank = 0;
-    let vote_message = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_skip_vote(42),
-        rank,
-    ));
-    let cert_message = ConsensusMessage::Certificate(test_create_base2_certificate(
+    let vote = Vote::new_skip_vote(42);
+    let cert_type = CertificateType::new_unique_notar(43);
+    let cert = test_create_base2_certificate(
         &ctx.bls_keypairs(),
         ctx.cluster_info.my_shred_version(),
-        CertificateType::new_unique_notar(43),
+        cert_type,
         &(0..7).collect::<Vec<_>>(),
-    ));
-    let vote_sender = ctx.validator_keypairs[rank].node_keypair.pubkey();
-    let cert_sender = Pubkey::new_unique();
-    let datagrams = messages_to_datagrams(
-        &[(vote_message, vote_sender), (cert_message, cert_sender)],
-        ctx.cluster_info.my_shred_version(),
     );
-
+    let cert_sender = Pubkey::new_unique();
+    let mut datagrams = ctx.vote_datagrams(vote, 0..4);
+    datagrams.push(message_to_datagram(
+        &ConsensusMessage::Certificate(cert),
+        ctx.cluster_info.my_shred_version(),
+        cert_sender,
+    ));
     ctx.send_datagrams(datagrams);
-    assert_eq!(receive_batches(&ctx.pool_receiver, 2).len(), 2);
-    let banned = ctx.banned_pubkeys();
-    assert!(!banned.contains(&vote_sender));
-    assert!(!banned.contains(&cert_sender));
+    let (aggregates, certificates) = receive_messages(&ctx.pool_receiver, 4, 1);
+    assert_verified_votes(
+        &aggregates,
+        &(0..4).map(|rank| (vote, rank)).collect::<Vec<_>>(),
+    );
+    assert_eq!(certificates[0].cert_type, cert_type);
+    assert!(ctx.banned_pubkeys().is_empty());
 }
 
 #[test]
@@ -1316,7 +1231,7 @@ fn test_banlist_updates_for_invalid_votes() {
         .validator_keypairs
         .iter()
         .enumerate()
-        .take(5)
+        .take(4)
         .map(|(i, keypair)| {
             let signature = if invalid_indexes.contains(&i) {
                 keypair.bls_keypair.sign(&invalid_payload).into()
@@ -1455,219 +1370,86 @@ fn generated_certs_are_filtered() {
 #[test]
 fn votes_are_bounded_by_highest_parent_ready() {
     let ctx = TestContext::new();
-    let highest_parent_ready_slot = 100;
-    *ctx.highest_parent_ready.write().unwrap() = (
-        highest_parent_ready_slot,
-        // The ParentReady target slot, rather than the parent block's slot, sets the bound.
-        Block::new_unique(7),
-    );
-    let max_vote_slot = highest_parent_ready_slot + 40;
-    let first_rejected_vote_slot = max_vote_slot + 1;
-
-    let accepted_vote_rank = 0;
-    let accepted_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_finalization_vote(max_vote_slot),
-        accepted_vote_rank,
-    ));
-    let rejected_vote_rank = 1;
-    let rejected_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_skip_vote(first_rejected_vote_slot),
-        rejected_vote_rank,
-    ));
-
-    // Certificates retain the root-relative bound and are not limited by ParentReady.
-    let cert_type = CertificateType::Finalize(first_rejected_vote_slot);
+    // The target slot, rather than the parent block's slot, sets the bound.
+    *ctx.highest_parent_ready.write().unwrap() = (100, Block::new_unique(7));
+    let max_vote_slot = 140;
+    let accepted_vote = Vote::new_finalization_vote(max_vote_slot);
+    let mut datagrams = ctx.vote_datagrams(accepted_vote, 0..6);
+    // Enough stake would trigger verification if these votes were admitted.
+    datagrams.extend(ctx.vote_datagrams(Vote::new_skip_vote(max_vote_slot + 1), 0..6));
+    // Certificates retain the root-relative bound.
+    let cert_type = CertificateType::Finalize(max_vote_slot + 1);
     let cert = test_create_base2_certificate(
         &ctx.bls_keypairs(),
         ctx.cluster_info.my_shred_version(),
         cert_type,
-        &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
+        &(0..10).collect::<Vec<_>>(),
     );
-    let cert = ConsensusMessage::Certificate(cert);
-    let datagrams = messages_to_datagrams(
-        &[
-            (
-                accepted_vote,
-                ctx.validator_keypairs[accepted_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-            (
-                rejected_vote,
-                ctx.validator_keypairs[rejected_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-            (cert, Pubkey::new_unique()),
-        ],
+    datagrams.push(message_to_datagram(
+        &ConsensusMessage::Certificate(cert),
         ctx.cluster_info.my_shred_version(),
-    );
+        Pubkey::new_unique(),
+    ));
     ctx.send_datagrams(datagrams);
-
-    assert_eq!(receive_batches(&ctx.pool_receiver, 2).len(), 2);
-    {
-        let (slot, pubkeys) = ctx.repair_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-        assert_eq!(slot, max_vote_slot);
-        assert_eq!(
-            pubkeys.as_slice(),
-            &[ctx.validator_keypairs[accepted_vote_rank]
-                .vote_keypair
-                .pubkey(),]
-        );
-    }
-    expect_no_receive(&ctx.repair_receiver);
+    let (aggregates, certificates) = receive_messages(&ctx.pool_receiver, 6, 1);
+    assert_verified_votes(
+        &aggregates,
+        &(0..6).map(|rank| (accepted_vote, rank)).collect::<Vec<_>>(),
+    );
+    assert_eq!(certificates[0].cert_type, cert_type);
+    ctx.assert_repair_votes(max_vote_slot, 0..6);
 }
 
 #[test]
 fn votes_are_bounded_by_root() {
     let ctx = TestContext::new();
-    let root_bank = ctx.sharable_banks.root();
-    let root_slot = root_bank.slot();
     *ctx.highest_parent_ready.write().unwrap() = (Slot::MAX, Block::new_unique(Slot::MAX));
-    let max_vote_slot = root_slot + MAX_VOTE_SLOT_DISTANCE_FROM_ROOT;
-
-    let messages = [max_vote_slot, max_vote_slot + 1]
-        .into_iter()
-        .enumerate()
-        .map(|(rank, slot)| {
-            let vote = ConsensusMessage::Vote(create_signed_vote_message(
-                &root_bank,
-                &ctx.validator_keypairs,
-                ctx.cluster_info.my_shred_version(),
-                Vote::new_skip_vote(slot),
-                rank,
-            ));
-            (vote, ctx.validator_keypairs[rank].node_keypair.pubkey())
-        })
-        .collect::<Vec<_>>();
-    let datagrams = messages_to_datagrams(&messages, ctx.cluster_info.my_shred_version());
-
+    let max_vote_slot = ctx.sharable_banks.root().slot() + MAX_VOTE_SLOT_DISTANCE_FROM_ROOT;
+    let vote = Vote::new_skip_vote(max_vote_slot);
+    let mut datagrams = ctx.vote_datagrams(vote, 0..4);
+    datagrams.extend(ctx.vote_datagrams(Vote::new_skip_vote(max_vote_slot + 1), 0..4));
     ctx.send_datagrams(datagrams);
-
-    let SigVerifiedBatch::Votes(votes) = ctx.pool_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap()
-    else {
-        panic!("expected verified votes");
-    };
-    assert_eq!(votes.len(), 1);
-    assert_eq!(votes[0].vote().slot(), max_vote_slot);
+    let (aggregates, _) = receive_messages(&ctx.pool_receiver, 4, 0);
+    assert_verified_votes(
+        &aggregates,
+        &(0..4).map(|rank| (vote, rank)).collect::<Vec<_>>(),
+    );
 }
 
 #[test]
 fn genesis_votes_bypass_future_bound_during_migration() {
-    let ctx = TestContext::new_with_config(1024, MigrationStatus::default());
-    let highest_parent_ready_slot = 100;
-    *ctx.highest_parent_ready.write().unwrap() = (
-        highest_parent_ready_slot,
-        Block {
-            slot: highest_parent_ready_slot,
-            block_id: BlockId::new_unique(),
-        },
-    );
-    let max_vote_slot = highest_parent_ready_slot + 40;
+    // Sixteen votes trigger a full batch even below the 82% Genesis threshold.
+    // Use disjoint voters for the two hashes so neither group equivocates.
+    let mut ctx = TestContext::new_with_num_validators(1024, MigrationStatus::default(), 40);
+    *ctx.highest_parent_ready.write().unwrap() = (100, Block::new_unique(100));
     let migration_slot = ctx.migration_status.record_feature_activation(200);
     let genesis_slot = migration_slot.saturating_sub(1);
-    assert!(genesis_slot > max_vote_slot);
-
-    let genesis_block = Block {
-        slot: genesis_slot,
-        block_id: BlockId::new_unique(),
-    };
+    assert!(genesis_slot > 140);
+    let genesis_block = Block::new_unique(genesis_slot);
     ctx.migration_status.set_genesis_block(genesis_block);
-    let genesis_vote_rank = 0;
-    let genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_genesis_vote(genesis_block),
-        genesis_vote_rank,
-    ));
-
-    // Normal votes remain bounded by ParentReady even when they target the exact block.
-    let normal_vote_rank = 1;
-    let normal_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_notarization_vote(genesis_block),
-        normal_vote_rank,
-    ));
-
-    // The migration slot itself cannot be the Genesis slot.
-    let different_slot_genesis_vote_rank = 2;
-    let different_slot_genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
+    let other_block = Block::new_unique(genesis_slot);
+    let genesis_vote = Vote::new_genesis_vote(genesis_block);
+    let other_vote = Vote::new_genesis_vote(other_block);
+    let mut datagrams = ctx.vote_datagrams(genesis_vote, 0..16);
+    datagrams.extend(ctx.vote_datagrams(other_vote, 16..32));
+    // A full batch would verify these groups if the range checks admitted them.
+    datagrams.extend(ctx.vote_datagrams(Vote::new_notarization_vote(genesis_block), 0..16));
+    datagrams.extend(ctx.vote_datagrams(
         Vote::new_genesis_vote(Block {
             slot: migration_slot,
             block_id: genesis_block.block_id,
         }),
-        different_slot_genesis_vote_rank,
+        16..32,
     ));
-
-    // The Genesis exception does not require the locally discovered block's hash either.
-    let different_hash_genesis_vote_rank = 3;
-    let different_hash_genesis_block = Block {
-        slot: genesis_slot,
-        block_id: BlockId::new_unique(),
-    };
-    let different_hash_genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_genesis_vote(different_hash_genesis_block),
-        different_hash_genesis_vote_rank,
-    ));
-
-    let datagrams = messages_to_datagrams(
-        &[
-            (
-                genesis_vote,
-                ctx.validator_keypairs[genesis_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-            (
-                normal_vote,
-                ctx.validator_keypairs[normal_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-            (
-                different_slot_genesis_vote,
-                ctx.validator_keypairs[different_slot_genesis_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-            (
-                different_hash_genesis_vote,
-                ctx.validator_keypairs[different_hash_genesis_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-        ],
-        ctx.cluster_info.my_shred_version(),
-    );
     ctx.send_datagrams(datagrams);
-
-    let (aggregates, _) = receive_messages(&ctx.pool_receiver, 2, 0);
-    assert_verified_votes(
-        &aggregates,
-        &[
-            (Vote::new_genesis_vote(genesis_block), genesis_vote_rank),
-            (
-                Vote::new_genesis_vote(different_hash_genesis_block),
-                different_hash_genesis_vote_rank,
-            ),
-        ],
-    );
+    let (aggregates, _) = receive_messages(&ctx.pool_receiver, 32, 0);
+    let expected = (0..16)
+        .map(|rank| (genesis_vote, rank))
+        .chain((16..32).map(|rank| (other_vote, rank)))
+        .collect::<Vec<_>>();
+    assert_verified_votes(&aggregates, &expected);
     expect_no_receive(&ctx.repair_receiver);
+    assert!(ctx.banned_pubkeys().is_empty());
 }
 
 #[test]
@@ -1680,33 +1462,16 @@ fn votes_are_bounded_by_root_before_parent_ready() {
         bank_forks.set_root(500, None, None);
     }
     *ctx.highest_parent_ready.write().unwrap() = (0, Block::new_unique(0));
-    let messages = [540, 541]
-        .into_iter()
-        .enumerate()
-        .map(|(rank, slot)| {
-            let vote = create_signed_vote_message(
-                &ctx.sharable_banks.root(),
-                &ctx.validator_keypairs,
-                ctx.cluster_info.my_shred_version(),
-                Vote::new_finalization_vote(slot),
-                rank,
-            );
-            (
-                ConsensusMessage::Vote(vote),
-                ctx.validator_keypairs[rank].node_keypair.pubkey(),
-            )
-        })
-        .collect::<Vec<_>>();
-    ctx.send_datagrams(messages_to_datagrams(
-        &messages,
-        ctx.cluster_info.my_shred_version(),
-    ));
-    let batches = receive_batches(&ctx.pool_receiver, 1);
-    let SigVerifiedBatch::Votes(votes) = &batches[0] else {
-        panic!("expected votes");
-    };
-    assert_eq!(votes.len(), 1);
-    assert_eq!(votes[0].vote().slot(), 540);
+    let vote = Vote::new_finalization_vote(540);
+    let mut datagrams = ctx.vote_datagrams(vote, 0..6);
+    datagrams.extend(ctx.vote_datagrams(Vote::new_finalization_vote(541), 0..6));
+    ctx.send_datagrams(datagrams);
+    let (aggregates, _) = receive_messages(&ctx.pool_receiver, 6, 0);
+    assert_verified_votes(
+        &aggregates,
+        &(0..6).map(|rank| (vote, rank)).collect::<Vec<_>>(),
+    );
+    ctx.assert_repair_votes(540, 0..6);
 }
 
 #[test]
