@@ -40,7 +40,7 @@ pub enum VoteStateTargetVersion {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
-    V4(VoteStateV4),
+    V4(Box<VoteStateV4>),
     // New vote state versions will be added here...
 }
 
@@ -314,7 +314,7 @@ impl VoteStateHandler {
                     return Err(InstructionError::AccountNotRentExempt);
                 }
                 // Vote account is large enough to store the newest version of vote state
-                vote_account.set_state(&VoteStateVersions::V4(Box::new(v4)))
+                vote_account.set_state(&VoteStateVersions::V4(v4))
             }
         }
     }
@@ -556,6 +556,10 @@ impl VoteStateHandler {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new_v4(vote_state: VoteStateV4) -> Self {
+        Self::new_v4_boxed(Box::new(vote_state))
+    }
+
+    fn new_v4_boxed(vote_state: Box<VoteStateV4>) -> Self {
         Self {
             target_state: TargetVoteState::V4(vote_state),
         }
@@ -567,12 +571,12 @@ impl VoteStateHandler {
     /// `VoteStateVersions` is not supported by `VoteStateHandler`.
     pub fn try_new_from_vote_state_versions(
         versions: VoteStateVersions,
-    ) -> Result<Self, InstructionError> {
+    ) -> Result<Self, VoteStateVersions> {
         match versions {
-            VoteStateVersions::V4(state) => Ok(Self::new_v4(*state)),
+            VoteStateVersions::V4(state) => Ok(Self::new_v4_boxed(state)),
             VoteStateVersions::V3(_)
             | VoteStateVersions::V1_14_11(_)
-            | VoteStateVersions::Uninitialized => Err(InstructionError::InvalidAccountData),
+            | VoteStateVersions::Uninitialized => Err(versions),
         }
     }
 
@@ -591,19 +595,27 @@ impl VoteStateHandler {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn unwrap_v4(self) -> VoteStateV4 {
         match self.target_state {
-            TargetVoteState::V4(v4) => v4,
+            TargetVoteState::V4(v4) => *v4,
         }
     }
 
     /// Serializes `self` into the provided `data` buffer.
     ///
     /// Returns `Err(InstructionError::InvalidAccountData)` if serialization fails.
-    pub fn serialize_into(self, data: &mut [u8]) -> Result<(), InstructionError> {
+    pub fn serialize_into(
+        self,
+        mut data: &mut [u8],
+    ) -> Result<VoteStateVersions, VoteStateVersions> {
         match self.target_state {
             TargetVoteState::V4(v4) => {
-                let versioned = VoteStateVersions::V4(Box::new(v4));
-                bincode::serialize_into(data, &versioned)
-                    .map_err(|_e| InstructionError::InvalidAccountData)
+                let versioned = VoteStateVersions::V4(v4);
+                match wincode::serialize_into(&mut data, &versioned) {
+                    Ok(()) => {
+                        data.fill(0);
+                        Ok(versioned)
+                    }
+                    Err(_e) => Err(versioned),
+                }
             }
         }
     }
@@ -732,6 +744,39 @@ mod tests {
             bls_pubkey_compressed: Some([255; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn test_serialize_into_clears_stale_tail_after_votes_shrink() {
+        let mut state = VoteStateV4 {
+            votes: (1..=MAX_LOCKOUT_HISTORY)
+                .map(|slot| LandedVote {
+                    lockout: Lockout::new(slot as Slot),
+                    latency: 0,
+                })
+                .collect(),
+            epoch_credits: vec![(1, 12_345, 678)],
+            ..Default::default()
+        };
+        let mut data = vec![0; VoteStateV4::size_of()];
+        bincode::serialize_into(
+            data.as_mut_slice(),
+            &VoteStateVersions::V4(Box::new(state.clone())),
+        )
+        .unwrap();
+
+        state.votes.truncate(1);
+        let versioned = VoteStateVersions::V4(Box::new(state.clone()));
+        let written = bincode::serialized_size(&versioned).unwrap() as usize;
+        // Shrinking the vote history leaves nonzero bytes beyond the new serialized state.
+        assert!(data[written..].iter().any(|byte| *byte != 0));
+        let mut expected = vec![0; data.len()];
+        bincode::serialize_into(expected.as_mut_slice(), &versioned).unwrap();
+
+        VoteStateHandler::new_v4(state)
+            .serialize_into(&mut data)
+            .unwrap();
+        assert_eq!(data, expected);
     }
 
     fn set_new_authorized_voter_and_assert(

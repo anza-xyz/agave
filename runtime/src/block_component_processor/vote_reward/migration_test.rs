@@ -199,43 +199,37 @@ mod tests {
 
         fn add_tower_rewards(&self, bank: Arc<Bank>) -> Arc<Bank> {
             let vote_accounts = bank.vote_accounts();
-            let updated_accounts = self
-                .validators
-                .iter()
-                .map(|validator| {
-                    let vote_pubkey = validator.vote_keypair.pubkey();
-                    let mut vote_state = VoteState::try_new(&vote_accounts, vote_pubkey).unwrap();
-                    vote_state
-                        .handler
-                        .increment_credits(bank.epoch(), self.pay_type.tower());
-                    vote_state.serialize().unwrap()
-                })
-                .collect::<Vec<_>>();
-            bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
+            let mut buffer = std::mem::MaybeUninit::uninit();
+            for validator in &self.validators {
+                let vote_pubkey = validator.vote_keypair.pubkey();
+                let mut vote_state =
+                    VoteState::try_new(&vote_accounts, vote_pubkey, buffer).unwrap();
+                vote_state
+                    .handler
+                    .increment_credits(bank.epoch(), self.pay_type.tower());
+                buffer = vote_state.serialize(&bank);
+            }
             let slot = bank.slot() + 10;
             new_bank_from_parent(bank, slot)
         }
 
         fn add_ag_rewards(&self, bank: Arc<Bank>) -> Arc<Bank> {
             let vote_accounts = bank.vote_accounts();
-            let updated_accounts = self
-                .validators
-                .iter()
-                .map(|validator| {
-                    let vote_pubkey = validator.vote_keypair.pubkey();
-                    let mut vote_state = VoteState::try_new(&vote_accounts, vote_pubkey).unwrap();
-                    if let Some(ag_credits) = self.pay_type.ag() {
-                        increment_credits(
-                            vote_state.handler.epoch_credits_mut(),
-                            bank.epoch(),
-                            bank.epoch(),
-                            ag_credits,
-                        );
-                    }
-                    vote_state.serialize().unwrap()
-                })
-                .collect::<Vec<_>>();
-            bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
+            let mut buffer = std::mem::MaybeUninit::uninit();
+            for validator in &self.validators {
+                let vote_pubkey = validator.vote_keypair.pubkey();
+                let mut vote_state =
+                    VoteState::try_new(&vote_accounts, vote_pubkey, buffer).unwrap();
+                if let Some(ag_credits) = self.pay_type.ag() {
+                    increment_credits(
+                        vote_state.handler.epoch_credits_mut(),
+                        bank.epoch(),
+                        bank.epoch(),
+                        ag_credits,
+                    );
+                }
+                buffer = vote_state.serialize(&bank);
+            }
             let slot = bank.slot() + 10;
             new_bank_from_parent(bank, slot)
         }

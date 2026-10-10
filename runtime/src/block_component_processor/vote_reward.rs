@@ -6,17 +6,18 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH,
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{
-        BlockTimestamp, LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY,
+        BlockTimestamp, LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY, VoteStateVersions,
     },
     solana_vote_program::vote_state::handler::VoteStateHandler,
     std::{
-        collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
+        collections::{HashMap, HashSet, VecDeque},
+        mem::MaybeUninit,
         num::NonZero,
     },
     thiserror::Error,
+    wincode::Deserialize,
 };
 
 pub(crate) mod epoch_inflation_account_state;
@@ -72,66 +73,55 @@ struct VoteState {
     vote_pubkey: Pubkey,
     /// Reference to actual `VoteStateHandler`.
     handler: VoteStateHandler,
-    /// How many lamports were stored in the account.
-    lamports: u64,
-    /// How much space the account takes up.
-    space: usize,
-    /// Who owns the account.
-    owner: Pubkey,
+    account_shared_data: AccountSharedData,
 }
 
 impl VoteState {
     fn try_new(
         vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
         vote_pubkey: Pubkey,
-    ) -> Option<Self> {
+        mut buffer: MaybeUninit<VoteStateVersions>,
+    ) -> Result<Self, MaybeUninit<VoteStateVersions>> {
         let Some((_, account)) = vote_accounts.get(&vote_pubkey) else {
             info!("did not find vote account for vote_pubkey={vote_pubkey}");
-            return None;
+            return Err(buffer);
         };
-        let versions = match wincode::deserialize(account.account().data()) {
-            Ok(s) => s,
-            Err(e) => {
-                info!("wincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
-                return None;
-            }
+        let account_shared_data = account.account().clone();
+        if let Err(e) = VoteStateVersions::deserialize_into(account_shared_data.data(), &mut buffer)
+        {
+            info!("wincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
+            return Err(buffer);
         };
+        let versions = unsafe { buffer.assume_init() };
         let handler = match VoteStateHandler::try_new_from_vote_state_versions(versions) {
             Ok(h) => h,
-            Err(e) => {
-                info!("VoteStateHandler::try_new() for vote_pubkey={vote_pubkey} failed with {e}");
-                return None;
+            Err(versioned) => {
+                let mut buffer = MaybeUninit::new(versioned);
+                unsafe { buffer.assume_init_drop() };
+                return Err(buffer);
             }
         };
-        Some(Self {
+        Ok(Self {
             vote_pubkey,
             handler,
-            lamports: account.lamports(),
-            space: account.account().data().len(),
-            owner: *account.owner(),
+            account_shared_data,
         })
     }
 
-    fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
-        let mut updated_account = AccountSharedData::new_rent_epoch(
-            self.lamports,
-            self.space,
-            &self.owner,
-            RENT_EXEMPT_RENT_EPOCH,
-        );
-        match self
+    fn serialize(mut self, bank: &Bank) -> MaybeUninit<VoteStateVersions> {
+        let versioned = match self
             .handler
-            .serialize_into(updated_account.data_as_mut_slice())
+            .serialize_into(self.account_shared_data.data_as_mut_slice())
         {
-            Ok(()) => Some((self.vote_pubkey, updated_account)),
-            Err(e) => {
-                info!(
-                    "serializing account vote_pubkey={} failed with {e}",
-                    self.vote_pubkey
-                );
-                None
+            Ok(versioned) => {
+                bank.store_account(&self.vote_pubkey, &self.account_shared_data);
+                versioned
             }
-        }
+            Err(v) => v,
+        };
+        let mut buffer = MaybeUninit::new(versioned);
+        unsafe { buffer.assume_init_drop() };
+        buffer
     }
 
     /// Updates `votes` and `last_timestamp` in the vote state.
@@ -265,11 +255,11 @@ impl<'a> RewardState<'a> {
         &self,
         vote_state: &mut VoteState,
         accumulating_leader_reward: &mut u64,
-    ) -> Result<bool, RewardStateError> {
+    ) -> Result<(), RewardStateError> {
         if self.reward_validators.contains(&vote_state.vote_pubkey) {
-            self.update_votes(vote_state);
             let reward =
                 self.calculate_reward(vote_state.vote_pubkey, accumulating_leader_reward)?;
+            self.update_votes(vote_state);
             if let Some(reward) = NonZero::new(reward) {
                 increment_credits(
                     vote_state.handler.epoch_credits_mut(),
@@ -278,10 +268,8 @@ impl<'a> RewardState<'a> {
                     reward,
                 );
             };
-            Ok(true)
-        } else {
-            Ok(false)
         }
+        Ok(())
     }
 
     /// Assumes that `Self::update_account` was already called and pays the additional
@@ -322,107 +310,14 @@ impl<'a> FinalCertState<'a> {
     }
 
     /// Updates the `root_slot` and the `votes` fields in the `VoteStateHandler`.
-    #[must_use]
-    fn update_account(&self, vote_state: &mut VoteState) -> bool {
+    fn update_account(&self, vote_state: &mut VoteState) {
         if self.signers.contains(&vote_state.vote_pubkey) {
             vote_state.maybe_update_root(self.final_slot);
             // If a validator is included in the finalization cert, it must have voted for it.
             // So even if the reward cert is absent, we can still update votes.
             vote_state.maybe_update_votes(self.final_slot, self.final_slot_timestamp_ns);
-            true
-        } else {
-            false
         }
     }
-}
-
-/// Allocates storage for updated accounts.
-fn allocate_updated_accounts(
-    bank: &Bank,
-    reward_cert: &Option<ValidatedRewardCert>,
-    final_cert_input: &Option<(&HashSet<Pubkey>, Slot)>,
-) -> Result<Option<HashMap<Pubkey, VoteState>>, AllocateAccountsError> {
-    let max_validators = match (&reward_cert, &final_cert_input) {
-        (None, None) => return Ok(None),
-        (Some(cert), None) => {
-            // Adding one in the off chance that the current leader is not in the cert.
-            cert.validators().len() + 1
-        }
-        (None, Some((signers, _))) => signers.len(),
-        (Some(reward_cert), Some((_, slot))) => {
-            // Both finalization cert and reward cert are present.  Instead of computing overlap,
-            // use max validators.
-            let final_cert_slot_max_validators = bank
-                .get_rank_map(*slot)
-                .ok_or(AllocateAccountsError::FinalCert {
-                    bank_slot: bank.slot(),
-                    final_slot: *slot,
-                })?
-                .len();
-            let reward_cert_slot_max_validators = bank
-                .get_rank_map(reward_cert.slot())
-                .ok_or(AllocateAccountsError::RewardCert {
-                    bank_slot: bank.slot(),
-                    reward_slot: reward_cert.slot(),
-                })?
-                .len();
-            final_cert_slot_max_validators.max(reward_cert_slot_max_validators)
-        }
-    };
-    Ok(Some(HashMap::with_capacity(max_validators)))
-}
-
-fn update_accounts(
-    reward_state: &Option<RewardState>,
-    final_cert_state: &Option<FinalCertState>,
-    vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
-    mut updated_accounts: HashMap<Pubkey, VoteState>,
-    validators: impl Iterator<Item = Pubkey>,
-) -> Result<Vec<(Pubkey, AccountSharedData)>, CalcVoteRewardUpdateVoteStatesError> {
-    let mut leader_reward = 0;
-    for validator in validators {
-        let Some(mut vote_state) = VoteState::try_new(vote_accounts, validator) else {
-            continue;
-        };
-        let account_updated = match (reward_state, final_cert_state) {
-            (None, None) => false,
-            (Some(state), None) => state.update_account(&mut vote_state, &mut leader_reward)?,
-            (None, Some(state)) => state.update_account(&mut vote_state),
-            (Some(reward_state), Some(final_state)) => {
-                let reward_updated =
-                    reward_state.update_account(&mut vote_state, &mut leader_reward)?;
-                let final_cert_updated = final_state.update_account(&mut vote_state);
-                reward_updated || final_cert_updated
-            }
-        };
-        if account_updated {
-            updated_accounts.insert(vote_state.vote_pubkey, vote_state);
-        }
-    }
-
-    // all validators have been processed, can pay leader rewards now.
-    if let Some(state) = &reward_state
-        && let Some(leader_reward) = NonZero::new(leader_reward)
-    {
-        match updated_accounts.entry(state.leader_vote_pubkey) {
-            Entry::Occupied(e) => {
-                state.update_leader(e.into_mut(), leader_reward);
-            }
-            Entry::Vacant(e) => {
-                if let Some(mut vote_state) =
-                    VoteState::try_new(vote_accounts, state.leader_vote_pubkey)
-                {
-                    state.update_leader(&mut vote_state, leader_reward);
-                    e.insert(vote_state);
-                }
-            }
-        }
-    }
-
-    Ok(updated_accounts
-        .into_values()
-        .filter_map(|vote_state| vote_state.serialize())
-        .collect())
 }
 
 /// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
@@ -433,10 +328,6 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
     block_producer_time_nanos: i64,
 ) -> Result<(), CalcVoteRewardUpdateVoteStatesError> {
-    let Some(updated_accounts) = allocate_updated_accounts(bank, &reward_cert, &final_cert_input)?
-    else {
-        return Ok(());
-    };
     let reward_state = match &reward_cert {
         Some(c) => Some(RewardState::try_new(
             bank,
@@ -449,35 +340,126 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     let final_cert_state = final_cert_input.map(|(signers, final_slot)| {
         FinalCertState::new(bank, signers, final_slot, block_producer_time_nanos)
     });
+
     let vote_accounts = bank.vote_accounts();
+    let mut buffer = MaybeUninit::uninit();
+    match (&reward_state, &final_cert_state) {
+        (None, None) => Ok(()),
+        (Some(state), None) => {
+            let mut leader_reward = 0;
+            for validator in state.reward_validators.iter().copied() {
+                if validator == state.leader_vote_pubkey {
+                    continue;
+                }
+                match VoteState::try_new(&vote_accounts, validator, buffer) {
+                    Ok(mut vote_state) => {
+                        state.update_account(&mut vote_state, &mut leader_reward)?;
+                        buffer = vote_state.serialize(bank);
+                    }
+                    Err(ret_buffer) => {
+                        buffer = ret_buffer;
+                    }
+                }
+            }
+            match VoteState::try_new(&vote_accounts, state.leader_vote_pubkey, buffer) {
+                Ok(mut vote_state) => {
+                    state.update_account(&mut vote_state, &mut leader_reward)?;
+                    if let Some(leader_reward) = NonZero::new(leader_reward) {
+                        state.update_leader(&mut vote_state, leader_reward);
+                    }
+                    vote_state.serialize(bank);
+                }
+                Err(_) => {}
+            }
+            Ok(())
+        }
 
-    let updated_accounts = match (&reward_state, &final_cert_state) {
-        (None, None) => return Ok(()),
-        (Some(state), None) => update_accounts(
-            &reward_state,
-            &final_cert_state,
-            &vote_accounts,
-            updated_accounts,
-            state.reward_validators.iter().cloned(),
-        )?,
-        (None, Some(state)) => update_accounts(
-            &reward_state,
-            &final_cert_state,
-            &vote_accounts,
-            updated_accounts,
-            state.signers.iter().cloned(),
-        )?,
-        (Some(r_state), Some(f_state)) => update_accounts(
-            &reward_state,
-            &final_cert_state,
-            &vote_accounts,
-            updated_accounts,
-            r_state.reward_validators.union(f_state.signers).cloned(),
-        )?,
-    };
+        (None, Some(state)) => {
+            for signer in state.signers {
+                match VoteState::try_new(&vote_accounts, *signer, buffer) {
+                    Ok(mut vote_state) => {
+                        state.update_account(&mut vote_state);
+                        buffer = vote_state.serialize(bank);
+                    }
+                    Err(ret_buffer) => {
+                        buffer = ret_buffer;
+                    }
+                }
+            }
+            Ok(())
+        }
 
-    bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
-    Ok(())
+        (Some(r_state), Some(f_state)) => {
+            let mut leader_reward = 0;
+            for validator in r_state
+                .reward_validators
+                .intersection(f_state.signers)
+                .copied()
+            {
+                if validator == r_state.leader_vote_pubkey {
+                    continue;
+                }
+                match VoteState::try_new(&vote_accounts, validator, buffer) {
+                    Ok(mut vote_state) => {
+                        r_state.update_account(&mut vote_state, &mut leader_reward)?;
+                        f_state.update_account(&mut vote_state);
+                        buffer = vote_state.serialize(bank);
+                    }
+                    Err(ret_buffer) => {
+                        buffer = ret_buffer;
+                    }
+                }
+            }
+            for validator in r_state
+                .reward_validators
+                .difference(f_state.signers)
+                .copied()
+            {
+                if validator == r_state.leader_vote_pubkey {
+                    continue;
+                }
+                match VoteState::try_new(&vote_accounts, validator, buffer) {
+                    Ok(mut vote_state) => {
+                        r_state.update_account(&mut vote_state, &mut leader_reward)?;
+                        buffer = vote_state.serialize(bank);
+                    }
+                    Err(ret_buffer) => {
+                        buffer = ret_buffer;
+                    }
+                }
+            }
+            for validator in f_state
+                .signers
+                .difference(r_state.reward_validators)
+                .copied()
+            {
+                if validator == r_state.leader_vote_pubkey {
+                    continue;
+                }
+                match VoteState::try_new(&vote_accounts, validator, buffer) {
+                    Ok(mut vote_state) => {
+                        f_state.update_account(&mut vote_state);
+                        buffer = vote_state.serialize(bank);
+                    }
+                    Err(ret_buffer) => {
+                        buffer = ret_buffer;
+                    }
+                }
+            }
+            match VoteState::try_new(&vote_accounts, r_state.leader_vote_pubkey, buffer) {
+                Ok(mut vote_state) => {
+                    r_state.update_account(&mut vote_state, &mut leader_reward)?;
+                    f_state.update_account(&mut vote_state);
+                    if let Some(leader_reward) = NonZero::new(leader_reward) {
+                        r_state.update_leader(&mut vote_state, leader_reward);
+                    }
+                    vote_state.serialize(bank);
+                }
+                Err(_) => {}
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Computes the voting reward in Lamports.
