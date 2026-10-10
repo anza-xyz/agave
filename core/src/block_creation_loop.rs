@@ -937,6 +937,11 @@ fn process_parent_ready(
         return Ok(true);
     }
 
+    // The window may have moved on while waiting for this notification.
+    if ctx.highest_parent_ready.read().unwrap().0 > bank_slot {
+        return Ok(true);
+    }
+
     if info.start_slot == bank_slot {
         if let Some(optimistic_parent_block) = optimistic_parent.take()
             && handle_parent_ready(
@@ -2028,6 +2033,46 @@ mod tests {
 
         create_and_insert_leader_bank(1, root_bank, 0, &mut ctx).unwrap();
         let bank_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
+        let mut optimistic_parent = Some(Block::new_unique(0));
+        let mut accumulated_txs = vec![versioned_transfer(1)];
+        let mut block_timer = Instant::now();
+        let original_timer = block_timer;
+        let mut records_shutdown = false;
+        assert!(
+            process_parent_ready(
+                &mut ctx,
+                &mut SlotMetrics::new(1, true),
+                leader_window_info(1, 0),
+                1,
+                &mut optimistic_parent,
+                &mut accumulated_txs,
+                &mut block_timer,
+                &mut records_shutdown,
+            )
+            .unwrap()
+        );
+        assert!(optimistic_parent.is_some());
+        assert_eq!(accumulated_txs.len(), 1);
+        assert_eq!(block_timer, original_timer);
+        assert!(!records_shutdown);
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id(),
+            bank_id
+        );
+        assert!(
+            process_parent_ready(
+                &mut ctx,
+                &mut SlotMetrics::new(1, true),
+                leader_window_info(2, 1),
+                1,
+                &mut optimistic_parent,
+                &mut accumulated_txs,
+                &mut block_timer,
+                &mut records_shutdown,
+            )
+            .unwrap()
+        );
+        assert_eq!(ctx.pending_parent_ready.as_ref().unwrap().start_slot, 2);
         record_sender
             .try_send(Record::new(
                 Hash::new_unique(),
