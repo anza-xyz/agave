@@ -1884,17 +1884,32 @@ impl ClusterInfo {
         send_gossip_packets(pongs, response_sender, &self.stats);
     }
 
-    fn handle_batch_pong_messages<I>(&self, pongs: I, now: Instant)
+    fn handle_batch_pong_messages<I>(&self, pongs: I, now: Instant, stakes: &HashMap<Pubkey, u64>)
     where
         I: IntoIterator<Item = (SocketAddr, Pong)>,
     {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pong_messages_time);
         let mut pongs = pongs.into_iter().peekable();
-        if pongs.peek().is_some() {
+        if pongs.peek().is_none() {
+            return;
+        }
+        // Contact infos stashed while the node was unverified, released by its pong.
+        let verified_values: Vec<CrdsValue> = {
             let mut ping_cache = self.ping_cache.lock().unwrap();
-            for (addr, pong) in pongs {
-                ping_cache.add(&pong, addr, now);
-            }
+            pongs
+                .filter_map(|(addr, pong)| {
+                    ping_cache
+                        .add(&pong, addr, now)
+                        .then(|| ping_cache.take_pending_contact_info((pong.pubkey(), addr)))
+                        .flatten()
+                })
+                .collect()
+        };
+        if !verified_values.is_empty() {
+            self.stats
+                .pending_contact_infos_released_on_pong
+                .add_relaxed(verified_values.len() as u64);
+            self.handle_batch_pull_responses(verified_values, stakes);
         }
     }
 
@@ -2101,6 +2116,7 @@ impl ClusterInfo {
                 &self.socket_addr_space,
                 &self.ping_cache,
                 &mut pings,
+                stakes,
             ) {
                 true
             } else {
@@ -2169,7 +2185,7 @@ impl ClusterInfo {
         self.handle_batch_push_messages(push_messages, thread_pool, stakes, response_sender);
         self.handle_batch_pull_responses(pull_responses, stakes);
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
-        self.handle_batch_pong_messages(pong_messages, Instant::now());
+        self.handle_batch_pong_messages(pong_messages, Instant::now(), stakes);
         self.handle_batch_pull_requests(pull_requests, stakes, response_sender);
         Ok(())
     }
@@ -2564,6 +2580,7 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
     pings: &mut Vec<(SocketAddr, Ping)>,
+    stakes: &HashMap<Pubkey, u64>,
 ) -> bool {
     let (pubkey, addr) = match value.data() {
         CrdsData::ContactInfo(node) => (node.pubkey(), node.gossip()),
@@ -2576,7 +2593,12 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     let (out, ping) = {
         let node = (*pubkey, addr);
         let mut ping_cache = ping_cache.lock().unwrap();
-        ping_cache.check(rng, keypair, Instant::now(), node)
+        let (out, ping) = ping_cache.check(rng, keypair, Instant::now(), node);
+        // A staked node's contact info is kept until its pong arrives, then inserted.
+        if !out && stakes.get(pubkey).is_some_and(|stake| *stake > 0) {
+            ping_cache.stash_pending_contact_info(node, value.clone());
+        }
+        (out, ping)
     };
     if let Some(ping) = ping {
         pings.push((addr, ping));
@@ -2858,7 +2880,8 @@ mod tests {
             .map(|(ping, (keypair, socket))| (*socket, Pong::new(ping, keypair)))
             .collect();
         let now = now + Duration::from_millis(1);
-        cluster_info.handle_batch_pong_messages(pongs, now);
+        let unstaked = HashMap::default();
+        cluster_info.handle_batch_pong_messages(pongs, now, &unstaked);
         // Assert that remote nodes now pass the ping/pong check.
         {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
@@ -2930,6 +2953,67 @@ mod tests {
         let entrypoint = ContactInfo::new_localhost(&pubkey, timestamp());
         let entrypoint_crdsvalue = CrdsValue::new_unsigned(CrdsData::from(entrypoint));
         vec![entrypoint_crdsvalue]
+    }
+
+    #[test]
+    fn test_verify_gossip_addr_keeps_staked_contact_info_until_pong() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let ping_cache = Mutex::new(PingCache::new(
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            GOSSIP_PING_CACHE_CAPACITY,
+        ));
+        let socket_addr_space = SocketAddrSpace::Unspecified;
+        let unstaked = HashMap::default();
+        let contact_info = |keypair: &Keypair| {
+            let node = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+            let addr = node.gossip().unwrap();
+            (CrdsValue::new(CrdsData::ContactInfo(node), keypair), addr)
+        };
+        let mut check = |value: &CrdsValue, stakes: &HashMap<Pubkey, u64>| {
+            let mut pings = Vec::new();
+            let out = verify_gossip_addr(
+                &mut rng,
+                &this_node,
+                value,
+                &socket_addr_space,
+                &ping_cache,
+                &mut pings,
+                stakes,
+            );
+            (out, pings)
+        };
+
+        // Staked owner, not verified yet: dropped, pinged, contact info kept for the pong.
+        let owner = Keypair::new();
+        let (value, addr) = contact_info(&owner);
+        let stakes = HashMap::from([(owner.pubkey(), 1u64)]);
+        let (out, mut pings) = check(&value, &stakes);
+        assert!(!out);
+        let (ping_addr, ping) = pings.pop().unwrap();
+        assert_eq!(ping_addr, addr);
+        {
+            let mut ping_cache = ping_cache.lock().unwrap();
+            assert!(ping_cache.add(&Pong::new(&ping, &owner), addr, Instant::now()));
+            assert_eq!(
+                ping_cache.take_pending_contact_info((owner.pubkey(), addr)),
+                Some(value)
+            );
+        }
+
+        // Unstaked owner: dropped and pinged, nothing kept.
+        let owner = Keypair::new();
+        let (value, addr) = contact_info(&owner);
+        let (out, pings) = check(&value, &unstaked);
+        assert!(!out);
+        assert_eq!(pings.len(), 1);
+        let mut ping_cache = ping_cache.lock().unwrap();
+        assert!(
+            ping_cache
+                .take_pending_contact_info((owner.pubkey(), addr))
+                .is_none()
+        );
     }
 
     #[test]
