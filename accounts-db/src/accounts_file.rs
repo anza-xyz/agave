@@ -321,7 +321,9 @@ impl AccountsFile {
     fn account_data_file(&self) -> Option<(&File, FileSize)> {
         match self {
             Self::AppendVec(av) => Some((av.file(), av.len() as FileSize)),
-            Self::Split(split) => split.data_file().map(|data_file| (data_file, split.data_len())),
+            Self::Split(split) => split
+                .data_file()
+                .map(|data_file| (data_file, split.data_len())),
         }
     }
 
