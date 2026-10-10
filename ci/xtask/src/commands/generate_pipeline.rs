@@ -181,11 +181,13 @@ impl PullRequestPipelineFlags {
                 || rust_changed
                 || changed_files.iter().any(|file| {
                     file.ends_with("ci/test-checks.sh")
+                        || file.ends_with(".toml")
                         || file == "CHANGELOG.md"
                         || file.ends_with("scripts/cargo-for-all-lock-files.sh")
                         || file.ends_with("scripts/check-dev-context-only-utils.sh")
                         || file.ends_with("scripts/agave-build-lists.sh")
                         || file.ends_with("scripts/cargo-clippy.sh")
+                        || file.ends_with("scripts/check-msrv.sh")
                         || file.ends_with("ci/do-audit.sh")
                         || file.ends_with("ci/check-install-all.sh")
                         || file.ends_with("scripts/spl-token-cli-version.sh")
@@ -200,7 +202,7 @@ impl PullRequestPipelineFlags {
                 || rust_changed
                 || changed_files
                     .iter()
-                    .any(|file| file.starts_with("ci/feature-check/")),
+                    .any(|file| file.starts_with("ci/feature-check/") || file == "clippy.toml"),
             miri: trigger_all
                 || rust_changed
                 || changed_files
@@ -214,7 +216,9 @@ impl PullRequestPipelineFlags {
             stable: trigger_all
                 || rust_changed
                 || changed_files.iter().any(|file| {
-                    file.ends_with("ci/stable/run-partition.sh")
+                    file == ".config/nextest.toml"
+                        || file == "dev-bins/.config/nextest.toml"
+                        || file.ends_with("ci/stable/run-partition.sh")
                         || file.ends_with("ci/stable/common.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
                         || file.ends_with("ci/common/limit-threads.sh")
@@ -222,7 +226,8 @@ impl PullRequestPipelineFlags {
             local_cluster: trigger_all
                 || rust_changed
                 || changed_files.iter().any(|file| {
-                    file.ends_with("ci/stable/run-local-cluster-partially.sh")
+                    file == ".config/nextest.toml"
+                        || file.ends_with("ci/stable/run-local-cluster-partially.sh")
                         || file.ends_with("ci/stable/common.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
                 }),
@@ -245,6 +250,11 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("ci/upload-ci-artifact.sh")
                         || file.ends_with("scripts/configure-metrics.sh")
                         || file.ends_with("scripts/run.sh")
+                        || file.starts_with("multinode-demo/")
+                        || file == "net/common.sh"
+                        || file == "fetch-core-bpf.sh"
+                        || file == "fetch-spl.sh"
+                        || file == "fetch-programs.sh"
                 }),
             stable_sbf: trigger_all
                 || rust_changed
@@ -254,18 +264,21 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("scripts/ulimit-n.sh")
                         || file.ends_with("ci/common/limit-threads.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
-                        || file.ends_with("programs/sbf/install.sh")
+                        || file.starts_with("programs/sbf/")
+                        || file == "cargo-build-sbf"
                 }),
             shuttle: trigger_all
                 || rust_changed
-                || changed_files
-                    .iter()
-                    .any(|file| file.ends_with("ci/test-shuttle.sh")),
+                || changed_files.iter().any(|file| {
+                    file == ".config/nextest.toml" || file.ends_with("ci/test-shuttle.sh")
+                }),
             coverage: trigger_all
                 || rust_changed
                 || changed_files.iter().any(|file| {
                     file.ends_with("scripts/coverage.sh")
                         || file.ends_with("ci/test-coverage.sh")
+                        || file.ends_with("ci/intercept.sh")
+                        || file.ends_with("ci/codecov-env.sh")
                         || file.starts_with("ci/coverage/")
                 }),
             xdp_tests: trigger_all
@@ -801,6 +814,6 @@ mod tests {
     fn test_cargo_config_triggers_release_check() {
         let f = flags(&[".cargo/config.toml"]);
         assert!(f.release_check);
-        assert!(!f.checks);
+        assert!(f.checks);
     }
 }
