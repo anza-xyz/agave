@@ -971,14 +971,12 @@ impl JsonRpcRequestProcessor {
                 let bank = Arc::clone(&bank);
                 self.runtime
                     .spawn_blocking(move || {
-                        rank_map_response(
-                            epoch,
-                            bank.epoch_stakes_from_slot(slot)
-                                .expect("epoch stakes were found in this bank before spawning"),
-                        )
+                        bank.epoch_stakes_from_slot(slot)
+                            .map(|stakes| rank_map_response(epoch, stakes))
+                            .ok_or_else(Error::internal_error)
                     })
                     .await
-                    .map_err(|_| Error::internal_error())
+                    .map_err(|_| Error::internal_error())?
             })
             .await?;
         let value = match identity {
@@ -5612,6 +5610,18 @@ pub mod tests {
         let response: RpcResponse<Option<RpcRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert!(response.value.unwrap().validators.is_empty());
+
+        // Retained epochs remain available after the RPC response cache is discarded.
+        *rpc.meta.rank_map_cache.write().unwrap() = RankMapCache::default();
+        let rebuilt = rpc
+            .meta
+            .runtime
+            .block_on(rpc.meta.get_rank_map(0, RpcRankMapConfig::default()))
+            .unwrap();
+        assert_eq!(rebuilt.context.slot, 3);
+        let rebuilt = rebuilt.value.unwrap();
+        assert!(!Arc::ptr_eq(&first, &rebuilt));
+        assert_eq!(first, rebuilt);
     }
 
     #[test]
