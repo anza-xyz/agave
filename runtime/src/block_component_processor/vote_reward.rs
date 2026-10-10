@@ -378,9 +378,11 @@ fn update_accounts(
     vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
     mut updated_accounts: HashMap<Pubkey, VoteState>,
     validators: impl Iterator<Item = Pubkey>,
-) -> Result<Vec<(Pubkey, AccountSharedData)>, CalcVoteRewardUpdateVoteStatesError> {
+) -> Result<(Vec<(Pubkey, AccountSharedData)>, usize), CalcVoteRewardUpdateVoteStatesError> {
     let mut leader_reward = 0;
+    let mut num_vote_accounts = 0;
     for validator in validators {
+        num_vote_accounts += 1;
         let Some(mut vote_state) = VoteState::try_new(vote_accounts, validator) else {
             continue;
         };
@@ -419,23 +421,28 @@ fn update_accounts(
         }
     }
 
-    Ok(updated_accounts
-        .into_values()
-        .filter_map(|vote_state| vote_state.serialize())
-        .collect())
+    Ok((
+        updated_accounts
+            .into_values()
+            .filter_map(|vote_state| vote_state.serialize())
+            .collect(),
+        num_vote_accounts,
+    ))
 }
 
 /// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
 /// based on the calculated rewards and the `final_cert_input`.
+///
+/// Returns number of vote accounts updated.
 pub(super) fn calc_vote_rewards_update_vote_states(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
     final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
     block_producer_time_nanos: i64,
-) -> Result<(), CalcVoteRewardUpdateVoteStatesError> {
+) -> Result<usize, CalcVoteRewardUpdateVoteStatesError> {
     let Some(updated_accounts) = allocate_updated_accounts(bank, &reward_cert, &final_cert_input)?
     else {
-        return Ok(());
+        return Ok(0);
     };
     let reward_state = match &reward_cert {
         Some(c) => Some(RewardState::try_new(
@@ -451,8 +458,8 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     });
     let vote_accounts = bank.vote_accounts();
 
-    let updated_accounts = match (&reward_state, &final_cert_state) {
-        (None, None) => return Ok(()),
+    let (updated_accounts, num_vote_accounts_updated) = match (&reward_state, &final_cert_state) {
+        (None, None) => return Ok(0),
         (Some(state), None) => update_accounts(
             &reward_state,
             &final_cert_state,
@@ -477,7 +484,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     };
 
     bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
-    Ok(())
+    Ok(num_vote_accounts_updated)
 }
 
 /// Computes the voting reward in Lamports.
