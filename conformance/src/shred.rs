@@ -171,12 +171,8 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
     let handle_duplicate = |duplicate: PossibleDuplicateShred| {
-        let _duplicate_proof = handle_duplicate_shred(
-            &blockstore,
-            duplicate,
-            true, // no_verify_chained_merkle_root: Alpenglow relies on the block id instead
-        )
-        .expect("handle duplicate shred");
+        let _duplicate_proof =
+            handle_duplicate_shred(&blockstore, duplicate).expect("handle duplicate shred");
     };
     let shreds_iter = parsed
         .iter()
