@@ -308,17 +308,6 @@ fn slot_time_reduction_vat_burns() -> [(Pubkey, u64); 4] {
     ]
 }
 
-fn is_feature_active_at_slot(
-    rpc_client: &RpcClient,
-    feature_id: &Pubkey,
-    slot: u64,
-) -> client_error::Result<bool> {
-    Ok(matches!(
-        rpc_client.get_feature_activation_slot(feature_id)?,
-        Some(activation_slot) if activation_slot <= slot
-    ))
-}
-
 fn vat_to_burn_per_epoch(rpc_client: &RpcClient, slot: u64) -> client_error::Result<u64> {
     let epoch_schedule = rpc_client.get_epoch_schedule()?;
 
@@ -350,12 +339,7 @@ fn get_minimum_vat_vote_account_balance(
 
     let vote_account_rent_exempt_minimum =
         rpc_client.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())?;
-    let vat_to_burn_per_epoch =
-        if is_feature_active_at_slot(rpc_client, &agave_feature_set::alpenglow::id(), slot)? {
-            vat_to_burn_per_epoch(rpc_client, slot)?
-        } else {
-            0
-        };
+    let vat_to_burn_per_epoch = vat_to_burn_per_epoch(rpc_client, slot)?;
 
     Ok(Some(
         vote_account_rent_exempt_minimum + vat_to_burn_per_epoch,

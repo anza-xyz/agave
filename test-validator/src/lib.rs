@@ -267,7 +267,11 @@ impl TestValidatorGenesis {
     /// during `initialize_ledger`, if member of the set is not a Feature
     /// it will be silently ignored
     pub fn deactivate_features(&mut self, deactivate_list: &[Pubkey]) -> &mut Self {
-        self.deactivate_feature_set.extend(deactivate_list);
+        self.deactivate_feature_set.extend(
+            deactivate_list
+                .iter()
+                .filter(|feature_id| **feature_id != agave_feature_set::alpenglow::id()),
+        );
         self
     }
 
@@ -544,11 +548,12 @@ impl TestValidatorGenesis {
                 .into_iter()
                 .zip(feature_ids)
                 .for_each(|(maybe_account, feature_id)| {
-                    if maybe_account
-                        .as_ref()
-                        .and_then(solana_feature_gate_interface::from_account)
-                        .and_then(|feature| feature.activated_at)
-                        .is_none()
+                    if feature_id != &agave_feature_set::alpenglow::id()
+                        && maybe_account
+                            .as_ref()
+                            .and_then(solana_feature_gate_interface::from_account)
+                            .and_then(|feature| feature.activated_at)
+                            .is_none()
                     {
                         self.deactivate_feature_set.insert(*feature_id);
                     } else {
@@ -902,6 +907,10 @@ impl TestValidator {
         // Only activate features which are not explicitly deactivated.
         let mut feature_set = FeatureSet::all_enabled();
         for feature in &config.deactivate_feature_set {
+            if feature == &agave_feature_set::alpenglow::id() {
+                warn!("Alpenglow is always enabled and cannot be deactivated");
+                continue;
+            }
             if FEATURE_NAMES.contains_key(feature) {
                 feature_set.deactivate(feature);
                 info!("Feature for {feature:?} deactivated");
@@ -1540,7 +1549,6 @@ mod test {
         [
             agave_feature_set::deprecate_rewards_sysvar::id(),
             agave_feature_set::disable_fees_sysvar::id(),
-            agave_feature_set::alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
             agave_feature_set::vote_account_initialize_v2::id(),
         ]

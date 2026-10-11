@@ -27,7 +27,9 @@ use {
         blockstore_processor::verify_ticks,
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, Shred,
-            filter::{ShredFilterContext, ShredRecoveryContext},
+            filter::{
+                ShredFilterContext, ShredRecoveryContext, check_feature_activation_from_bank,
+            },
             wire,
         },
     },
@@ -122,9 +124,10 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     // Bank at the root slot: drives the filter/recovery slot bounds, verify_ticks
     // tick params, and the dup feature gate.
     // FD: resolver + sched config (shred_version, advance_slot_old(root_slot)).
-    let feature_set = FeatureSet::default();
+    let mut feature_set = FeatureSet::default();
+    feature_set.activate(&agave_feature_set::alpenglow::id(), 0);
     let bank = build_root_bank(root_slot, feature_set);
-    let migration = MigrationStatus::default();
+    let migration = MigrationStatus::post_migration_status();
 
     // Step 1: parse each shred; record whether it's a chained Merkle shred.
     // FD: fd_shred_parse + fd_shred_is_chained. should_discard_shred only gates accumulation.
@@ -170,10 +173,15 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
     let handle_duplicate = |duplicate: PossibleDuplicateShred| {
+        let no_verify_chained_merkle_root = check_feature_activation_from_bank(
+            &agave_feature_set::alpenglow::id(),
+            duplicate.slot(),
+            &bank,
+        );
         let _duplicate_proof = handle_duplicate_shred(
             &blockstore,
             duplicate,
-            false, // no_verify_chained_merkle_root: keep pre-Alpenglow validation
+            no_verify_chained_merkle_root,
         )
         .expect("handle duplicate shred");
     };

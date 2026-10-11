@@ -386,12 +386,6 @@ fn main() {
     });
 
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
-    if matches.is_present("alpenglow") {
-        println!(
-            "Warning: --alpenglow is deprecated to be removed in a future release, \
-             solana-test-validator will always run alpenglow"
-        );
-    }
 
     if TestValidatorGenesis::ledger_exists(&ledger_path) {
         for (name, long) in &[
