@@ -799,11 +799,6 @@ impl ErasureMeta {
         let num_coding = index.coding().range(self.coding_shreds_indices()).count();
         self.config.num_data <= num_data + num_coding
     }
-
-    #[cfg(test)]
-    pub(crate) fn clear_first_received_coding_shred_index(&mut self) {
-        self.first_received_coding_index = 0;
-    }
 }
 
 impl MerkleRootMeta {
