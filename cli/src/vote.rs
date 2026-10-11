@@ -16,7 +16,7 @@ use {
         stake::check_current_authority,
     },
     agave_feature_set::{
-        alpenglow, bls_pubkey_management_in_vote_account, custom_commission_collector,
+        bls_pubkey_management_in_vote_account, custom_commission_collector,
         vote_account_initialize_v2,
     },
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
@@ -2035,14 +2035,7 @@ pub async fn process_show_vote_account(
         .and_then(|feature| feature.activated_at);
     let tvc_activation_epoch = tvc_activation_slot.map(|s| epoch_schedule.get_epoch(s));
 
-    let ag_is_active = get_feature_is_active(rpc_client, &alpenglow::id())
-        .await
-        .unwrap_or(false);
-    let ag_genesis_cert = if ag_is_active {
-        rpc_client.get_ag_genesis_cert().await?
-    } else {
-        None
-    };
+    let ag_genesis_cert = rpc_client.get_ag_genesis_cert().await?;
     let votes_observed = VotesObserved::new(&vote_state, &ag_genesis_cert);
     let epoch_voting_history = get_epoch_history(
         &epoch_schedule,

@@ -117,7 +117,8 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     // Bank at the root slot: drives the filter/recovery slot bounds, verify_ticks
     // tick params, and the dup feature gate.
     // FD: resolver + sched config (shred_version, advance_slot_old(root_slot)).
-    let feature_set = FeatureSet::default();
+    let mut feature_set = FeatureSet::default();
+    feature_set.activate(&agave_feature_set::alpenglow::id(), 0);
     let bank = build_root_bank(root_slot, feature_set);
     let migration = MigrationStatus::post_migration_status();
     set_alpenglow_ticks(&bank, &migration);
