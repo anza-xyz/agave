@@ -2210,18 +2210,6 @@ fn load_frozen_forks(
                 all_banks.retain(|_, bank| bank.ancestors.contains_key(&root));
                 m.stop();
                 root_retain_us += m.as_us();
-
-                // If this root bank activated the feature flag, update migration status
-                if migration_status.is_pre_feature_activation()
-                    && let Some(slot) = bank_forks
-                        .read()
-                        .unwrap()
-                        .root_bank()
-                        .feature_set
-                        .activated_slot(&agave_feature_set::alpenglow::id())
-                {
-                    migration_status.record_feature_activation(slot);
-                }
             }
 
             slots_processed += 1;
@@ -2529,7 +2517,6 @@ pub mod tests {
             },
             entry::{create_ticks, next_entry, next_entry_mut},
         },
-        solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_instruction::Instruction,
         solana_instruction_error::InstructionError,
@@ -2544,8 +2531,8 @@ pub mod tests {
         solana_runtime::{
             bank::{BankIdGenerator, bank_hash_details::SlotDetails},
             genesis_utils::{
-                self, ValidatorVoteKeypairs, create_genesis_config_with_tower_leader,
-                create_genesis_config_with_tower_vote_accounts,
+                ValidatorVoteKeypairs, create_genesis_config_for_alpenglow_migration_with_leader,
+                create_genesis_config_for_alpenglow_migration_with_vote_accounts,
             },
             installed_scheduler_pool::{
                 InstalledSchedulerPool, MockInstalledScheduler, MockUninstalledScheduler,
@@ -2574,8 +2561,8 @@ pub mod tests {
         trees::tr,
     };
 
-    fn create_tower_genesis_config(mint_lamports: u64) -> GenesisConfigInfo {
-        create_genesis_config_with_tower_leader(
+    fn create_alpenglow_migration_genesis_config(mint_lamports: u64) -> GenesisConfigInfo {
+        create_genesis_config_for_alpenglow_migration_with_leader(
             mint_lamports,
             &Pubkey::new_unique(),
             bootstrap_validator_stake_lamports(),
@@ -2596,7 +2583,7 @@ pub mod tests {
     /// Generate a dummy `MigrationStatus` in the `ReadyToEnable` phase
     fn ready_to_enable_migration_status(genesis_block: Block) -> MigrationStatus {
         let migration_status = MigrationStatus::default();
-        let migration_slot = migration_status.record_feature_activation(0);
+        let migration_slot = migration_status.migration_slot().unwrap();
         assert!(genesis_block.slot < migration_slot);
         migration_status.set_genesis_block(genesis_block);
         migration_status.set_genesis_certificate(genesis_certificate(genesis_block));
@@ -2802,7 +2789,8 @@ pub mod tests {
     fn test_process_blockstore_with_invalid_slot_tick_count() {
         agave_logger::setup();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_tower_genesis_config(10_000);
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_alpenglow_migration_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
 
         // Create a new ledger with slot 0 full of ticks
@@ -2911,7 +2899,8 @@ pub mod tests {
     fn test_process_blockstore_with_incomplete_slot() {
         agave_logger::setup();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_tower_genesis_config(10_000);
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_alpenglow_migration_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
 
         /*
@@ -2994,7 +2983,8 @@ pub mod tests {
     fn test_process_blockstore_with_two_forks_and_squash() {
         agave_logger::setup();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_tower_genesis_config(10_000);
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_alpenglow_migration_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
 
         // Create a new ledger with slot 0 full of ticks
@@ -3074,7 +3064,8 @@ pub mod tests {
     fn test_process_blockstore_with_two_forks() {
         agave_logger::setup();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_tower_genesis_config(10_000);
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_alpenglow_migration_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
 
         // Create a new ledger with slot 0 full of ticks
@@ -3163,7 +3154,8 @@ pub mod tests {
     fn test_process_blockstore_with_dead_slot() {
         agave_logger::setup();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_tower_genesis_config(10_000);
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_alpenglow_migration_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         debug!("ledger_path: {ledger_path:?}");
@@ -3206,7 +3198,8 @@ pub mod tests {
     fn test_process_blockstore_with_dead_child() {
         agave_logger::setup();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_tower_genesis_config(10_000);
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_alpenglow_migration_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         debug!("ledger_path: {ledger_path:?}");
@@ -3288,65 +3281,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_process_blockstore_epoch_boundary_root() {
-        agave_logger::setup();
-
-        let GenesisConfigInfo { genesis_config, .. } = create_tower_genesis_config(10_000);
-        let ticks_per_slot = genesis_config.ticks_per_slot;
-
-        // Create a new ledger with slot 0 full of ticks
-        let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let mut last_entry_hash = blockhash;
-
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        // Let `last_slot` be the number of slots in the first two epochs
-        let epoch_schedule = get_epoch_schedule(&genesis_config);
-        let last_slot = epoch_schedule.get_last_slot_in_epoch(1);
-
-        // Create a single chain of slots with all indexes in the range [0, v + 1]
-        for i in 1..=last_slot + 1 {
-            last_entry_hash = fill_blockstore_slot_with_ticks(
-                &blockstore,
-                ticks_per_slot,
-                i,
-                i - 1,
-                last_entry_hash,
-            );
-        }
-
-        // Set a root on the last slot of the last confirmed epoch
-        let rooted_slots: Vec<Slot> = (0..=last_slot).collect();
-        blockstore.set_roots(rooted_slots.iter()).unwrap();
-
-        // Set a root on the next slot of the confirmed epoch
-        blockstore
-            .set_roots(std::iter::once(&(last_slot + 1)))
-            .unwrap();
-
-        // Check that we can properly restart the ledger / leader scheduler doesn't fail
-        let opts = ProcessOptions {
-            run_verification: true,
-            ..ProcessOptions::default()
-        };
-        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
-        let bank_forks = bank_forks.read().unwrap();
-
-        // There is one fork, head is last_slot + 1
-        assert_eq!(frozen_bank_slots(&bank_forks), vec![last_slot + 1]);
-
-        // The latest root should have purged all its parents
-        assert!(
-            &bank_forks[last_slot + 1]
-                .parents()
-                .iter()
-                .map(|bank| bank.slot())
-                .next()
-                .is_none()
-        );
-    }
-
-    #[test]
     fn test_process_empty_entry_is_registered() {
         agave_logger::setup();
 
@@ -3386,7 +3320,7 @@ pub mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config_with_tower_leader(mint, &leader_pubkey, 50);
+        } = create_genesis_config_for_alpenglow_migration_with_leader(mint, &leader_pubkey, 50);
         genesis_config.poh_config.hashes_per_tick = Some(hashes_per_tick_genesis);
         let (ledger_path, mut last_entry_hash) =
             create_new_tmp_ledger_auto_delete!(&genesis_config);
@@ -4419,7 +4353,7 @@ pub mod tests {
     fn test_process_blockstore_from_root() {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_tower_genesis_config(123);
+        } = create_alpenglow_migration_genesis_config(123);
 
         let ticks_per_slot = 1;
         genesis_config.ticks_per_slot = ticks_per_slot;
@@ -4632,11 +4566,6 @@ pub mod tests {
         }
     }
 
-    fn get_epoch_schedule(genesis_config: &GenesisConfig) -> EpochSchedule {
-        let bank = Bank::new_for_tests(genesis_config);
-        bank.epoch_schedule().clone()
-    }
-
     fn frozen_bank_slots(bank_forks: &BankForks) -> Vec<Slot> {
         let mut slots: Vec<_> = bank_forks
             .frozen_banks()
@@ -4668,7 +4597,7 @@ pub mod tests {
         let validator_keypairs: Vec<_> =
             (0..10).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
         let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_tower_vote_accounts(
+            create_genesis_config_for_alpenglow_migration_with_vote_accounts(
                 1_000_000_000,
                 &validator_keypairs,
                 vec![100; validator_keypairs.len()],
@@ -4833,7 +4762,7 @@ pub mod tests {
         let forks = tr(0) / (tr(1) / (tr(2) / (tr(4))) / main_fork);
         let validator_keypairs = ValidatorVoteKeypairs::new_rand();
         let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_tower_vote_accounts(
+            create_genesis_config_for_alpenglow_migration_with_vote_accounts(
                 10_000,
                 &[&validator_keypairs],
                 vec![100],
@@ -5040,7 +4969,7 @@ pub mod tests {
 
         // Vote-state roots do not identify an Alpenglow block. Once migration starts, only
         // pre-migration roots may be inferred from vote accounts.
-        let migration_slot = migration_status.record_feature_activation(0);
+        let migration_slot = migration_status.migration_slot().unwrap();
         let accounts = convert_to_vote_accounts(vec![(migration_slot - 1, total_stake)]);
         assert_eq!(
             supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status),
@@ -5827,39 +5756,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_confirm_slot_block_with_markers_fails_without_alpenglow() {
-        let genesis_config = create_tower_genesis_config(100 * LAMPORTS_PER_SOL).genesis_config;
-        let (blockstore, genesis_config, _ledger_path, replay_verification_worker_pool) =
-            confirm_slot_with_block_markers_common(true, genesis_config);
-
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
-        assert!(
-            !bank1
-                .feature_set
-                .is_active(&agave_feature_set::alpenglow::id())
-        );
-        let bank1 = bank_forks.write().unwrap().insert(bank1);
-
-        confirm_slot(
-            &blockstore,
-            &bank1,
-            compute_shred_version(&genesis_config.hash(), None),
-            &replay_verification_worker_pool,
-            &mut ConfirmationTiming::default(),
-            &mut ConfirmationProgress::new(bank0.last_blockhash()),
-            false,
-            None,
-            None,
-            None,
-            false,
-            &MigrationStatus::default(),
-        )
-        .unwrap_err();
-    }
-
-    #[test]
     fn test_confirm_slot_block_with_markers_succeeds_with_alpenglow() {
         let genesis_config = create_genesis_config(100 * LAMPORTS_PER_SOL).genesis_config;
         let (blockstore, genesis_config, _ledger_path, replay_verification_worker_pool) =
@@ -5867,13 +5763,7 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
-        bank1.activate_feature(&agave_feature_set::alpenglow::id());
-        assert!(
-            bank1
-                .feature_set
-                .is_active(&agave_feature_set::alpenglow::id())
-        );
+        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
         let bank1 = bank_forks.write().unwrap().insert(bank1);
         let (entry_notification_sender, entry_notification_receiver) =
             bounded::<EntryNotification>(2);
@@ -5947,8 +5837,7 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
-        bank1.activate_feature(&agave_feature_set::alpenglow::id());
+        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
         let bank1 = bank_forks.write().unwrap().insert(bank1);
 
         let result = confirm_slot(
@@ -6170,7 +6059,7 @@ pub mod tests {
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
 
         let migration_status = MigrationStatus::default();
-        let migration_slot = migration_status.record_feature_activation(0);
+        let migration_slot = migration_status.migration_slot().unwrap();
         let pre_migration_slot = migration_slot.checked_sub(1).unwrap();
         let child_slots = [pre_migration_slot, migration_slot, migration_slot + 1];
 
@@ -6216,10 +6105,9 @@ pub mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_tower_genesis_config(10_000);
+        } = create_alpenglow_migration_genesis_config(10_000);
         let ticks_per_slot = 1;
         genesis_config.ticks_per_slot = ticks_per_slot;
-        genesis_utils::activate_feature(&mut genesis_config, agave_feature_set::alpenglow::id());
 
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();

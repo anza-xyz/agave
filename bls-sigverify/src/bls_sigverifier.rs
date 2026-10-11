@@ -207,9 +207,6 @@ impl SigVerifier {
                 error!("sigverifier input channel disconnected: Exiting.");
                 break;
             };
-            if self.migration_status.is_pre_feature_activation() {
-                continue;
-            }
             self.stats.maybe_report(self.sharable_banks.root().slot());
             if datagrams_buffer.is_empty() && certificates.is_empty() {
                 continue;

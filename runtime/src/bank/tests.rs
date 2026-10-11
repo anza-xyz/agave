@@ -6,16 +6,19 @@ use {
     },
     crate::{
         accounts_background_service::{PrunedBanksRequestHandler, SendDroppedBankCallback},
+        alpenglow_epoch_type::RewardEpochDelegatedStakes,
         bank::{BankRc, partitioned_epoch_rewards::EpochRewardPhase},
         bank_client::BankClient,
         bank_forks::BankForks,
+        block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
         epoch_stakes::VersionedEpochStakes,
         genesis_utils::{
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
-            create_genesis_config_with_leader, create_genesis_config_with_tower_leader,
-            create_genesis_config_with_vote_accounts, create_lockup_stake_account,
-            genesis_sysvar_and_builtin_program_lamports, minimum_vote_account_balance_for_vat,
+            create_genesis_config_for_alpenglow_migration_with_leader,
+            create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
+            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
+            minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
@@ -194,7 +197,9 @@ fn create_genesis_config_no_tx_fee(lamports: u64) -> (GenesisConfig, Keypair) {
 }
 
 pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, Keypair) {
-    solana_genesis_config::create_genesis_config(lamports)
+    let (mut genesis_config, mint_keypair) = solana_genesis_config::create_genesis_config(lamports);
+    activate_feature(&mut genesis_config, feature_set::alpenglow::id());
+    (genesis_config, mint_keypair)
 }
 
 fn create_genesis_config_with_legacy_hashes(lamports: u64) -> (GenesisConfig, Keypair) {
@@ -828,17 +833,30 @@ where
     assert_ne!(bank1.capitalization(), bank0.capitalization());
 
     // check voting rewards show up in rewards vector
+    let vat_lamports = bank1.vat_to_burn_per_epoch();
+    let vat_debit = i64::try_from(vat_lamports).unwrap();
     assert_eq!(
         *bank1.rewards.read().unwrap(),
-        vec![(
-            vote_id,
-            RewardInfo {
-                reward_type: RewardType::Voting,
-                lamports: 0,
-                post_balance: bank1.get_balance(&vote_id),
-                commission_bps: Some(0),
-            }
-        ),]
+        vec![
+            (
+                vote_id,
+                RewardInfo {
+                    reward_type: RewardType::VATDebit,
+                    lamports: -vat_debit,
+                    post_balance: bank1.get_balance(&vote_id),
+                    commission_bps: None,
+                }
+            ),
+            (
+                vote_id,
+                RewardInfo {
+                    reward_type: RewardType::Voting,
+                    lamports: 0,
+                    post_balance: bank1.get_balance(&vote_id),
+                    commission_bps: Some(0),
+                }
+            ),
+        ]
     );
     bank1.freeze();
 
@@ -864,14 +882,30 @@ where
     // verify the stake and vote accounts are the right size
     assert!(
         ((bank2.get_balance(&stake_id) - stake_account.lamports() + bank2.get_balance(&vote_id)
-            - vote_account.lamports()) as f64
+            - vote_account.lamports()
+            + vat_lamports) as f64
             - validator_rewards_lamports as f64)
             .abs()
             < 1.0
     );
 
-    // verify the rewards are the right size
-    assert!((validator_rewards_lamports as f64 - paid_rewards as f64).abs() < 1.0); // rounding, truncating
+    // Verify the capitalization change after accounting for VAT and the two
+    // Alpenglow reward metadata accounts.
+    let bank0_reward_metadata_lamports = bank0
+        .get_balance(&VOTE_REWARD_ACCOUNT_ADDR)
+        .checked_add(RewardEpochDelegatedStakes::account_lamports_for_tests(
+            &bank0,
+        ))
+        .unwrap();
+    let bank2_reward_metadata_lamports = bank2
+        .get_balance(&VOTE_REWARD_ACCOUNT_ADDR)
+        .checked_add(RewardEpochDelegatedStakes::account_lamports_for_tests(
+            &bank2,
+        ))
+        .unwrap();
+    let capitalization_rewards = paid_rewards as i128 + vat_lamports as i128
+        - (bank2_reward_metadata_lamports as i128 - bank0_reward_metadata_lamports as i128);
+    assert!((validator_rewards_lamports as f64 - capitalization_rewards as f64).abs() < 1.0); // rounding, truncating
 
     // verify validator rewards show up in rewards vectors
     assert_eq!(
@@ -5956,7 +5990,8 @@ fn test_shrink_candidate_slots_cached() {
     // No more slots should be shrunk
     assert_eq!(bank2.shrink_candidate_slots(), 0);
     // alive_counts represents the count of alive accounts in the three slots 0,1,2
-    assert_eq!(alive_counts, vec![14, 1, 6]);
+    // Slot 0 includes the always-active Alpenglow feature account.
+    assert_eq!(alive_counts, vec![15, 1, 6]);
 }
 
 #[test]
@@ -6784,7 +6819,6 @@ fn test_block_limits() {
 
 fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
     assert_eq!(bank.ns_per_slot, params.ns_per_slot());
-    assert_eq!(bank.hashes_per_tick(), params.hashes_per_tick());
     assert_eq!(
         bank.slots_per_year.to_bits(),
         params.slots_per_year().to_bits()
@@ -6880,7 +6914,6 @@ fn test_vat_burn_slot_params() {
             ClusterType::Development,
             FeatureSet::default(),
         );
-        activate_feature(&mut genesis_config, feature_set::alpenglow::id());
         if let Some(feature_id) = slot_time_feature_id {
             activate_feature(&mut genesis_config, feature_id);
         }
@@ -6999,7 +7032,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
     assert_reduced_slot_time_hashes_per_tick(
         genesis_config,
         Some(LEGACY_HASHES_PER_TICK),
-        SLOT_PARAMS_200MS.hashes_per_tick(),
+        Some(LEGACY_HASHES_PER_TICK),
     );
 
     let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
@@ -7097,7 +7130,7 @@ fn test_update_clock_slot_range_duration() {
         mut genesis_config,
         voting_keypair,
         ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
+    } = create_genesis_config_for_alpenglow_migration_with_leader(5, &leader_pubkey, 3);
     genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
     activate_feature(
         &mut genesis_config,
@@ -7698,7 +7731,7 @@ fn test_timestamp_slow() {
         mut genesis_config,
         voting_keypair,
         ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
+    } = create_genesis_config_for_alpenglow_migration_with_leader(5, &leader_pubkey, 3);
     let slots_in_epoch = 32;
     genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
     let (mut bank, _bank_forks) =
@@ -7743,7 +7776,7 @@ fn test_timestamp_fast() {
         mut genesis_config,
         voting_keypair,
         ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
+    } = create_genesis_config_for_alpenglow_migration_with_leader(5, &leader_pubkey, 3);
     let slots_in_epoch = 32;
     genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
     let (mut bank, _bank_forks) =

@@ -728,7 +728,6 @@ mod tests {
     use {
         super::*,
         crate::tests::{get_cluster_info, new_vote_aggregate},
-        agave_bls_sigverify::bls_sigverifier::MAX_VOTE_SLOT_DISTANCE_FROM_ROOT,
         agave_votor_messages::{
             certificate::CertificateType,
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
@@ -745,7 +744,6 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_runtime::{
-            bank::SlotLeader,
             bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
@@ -762,7 +760,6 @@ mod tests {
         pub event_receiver: Receiver<VotorEvent>,
         pub _repair_event_receiver: Receiver<RepairEvent>,
         pub validator_keypairs: Vec<ValidatorVoteKeypairs>,
-        pub bank_forks: Arc<RwLock<BankForks>>,
     }
 
     impl TestContext {
@@ -835,7 +832,6 @@ mod tests {
                 event_receiver,
                 _repair_event_receiver: repair_event_receiver,
                 validator_keypairs,
-                bank_forks,
             }
         }
     }
@@ -844,63 +840,6 @@ mod tests {
         fn default() -> Self {
             Self::new(None, Arc::new(MigrationStatus::post_migration_status()))
         }
-    }
-
-    #[test]
-    fn test_first_vote_uses_current_root_after_delayed_activation() {
-        let migration_status = Arc::new(MigrationStatus::default());
-        let mut ctx = TestContext::new(
-            Some(EpochSchedule::without_warmup()),
-            migration_status.clone(),
-        );
-        assert!(migration_status.is_pre_feature_activation());
-        let startup_root = ctx.ctx.sharable_banks.root().slot();
-        let new_root_slot = startup_root + MAX_VOTE_SLOT_DISTANCE_FROM_ROOT + 1;
-        let parent = ctx.ctx.sharable_banks.root();
-        let new_root = Bank::new_from_parent(parent, SlotLeader::default(), new_root_slot);
-        new_root.freeze();
-        {
-            let mut bank_forks = ctx.bank_forks.write().unwrap();
-            bank_forks.insert(new_root);
-            bank_forks.set_root(new_root_slot, None, None);
-        }
-        let root_bank = ctx.ctx.sharable_banks.root();
-        assert_eq!(root_bank.slot(), new_root_slot);
-        migration_status.enable_alpenglow_for_tests();
-
-        let vote = Vote::new_skip_vote(new_root_slot);
-        let rank_map = root_bank.get_rank_map(new_root_slot).unwrap();
-        let mut generated_certificate = false;
-        for rank in 0..ctx.validator_keypairs.len() {
-            let vote_keypair = &ctx.validator_keypairs[rank].vote_keypair;
-            let bls_keypair =
-                BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-            let vote_message = VoteMessage {
-                vote,
-                signature: bls_keypair
-                    .sign(&get_vote_payload_to_sign(
-                        vote,
-                        ctx.ctx.cluster_info.my_shred_version(),
-                    ))
-                    .into(),
-                rank: rank as u16,
-                stake: rank_map.get_pubkey_stake_entry(rank).unwrap().stake,
-            };
-            let (_, certificates) = ConsensusPoolService::add_pool_msg(
-                &root_bank,
-                &ctx.ctx.cluster_info.id(),
-                PoolMessage::Votes(vec![PoolVote::Own(vote_message)]),
-                &mut ctx.consensus_pool,
-                &mut vec![],
-                &mut ConsensusPoolServiceStats::new(),
-            );
-            generated_certificate |= !certificates.is_empty();
-        }
-
-        assert!(
-            generated_certificate,
-            "votes at the current root should not be rejected relative to the startup root"
-        );
     }
 
     /// Test the full consensus message flow:

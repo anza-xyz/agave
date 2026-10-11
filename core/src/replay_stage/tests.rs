@@ -64,7 +64,7 @@ use {
         commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
         genesis_utils::{
             GenesisConfigInfo, ValidatorVoteKeypairs, bootstrap_validator_stake_lamports,
-            create_genesis_config_with_tower_leader,
+            create_genesis_config_for_alpenglow_migration_with_leader,
         },
     },
     solana_sha256_hasher::hash,
@@ -178,7 +178,6 @@ impl ProcessActiveBanksContext {
 
 fn post_migration_status_for_tests() -> MigrationStatus {
     let migration_status = MigrationStatus::default();
-    migration_status.record_feature_activation(0);
     let genesis_block = Block::new_unique(0);
     let genesis_certificate = Arc::new(GenesisCert {
         block: genesis_block,
@@ -1398,9 +1397,6 @@ fn test_alpenglow_migration_transition_does_not_mark_bank_dead() {
         replay_vote_sender,
     );
     let genesis_block = Block::new_unique(0);
-    process_active_banks_context
-        .migration_status
-        .record_feature_activation(0);
     process_active_banks_context
         .migration_status
         .set_genesis_block(genesis_block);
@@ -6601,7 +6597,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     agave_logger::setup();
     let GenesisConfigInfo {
         mut genesis_config, ..
-    } = create_genesis_config_with_tower_leader(
+    } = create_genesis_config_for_alpenglow_migration_with_leader(
         123,
         &Pubkey::new_unique(),
         bootstrap_validator_stake_lamports(),

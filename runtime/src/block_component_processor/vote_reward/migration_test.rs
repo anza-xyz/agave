@@ -9,13 +9,12 @@ mod tests {
                 tests::{new_bank_from_parent, set_commission, split_commission_checked},
             },
             genesis_utils::{
-                ValidatorVoteKeypairs, activate_all_features_tower,
-                create_genesis_config_with_leader_ex, create_validator,
+                ValidatorVoteKeypairs,
+                create_genesis_config_with_leader_ex_for_alpenglow_migration, create_validator,
             },
             stake_utils,
             sysvar_account::from_account,
         },
-        agave_feature_set::FeatureSet,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
@@ -142,7 +141,7 @@ mod tests {
             } else {
                 SlotLeader::new_unique()
             };
-            let mut genesis_config = create_genesis_config_with_leader_ex(
+            let mut genesis_config = create_genesis_config_with_leader_ex_for_alpenglow_migration(
                 lamports,
                 &mint_keypair.pubkey(),
                 &validators[0].node_keypair.pubkey(),
@@ -154,11 +153,9 @@ mod tests {
                 FeeRateGovernor::new(0, 0),
                 Rent::default(),
                 ClusterType::Development,
-                &FeatureSet::default(),
                 vec![],
             );
             genesis_config.epoch_schedule = EpochSchedule::without_warmup();
-            activate_all_features_tower(&mut genesis_config);
             for (ind, keypair) in validators.iter().enumerate().skip(1) {
                 let node_pubkey = keypair.node_keypair.pubkey();
                 let vote_pubkey = keypair.vote_keypair.pubkey();
@@ -419,20 +416,21 @@ mod tests {
     ) {
         let num_validators = 5;
 
-        let (state, mut bank_at_tower) = State::new(
+        let (state, bank_before_migration) = State::new(
             pay_leader,
             num_validators,
             num_add_stakers,
             commission_bps,
             pay_type,
         );
-        bank_at_tower.activate_feature(&agave_feature_set::alpenglow::id());
-        let (bank_at_tower, _bank_forks) = bank_at_tower.wrap_with_bank_forks_for_tests();
+        let (bank_before_migration, _bank_forks) =
+            bank_before_migration.wrap_with_bank_forks_for_tests();
 
-        let first_slot_in_migration_epoch = bank_at_tower
+        let first_slot_in_migration_epoch = bank_before_migration
             .epoch_schedule
-            .get_first_slot_in_epoch(bank_at_tower.epoch() + 1);
-        let bank_at_migration0 = new_bank_from_parent(bank_at_tower, first_slot_in_migration_epoch);
+            .get_first_slot_in_epoch(bank_before_migration.epoch() + 1);
+        let bank_at_migration0 =
+            new_bank_from_parent(bank_before_migration, first_slot_in_migration_epoch);
 
         let bank_with_tower_rewards = state.add_tower_rewards(bank_at_migration0);
 

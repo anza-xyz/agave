@@ -334,33 +334,6 @@ fn datagram_from_bytes(message: impl Into<Bytes>, peer_pubkey: Pubkey) -> Datagr
 }
 
 #[test]
-fn test_blockstore_certificate_requires_active_alpenglow() {
-    let ctx = TestContext::new_with_config(1024, MigrationStatus::default());
-    let shred_version = ctx.cluster_info.my_shred_version();
-    let block = Block::new_unique(1);
-    let certificate = test_create_base2_unverified_certificate(
-        &ctx.bls_keypairs(),
-        shred_version,
-        CertificateType::FinalizeFast(block),
-        &[0, 1, 2, 3, 4, 5, 6, 7],
-    );
-    let slot = 2;
-
-    ctx.send_certificate(slot, certificate.clone());
-    expect_no_receive(&ctx.pool_receiver);
-
-    ctx.migration_status.enable_alpenglow_for_tests();
-    ctx.send_certificate(slot, certificate);
-    let SigVerifiedBatch::Certificates(certs) =
-        ctx.pool_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap()
-    else {
-        panic!("expected a certificate batch");
-    };
-    assert_eq!(certs.len(), 1);
-    assert_eq!(certs[0].cert_type, CertificateType::FinalizeFast(block));
-}
-
-#[test]
 fn test_old_blockstore_certificate_is_filtered() {
     let ctx = TestContext::new();
     let shred_version = ctx.cluster_info.my_shred_version();
@@ -1560,7 +1533,7 @@ fn votes_are_bounded_by_root() {
 
 #[test]
 fn genesis_votes_bypass_future_bound_during_migration() {
-    let ctx = TestContext::new_with_config(1024, MigrationStatus::default());
+    let ctx = TestContext::new_with_config(1024, MigrationStatus::new_for_tests(200));
     let highest_parent_ready_slot = 100;
     *ctx.highest_parent_ready.write().unwrap() = (
         highest_parent_ready_slot,
@@ -1570,7 +1543,7 @@ fn genesis_votes_bypass_future_bound_during_migration() {
         },
     );
     let max_vote_slot = highest_parent_ready_slot + 40;
-    let migration_slot = ctx.migration_status.record_feature_activation(200);
+    let migration_slot = ctx.migration_status.migration_slot().unwrap();
     let genesis_slot = migration_slot.saturating_sub(1);
     assert!(genesis_slot > max_vote_slot);
 

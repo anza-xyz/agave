@@ -516,7 +516,6 @@ pub(crate) mod tests {
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::create_v4_account_with_authorized,
         std::iter,
-        test_case::test_case,
     };
 
     struct VoteAccountInfo {
@@ -528,7 +527,6 @@ pub(crate) mod tests {
     fn new_vote_accounts(
         num_nodes: usize,
         num_vote_accounts_per_node: usize,
-        is_alpenglow: bool,
     ) -> HashMap<Pubkey, Vec<VoteAccountInfo>> {
         // Create some vote accounts for each pubkey
         (0..num_nodes)
@@ -546,15 +544,10 @@ pub(crate) mod tests {
                                 .try_into()
                                 .unwrap();
 
-                        let bls_pubkey = if is_alpenglow {
-                            bls_pubkey_compressed_serialized
-                        } else {
-                            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]
-                        };
                         let account = create_v4_account_with_authorized(
                             &node_id,
                             &authorized_voter,
-                            bls_pubkey,
+                            bls_pubkey_compressed_serialized,
                             &node_id,
                             0,
                             &node_id,
@@ -591,15 +584,13 @@ pub(crate) mod tests {
             .collect()
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_parse_epoch_vote_accounts(is_alpenglow: bool) {
+    #[test]
+    fn test_parse_epoch_vote_accounts() {
         let stake_per_account = 100;
         let num_vote_accounts_per_node = 2;
         let num_nodes = 10;
 
-        let vote_accounts_map =
-            new_vote_accounts(num_nodes, num_vote_accounts_per_node, is_alpenglow);
+        let vote_accounts_map = new_vote_accounts(num_nodes, num_vote_accounts_per_node);
 
         let expected_authorized_voters: HashMap<_, _> = vote_accounts_map
             .values()
@@ -655,14 +646,12 @@ pub(crate) mod tests {
         );
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_node_id_to_stake(is_alpenglow: bool) {
+    #[test]
+    fn test_node_id_to_stake() {
         let num_nodes = 10;
         let num_vote_accounts_per_node = 2;
 
-        let vote_accounts_map =
-            new_vote_accounts(num_nodes, num_vote_accounts_per_node, is_alpenglow);
+        let vote_accounts_map = new_vote_accounts(num_nodes, num_vote_accounts_per_node);
         let node_id_to_stake_map = vote_accounts_map
             .keys()
             .enumerate()
@@ -688,7 +677,7 @@ pub(crate) mod tests {
         let num_nodes = 10;
         let num_vote_accounts = num_nodes;
 
-        let vote_accounts_map = new_vote_accounts(num_nodes, 1, true);
+        let vote_accounts_map = new_vote_accounts(num_nodes, 1);
         let node_id_to_stake_map = vote_accounts_map
             .keys()
             .enumerate()
@@ -750,7 +739,7 @@ pub(crate) mod tests {
         agave_logger::setup();
         let num_nodes = 10;
 
-        let vote_accounts_map = new_vote_accounts(num_nodes, 2, true);
+        let vote_accounts_map = new_vote_accounts(num_nodes, 2);
         let node_id_to_stake_map = vote_accounts_map
             .keys()
             .enumerate()

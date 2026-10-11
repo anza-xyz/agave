@@ -797,7 +797,9 @@ mod tests {
         crate::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
-            genesis_utils::{create_genesis_config, create_genesis_config_with_tower_leader},
+            genesis_utils::{
+                create_genesis_config, create_genesis_config_for_alpenglow_migration_with_leader,
+            },
         },
         agave_votor_messages::consensus_message::BlockId,
         bytes::Bytes,
@@ -823,9 +825,12 @@ mod tests {
         Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config)
     }
 
-    fn create_test_bank_tower() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
-        let genesis_config_info =
-            create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 0);
+    fn create_test_bank_during_migration() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+        let genesis_config_info = create_genesis_config_for_alpenglow_migration_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            0,
+        );
         Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config)
     }
 
@@ -853,7 +858,7 @@ mod tests {
 
     fn post_migration_status_with_genesis_slot(genesis_slot: Slot) -> MigrationStatus {
         let migration_status = MigrationStatus::default();
-        let migration_slot = migration_status.record_feature_activation(0);
+        let migration_slot = migration_status.migration_slot().unwrap();
         assert!(genesis_slot < migration_slot);
 
         let genesis_block = Block::new_unique(genesis_slot);
@@ -900,7 +905,7 @@ mod tests {
     #[test]
     fn test_first_alpenglow_block_with_genesis_certificate_marker_succeeds() {
         let migration_status = post_migration_status_with_genesis_slot(1);
-        let (genesis_bank, bank_forks) = create_test_bank_tower();
+        let (genesis_bank, bank_forks) = create_test_bank_during_migration();
         let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
         let parent_block_id = BlockId::new_unique();
         parent.set_block_id(Some(parent_block_id.to_hash()));
@@ -926,8 +931,7 @@ mod tests {
     #[test]
     fn test_genesis_certificate_marker_aborts_tower_bank_during_migration() {
         let migration_status = MigrationStatus::default();
-        migration_status.record_feature_activation(0);
-        let (genesis_bank, bank_forks) = create_test_bank_tower();
+        let (genesis_bank, bank_forks) = create_test_bank_during_migration();
         let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
         let parent_block_id = BlockId::new_unique();
         parent.set_block_id(Some(parent_block_id.to_hash()));
@@ -1257,10 +1261,7 @@ mod tests {
         >;
 
         let post_migration = MigrationStatus::post_migration_status();
-        let pre_migration = MigrationStatus::default();
-        // Feature activated but migration not yet complete
         let in_migration = MigrationStatus::default();
-        in_migration.record_feature_activation(0);
 
         let (parent, bank_forks) = create_test_bank();
         // First slot of a leader window so UpdateParent passes the window check
@@ -1407,18 +1408,6 @@ mod tests {
 
         #[rustfmt::skip]
         let cases: Vec<(&MigrationStatus, Vec<Step>, Result<(), E>)> = vec![
-            // - Pre migration
-            (&pre_migration, vec![entries(), tick(true)], Ok(())),
-            (&pre_migration, vec![entries(), tick(false)], Ok(())),
-            (&pre_migration, vec![tick(false)], Ok(())),
-            (&pre_migration, vec![tick(true), entries()], Ok(())),
-            (&pre_migration, vec![entries(), entries(), tick(false), tick(true)], Ok(())),
-            (&pre_migration, vec![header()], Err(E::BlockComponentPreMigration)),
-            (&pre_migration, vec![genesis_cert()], Err(E::BlockComponentPreMigration)),
-            (&pre_migration, vec![footer()], Err(E::BlockComponentPreMigration)),
-            (&pre_migration, vec![update_parent(false)], Err(E::BlockComponentPreMigration)),
-            (&pre_migration, vec![update_parent(true)], Err(E::BlockComponentPreMigration)),
-
             // - In migration
             // header and genesis cert are processed so a slow node can catch up,
             // other markers are still rejected

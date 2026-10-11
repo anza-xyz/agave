@@ -1988,16 +1988,12 @@ impl Bank {
                 thread_pool,
             ));
 
-        // the vote reward account state should be created at the epoch boundary in which we
-        // activate alpenglow as it will need info from the previous epoch.
-        if self.feature_set.snapshot().alpenglow {
-            let epoch_start_capitalization = parent_capitalization;
-            EpochInflationAccountState::new_epoch_update_account(
-                self,
-                epoch_start_capitalization,
-                epoch_rewards,
-            );
-        }
+        let epoch_start_capitalization = parent_capitalization;
+        EpochInflationAccountState::new_epoch_update_account(
+            self,
+            epoch_start_capitalization,
+            epoch_rewards,
+        );
 
         report_new_epoch_metrics(
             epoch,
@@ -2824,16 +2820,11 @@ impl Bank {
         }
     }
 
-    /// Burn the Validator Admission ticket from each vote account if Alpenglow is enabled
+    /// Burn the Validator Admission ticket from each vote account.
     ///
     /// Note: This must ONLY be called after the vote accounts have been filtered (`clone_and_filter_for_vat`)
     /// to the top `MAX_ALPENGLOW_VOTE_ACCOUNTS` that contain enough balance for admission.
     fn maybe_burn_vat_from_staked_accounts(&mut self, epoch_stakes: &VersionedEpochStakes) {
-        let feature_snapshot = self.feature_set.snapshot();
-        if !feature_snapshot.alpenglow {
-            return;
-        }
-
         let vat_to_burn_per_epoch = self.vat_to_burn_per_epoch();
         let vote_accounts = epoch_stakes.stakes().vote_accounts();
         debug_assert!(vote_accounts.len() <= 2000);
@@ -3627,10 +3618,6 @@ impl Bank {
     /// Update the clock sysvar from a block footer's nanosecond timestamp.
     /// Also stores the nanosecond value for later retrieval via `get_nanosecond_clock`.
     pub fn update_clock_from_footer(&self, unix_timestamp_nanos: i64) {
-        if !self.feature_set.snapshot().alpenglow {
-            return;
-        }
-
         // On epoch boundaries, update epoch_start_timestamp
         //
         // Note: the genesis block's bank is created via new_from_genesis, which calls update_clock
@@ -5121,11 +5108,6 @@ impl Bank {
         self.ns_per_slot = params.ns_per_slot();
         self.slots_per_year = params.slots_per_year();
         self.rent_collector.slots_per_year = params.slots_per_year();
-        if !self.feature_set.is_active(&feature_set::alpenglow::id())
-            && self.hashes_per_tick().is_some()
-        {
-            self.set_hashes_per_tick(params.hashes_per_tick());
-        }
     }
 
     /// Verifies bank fields are consistent with current slot params.
@@ -5146,14 +5128,6 @@ impl Bank {
             params.slots_per_year().to_bits(),
             "snapshot slot-time rent_collector.slots_per_year mismatch"
         );
-        let hashes_per_tick = self.hashes_per_tick();
-        if !self.feature_set.is_active(&feature_set::alpenglow::id()) && hashes_per_tick.is_some() {
-            assert_eq!(
-                hashes_per_tick,
-                params.hashes_per_tick(),
-                "snapshot slot-time hashes_per_tick mismatch"
-            );
-        }
         assert_eq!(
             self.entry_bytes_budget().slot_limit(),
             params.max_entry_bytes_per_slot(),
@@ -6810,19 +6784,14 @@ impl Bank {
         self.collector_fee_details.read().unwrap().clone()
     }
 
-    /// Minimum balance a vote account must hold to survive SIMD-0357 filtering
-    /// under the current feature set. When `alpenglow` is active the threshold
-    /// also includes one epoch's worth of VAT burn.
+    /// Minimum balance a vote account must hold to survive SIMD-0357 filtering.
+    /// The threshold includes one epoch's worth of VAT burn.
     pub fn minimum_vote_account_balance_for_vat(&self) -> u64 {
         let vote_account_rent_exempt_minimum = self
             .rent_collector
             .rent
             .minimum_balance(VoteStateV4::size_of());
-        if self.feature_set.snapshot().alpenglow {
-            vote_account_rent_exempt_minimum + self.vat_to_burn_per_epoch()
-        } else {
-            vote_account_rent_exempt_minimum
-        }
+        vote_account_rent_exempt_minimum + self.vat_to_burn_per_epoch()
     }
 
     /// Returns the `Stakes` as filtered by SIMD-0357
@@ -6960,12 +6929,15 @@ impl Bank {
     fn new_from_fields_for_tests(
         bank_rc: BankRc,
         fields: BankFieldsToDeserialize,
-        feature_set: FeatureSet,
+        mut feature_set: FeatureSet,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
         leader: SlotLeader,
         stakes_cache: StakesCache,
         accounts_data_size_initial: u64,
     ) -> Self {
+        if !feature_set.is_active(&agave_feature_set::alpenglow::id()) {
+            feature_set.activate(&agave_feature_set::alpenglow::id(), 0);
+        }
         let slot = fields.slot;
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let mut bank = Self::default_with_bank_rc(bank_rc);
@@ -7128,7 +7100,9 @@ impl Bank {
     pub fn default_for_tests() -> Self {
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
-        Self::default_with_bank_rc(BankRc::new(accounts))
+        let mut bank = Self::default_with_bank_rc(BankRc::new(accounts));
+        bank.ensure_alpenglow_active_for_tests();
+        bank
     }
 
     pub fn new_with_bank_forks_for_tests(
@@ -7171,6 +7145,7 @@ impl Bank {
             None,
             None,
         );
+        bank.ensure_alpenglow_active_for_tests();
         // Keep test-bank fee structure aligned with the genesis fee configuration.
         bank.set_fee_structure(&FeeStructure {
             lamports_per_signature: genesis_config.fee_rate_governor.lamports_per_signature,
@@ -7186,7 +7161,7 @@ impl Bank {
     /// Intended for use by benches only.
     /// create new bank with the given config and paths.
     pub fn new_with_paths_for_benches(genesis_config: &GenesisConfig, paths: Vec<PathBuf>) -> Self {
-        Self::new_from_genesis(
+        let mut bank = Self::new_from_genesis(
             genesis_config,
             Arc::<RuntimeConfig>::default(),
             paths,
@@ -7197,7 +7172,18 @@ impl Bank {
             Arc::default(),
             None,
             None,
-        )
+        );
+        bank.ensure_alpenglow_active_for_tests();
+        bank
+    }
+
+    fn ensure_alpenglow_active_for_tests(&mut self) {
+        if !self
+            .feature_set
+            .is_active(&agave_feature_set::alpenglow::id())
+        {
+            self.activate_feature(&agave_feature_set::alpenglow::id());
+        }
     }
 
     pub fn new_from_parent_with_bank_forks(

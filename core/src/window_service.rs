@@ -488,7 +488,8 @@ mod test {
         solana_runtime::{
             bank::Bank,
             genesis_utils::{
-                bootstrap_validator_stake_lamports, create_genesis_config_with_tower_leader,
+                bootstrap_validator_stake_lamports,
+                create_genesis_config_for_alpenglow_migration_with_leader,
             },
         },
         solana_signer::Signer,
@@ -533,7 +534,7 @@ mod test {
     #[test]
     fn test_run_check_duplicate() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let genesis_config = create_genesis_config_with_tower_leader(
+        let genesis_config = create_genesis_config_for_alpenglow_migration_with_leader(
             10_000,
             &Pubkey::new_unique(),
             bootstrap_validator_stake_lamports(),
@@ -599,7 +600,7 @@ mod test {
             Arc::new(keypair),
             SocketAddrSpace::Unspecified,
         ));
-        let genesis_config = create_genesis_config_with_tower_leader(
+        let genesis_config = create_genesis_config_for_alpenglow_migration_with_leader(
             10_000,
             &Pubkey::new_unique(),
             bootstrap_validator_stake_lamports(),

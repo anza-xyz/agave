@@ -6,7 +6,7 @@ use {
     },
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::bank::Bank,
     solana_signer::Signer,
     std::{
         collections::{HashMap, HashSet},
@@ -22,10 +22,8 @@ fn bench_save_tower(c: &mut Criterion) {
 
     let vote_account_pubkey = &Pubkey::default();
     let node_keypair = Arc::new(Keypair::new());
-    let heaviest_bank = BankForks::new_rw_arc(Bank::default_for_tests())
-        .read()
-        .unwrap()
-        .working_bank();
+    let (_, bank_forks) = Bank::default_for_tests().wrap_with_bank_forks_for_tests();
+    let heaviest_bank = bank_forks.read().unwrap().working_bank();
     let tower_storage = FileTowerStorage::new(dir.path().to_path_buf());
     let tower = Tower::new(
         &node_keypair.pubkey(),
@@ -44,10 +42,8 @@ fn bench_save_tower(c: &mut Criterion) {
 fn bench_generate_ancestors_descendants(c: &mut Criterion) {
     let vote_account_pubkey = &Pubkey::default();
     let node_keypair = Arc::new(Keypair::new());
-    let heaviest_bank = BankForks::new_rw_arc(Bank::default_for_tests())
-        .read()
-        .unwrap()
-        .working_bank();
+    let (_, bank_forks) = Bank::default_for_tests().wrap_with_bank_forks_for_tests();
+    let heaviest_bank = bank_forks.read().unwrap().working_bank();
     let mut tower = Tower::new(
         &node_keypair.pubkey(),
         vote_account_pubkey,

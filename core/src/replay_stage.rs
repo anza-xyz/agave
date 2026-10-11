@@ -3140,22 +3140,6 @@ impl ReplayStage {
                 drop_bank_sender,
                 tbft_structs,
             );
-
-            // Check if we've rooted a bank that will tell us the migration slot
-            if migration_status.is_pre_feature_activation()
-                && let Some(slot) = bank_forks
-                    .read()
-                    .unwrap()
-                    .root_bank()
-                    .feature_set
-                    .activated_slot(&agave_feature_set::alpenglow::id())
-            {
-                let migration_slot = migration_status.record_feature_activation(slot);
-                datapoint_info!(
-                    "migration-started",
-                    ("migration_slot", migration_slot as i64, i64),
-                );
-            }
         }
 
         let mut update_commitment_cache_time = Measure::start("update_commitment_cache");

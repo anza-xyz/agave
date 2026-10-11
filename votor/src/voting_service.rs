@@ -366,7 +366,6 @@ mod tests {
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
-            migration::MigrationStatus,
             vote::Vote,
             wire::get_vote_payload_to_sign,
         },
@@ -620,7 +619,6 @@ mod tests {
                 spy_listener.0,
                 Some(spy_listener.1),
             )]))),
-            Arc::new(MigrationStatus::post_migration_status()),
         );
         (
             VotingService::new(

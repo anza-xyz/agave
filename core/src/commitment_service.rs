@@ -333,7 +333,8 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_runtime::{
             genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_tower_vote_accounts,
+                ValidatorVoteKeypairs,
+                create_genesis_config_for_alpenglow_migration_with_vote_accounts,
             },
             stake_utils,
         },
@@ -644,7 +645,7 @@ mod tests {
         let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs];
         let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_tower_vote_accounts(
+            create_genesis_config_for_alpenglow_migration_with_vote_accounts(
                 1_000_000_000,
                 &validator_keypairs,
                 vec![100; 1],

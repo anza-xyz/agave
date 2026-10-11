@@ -2222,7 +2222,7 @@ mod tests {
         let validator_voting_keypairs: Vec<_> =
             (0..10).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
         let GenesisConfigInfo { genesis_config, .. } = if use_tower {
-            genesis_utils::create_genesis_config_with_tower_vote_accounts(
+            genesis_utils::create_genesis_config_for_alpenglow_migration_with_vote_accounts(
                 10_000,
                 &validator_voting_keypairs,
                 vec![100; validator_voting_keypairs.len()],

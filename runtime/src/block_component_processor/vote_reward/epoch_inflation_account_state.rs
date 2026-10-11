@@ -183,8 +183,8 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config,
-                create_genesis_config_with_tower_leader, create_genesis_config_with_vote_accounts,
-                deactivate_features,
+                create_genesis_config_for_alpenglow_migration_with_leader,
+                create_genesis_config_with_vote_accounts, deactivate_features,
             },
             slot_params::slot_time_feature_ids,
         },
@@ -211,7 +211,8 @@ mod tests {
 
     #[test]
     fn set_state_works() {
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
+        let genesis_config = create_genesis_config(1).genesis_config;
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank = bank_forks.read().unwrap().root_bank();
         let state = get_rand_state();
         state.set_state(&bank);
@@ -343,7 +344,11 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 0);
+        } = create_genesis_config_for_alpenglow_migration_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            0,
+        );
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let root_bank = bank_forks.read().unwrap().root_bank();
 

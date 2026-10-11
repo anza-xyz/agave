@@ -246,7 +246,7 @@ mod tests {
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
-            genesis_utils::create_genesis_config_with_tower_leader,
+            genesis_utils::create_genesis_config_for_alpenglow_migration_with_leader,
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -345,7 +345,7 @@ mod tests {
         let my_pubkey = my_keypair.pubkey();
         let shred_version = 0;
         let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_tower_leader(10_000, &my_pubkey, 10_000);
+            create_genesis_config_for_alpenglow_migration_with_leader(10_000, &my_pubkey, 10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
@@ -403,7 +403,7 @@ mod tests {
         let my_pubkey = my_keypair.pubkey();
         let shred_version = 0;
         let genesis_config_info =
-            create_genesis_config_with_tower_leader(10_000, &my_pubkey, 10_000);
+            create_genesis_config_for_alpenglow_migration_with_leader(10_000, &my_pubkey, 10_000);
         let GenesisConfigInfo { genesis_config, .. } = genesis_config_info;
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks_arc = BankForks::new_rw_arc(bank);
@@ -530,7 +530,7 @@ mod tests {
         let my_pubkey = my_keypair.pubkey();
         let shred_version = 0;
         let genesis_config_info =
-            create_genesis_config_with_tower_leader(10_000, &my_pubkey, 10_000);
+            create_genesis_config_for_alpenglow_migration_with_leader(10_000, &my_pubkey, 10_000);
         let GenesisConfigInfo { genesis_config, .. } = genesis_config_info;
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks_arc = BankForks::new_rw_arc(bank);
