@@ -147,11 +147,11 @@ fn default_sysvar_cache() -> SysvarCache {
     sysvar_cache.fill_missing_entries(|pubkey, callback| {
         if pubkey == &rent::id() {
             let rent = Rent::default();
-            let rent_data = bincode::serialize(&rent).unwrap();
+            let rent_data = wincode::serialize(&rent).unwrap();
             callback(&rent_data);
         } else if pubkey == &clock::id() {
             let clock = solana_clock::Clock::default();
-            let clock_data = bincode::serialize(&clock).unwrap();
+            let clock_data = wincode::serialize(&clock).unwrap();
             callback(&clock_data);
         }
     });
@@ -420,6 +420,8 @@ fn test_program_sbf_loader_deprecated() {
 // In SBPFv3, we don't have a verification step for undefined syscalls, and we don't do dynamic
 // symbol resolution, so this test would pass.
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
+    use solana_account::state_traits::StateMutWincode as _;
+
     agave_logger::setup();
 
     // Populate loader account with `solana_sbf_rust_deprecated_loader` elf, which
@@ -445,12 +447,15 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     let buffer_state = UpgradeableLoaderState::Buffer {
         authority_address: Some(authority_pubkey),
     };
-    let mut buffer_data = bincode::serialize(&buffer_state).unwrap();
-    buffer_data.extend_from_slice(&program_elf);
-
-    // Build sysvar accounts for the deploy instruction
-    let rent_data = bincode::serialize(&Rent::default()).unwrap();
-    let clock_data = bincode::serialize(&solana_clock::Clock::default()).unwrap();
+    let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
+    let mut buffer_account = Account::new_data_with_space(
+        1_000_000_000,
+        &buffer_state,
+        buffer_metadata_size + program_elf.len(),
+        &bpf_loader_upgradeable::id(),
+    )
+    .unwrap();
+    buffer_account.data[buffer_metadata_size..].copy_from_slice(&program_elf);
 
     let accounts = vec![
         (
@@ -470,32 +475,14 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
                 ..Account::default()
             },
         ),
-        (
-            buffer_pubkey,
-            Account {
-                lamports: 1_000_000_000,
-                data: buffer_data,
-                owner: bpf_loader_upgradeable::id(),
-                ..Account::default()
-            },
-        ),
+        (buffer_pubkey, buffer_account),
         (
             rent::id(),
-            Account {
-                lamports: 1,
-                data: rent_data,
-                owner: sysvar::id(),
-                ..Account::default()
-            },
+            Account::new_data(1, &Rent::default(), &sysvar::id()).unwrap(),
         ),
         (
             clock::id(),
-            Account {
-                lamports: 1,
-                data: clock_data,
-                owner: sysvar::id(),
-                ..Account::default()
-            },
+            Account::new_data(1, &solana_clock::Clock::default(), &sysvar::id()).unwrap(),
         ),
         keyed_account_for_system_program(),
         solana_svm::conformance::programs::keyed_account_for_bpf_loader_upgradeable_program(),

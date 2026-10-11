@@ -8233,7 +8233,6 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-validator",
- "bincode",
  "borsh",
  "solana-account",
  "solana-account-info",
@@ -8278,6 +8277,7 @@ dependencies = [
  "solana-vote-interface",
  "solana-vote-program",
  "test-case",
+ "wincode",
 ]
 
 [[package]]
