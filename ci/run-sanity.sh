@@ -19,15 +19,8 @@ rm -rf config/run/init-completed config/ledger
 
 # Sanity-check that agave-validator can successfully terminate itself without relying on
 # process::exit() by extending the timeout...
-# Also the banking_tracer thread needs some extra time to flush due to
-# unsynchronized and buffered IO.
 validator_timeout="${SOLANA_VALIDATOR_EXIT_TIMEOUT:-120}"
-# simulate-block-production uses the legacy PoH simulator, which cannot produce
-# valid Alpenglow blocks.
-alpenglow_feature_id=A1pengvuM6JEcyNuTnMqepBKhwHE3N6PmUrdATGawhJS
-run_sh_genesis_args="$SOLANA_RUN_SH_GENESIS_ARGS --deactivate-feature $alpenglow_feature_id"
-SOLANA_RUN_SH_GENESIS_ARGS="$run_sh_genesis_args" \
-  SOLANA_RUN_SH_VALIDATOR_ARGS="${SOLANA_RUN_SH_VALIDATOR_ARGS} --full-snapshot-interval-slots 200 --incremental-snapshot-interval-slots 100 --enable-banking-trace $((1024 * 1024 * 1024))" \
+SOLANA_RUN_SH_VALIDATOR_ARGS="${SOLANA_RUN_SH_VALIDATOR_ARGS} --full-snapshot-interval-slots 200 --incremental-snapshot-interval-slots 100" \
   SOLANA_VALIDATOR_EXIT_TIMEOUT="$validator_timeout" \
   timeout "$validator_timeout" ./scripts/run.sh &
 
@@ -44,9 +37,7 @@ while [[ ! -f config/run/init-completed ]]; do
   fi
 done
 
-# Needs bunch of slots for simulate-block-production.
-# Better yet, run ~20 secs to run longer than its warm-up.
-# As a bonus, this works as a sanity test of general slot-rooting behavior.
+# Wait for enough rooted slots to exercise snapshot creation and ledger verification.
 snapshot_slot=50
 latest_slot=0
 
@@ -78,15 +69,3 @@ $solana_ledger_tool verify --abort-on-invalid-block \
 $solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
   |& grep -q "Log Messages:$"
 set +x
-
-
-first_simulated_slot=$((latest_slot / 2))
-purge_slot=$((first_simulated_slot + latest_slot / 4))
-echo "First simulated slot: ${first_simulated_slot}"
-# Purge some slots so that later verify fails if sim is broken
-$solana_ledger_tool purge --ledger config/ledger "$purge_slot"
-$solana_ledger_tool simulate-block-production --ledger config/ledger \
-  --first-simulated-slot $first_simulated_slot
-# Slots should be available and correctly replayable upto snapshot_slot at least.
-$solana_ledger_tool verify --abort-on-invalid-block \
-  --ledger config/ledger --enable-hash-overrides --halt-at-slot "$snapshot_slot"

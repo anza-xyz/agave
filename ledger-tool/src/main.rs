@@ -39,11 +39,11 @@ use {
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_core::{
-        banking_simulation::{BankingSimulator, BankingTraceEvents},
+        banking_trace::{BankingTraceEvents, trace_event_file_name},
         cost_update_service::report_cost_tracker_stats,
         resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
-        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
+        validator::BlockVerificationMethod,
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
     solana_entry::entry::create_ticks,
@@ -584,7 +584,7 @@ fn read_banking_trace_event_file_paths_or_exit(banking_trace_path: PathBuf) -> V
     }
 
     for index in 0.. {
-        let event_file_name: OsString = BankingSimulator::event_file_name(index).into();
+        let event_file_name: OsString = trace_event_file_name(index).into();
         if entry_names.remove(&event_file_name) {
             event_file_paths.push(banking_trace_path.join(event_file_name));
         } else {
@@ -1903,8 +1903,7 @@ fn main() {
                         .takes_value(false)
                         .help(
                             "Enable override of blockhashes and bank hashes from banking trace \
-                             event files to correctly verify blocks produced by the \
-                             simulate-block-production subcommand",
+                             event files when verifying historical simulated ledgers",
                         ),
                 ),
         )
@@ -2175,46 +2174,6 @@ fn main() {
                         .long("enable-capitalization-change")
                         .takes_value(false)
                         .help("If snapshot creation should succeed with a capitalization delta."),
-                ),
-        )
-        .subcommand(
-            SubCommand::with_name("simulate-block-production")
-                .about("Simulate producing blocks with banking trace event files in the ledger")
-                .arg(&load_genesis_config_arg)
-                .args(&accounts_db_config_args)
-                .args(&snapshot_config_args)
-                .arg(
-                    Arg::with_name("block_production_method")
-                        .long("block-production-method")
-                        .value_name("METHOD")
-                        .takes_value(true)
-                        .possible_values(BlockProductionMethod::cli_names())
-                        .default_value(BlockProductionMethod::default().into())
-                        .help(BlockProductionMethod::cli_message()),
-                )
-                .arg(
-                    Arg::with_name("transaction_struct")
-                        .long("transaction-structure")
-                        .value_name("STRUCT")
-                        .takes_value(true)
-                        .possible_values(TransactionStructure::cli_names())
-                        .default_value(TransactionStructure::default().into())
-                        .help(TransactionStructure::cli_message()),
-                )
-                .arg(
-                    Arg::with_name("first_simulated_slot")
-                        .long("first-simulated-slot")
-                        .value_name("SLOT")
-                        .validator(is_slot)
-                        .takes_value(true)
-                        .required(true)
-                        .help("Start simulation at the given slot"),
-                )
-                .arg(
-                    Arg::with_name("no_block_cost_limits")
-                        .long("no-block-cost-limits")
-                        .takes_value(false)
-                        .help("Disable block cost limits effectively by setting them to the max"),
                 ),
         )
         .subcommand(
@@ -2633,62 +2592,6 @@ fn main() {
                 }
                 ("create-snapshot", Some(arg_matches)) => {
                     create_snapshot(ledger_path, arg_matches);
-                }
-                ("simulate-block-production", Some(arg_matches)) => {
-                    let mut process_options = parse_process_options(&ledger_path, arg_matches);
-
-                    let banking_trace_events = load_banking_trace_events_or_exit(&ledger_path);
-                    process_options.hash_overrides =
-                        Some(banking_trace_events.hash_overrides().clone());
-
-                    let slot = value_t!(arg_matches, "first_simulated_slot", Slot).unwrap();
-                    let simulator = BankingSimulator::new(banking_trace_events, slot);
-                    let Some(parent_slot) = simulator.parent_slot() else {
-                        eprintln!(
-                            "Couldn't determine parent_slot of first_simulated_slot: {slot} due \
-                             to missing banking_trace_event data."
-                        );
-                        exit(1);
-                    };
-                    process_options.halt_at_slot = Some(parent_slot);
-
-                    // PrimaryForMaintenance needed to purge (write) any existing simulated shreds
-                    // from previous runs
-                    let blockstore = Arc::new(open_blockstore(
-                        &ledger_path,
-                        arg_matches,
-                        AccessType::PrimaryForMaintenance,
-                    ));
-                    let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
-                        load_and_process_ledger_or_exit(
-                            arg_matches,
-                            &genesis_config,
-                            blockstore.clone(),
-                            process_options,
-                            None, // transaction status sender
-                        );
-
-                    let block_production_method = value_t_or_exit!(
-                        arg_matches,
-                        "block_production_method",
-                        BlockProductionMethod
-                    );
-
-                    info!("Using: block-production-method: {block_production_method}");
-
-                    match simulator.start(
-                        genesis_config,
-                        bank_forks,
-                        blockstore,
-                        block_production_method,
-                    ) {
-                        Ok(()) => println!("Ok"),
-                        Err(error) => {
-                            eprintln!("{error:?}");
-                            exit(1);
-                        }
-                    };
                 }
                 ("accounts", Some(arg_matches)) => {
                     let process_options = parse_process_options(&ledger_path, arg_matches);

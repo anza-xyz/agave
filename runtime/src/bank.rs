@@ -5638,8 +5638,7 @@ impl Bank {
                 }
             });
         // Avoid to optimize out `hash` along with the whole computation by super smart rustc.
-        // hash_override is used by ledger-tool's simulate-block-production, which prefers
-        // the actual bank freezing processing for accurate simulation.
+        // hash_override is used by ledger-tool when verifying historical simulated ledgers.
         #[cfg(feature = "dev-context-only-utils")]
         let hash = hash_override.unwrap_or(std::hint::black_box(hash));
 

@@ -23,6 +23,15 @@ use {
     },
     thiserror::Error,
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    bincode::deserialize_from,
+    solana_runtime::bank::HashOverrides,
+    std::{
+        fs::File,
+        io::{BufRead, BufReader},
+    },
+};
 
 /// Capacity of the vote channel between sigverify and the banking-stage.
 /// Sized to fit all votes from a reasonably sized cluster for 1 slot, + margin.
@@ -57,6 +66,14 @@ const TRACE_FILE_ROTATE_COUNT: u64 = 14; // target 2 weeks retention under norma
 const TRACE_FILE_WRITE_INTERVAL_MS: u64 = 100;
 const BUF_WRITER_CAPACITY: usize = 10 * 1024 * 1024;
 pub const TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD: u64 = 1024 * 1024 * 1024;
+
+pub fn trace_event_file_name(index: usize) -> String {
+    if index == 0 {
+        BASENAME.to_string()
+    } else {
+        format!("{BASENAME}.{index}")
+    }
+}
 
 #[derive(Clone)]
 struct ActiveTracer {
@@ -100,6 +117,80 @@ pub enum ChannelLabel {
     TpuVote,
     GossipVote,
     Dummy,
+}
+
+/// Banking trace data needed to replay historical bank and block hashes.
+#[cfg(feature = "dev-context-only-utils")]
+#[derive(Default)]
+pub struct BankingTraceEvents {
+    hash_overrides: HashOverrides,
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl BankingTraceEvents {
+    fn read_event_file(
+        event_file_path: &PathBuf,
+        mut callback: impl FnMut(TimedTracedEvent),
+    ) -> Result<(), TraceError> {
+        let mut reader = BufReader::new(File::open(event_file_path)?);
+
+        // EOF is reached at a correct deserialization boundary or the file is empty.
+        // Do not consume the look-ahead buffer before deserializing the next event.
+        while !reader.fill_buf()?.is_empty() {
+            callback(deserialize_from(&mut reader)?);
+        }
+
+        Ok(())
+    }
+
+    pub fn load(event_file_paths: &[PathBuf]) -> Result<Self, TraceError> {
+        let mut event_count = 0;
+        let mut events = Self::default();
+        for event_file_path in event_file_paths {
+            let old_event_count = event_count;
+            let read_result = Self::read_event_file(event_file_path, |event| {
+                event_count += 1;
+                if let TimedTracedEvent(
+                    _,
+                    TracedEvent::BlockAndBankHash(slot, blockhash, bank_hash),
+                ) = event
+                {
+                    events
+                        .hash_overrides
+                        .add_override(slot, blockhash, bank_hash);
+                }
+            });
+            info!(
+                "Read {} events from {:?}",
+                event_count - old_event_count,
+                event_file_path,
+            );
+
+            if matches!(
+                read_result,
+                Err(TraceError::SerializeError(ref error))
+                    if matches!(
+                        &**error,
+                        bincode::ErrorKind::Io(io_error)
+                            if io_error.kind() == std::io::ErrorKind::UnexpectedEof
+                    )
+            ) {
+                // A trace file may end mid-event after an unclean validator shutdown.
+                warn!(
+                    "Reading {event_file_path:?} failed {read_result:?} due to file corruption or \
+                     unclean validator shutdown",
+                );
+            } else {
+                read_result?;
+            }
+        }
+
+        Ok(events)
+    }
+
+    pub fn hash_overrides(&self) -> &HashOverrides {
+        &self.hash_overrides
+    }
 }
 
 struct RollingConditionGrouped {
@@ -424,10 +515,6 @@ impl TracedSender {
 
     pub fn len(&self) -> usize {
         self.sender.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 
