@@ -346,20 +346,17 @@ pub mod test_utils {
 
     pub fn loader_v3_programdata_account(slot: Slot, elf: &[u8]) -> AccountSharedData {
         let offset = UpgradeableLoaderState::size_of_programdata_metadata();
-        let mut data = vec![0u8; offset];
-        wincode::serialize_into(
-            &mut data[..offset],
+        let mut account = AccountSharedData::new_data_with_space(
+            0,
             &UpgradeableLoaderState::ProgramData {
                 slot,
                 upgrade_authority_address: None,
             },
+            offset + elf.len(),
+            &bpf_loader_upgradeable::id(),
         )
         .unwrap();
-        data.extend_from_slice(elf);
-
-        let mut account = AccountSharedData::default();
-        account.set_owner(bpf_loader_upgradeable::id());
-        account.set_data_from_slice(&data);
+        account.data_as_mut_slice()[offset..].copy_from_slice(elf);
         account
     }
 

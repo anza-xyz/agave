@@ -216,37 +216,32 @@ pub fn deploy_program_with_upgrade_authority(
     };
 
     // The program account must have funds and hold the executable binary
-    let mut account_data = AccountSharedData::default();
-    let buffer = wincode::serialize(&state).unwrap();
-    account_data.set_lamports(rent.minimum_balance(buffer.len()));
-    account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
+    let mut account_data =
+        AccountSharedData::new_data(0, &state, &solana_sdk_ids::bpf_loader_upgradeable::id())
+            .unwrap();
+    account_data.set_lamports(rent.minimum_balance(account_data.data().len()));
     account_data.set_executable(true);
-    account_data.set_data_from_slice(&buffer);
     mock_bank
         .account_shared_data
         .write()
         .unwrap()
         .insert(program_account, account_data);
 
-    let mut account_data = AccountSharedData::default();
     let state = UpgradeableLoaderState::ProgramData {
         slot: deployment_slot,
         upgrade_authority_address,
     };
-    let mut header = wincode::serialize(&state).unwrap();
-    let mut complement = vec![
-        0;
-        std::cmp::max(
-            0,
-            UpgradeableLoaderState::size_of_programdata_metadata().saturating_sub(header.len())
-        )
-    ];
-    let mut buffer = load_program(name);
-    header.append(&mut complement);
-    header.append(&mut buffer);
-    account_data.set_lamports(rent.minimum_balance(header.len()));
-    account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
-    account_data.set_data_from_slice(&header);
+    let elf = load_program(name);
+    let metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
+    let space = metadata_size.saturating_add(elf.len());
+    let mut account_data = AccountSharedData::new_data_with_space(
+        rent.minimum_balance(space),
+        &state,
+        space,
+        &solana_sdk_ids::bpf_loader_upgradeable::id(),
+    )
+    .unwrap();
+    account_data.data_as_mut_slice()[metadata_size..].copy_from_slice(&elf);
     mock_bank
         .account_shared_data
         .write()
