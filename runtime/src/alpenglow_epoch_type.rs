@@ -104,8 +104,7 @@ impl RewardEpochDelegatedStakes {
         let data = wincode::serialize(&delegated_stakes_account).unwrap();
         let lamports = bank
             .get_minimum_balance_for_rent_exemption(RewardEpochDelegatedStakesAccount::max_size());
-        let mut account = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
 
         bank.store_account_and_update_capitalization(
             &REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT,

@@ -12744,11 +12744,8 @@ fn test_new_for_txn_tests_system_transfer() {
     };
     let rent = Rent::default();
 
-    let make_sysvar = |data: Vec<u8>| {
-        let mut acct = AccountSharedData::new(1, data.len(), &solana_sdk_ids::sysvar::id());
-        acct.set_data_from_slice(&data);
-        acct
-    };
+    let make_sysvar =
+        |data: Vec<u8>| AccountSharedData::new_with_data(1, data, &solana_sdk_ids::sysvar::id());
 
     let owned_accounts = [
         (
@@ -12878,11 +12875,8 @@ fn test_new_for_block_tests_with_vote_account() {
     let lamports_per_signature = 5000;
     let transfer_amount = 100_000;
 
-    let make_sysvar = |data: Vec<u8>| {
-        let mut acct = AccountSharedData::new(1, data.len(), &solana_sdk_ids::sysvar::id());
-        acct.set_data_from_slice(&data);
-        acct
-    };
+    let make_sysvar =
+        |data: Vec<u8>| AccountSharedData::new_with_data(1, data, &solana_sdk_ids::sysvar::id());
 
     let clock = solana_clock::Clock {
         slot,

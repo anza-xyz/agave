@@ -3618,8 +3618,7 @@ impl Bank {
         };
         let data = wincode::serialize(&cert).unwrap();
         let lamports = Rent::default().minimum_balance(data.len());
-        let mut cert_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        cert_acct.set_data_from_slice(&data);
+        let cert_acct = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
 
         self.store_account_and_update_capitalization(&GENESIS_CERTIFICATE_ACCOUNT, &cert_acct);
         self.set_is_alpenglow();
@@ -3668,8 +3667,7 @@ impl Bank {
         // Update Alpenglow clock
         let data = wincode::serialize(&unix_timestamp_nanos).unwrap();
         let lamports = Rent::default().minimum_balance(data.len());
-        let mut alpenclock_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        alpenclock_acct.set_data_from_slice(&data);
+        let alpenclock_acct = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
 
         self.store_account_and_update_capitalization(&NANOSECOND_CLOCK_ACCOUNT, &alpenclock_acct);
 

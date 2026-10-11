@@ -1146,13 +1146,10 @@ pub(crate) mod tests {
                 programdata_address,
             })
             .unwrap();
-            let space = data.len();
-            let lamports = bank.get_minimum_balance_for_rent_exemption(space);
-            let owner = &bpf_loader_upgradeable::id();
-
-            let mut account = AccountSharedData::new(lamports, space, owner);
+            let lamports = bank.get_minimum_balance_for_rent_exemption(data.len());
+            let mut account =
+                AccountSharedData::new_with_data(lamports, data, &bpf_loader_upgradeable::id());
             account.set_executable(true);
-            account.data_as_mut_slice().copy_from_slice(&data);
             bank.store_account_and_update_capitalization(program_address, &account);
             account
         };

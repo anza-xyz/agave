@@ -108,8 +108,7 @@ impl EpochInflationAccountState {
     fn set_state(&self, bank: &Bank) {
         let data = wincode::serialize(&self).unwrap();
         let lamports = bank.get_minimum_balance_for_rent_exemption(data.len());
-        let mut account = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
         bank.store_account_and_update_capitalization(&VOTE_REWARD_ACCOUNT_ADDR, &account);
     }
 
