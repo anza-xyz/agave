@@ -50,6 +50,7 @@ solana-slot-hashes = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "wincode"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
@@ -73,7 +74,6 @@ solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
-wincode = { workspace = true }
 
 [[bench]]
 name = "vote_instructions"
