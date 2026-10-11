@@ -220,6 +220,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     );
     add_arg!(
         // deprecated in v4.5.0
+        Arg::with_name("tpu_vote_transaction_receive_threads")
+            .long("tpu-vote-transaction-receive-threads")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .help("No-op; the TPU vote QUIC server has been removed"),
+        usage_warning: "Votes are no longer received over QUIC on the TPU vote port.",
+    );
+    add_arg!(
+        // deprecated in v4.5.0
         Arg::with_name("vote_use_quic")
             .long("vote-use-quic")
             .takes_value(true)

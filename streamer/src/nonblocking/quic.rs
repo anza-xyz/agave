@@ -77,13 +77,6 @@ const MAX_CONNECTION_BURST: u64 = 1000;
 /// peer, and is canceled when we get a Handshake packet from them.
 const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Absolute max RTT to allow for a legitimate connection.
-/// Enough to cover any non-malicious link on Earth.
-pub(crate) const MAX_RTT: Duration = Duration::from_millis(320);
-/// Prevent connections from having 0 RTT when RTT is too small,
-/// as this would break some BDP calculations and assign zero bandwidth
-pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
-
 /// How many RTTs worth of delay can we tolerate on stream reassembly
 /// before considering stream to be "too late". 1.5 RTT should be enough
 /// for any reasonable fragmentation to be resolved, so the only way
@@ -1136,27 +1129,6 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
             0
         }
     }
-
-    /// Removes all connections associated with `key`.
-    ///
-    /// Returns the number of removed connections.
-    pub(crate) fn remove_connections_by_key(&mut self, key: ConnectionTableKey) -> usize {
-        self.table
-            .swap_remove(&key)
-            .map(|connections| {
-                let num_removed = connections.len();
-                debug_assert!(
-                    self.total_size >= num_removed,
-                    "connection table size underflow while removing by key; total_size={}, \
-                     removed={}",
-                    self.total_size,
-                    num_removed
-                );
-                self.total_size = self.total_size.saturating_sub(num_removed);
-                num_removed
-            })
-            .unwrap_or_default()
-    }
 }
 
 struct EndpointAccept<'a> {
@@ -1900,55 +1872,6 @@ pub mod test {
         }
         assert_eq!(table.total_size, 0);
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn test_remove_connections_by_key() {
-        agave_logger::setup();
-        let cancel = CancellationToken::new();
-        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
-        let pubkey1 = Pubkey::new_unique();
-        let pubkey2 = Pubkey::new_unique();
-        let max_connections_per_peer = 10;
-        let stats = Arc::new(StreamerStats::default());
-
-        (0..2).for_each(|i| {
-            table
-                .try_add_connection(
-                    ConnectionTableKey::Pubkey(pubkey1),
-                    0,
-                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                    None,
-                    ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new(i)),
-                    max_connections_per_peer,
-                    || Arc::new(NullStreamerCounter {}),
-                )
-                .unwrap();
-        });
-        table
-            .try_add_connection(
-                ConnectionTableKey::Pubkey(pubkey2),
-                0,
-                ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                None,
-                ConnectionPeerType::Unstaked,
-                Arc::new(AtomicU64::new(2)),
-                max_connections_per_peer,
-                || Arc::new(NullStreamerCounter {}),
-            )
-            .unwrap();
-
-        assert_eq!(table.total_size, 3);
-        let removed = table.remove_connections_by_key(ConnectionTableKey::Pubkey(pubkey1));
-        assert_eq!(removed, 2);
-        assert_eq!(table.total_size, 1);
-        assert_eq!(table.table.len(), 1);
-        assert!(
-            table
-                .table
-                .contains_key(&ConnectionTableKey::Pubkey(pubkey2))
-        );
     }
 
     #[test]

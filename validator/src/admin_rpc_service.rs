@@ -1534,7 +1534,6 @@ mod tests {
                 HashSet::from_iter(vec![
                     KeyUpdaterType::Tpu,
                     KeyUpdaterType::TpuForwards,
-                    KeyUpdaterType::TpuVote,
                     KeyUpdaterType::Forward,
                     KeyUpdaterType::RpcService,
                     KeyUpdaterType::Votor,

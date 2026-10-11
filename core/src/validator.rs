@@ -148,8 +148,8 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
-        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
-        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        nonblocking::swqos::SwQosConfig,
+        quic::{QuicStreamerConfig, SwQosQuicStreamerConfig},
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
@@ -632,8 +632,6 @@ pub struct ValidatorTpuConfig {
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
     pub tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
-    /// QUIC server config for Vote
-    pub vote_quic_server_config: SimpleQosQuicStreamerConfig,
     /// Number of threads to use for signature verification
     pub sigverify_threads: NonZeroUsize,
 }
@@ -663,20 +661,6 @@ impl ValidatorTpuConfig {
             },
         };
 
-        // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
-        let vote_quic_server_config = SimpleQosQuicStreamerConfig {
-            quic_streamer_config: QuicStreamerConfig {
-                max_connections_per_ipaddr_per_min: 32,
-                ..Default::default()
-            },
-            qos_config: SimpleQosConfig {
-                // Way more than the size of our clusters. If some super low staked validators can not
-                // find room, it does not present a liveness issue.
-                max_staked_connections: 4096,
-                ..Default::default()
-            },
-        };
-
         // Two threads is reasonable for tests; benches are free to set more
         let sigverify_threads = NonZeroUsize::new(2).expect("2 is non-zero");
 
@@ -684,7 +668,6 @@ impl ValidatorTpuConfig {
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
-            vote_quic_server_config,
             sigverify_threads,
         }
     }
@@ -795,7 +778,6 @@ impl Validator {
             vote_use_quic,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
-            vote_quic_server_config,
             sigverify_threads: tpu_sigverify_threads,
         } = tpu_config;
 
@@ -1809,7 +1791,6 @@ impl Validator {
                 broadcast: node.sockets.broadcast,
                 transactions_quic: node.sockets.tpu_quic,
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
-                vote_quic: node.sockets.tpu_vote_quic,
                 vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
             },
             rpc_subscriptions,
@@ -1840,7 +1821,6 @@ impl Validator {
             tracer_thread,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
-            vote_quic_server_config,
             prioritization_fee_cache,
             tpu_sigverify_threads,
             config.block_production_method.clone(),
