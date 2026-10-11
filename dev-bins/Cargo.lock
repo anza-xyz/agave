@@ -60,7 +60,6 @@ version = "4.5.0-alpha.2"
 dependencies = [
  "crossbeam-channel",
  "solana-perf",
- "wincode",
 ]
 
 [[package]]

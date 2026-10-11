@@ -47,7 +47,7 @@ solana-clap-utils = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
-solana-core = { workspace = true, features = ["dev-context-only-utils"] }
+solana-core = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["wincode"] }

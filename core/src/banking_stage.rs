@@ -23,7 +23,6 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_perf::packet::{BytesPacket, PACKETS_PER_BATCH, bytes::Bytes},
     solana_poh::{
         poh_controller::PohController, poh_recorder::PohRecorder,
@@ -39,7 +38,6 @@ use {
     std::{
         collections::HashSet,
         num::{NonZeroU64, NonZeroUsize},
-        ops::Deref,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -311,22 +309,6 @@ impl BankingStageStats {
             );
             self.batch_packet_indexes_len.clear();
         }
-    }
-}
-
-pub trait LikeClusterInfo: Send + Sync + 'static + Clone {
-    fn id(&self) -> Pubkey;
-
-    fn lookup_contact_info<R>(&self, id: &Pubkey, query: impl ContactInfoQuery<R>) -> Option<R>;
-}
-
-impl LikeClusterInfo for Arc<ClusterInfo> {
-    fn id(&self) -> Pubkey {
-        self.deref().id()
-    }
-
-    fn lookup_contact_info<R>(&self, id: &Pubkey, query: impl ContactInfoQuery<R>) -> Option<R> {
-        self.deref().lookup_contact_info(id, query)
     }
 }
 
