@@ -17,7 +17,6 @@ use {
         resolved_transaction_view::ResolvedTransactionView, result::TransactionViewError,
         transaction_view::SanitizedTransactionView,
     },
-    agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
@@ -1002,18 +1001,6 @@ impl JsonRpcRequestProcessor {
         // fine
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.epoch_schedule().clone()
-    }
-
-    pub fn get_ag_genesis_cert(&self) -> Option<WireBlockCertMessage> {
-        let bank = self.bank(Some(CommitmentConfig::finalized()));
-        bank.get_alpenglow_genesis_certificate()
-            .map(|c| WireBlockCertMessage {
-                block: c.block,
-                signature: WireCertSignature {
-                    signature: c.signature.signature,
-                    bitmap: c.signature.bitmap,
-                },
-            })
     }
 
     pub async fn get_vat_active_set_rank_map(
@@ -3361,7 +3348,7 @@ pub mod rpc_minimal {
 // RPC interface that only depends on immediate Bank data
 // Expected to be provided by API nodes
 pub mod rpc_bank {
-    use {super::*, agave_votor_messages::wire::WireBlockCertMessage};
+    use super::*;
     #[rpc]
     pub trait BankData {
         type Metadata;
@@ -3401,10 +3388,6 @@ pub mod rpc_bank {
             start_slot: Slot,
             limit: u64,
         ) -> Result<Vec<String>>;
-
-        #[rpc(meta, name = "getAgGenesisCert")]
-        fn get_ag_genesis_cert(&self, meta: Self::Metadata)
-        -> Result<Option<WireBlockCertMessage>>;
 
         #[rpc(meta, name = "getVatActiveSetRankMap")]
         fn get_vat_active_set_rank_map(
@@ -3487,14 +3470,6 @@ pub mod rpc_bank {
                 .into_iter()
                 .map(|identity| identity.to_string())
                 .collect())
-        }
-
-        fn get_ag_genesis_cert(
-            &self,
-            meta: Self::Metadata,
-        ) -> Result<Option<WireBlockCertMessage>> {
-            debug!("get_ag_genesis_cert rpc request received");
-            Ok(meta.get_ag_genesis_cert())
         }
 
         fn get_vat_active_set_rank_map(
@@ -5606,43 +5581,6 @@ pub mod tests {
         };
         let (response, _) = futures::executor::block_on(fut);
         assert_eq!(response, 20);
-    }
-
-    #[test]
-    fn test_rpc_get_ag_genesis_cert() {
-        use {
-            agave_votor_messages::{
-                certificate::{CertSignature, GenesisCert},
-                consensus_message::Block,
-            },
-            solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        };
-
-        let rpc = RpcHandler::start();
-        // Seed the bank with a genesis certificate for the RPC to return.
-        let block = Block::new_unique(0);
-        rpc.working_bank()
-            .set_alpenglow_genesis_certificate(&GenesisCert {
-                block,
-                signature: CertSignature {
-                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    bitmap: vec![1, 2, 3],
-                },
-            });
-
-        let request = create_test_request("getAgGenesisCert", None);
-        let result: Value = parse_success_result(rpc.handle_request_sync(request));
-        let expected = json!({
-            "block": {
-                "slot": 0,
-                "blockId": &block.block_id,
-            },
-            "signature": {
-                "signature": vec![0u8; BLS_SIGNATURE_AFFINE_SIZE],
-                "bitmap": [1, 2, 3],
-            },
-        });
-        assert_eq!(result, expected);
     }
 
     #[test]

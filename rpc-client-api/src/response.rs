@@ -7,7 +7,6 @@ pub use solana_rpc_client_types::response::{
     RpcBlockUpdateError, RpcBlockhash, RpcBlockhashFeeCalculator,
     RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcFeeCalculator,
     RpcFeeRateGovernor, RpcIdentity, RpcInflationGovernor, RpcInflationRate, RpcInflationReward,
-    RpcKeyedAccount, RpcLeaderSchedule, RpcLogsResponse, RpcPerfSample, RpcPrioritizationFee,
     RpcResponseContext, RpcSignatureConfirmation, RpcSignatureResult, RpcSimulateTransactionResult,
     RpcSnapshotSlotInfo, RpcStorageTurn, RpcSupply, RpcTokenAccountBalance, RpcVatActiveSetRankMap,
     RpcVatActiveSetRankMapEntry, RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,

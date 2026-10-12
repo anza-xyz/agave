@@ -3247,8 +3247,12 @@ pub(crate) mod tests {
         };
 
         let (rpc_all, mut receiver_all) = rpc_pubsub_service::test_connection(&subscriptions);
+        #[allow(deprecated)]
         let sub_id_for_all = rpc_all
-            .logs_subscribe(RpcTransactionLogsFilter::All, Some(sub_config.clone()))
+            .logs_subscribe(
+                RpcTransactionLogsFilter::AllWithVotes,
+                Some(sub_config.clone()),
+            )
             .unwrap();
         assert!(subscriptions.control.logs_subscribed(None));
 
