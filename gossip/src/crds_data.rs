@@ -78,7 +78,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for RejectNonzeroU8 {
     feature = "stable-abi",
     derive(StableAbi),
     frozen_abi(
-        abi_digest = "Dqsrw64E4ALKusk5cjbckL6vNHw1ESwTzKUqKrMSQCic",
+        abi_digest = "FZiDMHetscktd2KGSY9iJY1fz9fg8jPLMinsMMVwHCFx",
         abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
@@ -374,7 +374,7 @@ impl Sanitize for LowestSlot {
     feature = "stable-abi",
     derive(StableAbi),
     frozen_abi(
-        abi_digest = "BuDZ4shsJhBqELG47eMS3cDM8EcqHBGMSVu99JeW6VdM",
+        abi_digest = "3jidUuASBha6Po2cdrJU8DwTTvejkKNarQD317Hgyj3L",
         abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
@@ -488,12 +488,21 @@ impl solana_frozen_abi::rand::distr::Distribution<Vote>
 {
     fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Vote {
         use solana_frozen_abi::stable_abi::StableAbi;
+        let mut transaction = Transaction::default();
+        transaction
+            .signatures
+            .push(<solana_signature::Signature as StableAbi>::random(rng));
+        transaction.message.header.num_required_signatures = 1;
+        transaction
+            .message
+            .account_keys
+            .push(<Pubkey as StableAbi>::random(rng));
         Vote::new(
             <Pubkey as StableAbi>::random(rng),
-            Transaction::default(),
+            transaction,
             rng.random(),
         )
-        .expect("default transaction must sanitize")
+        .expect("sample transaction must sanitize")
     }
 }
 
