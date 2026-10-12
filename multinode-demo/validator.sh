@@ -341,7 +341,8 @@ setup_validator_accounts() {
         ) || return $?
       fi
       echo "Creating stake account"
-      # in case partitioned epoch rewards distribution is active. retry the command to add more tlorercnce
+      # The command will fail if partitioned epoch rewards distribution is
+      # active; retry the command several times to add some tolerance
       retry_command 10 2 \
         wallet create-stake-account "$stake_account" "$stake_sol" || return $?
       echo "Delegating stake"
