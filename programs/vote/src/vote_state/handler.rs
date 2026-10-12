@@ -602,7 +602,7 @@ impl VoteStateHandler {
         match self.target_state {
             TargetVoteState::V4(v4) => {
                 let versioned = VoteStateVersions::V4(Box::new(v4));
-                bincode::serialize_into(data, &versioned)
+                wincode::serialize_into(data, &versioned)
                     .map_err(|_e| InstructionError::InvalidAccountData)
             }
         }
