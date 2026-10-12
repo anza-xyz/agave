@@ -361,7 +361,7 @@ impl Stakes<StakeAccount> {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn load_from_accounts<F>(
         stakes: DeserializableDelegationStakes,
-        stake_pubkeys: Vec<Pubkey>,
+        stake_pubkeys: impl IntoParallelIterator<Item = Pubkey>,
         get_account: F,
     ) -> Result<Self, Error>
     where

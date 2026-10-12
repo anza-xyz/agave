@@ -10,6 +10,7 @@ use {
         self, AcctState, BlockContext as ProtoBlockContext, BlockEffects as ProtoBlockEffects,
         PrevVoteAccount as ProtoPrevVoteAccount,
     },
+    rayon::prelude::*,
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{accounts_hash::AccountsLtHash, ancestors::Ancestors},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, Epoch},
@@ -122,12 +123,11 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
     // Build the stakes cache the way a snapshot load does. Stake accounts
     // come from the account list, the rest from stakes_t.
     let stake_pubkeys = accounts_to_store
-        .iter()
+        .par_iter()
         .filter(|(_, account)| {
             account.lamports() > 0 && solana_sdk_ids::stake::check_id(account.owner())
         })
-        .map(|(pubkey, _)| *pubkey)
-        .collect();
+        .map(|(pubkey, _)| *pubkey);
     let stakes_for_cache = Stakes::load_from_accounts(stakes_t.clone(), stake_pubkeys, |pubkey| {
         accounts_to_store
             .iter()

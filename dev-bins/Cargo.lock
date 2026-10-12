@@ -122,6 +122,7 @@ dependencies = [
  "clap 4.6.1",
  "prost",
  "protosol",
+ "rayon",
  "serde_json",
  "solana-account",
  "solana-accounts-db",

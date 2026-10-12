@@ -5607,7 +5607,11 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
             epoch: 0,
             stake_history: stakes.history().clone(),
         };
-        let stake_pubkeys = stakes.stake_delegations().keys().copied().collect();
+        let stake_pubkeys = stakes
+            .stake_delegations()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
         Stakes::load_from_accounts(deserialized_stakes, stake_pubkeys, |pubkey| {
             bank0.get_account(pubkey)
         })
@@ -12162,7 +12166,7 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
             .stake_delegations()
             .keys()
             .copied()
-            .collect(),
+            .collect::<Vec<_>>(),
         epoch_stakes,
     );
 
@@ -12216,7 +12220,7 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
             .stake_delegations()
             .keys()
             .copied()
-            .collect(),
+            .collect::<Vec<_>>(),
         epoch_stakes,
     );
 
