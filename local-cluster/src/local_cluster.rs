@@ -21,6 +21,7 @@ use {
         Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig,
     },
     solana_epoch_schedule::EpochSchedule,
+    solana_fee_structure::FeeStructure,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
@@ -1142,7 +1143,13 @@ impl LocalCluster {
     }
 
     fn required_validator_funding(stake: u64) -> u64 {
-        stake.saturating_mul(2).saturating_add(2) // 1 lamport for each new account
+        // The vote- and stake-account setup transactions each carry two signatures.
+        let setup_transaction_fees =
+            4u64.saturating_mul(FeeStructure::default().lamports_per_signature);
+        stake
+            .saturating_mul(2)
+            .saturating_add(2) // 1 lamport for each new account
+            .saturating_add(setup_transaction_fees)
     }
 }
 
