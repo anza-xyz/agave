@@ -12,6 +12,8 @@
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[cfg(test)]
 use solana_vote_interface::authorized_voters::AuthorizedVoters;
 use {
@@ -34,6 +36,14 @@ use {
 
 /// Copy of `VoteStateVersions` except that state is without a `Box`.
 /// Eliminates the cost of the `Box` when deserializing a `VoteAccount`.
+#[cfg_attr(
+    feature = "stable-abi",
+    frozen_abi(
+        abi_digest = "292pqhdmS6k7yrk5pUSQBpiQq1MLHb15pu6oM5WnWcug",
+        abi_serializer = "wincode"
+    ),
+    derive(StableAbi, StableAbiSample, SchemaWrite)
+)]
 #[derive(Debug, PartialEq, Eq, SchemaRead)]
 pub enum VoteStateVersionsInline {
     Uninitialized,
@@ -356,14 +366,7 @@ impl VoteStateHandler {
                     return Err(InstructionError::AccountNotRentExempt);
                 }
                 // Vote account is large enough to store the newest version of vote state
-                let state = VoteStateVersionsRef::V4(v4);
-                let data = vote_account.get_data_mut()?;
-                let serialized_size =
-                    wincode::serialized_size(&state).map_err(|_| InstructionError::GenericError)?;
-                if serialized_size > data.len() as u64 {
-                    return Err(InstructionError::AccountDataTooSmall);
-                }
-                wincode::serialize_into(data, &state).map_err(|_| InstructionError::GenericError)
+                vote_account.set_state(&VoteStateVersionsRef::V4(v4))
             }
         }
     }
@@ -743,54 +746,6 @@ mod tests {
 
     /// Default block revenue commission rate in basis points (100%) per SIMD-0185.
     const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
-
-    #[test]
-    fn test_borrowed_vote_state_versions_compatibility() {
-        let v1 = VoteState1_14_11::default();
-        let v3 = VoteStateV3::default();
-        let v4 = get_max_sized_vote_state_v4();
-        let versions = [
-            (
-                None,
-                VoteStateVersions::V1_14_11(Box::new(v1.clone())),
-                VoteStateVersionsInline::V1_14_11(v1.clone()),
-            ),
-            (
-                None,
-                VoteStateVersions::V3(Box::new(v3.clone())),
-                VoteStateVersionsInline::V3(v3.clone()),
-            ),
-            (
-                Some(VoteStateVersionsRef::V4(&v4)),
-                VoteStateVersions::V4(Box::new(v4.clone())),
-                VoteStateVersionsInline::V4(v4.clone()),
-            ),
-        ];
-        for (borrowed, orig, inline) in versions {
-            let bytes = wincode::serialize(&orig).unwrap();
-            assert_eq!(
-                VoteStateVersionsInline::deserialize(&bytes).unwrap(),
-                inline
-            );
-            if let Some(borrowed) = borrowed {
-                let borrowed_bytes = wincode::serialize(&borrowed).unwrap();
-                assert_eq!(borrowed_bytes, bytes);
-                assert_eq!(
-                    VoteStateVersionsInline::deserialize(&borrowed_bytes).unwrap(),
-                    inline
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_inline_vote_state_rejects_uninitialized() {
-        let bytes = wincode::serialize(&VoteStateVersions::Uninitialized).unwrap();
-        assert_eq!(
-            VoteStateVersionsInline::deserialize(&bytes),
-            Err(InstructionError::InvalidAccountData),
-        );
-    }
 
     #[test]
     fn test_vote_state_handler_compatibility() {

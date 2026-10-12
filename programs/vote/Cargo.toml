@@ -24,6 +24,7 @@ agave-unstable-api = []
 dev-context-only-utils = ["dep:qualifier_attr"]
 stable-abi = [
     "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
     "solana-vote-interface/stable-abi",
 ]
 
@@ -38,6 +39,7 @@ solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
@@ -54,8 +56,10 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
+arbitrary = { workspace = true }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
+rand = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-clock = { workspace = true, features = ["wincode"] }
 solana-epoch-schedule = { workspace = true, features = ["wincode"] }
@@ -72,6 +76,7 @@ solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-un
 solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote-interface = { workspace = true, features = ["dev-context-only-utils"] }
 solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

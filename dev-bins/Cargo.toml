@@ -163,7 +163,7 @@ solana-test-validator = { path = "../test-validator", version = "=4.5.0-alpha.2"
 solana-time-utils = "3.0.0"
 solana-tpu-client = { path = "../tpu-client", version = "=4.5.0-alpha.2", default-features = false, features = ["agave-unstable-api"] }
 solana-transaction = "5.1.0"
-solana-transaction-context = { path = "../transaction-context", version = "=4.5.0-alpha.2", features = ["agave-unstable-api", "bincode"] }
+solana-transaction-context = { path = "../transaction-context", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-transaction-error = "4.1.0"
 solana-transaction-status = { path = "../transaction-status", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }

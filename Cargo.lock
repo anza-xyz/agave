@@ -11332,7 +11332,6 @@ dependencies = [
 name = "solana-transaction-context"
 version = "4.5.0-alpha.2"
 dependencies = [
- "bincode",
  "qualifier_attr",
  "serde",
  "solana-account",
@@ -11655,11 +11654,13 @@ version = "4.5.0-alpha.2"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "arbitrary",
  "assert_matches",
  "bincode",
  "criterion",
  "log",
  "qualifier_attr",
+ "rand 0.9.4",
  "solana-account",
  "solana-bincode",
  "solana-bls-signatures",
@@ -11667,6 +11668,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-frozen-abi",
+ "solana-frozen-abi-macro",
  "solana-hash",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
