@@ -164,9 +164,6 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let retransmit_sender = new_dummy_retransmit_sender();
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
-    // Blockstore stores duplicate proofs at insert time.
-    let handle_duplicate = |_| {};
-
     let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
     slots.sort_unstable();
     slots.dedup();
@@ -174,11 +171,10 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let shreds_iter = parsed
         .into_iter()
         .map(|shred| (shred, /*is_repaired:*/ false));
-    let _ = blockstore.insert_shreds_handle_duplicate(
+    let _ = blockstore.insert_shreds_with_recovery(
         shreds_iter,
         false, // is_trusted: keep dedup + integrity checks
         &mut recovery,
-        &handle_duplicate,
         &mut metrics,
     );
 
