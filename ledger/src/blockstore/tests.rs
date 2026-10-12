@@ -227,7 +227,7 @@ fn test_create_new_ledger() {
     let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
     let blockstore = Blockstore::open(ledger_path.path()).unwrap(); //FINDME
 
-    let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
+    let ticks = create_ticks(genesis_config.ticks_per_slot, 1, genesis_config.hash());
     let entries = blockstore.get_slot_entries(0, 0).unwrap();
 
     assert_eq!(ticks, entries);

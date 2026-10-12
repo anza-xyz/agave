@@ -29,9 +29,7 @@ use {
     },
     agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
     agave_snapshots::unpack_genesis_archive,
-    agave_votor_messages::{
-        migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
-    },
+    agave_votor_messages::unverified_vote_message::UnverifiedCertificate,
     bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
@@ -49,7 +47,6 @@ use {
         block_component::{
             BlockComponent, ParsedBlockComponent, VersionedBlockFooter, VersionedBlockHeader,
             VersionedBlockMarker, VersionedUpdateParent, finalization_certificates_from_footer,
-            genesis_certificate_from_shred,
         },
         block_component_parser,
         entry::{Entry, EntryView, create_ticks},
@@ -122,9 +119,8 @@ pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 ///
 /// Replay also recovers by reading SlotMeta, so dropping this bounded signal is
 /// a latency event rather than the only source of truth. Keep this small enough
-/// that Tower validators do not pay a large idle-memory cost for the channel.
+/// that validators do not pay a large idle-memory cost for the channel.
 pub const MAX_UPDATE_PARENT_SIGNALS: usize = 4_096;
-const GENESIS_BLOCK_MARKER_SHRED_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64;
 // Update parent events are expected to be rare, so a small cache to avoid
 // hitting blockstore should suffice here. The "DoS" attack to cause cache churn
 // and misses is also expensive because it would involve malicious leader giving
@@ -166,7 +162,6 @@ impl ChainingEffects {
 struct CertificateForwarder {
     /// The certificate along with the slot # of the block it was present in
     sender: Sender<(Slot, UnverifiedCertificate)>,
-    migration_status: Arc<MigrationStatus>,
 }
 
 impl CertificateForwarder {
@@ -175,26 +170,12 @@ impl CertificateForwarder {
         let _ = self.sender.try_send((carrier_slot, certificate));
     }
 
-    fn maybe_forward_genesis_certificate(&self, shred: &Shred) {
-        if self.migration_status.is_in_migration()
-            && let Some(certificate) = shred
-                .data()
-                .ok()
-                .and_then(|payload| genesis_certificate_from_shred(payload, shred.version()))
-        {
-            self.try_forward_certificate(shred.slot(), certificate);
-        }
-    }
-
     fn maybe_forward_block_footer_certificate(
         &self,
         blockstore: &Blockstore,
         slot: Slot,
         last_index: u64,
     ) {
-        if !self.migration_status.should_allow_block_markers(slot) {
-            return;
-        }
         match blockstore.get_block_footer_certificates(slot, last_index) {
             Ok(certificates) => {
                 for certificate in certificates {
@@ -713,19 +694,11 @@ impl Blockstore {
     /// sigverifier.
     ///
     /// The accompanying slot is the carrier slot whose entries contained the certificate, while
-    /// the slot in the certificate is the block being certified. The carrier slot is needed to
-    /// check whether block markers were active and to attribute an invalid certificate to the
-    /// leader that included it.
-    pub fn set_certificate_sender(
-        &self,
-        sender: Sender<(Slot, UnverifiedCertificate)>,
-        migration_status: Arc<MigrationStatus>,
-    ) {
+    /// the slot in the certificate is the block being certified. The carrier slot attributes an
+    /// invalid certificate to the leader that included it.
+    pub fn set_certificate_sender(&self, sender: Sender<(Slot, UnverifiedCertificate)>) {
         self.certificate_forwarder
-            .set(CertificateForwarder {
-                sender,
-                migration_status,
-            })
+            .set(CertificateForwarder { sender })
             .expect("certificate sender already set");
     }
 
@@ -1186,9 +1159,7 @@ impl Blockstore {
 
     /// Gets the double merkle root for the block in the given location.
     ///
-    /// Returns `None` if the block is not full, or if the slot was completed
-    /// while block markers were disabled. That can happen for legacy Tower
-    /// slots in a process that later enters Alpenglow migration.
+    /// Returns `None` if the block is not full.
     pub fn get_double_merkle_root(
         &self,
         slot: Slot,
@@ -3055,12 +3026,6 @@ impl Blockstore {
         let slot = shred.slot();
         let shred_index = u64::from(shred.index());
 
-        if shred_index == GENESIS_BLOCK_MARKER_SHRED_INDEX
-            && let Some(forwarder) = self.certificate_forwarder.get()
-        {
-            forwarder.maybe_forward_genesis_certificate(&shred);
-        }
-
         let ShredInsertionTracker {
             index_working_set,
             slot_meta_working_set,
@@ -3764,21 +3729,11 @@ impl Blockstore {
             .ok_or(BlockstoreError::MissingMerkleRoot(slot, last_index))
     }
 
-    /// Retrieves the block id of this slot depending on the `migration_status`:
-    /// - For TowerBFT blocks this is the merkle root of the last shred
-    /// - For Alpenglow blocks this is the double merkle root
+    /// Retrieves the double merkle root block ID of this slot.
     ///
     /// Returns `Ok(None)` if the block is not complete
-    pub fn get_block_id(
-        &self,
-        slot: Slot,
-        migration_status: &MigrationStatus,
-    ) -> Result<Option<Hash>> {
-        if migration_status.should_use_double_merkle_block_id(slot) {
-            self.get_double_merkle_root(slot, BlockLocation::Original)
-        } else {
-            self.get_last_shred_merkle_root(slot)
-        }
+    pub fn get_block_id(&self, slot: Slot) -> Result<Option<Hash>> {
+        self.get_double_merkle_root(slot, BlockLocation::Original)
     }
 
     pub fn get_data_shreds_for_slot(&self, slot: Slot, start_index: u64) -> Result<Vec<Shred>> {
@@ -5442,20 +5397,8 @@ impl Blockstore {
         }
     }
 
-    pub fn insert_bank_hash(&self, slot: Slot, frozen_hash: Hash, is_duplicate_confirmed: bool) {
-        if let Some(prev_value) = self.bank_hash_cf.get(slot).unwrap()
-            && prev_value.frozen_hash() == frozen_hash
-            && prev_value.is_duplicate_confirmed()
-        {
-            // Don't overwrite is_duplicate_confirmed == true with is_duplicate_confirmed == false,
-            // which may happen on startup when processing from blockstore processor because the
-            // blocks may not reflect earlier observed gossip votes from before the restart.
-            return;
-        }
-        let data = FrozenHashVersioned::Current(FrozenHashStatus {
-            frozen_hash,
-            is_duplicate_confirmed,
-        });
+    pub fn insert_bank_hash(&self, slot: Slot, frozen_hash: Hash) {
+        let data = FrozenHashVersioned::new(frozen_hash);
         self.bank_hash_cf.put(slot, &data).unwrap()
     }
 
@@ -5464,14 +5407,6 @@ impl Blockstore {
             .get(slot)
             .unwrap()
             .map(|versioned| versioned.frozen_hash())
-    }
-
-    pub fn is_duplicate_confirmed(&self, slot: Slot) -> bool {
-        self.bank_hash_cf
-            .get(slot)
-            .unwrap()
-            .map(|versioned| versioned.is_duplicate_confirmed())
-            .unwrap_or(false)
     }
 
     pub fn insert_optimistic_slot(
@@ -5501,16 +5436,10 @@ impl Blockstore {
         Ok(iter.take(num).collect())
     }
 
-    pub fn set_duplicate_confirmed_slots_and_hashes(
-        &self,
-        duplicate_confirmed_slot_hashes: impl Iterator<Item = (Slot, Hash)>,
-    ) -> Result<()> {
+    fn insert_bank_hashes(&self, slot_hashes: impl Iterator<Item = (Slot, Hash)>) -> Result<()> {
         let mut write_batch = self.get_write_batch();
-        for (slot, frozen_hash) in duplicate_confirmed_slot_hashes {
-            let data = FrozenHashVersioned::Current(FrozenHashStatus {
-                frozen_hash,
-                is_duplicate_confirmed: true,
-            });
+        for (slot, frozen_hash) in slot_hashes {
+            let data = FrozenHashVersioned::new(frozen_hash);
             self.bank_hash_cf
                 .put_in_batch(&mut write_batch, slot, &data)?;
         }
@@ -5540,7 +5469,7 @@ impl Blockstore {
     ) -> Result<()> {
         self.set_roots(slots.iter().map(|(slot, _hash)| slot))?;
         if with_hash {
-            self.set_duplicate_confirmed_slots_and_hashes(
+            self.insert_bank_hashes(
                 slots
                     .into_iter()
                     .map(|(slot, maybe_hash)| (slot, maybe_hash.unwrap())),
@@ -6614,10 +6543,9 @@ pub fn create_new_ledger(
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
-    // Slot-0 tick entries are created before a Bank exists, so use the
-    // genesis PoH config directly.
-    let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
-    let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
+    // Slot 0 is special-cased to contain only ticks, but those ticks still use Alpenglow's
+    // low-power PoH mode.
+    let entries = create_ticks(ticks_per_slot, 1, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
     let version = solana_shred_version::version_from_hash(&last_hash);
     // Slot 0 has no parent slot so there is nothing to chain to; instead,

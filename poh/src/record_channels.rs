@@ -71,7 +71,7 @@ pub enum RecordSenderError {
 }
 
 /// A sender for sending [`Record`]s to the block creation loop.
-/// The sender does not wait for the block creation loop to pick up the records, and will return
+/// The sender does not wait for the block creation loop to pick up records, and will return
 /// immediately if the channel is full, shutdown, or if the bank id has changed.
 #[derive(Clone, Debug)]
 pub struct RecordSender {

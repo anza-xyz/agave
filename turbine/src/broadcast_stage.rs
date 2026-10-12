@@ -1,11 +1,7 @@
 //! A stage to broadcast data from a leader node to validators
 #![allow(clippy::rc_buffer)]
 use {
-    self::{
-        broadcast_duplicates_run::{BroadcastDuplicatesConfig, BroadcastDuplicatesRun},
-        broadcast_metrics::*,
-        standard_broadcast_run::StandardBroadcastRun,
-    },
+    self::{broadcast_metrics::*, standard_broadcast_run::StandardBroadcastRun},
     crate::{
         XdpSender,
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
@@ -49,7 +45,6 @@ use {
     thiserror::Error,
 };
 
-pub mod broadcast_duplicates_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
 pub(crate) mod standard_broadcast_run;
@@ -149,16 +144,9 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Debug)]
-pub enum BroadcastStageType {
-    Standard,
-    BroadcastDuplicates(BroadcastDuplicatesConfig),
-}
-
-impl BroadcastStageType {
+impl BroadcastStage {
     #[allow(clippy::too_many_arguments)]
-    pub fn new_broadcast_stage(
-        &self,
+    pub fn new(
         sock: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
         receiver: Receiver<WorkingBankMessage>,
@@ -170,40 +158,16 @@ impl BroadcastStageType {
         xdp_sender: Option<XdpSender>,
         votor_event_sender: VotorEventSender,
     ) -> BroadcastStage {
-        let migration_status = bank_forks.read().unwrap().migration_status();
-        match self {
-            BroadcastStageType::Standard => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                StandardBroadcastRun::new(
-                    shred_version,
-                    migration_status,
-                    votor_event_sender,
-                    leader_schedule_cache,
-                ),
-                xdp_sender,
-            ),
-
-            BroadcastStageType::BroadcastDuplicates(config) => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                BroadcastDuplicatesRun::new(
-                    shred_version,
-                    config.clone(),
-                    migration_status,
-                    votor_event_sender,
-                ),
-                xdp_sender,
-            ),
-        }
+        Self::new_with_run(
+            sock,
+            cluster_info,
+            receiver,
+            exit_sender,
+            blockstore,
+            bank_forks,
+            StandardBroadcastRun::new(shred_version, votor_event_sender, leader_schedule_cache),
+            xdp_sender,
+        )
     }
 }
 
@@ -322,7 +286,7 @@ impl BroadcastStage {
     /// which will then close FetchStage in the Tpu, and then the rest of the Tpu,
     /// completing the cycle.
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    fn new_with_run(
         socks: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
         receiver: Receiver<WorkingBankMessage>,
@@ -571,7 +535,6 @@ impl<T> From<crossbeam_channel::SendError<T>> for Error {
 pub mod test {
     use {
         super::*,
-        agave_votor_messages::migration::MigrationStatus,
         crossbeam_channel::bounded,
         solana_entry::{entry::create_ticks, recorder_message::RecorderMessage},
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -707,19 +670,14 @@ pub mod test {
         ));
 
         // Start up the broadcast stage
-        let broadcast_service = BroadcastStage::new(
+        let broadcast_service = BroadcastStage::new_with_run(
             leader_info.sockets.broadcast,
             cluster_info,
             entry_receiver,
             exit_sender,
             blockstore.clone(),
             bank_forks,
-            StandardBroadcastRun::new(
-                0,
-                Arc::new(MigrationStatus::default()),
-                votor_event_sender,
-                leader_schedule_cache,
-            ),
+            StandardBroadcastRun::new(0, votor_event_sender, leader_schedule_cache),
             None,
         );
 

@@ -8,7 +8,6 @@
 use {
     agave_feature_set::FeatureSet,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
-    agave_votor_messages::migration::MigrationStatus,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
     solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
@@ -120,8 +119,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let mut feature_set = FeatureSet::default();
     feature_set.activate(&agave_feature_set::alpenglow::id(), 0);
     let bank = build_root_bank(root_slot, feature_set);
-    let migration = MigrationStatus::post_migration_status();
-    set_alpenglow_ticks(&bank, &migration);
+    set_alpenglow_ticks(&bank);
 
     // Step 1: parse each shred; record whether it's a chained Merkle shred.
     // FD: fd_shred_parse + fd_shred_is_chained. should_discard_shred only gates accumulation.
@@ -242,7 +240,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             }
         }
         let mut tick_hash_count = 0u64;
-        if verify_ticks(&bank, &entries, is_full, &mut tick_hash_count, &migration).is_err() {
+        if verify_ticks(&bank, &entries, is_full, &mut tick_hash_count).is_err() {
             effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
         }
     }
