@@ -2103,9 +2103,7 @@ mod tests {
             },
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_perf::packet::{
-            Packet, PacketFlags, deserialize_slice_from_packet, packet_from_data,
-        },
+        solana_perf::packet::{PacketFlags, deserialize_slice_from_packet},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
@@ -2129,7 +2127,7 @@ mod tests {
         let keypair = Keypair::new();
         let ping = Ping::new(rng.random(), &keypair);
         let ping = RepairResponse::Ping(ping);
-        let pkt = packet_from_data(None, ping).unwrap();
+        let pkt = bytes_packet_from_data(None, ping).unwrap();
         assert_eq!(pkt.meta().size, REPAIR_RESPONSE_SERIALIZED_PING_BYTES);
     }
 
@@ -2137,9 +2135,8 @@ mod tests {
     fn test_deserialize_shred_as_ping() {
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(123, &keypair);
-        let mut pkt = Packet::default();
-        shred.copy_to_packet(&mut pkt);
-        pkt.meta_mut().size = REPAIR_RESPONSE_SERIALIZED_PING_BYTES;
+        let mut pkt = shred.payload().to_bytes_packet(None);
+        pkt.set_buffer(pkt.buffer().slice(..REPAIR_RESPONSE_SERIALIZED_PING_BYTES));
         let res = deserialize_slice_from_packet::<RepairResponse, _>(&pkt, ..);
         if let Ok(RepairResponse::Ping(ping)) = res {
             assert!(!ping.verify());
@@ -2282,10 +2279,6 @@ mod tests {
         }
     }
 
-    fn make_remote_request(packet: &Packet) -> BytesPacket {
-        BytesPacket::from(packet)
-    }
-
     #[test]
     fn test_check_well_formed_repair_request() {
         let mut rng = rand::rng();
@@ -2293,13 +2286,13 @@ mod tests {
         let ping = Ping::new(rng.random(), &keypair);
         let pong = Pong::new(&ping, &keypair);
         let request = RepairProtocol::Pong(pong);
-        let mut pkt = packet_from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
+        let mut pkt = bytes_packet_from_data(None, request).unwrap();
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 5;
-        let mut batch = vec![make_remote_request(&pkt)];
+        pkt.set_buffer(pkt.buffer().slice(..5));
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 0);
@@ -2310,13 +2303,13 @@ mod tests {
             slot: 123,
             shred_index: 456,
         };
-        let mut pkt = packet_from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
+        let mut pkt = bytes_packet_from_data(None, request).unwrap();
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 8;
-        let mut batch = vec![make_remote_request(&pkt)];
+        pkt.set_buffer(pkt.buffer().slice(..8));
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 0);
@@ -2326,13 +2319,13 @@ mod tests {
             header: repair_request_header_for_tests(),
             slot: 123,
         };
-        let mut pkt = packet_from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
+        let mut pkt = bytes_packet_from_data(None, request).unwrap();
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 1;
-        let mut batch = vec![make_remote_request(&pkt)];
+        pkt.set_buffer(pkt.buffer().slice(..1));
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 0);
@@ -2342,13 +2335,13 @@ mod tests {
             header: repair_request_header_for_tests(),
             slot: 262_547_696,
         };
-        let mut pkt = packet_from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
+        let mut pkt = bytes_packet_from_data(None, request).unwrap();
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 3;
-        let mut batch = vec![make_remote_request(&pkt)];
+        pkt.set_buffer(pkt.buffer().slice(..3));
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 0);
@@ -2537,14 +2530,12 @@ mod tests {
         let my_keypair = Keypair::new();
         let other_keypair = Keypair::new();
 
-        fn sign_packet(packet: &mut Packet, keypair: &Keypair) {
-            let signable_data = [
-                packet.data(..4).unwrap(),
-                packet.data(4 + SIGNATURE_BYTES..).unwrap(),
-            ]
-            .concat();
+        fn sign_packet(packet: &mut BytesPacket, keypair: &Keypair) {
+            let mut buffer = packet.buffer().to_vec();
+            let signable_data = [&buffer[..4], &buffer[4 + SIGNATURE_BYTES..]].concat();
             let signature = keypair.sign_message(&signable_data[..]);
-            packet.buffer_mut()[4..4 + SIGNATURE_BYTES].copy_from_slice(signature.as_ref());
+            buffer[4..4 + SIGNATURE_BYTES].copy_from_slice(signature.as_ref());
+            packet.set_buffer(buffer);
         }
 
         // well formed packet
@@ -2557,7 +2548,7 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = packet_from_data(None, request).unwrap();
+            let mut packet = bytes_packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
@@ -2581,7 +2572,7 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = packet_from_data(None, request).unwrap();
+            let mut packet = bytes_packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
@@ -2607,7 +2598,7 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = packet_from_data(None, request).unwrap();
+            let mut packet = bytes_packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
@@ -2631,7 +2622,7 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = packet_from_data(None, request).unwrap();
+            let mut packet = bytes_packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &other_keypair);
             packet
         };
@@ -3569,9 +3560,8 @@ mod tests {
     }
 
     fn pong_packet(pong: Pong, from_addr: &SocketAddr) -> BytesPacket {
-        let packet = packet_from_data(Some(from_addr), RepairProtocol::Pong(pong))
-            .expect("pong must serialize");
-        make_remote_request(&packet)
+        bytes_packet_from_data(Some(from_addr), RepairProtocol::Pong(pong))
+            .expect("pong must serialize")
     }
 
     fn signed_window_index_packet(

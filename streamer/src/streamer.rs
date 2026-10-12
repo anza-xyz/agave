@@ -529,7 +529,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{BytesPacket, BytesPacketBatch, Meta, PACKET_DATA_SIZE, Packet},
+            packet::{BytesPacket, BytesPacketBatch, Meta, PACKET_DATA_SIZE},
             sendmmsg::batch_send,
             streamer::receiver,
         },
@@ -577,7 +577,6 @@ mod test {
 
     #[test]
     fn streamer_debug() {
-        write!(io::sink(), "{:?}", Packet::default()).unwrap();
         write!(io::sink(), "{:?}", BytesPacketBatch::default()).unwrap();
     }
     #[test]

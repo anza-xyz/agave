@@ -149,14 +149,13 @@ mod tests {
     use {
         super::*,
         crate::{
-            packet::{Packet, to_packet_batches},
+            packet::{PACKET_DATA_SIZE, to_packet_batches},
             sigverify,
             test_tx::test_tx,
         },
         agave_random::range::random_u64_range,
         rand::SeedableRng as _,
         rand_chacha::ChaChaRng,
-        solana_packet::{Meta, PACKET_DATA_SIZE},
         test_case::test_case,
     };
 
@@ -310,16 +309,16 @@ mod tests {
         let mut rng = ChaChaRng::from_seed(seed);
         let deduper = Deduper::<2, [u8]>::new(&mut rng, num_bits);
         assert!((num_packets as u64) < get_capacity::<2>(num_bits, FALSE_POSITIVE_RATE));
-        let mut packet = Packet::new([0u8; PACKET_DATA_SIZE], Meta::default());
+        let mut buffer = [0u8; PACKET_DATA_SIZE];
         let mut dup_count = 0usize;
         for _ in 0..num_packets {
             let size = random_u64_range(&mut rng, 0..PACKET_DATA_SIZE as u64) as usize;
-            packet.meta_mut().size = size;
-            rng.fill(&mut packet.buffer_mut()[0..size]);
-            if deduper.dedup(packet.data(..).unwrap()) {
+            let data = &mut buffer[..size];
+            rng.fill(&mut *data);
+            if deduper.dedup(data) {
                 dup_count += 1;
             }
-            assert!(deduper.dedup(packet.data(..).unwrap()));
+            assert!(deduper.dedup(data));
         }
         // `ahash` output varies with its target-specific implementation. Check
         // distribution quality instead of pinning exact false-positive and bit

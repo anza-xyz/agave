@@ -18,7 +18,7 @@ use {
     },
 };
 pub use {
-    solana_packet::{Meta, PACKET_DATA_SIZE, Packet},
+    solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
         BytesPacket, BytesPacketBatch, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch,
     },
@@ -298,10 +298,7 @@ mod tests {
         super::{recv_from as recv_from_impl, *},
         bytes::Bytes,
         solana_net_utils::sockets::bind_to_localhost_unique,
-        std::{
-            io::{self, Write},
-            net::SocketAddr,
-        },
+        std::net::SocketAddr,
     };
 
     fn test_packet(dest: &SocketAddr, size: usize) -> BytesPacket {
@@ -362,29 +359,6 @@ mod tests {
             assert_eq!(m.meta().size, PACKET_DATA_SIZE);
             assert_eq!(m.meta().socket_addr(), saddr);
         }
-    }
-
-    #[test]
-    pub fn debug_trait() {
-        write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", BytesPacketBatch::default()).unwrap();
-    }
-
-    #[test]
-    fn test_packet_partial_eq() {
-        let mut p1 = Packet::default();
-        let mut p2 = Packet::default();
-
-        p1.meta_mut().size = 1;
-        p1.buffer_mut()[0] = 0;
-
-        p2.meta_mut().size = 1;
-        p2.buffer_mut()[0] = 0;
-
-        assert!(p1 == p2);
-
-        p2.buffer_mut()[0] = 4;
-        assert!(p1 != p2);
     }
 
     #[test]

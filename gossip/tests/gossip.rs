@@ -15,7 +15,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
-    solana_perf::packet::Packet,
+    solana_perf::packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
@@ -251,13 +251,12 @@ pub fn cluster_info_retransmit() {
         sleep(Duration::from_secs(1));
     }
     assert!(done);
-    let mut p = Packet::default();
-    p.meta_mut().size = 10;
+    let data = [0u8; 10];
     let peers = c1.tvu_peers(ContactInfo::clone);
     let retransmit_peers: Vec<_> = peers.iter().collect();
     retransmit_to(
         &retransmit_peers,
-        p.data(..).unwrap(),
+        &data,
         &tn1,
         false,
         &SocketAddrSpace::Unspecified,
@@ -265,9 +264,9 @@ pub fn cluster_info_retransmit() {
     let res: Vec<_> = [tn1, tn2, tn3]
         .into_par_iter()
         .map(|s| {
-            let mut p = Packet::default();
+            let mut buffer = [0u8; PACKET_DATA_SIZE];
             s.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-            let res = s.recv_from(p.buffer_mut());
+            let res = s.recv_from(&mut buffer);
             res.is_err() //true if failed to receive the retransmit packet
         })
         .collect();
