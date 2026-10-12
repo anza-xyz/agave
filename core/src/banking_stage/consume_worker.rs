@@ -1,7 +1,7 @@
 use {
     super::{
         consumer::{Consumer, ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
-        leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
+        execute_and_commit_timings::ExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crate::banking_stage::consumer::{ExecutionFlags, RetryableIndex},
@@ -804,7 +804,6 @@ pub(crate) mod external {
                     Some(self.bank.clone()),
                     self.bank.tick_height(),
                     None,
-                    None,
                 )));
             }
 
@@ -964,7 +963,7 @@ pub(crate) mod external {
             let recorder = TransactionRecorder::new(record_sender);
             let committer = Committer::new(None, None);
             let consumer = Consumer::new(committer, recorder, None);
-            let shared_leader_state = SharedLeaderState::new(0, None, None);
+            let shared_leader_state = SharedLeaderState::new(0, None);
             let exit = Arc::new(AtomicBool::new(false));
 
             let worker = ExternalWorker::new(
@@ -1930,14 +1929,14 @@ impl ConsumeWorkerMetrics {
 
     fn update_on_execute_and_commit_timings(
         &self,
-        LeaderExecuteAndCommitTimings {
+        ExecuteAndCommitTimings {
             load_execute_us,
             freeze_lock_us,
             record_us,
             commit_us,
-            post_commit_us,
+            transaction_status_update_us,
             ..
-        }: &LeaderExecuteAndCommitTimings,
+        }: &ExecuteAndCommitTimings,
     ) {
         self.timing_metrics
             .load_execute_us_min
@@ -1958,8 +1957,8 @@ impl ConsumeWorkerMetrics {
             .commit_us
             .fetch_add(*commit_us, Ordering::Relaxed);
         self.timing_metrics
-            .post_commit_us
-            .fetch_add(*post_commit_us, Ordering::Relaxed);
+            .transaction_status_update_us
+            .fetch_add(*transaction_status_update_us, Ordering::Relaxed);
         self.timing_metrics
             .num_batches_processed
             .fetch_add(1, Ordering::Relaxed);
@@ -2142,7 +2141,7 @@ struct ConsumeWorkerTimingMetrics {
     freeze_lock_us: AtomicU64,
     record_us: AtomicU64,
     commit_us: AtomicU64,
-    post_commit_us: AtomicU64,
+    transaction_status_update_us: AtomicU64,
     num_batches_processed: AtomicU64,
 }
 
@@ -2184,8 +2183,8 @@ impl ConsumeWorkerTimingMetrics {
             ("record_us", self.record_us.swap(0, Ordering::Relaxed), i64),
             ("commit_us", self.commit_us.swap(0, Ordering::Relaxed), i64),
             (
-                "post_commit_us",
-                self.post_commit_us.swap(0, Ordering::Relaxed),
+                "transaction_status_update_us",
+                self.transaction_status_update_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
@@ -2416,7 +2415,7 @@ mod tests {
 
         let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
-        let shared_leader_state = SharedLeaderState::new(0, None, None);
+        let shared_leader_state = SharedLeaderState::new(0, None);
 
         let (consume_sender, consume_receiver) = bounded(1024);
         let (consumed_sender, consumed_receiver) = bounded(1024);
@@ -2561,7 +2560,6 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             None,
-            None,
         )));
         let worker_thread = std::thread::spawn(move || worker.run());
 
@@ -2620,7 +2618,6 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             None,
-            None,
         )));
         record_receiver.restart(bank.bank_id());
 
@@ -2673,7 +2670,6 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
-            None,
             None,
         )));
         record_receiver.restart(bank.bank_id());
@@ -2731,7 +2727,6 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
-            None,
             None,
         )));
         record_receiver.restart(bank.bank_id());
@@ -2813,7 +2808,6 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             None,
-            None,
         )));
         record_receiver.restart(bank.bank_id());
         assert!(bank.slot() > 0);
@@ -2860,7 +2854,6 @@ mod tests {
                 )
                 .unwrap(),
                 MessageHash::Compute,
-                None,
                 loader,
                 &HashSet::default(),
             )

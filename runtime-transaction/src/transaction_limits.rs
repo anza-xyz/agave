@@ -177,7 +177,6 @@ mod tests {
         let result = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
             transaction,
             MessageHash::Compute,
-            None,
         );
         assert_eq!(
             result.err(),
@@ -207,7 +206,6 @@ mod tests {
                 let static_tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                     tx,
                     MessageHash::Compute,
-                    None,
                 )
                 .unwrap();
                 let address_loader = if matches!(version, TransactionVersion::V0) {
@@ -230,7 +228,6 @@ mod tests {
             let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
-                None,
             )
             .unwrap();
             let loaded_addresses =
@@ -267,7 +264,6 @@ mod tests {
         let sdk_tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
             tx,
             MessageHash::Compute,
-            None,
         )
         .unwrap();
         assert_eq!(
@@ -284,7 +280,6 @@ mod tests {
         let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             view,
             MessageHash::Compute,
-            None,
         )
         .unwrap();
         assert_eq!(
@@ -404,7 +399,6 @@ mod tests {
         let borrowed = RuntimeTransaction::<&SanitizedTransactionView<_>>::try_new(
             &view,
             MessageHash::Compute,
-            None,
         );
         assert_eq!(
             borrowed.err(),
@@ -413,7 +407,6 @@ mod tests {
         let owned = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             view,
             MessageHash::Compute,
-            None,
         );
         assert_eq!(
             owned.err(),

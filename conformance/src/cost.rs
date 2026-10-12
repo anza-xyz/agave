@@ -60,7 +60,6 @@ fn runtime_transaction_from_proto(
     RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
         versioned_tx,
         MessageHash::Compute,
-        None,
     )
     .expect("failed to create RuntimeTransaction")
 }

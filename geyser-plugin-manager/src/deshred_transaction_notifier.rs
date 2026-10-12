@@ -35,7 +35,6 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
         completed_data_set_starting_shred_index: u32,
         completed_data_set_ending_shred_index_exclusive: u32,
         signature: &Signature,
-        is_vote: bool,
         transaction: &VersionedTransaction,
         loaded_addresses: Option<&LoadedAddresses>,
     ) {
@@ -49,7 +48,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             Measure::start("geyser-plugin-notify_plugins_of_deshred_transaction_info");
         let transaction_info = ReplicaDeshredTransactionInfoV2 {
             signature,
-            is_vote,
+            is_vote: false,
             transaction,
             loaded_addresses,
             completed_data_set_starting_shred_index,

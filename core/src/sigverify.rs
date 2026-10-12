@@ -72,10 +72,10 @@ impl SigVerifyWorkerState {
 
 #[derive(Clone)]
 struct WorkerPoolChannels {
-    non_vote_receiver: Receiver<PacketBatch>,
-    forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
+    packet_receiver: Receiver<PacketBatch>,
+    forward_stage_sender: Sender<BankingPacketBatch>,
     sharable_banks: SharableBanks,
-    non_vote_state: SigVerifyWorkerState,
+    worker_state: SigVerifyWorkerState,
 }
 
 pub(crate) struct SigVerifyWorkerPool {
@@ -95,17 +95,17 @@ impl Drop for SigVerifyWorkerPool {
 impl SigVerifyWorkerPool {
     pub(crate) fn new(
         num_workers: NonZeroUsize,
-        non_vote_receiver: Receiver<PacketBatch>,
-        forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
-        forward_non_votes: bool,
+        packet_receiver: Receiver<PacketBatch>,
+        forward_stage_sender: Sender<BankingPacketBatch>,
+        forward_transactions: bool,
         sharable_banks: SharableBanks,
-        non_vote_state: SigVerifyWorkerState,
+        worker_state: SigVerifyWorkerState,
     ) -> Self {
         let channels = WorkerPoolChannels {
-            non_vote_receiver,
+            packet_receiver,
             forward_stage_sender,
             sharable_banks,
-            non_vote_state,
+            worker_state,
         };
         let worker_hdls = (0..num_workers.get())
             .map(|idx| {
@@ -113,28 +113,26 @@ impl SigVerifyWorkerPool {
 
                 std::thread::Builder::new()
                     .name(format!("solSigVerify{idx:02}"))
-                    .spawn(move || Self::worker(channels, forward_non_votes))
+                    .spawn(move || Self::worker(channels, forward_transactions))
                     .expect("failed to spawn sigverify worker thread")
             })
             .collect();
         Self { worker_hdls }
     }
 
-    fn worker(channels: WorkerPoolChannels, forward_non_votes: bool) {
-        while Self::worker_iteration(&channels, forward_non_votes) {}
+    fn worker(channels: WorkerPoolChannels, forward_transactions: bool) {
+        while Self::worker_iteration(&channels, forward_transactions) {}
     }
 
     /// Returns false if some channel connection is disconnected.
-    fn worker_iteration(channels: &WorkerPoolChannels, forward_non_votes: bool) -> bool {
-        match channels.non_vote_receiver.recv() {
+    fn worker_iteration(channels: &WorkerPoolChannels, forward_transactions: bool) -> bool {
+        match channels.packet_receiver.recv() {
             Ok(batch) => Self::run_transaction_task(
                 batch,
-                false,
                 &channels.forward_stage_sender,
-                forward_non_votes,
-                false,
+                forward_transactions,
                 &channels.sharable_banks,
-                &channels.non_vote_state,
+                &channels.worker_state,
             ),
             Err(RecvError) => false,
         }
@@ -142,10 +140,8 @@ impl SigVerifyWorkerPool {
 
     fn run_transaction_task(
         mut batch: PacketBatch,
-        reject_non_vote: bool,
-        forward_stage_sender: &Sender<(BankingPacketBatch, bool)>,
+        forward_stage_sender: &Sender<BankingPacketBatch>,
         should_forward: bool,
-        is_tpu_vote: bool,
         sharable_banks: &SharableBanks,
         state: &SigVerifyWorkerState,
     ) -> bool {
@@ -200,10 +196,7 @@ impl SigVerifyWorkerPool {
             }
         }
 
-        let (_, verify_time_us) = measure_us!(sigverify::ed25519_verify_serial(
-            &mut batch,
-            reject_non_vote,
-        ));
+        let (_, verify_time_us) = measure_us!(sigverify::ed25519_verify_serial(&mut batch));
         let num_valid_packets = sigverify::count_valid_packets(std::iter::once(&batch));
         state
             .stats
@@ -243,20 +236,17 @@ impl SigVerifyWorkerPool {
             }
         }
         if should_forward {
-            Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
+            Self::try_forward(forward_stage_sender, banking_packet_batch);
         }
 
         true
     }
 
     fn try_forward(
-        forward_stage_sender: &Sender<(BankingPacketBatch, bool)>,
+        forward_stage_sender: &Sender<BankingPacketBatch>,
         banking_packet_batch: BankingPacketBatch,
-        is_tpu_vote: bool,
     ) {
-        if let Err(TrySendError::Full(_)) =
-            forward_stage_sender.try_send((banking_packet_batch, is_tpu_vote))
-        {
+        if let Err(TrySendError::Full(_)) = forward_stage_sender.try_send(banking_packet_batch) {
             warn!("forwarding stage channel is full, dropping packets.");
         }
     }
