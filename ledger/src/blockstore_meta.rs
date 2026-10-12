@@ -428,29 +428,29 @@ impl Display for BlockLocation {
 
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
 pub enum FrozenHashVersioned {
-    Current(FrozenHashStatus),
+    /// Legacy RocksDB rows included Tower duplicate-confirmation state.
+    Legacy(FrozenHashStatusLegacy),
+    Current(Hash),
 }
 
 impl FrozenHashVersioned {
-    pub fn frozen_hash(&self) -> Hash {
-        match self {
-            FrozenHashVersioned::Current(frozen_hash_status) => frozen_hash_status.frozen_hash,
-        }
+    pub(crate) fn new(frozen_hash: Hash) -> Self {
+        Self::Current(frozen_hash)
     }
 
-    pub fn is_duplicate_confirmed(&self) -> bool {
+    pub fn frozen_hash(&self) -> Hash {
         match self {
-            FrozenHashVersioned::Current(frozen_hash_status) => {
-                frozen_hash_status.is_duplicate_confirmed
-            }
+            FrozenHashVersioned::Legacy(frozen_hash_status) => frozen_hash_status.frozen_hash,
+            FrozenHashVersioned::Current(frozen_hash) => *frozen_hash,
         }
     }
 }
 
+/// Decode-only representation of legacy bank-hash column entries.
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
-pub struct FrozenHashStatus {
-    pub frozen_hash: Hash,
-    pub is_duplicate_confirmed: bool,
+pub struct FrozenHashStatusLegacy {
+    frozen_hash: Hash,
+    _is_duplicate_confirmed: bool,
 }
 
 impl Index {
@@ -1345,6 +1345,35 @@ mod test {
             .set(ConnectedFlags::PARENT_CONNECTED, true);
         assert!(
             wincode::deserialize::<WithBool>(&wincode::serialize(&with_flags).unwrap()).is_err()
+        );
+    }
+
+    #[test]
+    fn test_frozen_hash_status_legacy_compatibility() {
+        #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
+        enum LegacyFrozenHashVersioned {
+            Current(LegacyFrozenHashStatus),
+        }
+
+        #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
+        struct LegacyFrozenHashStatus {
+            frozen_hash: Hash,
+            is_duplicate_confirmed: bool,
+        }
+
+        let frozen_hash = Hash::new_unique();
+        let legacy = LegacyFrozenHashVersioned::Current(LegacyFrozenHashStatus {
+            frozen_hash,
+            is_duplicate_confirmed: true,
+        });
+        let current =
+            wincode::deserialize::<FrozenHashVersioned>(&wincode::serialize(&legacy).unwrap())
+                .unwrap();
+        assert_eq!(current.frozen_hash(), frozen_hash);
+
+        assert_eq!(
+            FrozenHashVersioned::new(frozen_hash),
+            FrozenHashVersioned::Current(frozen_hash)
         );
     }
 

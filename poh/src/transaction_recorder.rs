@@ -35,7 +35,7 @@ pub struct RecordTransactionsSummary {
     pub starting_transaction_index: Option<usize>,
 }
 
-/// Adds transactions into the PoH stream, by sending them to the PoH service.
+/// Adds transactions into the PoH stream by sending them to the block creation loop.
 #[derive(Clone, Debug)]
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
@@ -47,7 +47,7 @@ impl TransactionRecorder {
         Self { record_sender }
     }
 
-    /// Hashes `transactions` and sends to PoH service for recording. Waits for response up to 1s.
+    /// Hashes `transactions` and queues them for recording by the block creation loop.
     /// Panics on unexpected (non-`MaxHeightReached`) errors.
     pub fn record_transactions(
         &self,

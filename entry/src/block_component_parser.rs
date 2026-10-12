@@ -199,13 +199,10 @@ mod tests {
     use {
         super::*,
         crate::{
-            block_component::{
-                BlockFooterV1, BlockHeaderV1, GenesisCertBlockMarker, UpdateParentV1,
-            },
+            block_component::{BlockFooterV1, BlockHeaderV1, UpdateParentV1},
             entry::Entry,
         },
         agave_votor_messages::consensus_message::BlockId,
-        solana_bls_signatures::Keypair as BlsKeypair,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_transaction::versioned::VersionedTransaction,
@@ -355,15 +352,6 @@ mod tests {
             new_parent_block_id: BlockId::new_unique(),
         });
         "update_parent"
-    )]
-    #[test_case(
-        VersionedBlockMarker::from_genesis_cert_block_marker(GenesisCertBlockMarker {
-            slot: 44,
-            block_id: BlockId::new_unique(),
-            bls_signature: BlsKeypair::new().sign(b"genesis").into(),
-            bitmap: vec![1, 2, 3],
-        });
-        "genesis_certificate"
     )]
     fn parsed_block_marker_view_matches_source_marker_for_each_variant(
         source_marker: VersionedBlockMarker,

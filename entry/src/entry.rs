@@ -234,10 +234,8 @@ pub enum EntryType<Tx: TransactionWithMeta> {
 
 #[derive(Debug)]
 struct TxVerificationData<D: TransactionData> {
-    is_simple_vote: bool,
     signatures: SmallVec<[Signature; 2]>,
     signer_pubkeys: SmallVec<[Address; 2]>,
-    message_hash: Hash,
     transaction_view: UnsanitizedTransactionView<D>,
 }
 
@@ -316,24 +314,6 @@ where
             .iter()
             .zip(&tx_data.signer_pubkeys)
             .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message))
-    }
-
-    pub fn vote_transaction_message_hash(&self, index: usize) -> Option<Hash> {
-        let tx_data = &self.signatures[index];
-        (tx_data.is_simple_vote && !tx_data.signatures.is_empty()).then_some(tx_data.message_hash)
-    }
-
-    pub fn vote_transaction_message_hashes(&self) -> Vec<Hash> {
-        self.signatures
-            .iter()
-            .filter(|tx_signatures| tx_signatures.is_simple_vote)
-            .filter_map(|tx_signatures| {
-                tx_signatures
-                    .signatures
-                    .first()
-                    .map(|_| tx_signatures.message_hash)
-            })
-            .collect()
     }
 }
 
@@ -484,11 +464,8 @@ where
             let signatures = transaction_view.signatures().iter().copied().collect();
             let signer_pubkeys = static_account_keys[..num_signers].iter().copied().collect();
             let verified_transaction = verify(transaction_view.clone())?;
-            let message_hash = *verified_transaction.message_hash();
             unverified_signatures.signatures.push(TxVerificationData {
-                is_simple_vote: verified_transaction.is_simple_vote_transaction(),
                 signatures,
-                message_hash,
                 transaction_view,
                 signer_pubkeys,
             });
@@ -875,7 +852,6 @@ mod tests {
                     RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
                         sanitized,
                         MessageHash::Compute,
-                        None,
                     )?;
                 ReplayTransaction::try_new(
                     statically_loaded,
@@ -910,7 +886,6 @@ mod tests {
                     RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
                         sanitized,
                         MessageHash::Compute,
-                        None,
                     )?;
                 ReplayTransaction::try_new(
                     statically_loaded,

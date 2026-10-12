@@ -218,7 +218,7 @@ fn test_create_new_ledger() {
     let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
     let blockstore = Blockstore::open(ledger_path.path()).unwrap(); //FINDME
 
-    let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
+    let ticks = create_ticks(genesis_config.ticks_per_slot, 1, genesis_config.hash());
     let entries = blockstore.get_slot_entries(0, 0).unwrap();
 
     assert_eq!(ticks, entries);
@@ -1855,7 +1855,7 @@ fn test_should_insert_data_shred() {
 }
 
 #[test]
-fn test_handle_duplicate_shred_returns_duplicate_proof() {
+fn test_handle_duplicate_shred_stores_duplicate_proof() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let (shreds, _) = make_many_slot_entries(5, 5, 10);
@@ -1869,19 +1869,30 @@ fn test_handle_duplicate_shred_returns_duplicate_proof() {
     let duplicate_shred_slot = duplicate_shred.slot();
     assert!(!blockstore.has_duplicate_shreds_in_slot(duplicate_shred_slot));
 
-    let (returned_shred, conflicting_payload) = handle_duplicate_shred(
+    handle_duplicate_shred(
         &blockstore,
         PossibleDuplicateShred::Exists(duplicate_shred.clone()),
-        true,
     )
-    .unwrap()
     .unwrap();
 
-    assert_eq!(returned_shred.payload(), duplicate_shred.payload());
-    assert_eq!(conflicting_payload, *original_shred.payload());
     let duplicate_proof = blockstore.get_duplicate_slot(duplicate_shred_slot).unwrap();
     assert_eq!(duplicate_proof.shred1, *original_shred.payload());
     assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
+}
+
+#[test]
+fn test_handle_duplicate_shred_ignores_fixed_fec_chained_merkle_root_conflict() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 5;
+
+    handle_duplicate_shred(
+        &blockstore,
+        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
+    )
+    .unwrap();
+
+    assert!(!blockstore.is_dead(slot));
 }
 
 #[test]

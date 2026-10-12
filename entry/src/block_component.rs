@@ -114,25 +114,10 @@
 /// │ Bitmap                    (variable)    │
 /// └─────────────────────────────────────────┘
 /// ```
-///
-/// ### GenesisCertificate Layout
-/// ```text
-/// ┌─────────────────────────────────────────┐
-/// │ Genesis Slot                  (8 bytes) │
-/// ├─────────────────────────────────────────┤
-/// │ Genesis Block ID             (32 bytes) │
-/// ├─────────────────────────────────────────┤
-/// │ BLS Signature               (192 bytes) │
-/// ├─────────────────────────────────────────┤
-/// │ Bitmap length (max 512)       (8 bytes) │
-/// ├─────────────────────────────────────────┤
-/// │ Bitmap                (up to 512 bytes) │
-/// └─────────────────────────────────────────┘
-/// ```
 use {
     crate::entry::{Entry, EntryView, MaxDataShredsLen},
     agave_votor_messages::{
-        certificate::{CertSignature, CertificateType, GenesisCert},
+        certificate::{CertSignature, CertificateType},
         consensus_message::{Block, BlockId},
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
         unverified_vote_message::UnverifiedCertificate,
@@ -144,7 +129,6 @@ use {
     },
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_perf::packet::packet_config,
     std::mem::MaybeUninit,
     wincode::{
         ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
@@ -152,15 +136,12 @@ use {
         containers::Vec as WincodeVec,
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
-        len::{BincodeLen, FixIntLen},
+        len::FixIntLen,
         pod_wrapper,
     },
 };
 
 pod_wrapper! {
-    // Use `BLSSignature` directly once `BLSSignature` wincode support
-    // is released in solana-sdk.
-    unsafe struct PodBLSSignature(BLSSignature);
     // Use `BLSSignatureCompressed` directly once `BLSSignature` wincode support
     // is released in solana-sdk.
     unsafe struct PodBLSSignatureCompressed(BLSSignatureCompressed);
@@ -258,42 +239,6 @@ pub struct BlockHeaderV1 {
 pub struct UpdateParentV1 {
     pub new_parent_slot: Slot,
     pub new_parent_block_id: BlockId,
-}
-
-/// Attests to genesis block finalization with a BLS aggregate signature.
-#[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
-pub struct GenesisCertBlockMarker {
-    pub slot: Slot,
-    pub block_id: BlockId,
-    #[wincode(with = "PodBLSSignature")]
-    pub bls_signature: BLSSignature,
-    #[wincode(with = "WincodeVec<u8, BincodeLen>")]
-    pub bitmap: Vec<u8>,
-}
-
-impl GenesisCertBlockMarker {
-    /// Max bitmap size in bytes (supports up to 4096 validators).
-    pub const MAX_BITMAP_SIZE: usize = 512;
-}
-
-impl TryFrom<GenesisCert> for GenesisCertBlockMarker {
-    type Error = String;
-
-    fn try_from(cert: GenesisCert) -> Result<Self, Self::Error> {
-        if cert.signature.bitmap.len() > Self::MAX_BITMAP_SIZE {
-            return Err(format!(
-                "bitmap size {} exceeds max {}",
-                cert.signature.bitmap.len(),
-                Self::MAX_BITMAP_SIZE
-            ));
-        }
-        Ok(Self {
-            slot: cert.block.slot,
-            block_id: cert.block.block_id,
-            bls_signature: cert.signature.signature,
-            bitmap: cert.signature.bitmap,
-        })
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
@@ -407,7 +352,6 @@ pub enum BlockMarkerV1 {
     BlockFooter(LengthPrefixed<VersionedBlockFooter>),
     BlockHeader(LengthPrefixed<VersionedBlockHeader>),
     UpdateParent(LengthPrefixed<VersionedUpdateParent>),
-    GenesisCertificate(LengthPrefixed<GenesisCertBlockMarker>),
 }
 
 impl BlockMarkerV1 {
@@ -421,10 +365,6 @@ impl BlockMarkerV1 {
 
     pub fn new_update_parent(u: VersionedUpdateParent) -> Self {
         Self::UpdateParent(LengthPrefixed::new(u))
-    }
-
-    pub fn new_genesis_certificate(c: GenesisCertBlockMarker) -> Self {
-        Self::GenesisCertificate(LengthPrefixed::new(c))
     }
 
     pub fn as_block_footer(&self) -> Option<&VersionedBlockFooter> {
@@ -444,13 +384,6 @@ impl BlockMarkerV1 {
     pub fn as_update_parent(&self) -> Option<&VersionedUpdateParent> {
         match self {
             Self::UpdateParent(lp) => Some(lp.inner()),
-            _ => None,
-        }
-    }
-
-    pub fn as_genesis_certificate(&self) -> Option<&GenesisCertBlockMarker> {
-        match self {
-            Self::GenesisCertificate(lp) => Some(lp.inner()),
             _ => None,
         }
     }
@@ -484,11 +417,6 @@ impl VersionedBlockMarker {
         let u = VersionedUpdateParent::V1(u);
         let u = BlockMarkerV1::UpdateParent(LengthPrefixed::new(u));
         Self::new(u)
-    }
-
-    pub fn from_genesis_cert_block_marker(g: GenesisCertBlockMarker) -> Self {
-        let g = BlockMarkerV1::GenesisCertificate(LengthPrefixed::new(g));
-        Self::new(g)
     }
 
     pub fn is_update_parent(&self) -> bool {
@@ -646,39 +574,6 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
     }
 }
 
-/// Try to parse a Genesis certificate from a data shred payload
-pub fn genesis_certificate_from_shred(
-    payload: &[u8],
-    shred_version: u16,
-) -> Option<UnverifiedCertificate> {
-    if !BlockComponent::infer_is_block_marker(payload).unwrap_or(false) {
-        return None;
-    }
-    let BlockComponent::BlockMarker(VersionedBlockMarker::V1(marker)) =
-        wincode::config::deserialize_exact(payload, packet_config()).ok()?
-    else {
-        return None;
-    };
-    let BlockMarkerV1::GenesisCertificate(marker) = marker else {
-        return None;
-    };
-    let GenesisCertBlockMarker {
-        slot,
-        block_id,
-        bls_signature,
-        bitmap,
-    } = marker.into_inner();
-    if bitmap.len() > GenesisCertBlockMarker::MAX_BITMAP_SIZE {
-        return None;
-    }
-    Some(UnverifiedCertificate {
-        cert_type: CertificateType::Genesis(Block { slot, block_id }),
-        signature: bls_signature,
-        bitmap,
-        shred_version,
-    })
-}
-
 /// Converts a block footer finalization certificate into certificates ready for BLS verification.
 ///
 /// A fast-finalization footer produces one `FinalizeFast` certificate. A slow-finalization footer
@@ -728,9 +623,7 @@ pub fn finalization_certificates_from_footer(
 mod tests {
     use {
         super::*,
-        solana_bls_signatures::{
-            BLS_SIGNATURE_AFFINE_SIZE, Keypair as BlsKeypair, Signature as BlsSignature,
-        },
+        solana_bls_signatures::{Keypair as BlsKeypair, Signature as BlsSignature},
         std::iter::repeat_n,
         wincode::config::DEFAULT_PREALLOCATION_SIZE_LIMIT,
     };
@@ -754,43 +647,6 @@ mod tests {
         let signature: BlsSignature = BlsKeypair::new().sign(payload).into();
         let aggregate = VotesAggregate::from_cert_signature(CertSignature { signature, bitmap });
         (aggregate, signature)
-    }
-
-    #[test]
-    fn parse_genesis_certificate_from_shred() {
-        let parent_slot = 41;
-        let block_id = BlockId::new_unique();
-        let shred_version = 123;
-        let signature: BlsSignature = BlsKeypair::new().sign(b"genesis").into();
-        let bitmap = vec![0xa5; 64];
-        let marker = GenesisCertBlockMarker {
-            slot: parent_slot,
-            block_id,
-            bls_signature: signature,
-            bitmap: bitmap.clone(),
-        };
-        let component = BlockComponent::new_block_marker(
-            VersionedBlockMarker::from_genesis_cert_block_marker(marker),
-        );
-        let payload = wincode::serialize(&component).unwrap();
-
-        let certificate = genesis_certificate_from_shred(&payload, shred_version).unwrap();
-        assert_eq!(
-            certificate.cert_type,
-            CertificateType::Genesis(Block {
-                slot: parent_slot,
-                block_id,
-            })
-        );
-        assert_eq!(certificate.signature, signature);
-        assert_eq!(certificate.bitmap, bitmap);
-        assert_eq!(certificate.shred_version, shred_version);
-
-        let mut payload_with_trailing_data = payload;
-        payload_with_trailing_data.push(0);
-        assert!(
-            genesis_certificate_from_shred(&payload_with_trailing_data, shred_version,).is_none()
-        );
     }
 
     #[test]
@@ -881,18 +737,6 @@ mod tests {
             wincode::deserialize::<BlockFooterV1>(&bytes).unwrap()
         );
 
-        let marker = GenesisCertBlockMarker {
-            slot: 999,
-            block_id: BlockId::new_unique(),
-            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![1, 2, 3],
-        };
-        let bytes = wincode::serialize(&marker).unwrap();
-        assert_eq!(
-            marker,
-            wincode::deserialize::<GenesisCertBlockMarker>(&bytes).unwrap()
-        );
-
         let marker = VersionedBlockMarker::from_block_footer(footer.clone());
         let bytes = wincode::serialize(&marker).unwrap();
         assert_eq!(
@@ -924,28 +768,6 @@ mod tests {
 
         assert!(matches!(
             wincode::deserialize::<LengthPrefixed<VersionedBlockHeader>>(&bytes),
-            Err(wincode::ReadError::Custom(
-                "LengthPrefixed: inner serialized size does not match length prefix"
-            ))
-        ));
-    }
-
-    #[test]
-    fn length_prefixed_rejects_oversized_deserialized_inner() {
-        let marker = GenesisCertBlockMarker {
-            slot: 999,
-            block_id: BlockId::new_unique(),
-            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![0xAB; usize::from(u16::MAX) + 1],
-        };
-        let wire = LengthPrefixed {
-            len: 7,
-            inner: marker,
-        };
-        let bytes = wincode::serialize(&wire).unwrap();
-
-        assert!(matches!(
-            wincode::deserialize::<LengthPrefixed<GenesisCertBlockMarker>>(&bytes),
             Err(wincode::ReadError::Custom(
                 "LengthPrefixed: inner serialized size does not match length prefix"
             ))

@@ -7,7 +7,6 @@
 
 use {
     agave_feature_set::FeatureSet,
-    agave_votor_messages::migration::MigrationStatus,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
     solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
@@ -27,9 +26,7 @@ use {
         blockstore_processor::verify_ticks,
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, Shred,
-            filter::{
-                ShredFilterContext, ShredRecoveryContext, check_feature_activation_from_bank,
-            },
+            filter::{ShredFilterContext, ShredRecoveryContext},
             wire,
         },
     },
@@ -127,7 +124,6 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let mut feature_set = FeatureSet::default();
     feature_set.activate(&agave_feature_set::alpenglow::id(), 0);
     let bank = build_root_bank(root_slot, feature_set);
-    let migration = MigrationStatus::post_migration_status();
 
     // Step 1: parse each shred; record whether it's a chained Merkle shred.
     // FD: fd_shred_parse + fd_shred_is_chained. should_discard_shred only gates accumulation.
@@ -173,17 +169,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
     let handle_duplicate = |duplicate: PossibleDuplicateShred| {
-        let no_verify_chained_merkle_root = check_feature_activation_from_bank(
-            &agave_feature_set::alpenglow::id(),
-            duplicate.slot(),
-            &bank,
-        );
-        let _duplicate_proof = handle_duplicate_shred(
-            &blockstore,
-            duplicate,
-            no_verify_chained_merkle_root,
-        )
-        .expect("handle duplicate shred");
+        handle_duplicate_shred(&blockstore, duplicate).expect("handle duplicate shred");
     };
     let shreds_iter = parsed
         .iter()
@@ -226,7 +212,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             }
         }
         let mut tick_hash_count = 0u64;
-        if verify_ticks(&bank, &entries, is_full, &mut tick_hash_count, &migration).is_err() {
+        if verify_ticks(&bank, &entries, is_full, &mut tick_hash_count).is_err() {
             effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
         }
     }
