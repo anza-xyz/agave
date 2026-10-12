@@ -234,72 +234,6 @@ enum InsertCodingShredError {
     BlockstoreError(#[from] BlockstoreError),
 }
 
-#[derive(Eq, PartialEq, Debug, Clone)]
-pub enum PossibleDuplicateShred {
-    Exists(Shred), // Blockstore has another shred in its spot
-    // The index of this shred conflicts with `slot_meta.last_index`
-    LastIndexConflict(
-        Shred,          // original
-        shred::Payload, // conflict
-    ),
-    // The coding shred has a conflict in the erasure_meta
-    ErasureConflict(
-        Shred,          // original
-        shred::Payload, // conflict
-    ),
-    // Merkle root conflict in the same fec set
-    MerkleRootConflict(
-        Shred,          // original
-        shred::Payload, // conflict
-    ),
-    // Chained merkle root conflict with previous fec set
-    // A part of SIMD-0340
-    FixedFECChainedMerkleRootConflict(Slot),
-}
-
-impl PossibleDuplicateShred {
-    pub fn slot(&self) -> Slot {
-        match self {
-            Self::Exists(shred) => shred.slot(),
-            Self::LastIndexConflict(shred, _) => shred.slot(),
-            Self::ErasureConflict(shred, _) => shred.slot(),
-            Self::MerkleRootConflict(shred, _) => shred.slot(),
-            Self::FixedFECChainedMerkleRootConflict(slot) => *slot,
-        }
-    }
-}
-
-/// Applies the blockstore side effects required for a possible duplicate shred.
-pub fn handle_duplicate_shred(
-    blockstore: &Blockstore,
-    shred: PossibleDuplicateShred,
-) -> Result<()> {
-    match shred {
-        PossibleDuplicateShred::LastIndexConflict(..)
-        | PossibleDuplicateShred::ErasureConflict(..)
-        | PossibleDuplicateShred::MerkleRootConflict(..)
-        | PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_) => Ok(()),
-        PossibleDuplicateShred::Exists(shred) => {
-            let shred_slot = shred.slot();
-            // Unlike the other cases we have to wait until here to decide to handle the duplicate and store
-            // in blockstore. This is because the duplicate could have been part of the same insert batch,
-            // so we wait until the batch has been written.
-            if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
-                return Ok(()); // A duplicate is already recorded
-            }
-            let Some(existing_shred_payload) = blockstore.is_shred_duplicate(&shred) else {
-                return Ok(()); // Not a duplicate
-            };
-            blockstore.store_duplicate_slot(
-                shred_slot,
-                existing_shred_payload.clone(),
-                shred.clone().into_payload(),
-            )?;
-            Ok(())
-        }
-    }
-}
-
 enum WorkingEntry<T> {
     Dirty(T), // Value has been modified with respect to the blockstore column
     Clean(T), // Value matches what is currently in the blockstore column
@@ -320,11 +254,6 @@ impl<T> AsRef<T> for WorkingEntry<T> {
     }
 }
 
-pub struct InsertResults {
-    completed_data_set_infos: Vec<CompletedDataSetInfo>,
-    duplicate_shreds: Vec<PossibleDuplicateShred>,
-}
-
 #[allow(clippy::large_enum_variant)]
 pub enum ConfirmedBlockComponent {
     EntryBatch(Vec<EntrySummary>),
@@ -341,7 +270,7 @@ pub struct VersionedConfirmedBlockWithComponents {
 ///
 /// Services such as the `WindowService` for a TVU, and `ReplayStage` for a TPU, piece together
 /// these sets by inserting shreds via direct or indirect calls to
-/// [`Blockstore::insert_shreds_handle_duplicate()`].
+/// [`Blockstore::insert_shreds_with_recovery()`].
 ///
 /// `solana_core::completed_data_sets_service::CompletedDataSetsService` is the main receiver of
 /// `CompletedDataSetInfo`.
@@ -471,7 +400,10 @@ struct ShredInsertionTracker<'a, 'batch> {
     // In-memory map that maintains the dirty copy of the index meta.  It will
     // later be written to `cf::Index` or `cf::AlternateIndex`
     index_working_set: HashMap<(BlockLocation, Slot), IndexMetaWorkingSetEntry>,
-    duplicate_shreds: Vec<PossibleDuplicateShred>,
+    // Shreds whose position was already occupied. These cannot be checked for
+    // an actual payload conflict until the write batch has been committed,
+    // because the other shred may have arrived in the same batch.
+    duplicate_shreds: Vec<Shred>,
     // Collection of the current blockstore writes which will be committed
     // atomically.
     write_batch: &'batch mut WriteBatch,
@@ -1011,51 +943,6 @@ impl Blockstore {
     }
 
     #[cfg(test)]
-    fn erasure_meta(&self, erasure_set: ErasureSetId) -> Result<Option<ErasureMeta>> {
-        let (slot, fec_set_index) = erasure_set.store_key();
-        self.erasure_meta_cf.get((slot, u64::from(fec_set_index)))
-    }
-
-    #[cfg(test)]
-    fn put_erasure_meta(
-        &self,
-        erasure_set: ErasureSetId,
-        erasure_meta: &ErasureMeta,
-    ) -> Result<()> {
-        let (slot, fec_set_index) = erasure_set.store_key();
-        self.erasure_meta_cf.put_bytes(
-            (slot, u64::from(fec_set_index)),
-            &wincode::serialize(erasure_meta).unwrap(),
-        )
-    }
-
-    /// Attempts to find the previous consecutive erasure set for `erasure_set`
-    /// using the fact that FEC sets are fixed in size at DATA_SHREDS_PER_FEC_BLOCK
-    /// data shreds.
-    ///
-    /// Only for use in the `Original` column
-    fn previous_fec_set_shred_id(
-        &self,
-        erasure_set: &ErasureSetId,
-        merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
-    ) -> Option<ShredId> {
-        let prev_erasure_set = erasure_set.previous_fec_set()?;
-        let prev_merkle_root_meta = merkle_root_metas
-            .get(&(BlockLocation::Original, prev_erasure_set))
-            .map(WorkingEntry::as_ref)
-            .map(Cow::Borrowed)
-            .or_else(|| {
-                self.merkle_root_meta(prev_erasure_set)
-                    .unwrap()
-                    .map(Cow::Owned)
-            })?;
-        Some(ShredId::new(
-            erasure_set.slot(),
-            prev_merkle_root_meta.first_received_shred_index(),
-            prev_merkle_root_meta.first_received_shred_type(),
-        ))
-    }
-
     fn merkle_root_meta(&self, erasure_set: ErasureSetId) -> Result<Option<MerkleRootMeta>> {
         self.merkle_root_meta_cf.get(erasure_set.store_key())
     }
@@ -1873,70 +1760,6 @@ impl Blockstore {
         metrics.shred_recovery_elapsed_us += start.as_us();
     }
 
-    /// Check the chained merkle root consistency between newly inserted FEC sets.
-    /// Note: This check is not performed on Alternate columns as the shreds are already pre verified.
-    fn check_chained_merkle_root_consistency(
-        &self,
-        shred_insertion_tracker: &mut ShredInsertionTracker,
-    ) {
-        for ((location, erasure_set), working_merkle_root_meta) in
-            shred_insertion_tracker.merkle_root_metas.iter()
-        {
-            if !working_merkle_root_meta.should_write() {
-                // Not a new merkle root meta
-                continue;
-            }
-            let (slot, _) = erasure_set.store_key();
-
-            // Note: this check is not performed on Alternate columns as they are already validated
-            // via a separate merkle proof on repair ingest
-            if !matches!(location, BlockLocation::Original) {
-                continue;
-            }
-
-            let merkle_root_meta = working_merkle_root_meta.as_ref();
-            let shred_id = ShredId::new(
-                slot,
-                merkle_root_meta.first_received_shred_index(),
-                merkle_root_meta.first_received_shred_type(),
-            );
-            let shred = shred_insertion_tracker
-                .just_inserted_shreds
-                .get(&(*location, shred_id))
-                .expect("Merkle root meta was just created, initial shred must exist");
-
-            // Forward check for SIMD-0340
-            if let Some(next_erasure_set) = erasure_set.next_fec_set()
-                && !self.check_forward_chained_merkle_root_consistency(
-                    shred,
-                    next_erasure_set,
-                    &shred_insertion_tracker.just_inserted_shreds,
-                    &shred_insertion_tracker.merkle_root_metas,
-                )
-            {
-                shred_insertion_tracker.duplicate_shreds.push(
-                    PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
-                );
-                continue;
-            }
-
-            // Backwards check for SIMD-0340
-            if let Some(prev_shred_id) = self
-                .previous_fec_set_shred_id(erasure_set, &shred_insertion_tracker.merkle_root_metas)
-                && !self.check_backwards_chained_merkle_root_consistency(
-                    shred,
-                    prev_shred_id,
-                    &shred_insertion_tracker.just_inserted_shreds,
-                )
-            {
-                shred_insertion_tracker.duplicate_shreds.push(
-                    PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(slot),
-                );
-                continue;
-            }
-        }
-    }
-
     /// Computes and adds DoubleMerkleMeta to the write_batch for newly completed
     /// slots after block markers have been enabled.
     fn compute_double_merkle_meta_for_newly_completed_slots(
@@ -2245,7 +2068,7 @@ impl Blockstore {
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<InsertResults> {
+    ) -> Result<Vec<CompletedDataSetInfo>> {
         let mut total_start = Measure::start("Total elapsed");
         write_batch.clear();
 
@@ -2286,7 +2109,7 @@ impl Blockstore {
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<InsertResults> {
+    ) -> Result<Vec<CompletedDataSetInfo>> {
         let shreds = shreds.into_iter();
         let mut shred_insertion_tracker = ShredInsertionTracker::new(shreds.len(), write_batch);
 
@@ -2314,8 +2137,6 @@ impl Blockstore {
             metrics,
         )?;
 
-        self.check_chained_merkle_root_consistency(&mut shred_insertion_tracker);
-
         // Compute DoubleMerkleMeta for any newly completed slots so it's committed atomically
         self.compute_double_merkle_meta_for_newly_completed_slots(&mut shred_insertion_tracker)?;
 
@@ -2330,6 +2151,13 @@ impl Blockstore {
         self.write_batch(&mut *shred_insertion_tracker.write_batch)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
+
+        // Shreds which collide with an occupied position must be checked after
+        // the batch is committed: the occupying shred may have been inserted
+        // earlier in this same batch.
+        for shred in &shred_insertion_tracker.duplicate_shreds {
+            self.handle_existing_shred(shred)?;
+        }
 
         if chaining_effects.slot_meta_topology_changed {
             self.advance_slot_meta_topology_generation();
@@ -2352,16 +2180,13 @@ impl Blockstore {
 
         metrics.index_meta_time_us += shred_insertion_tracker.index_meta_time_us;
 
-        Ok(InsertResults {
-            completed_data_set_infos: shred_insertion_tracker.newly_completed_data_sets,
-            duplicate_shreds: shred_insertion_tracker.duplicate_shreds,
-        })
+        Ok(shred_insertion_tracker.newly_completed_data_sets)
     }
 
-    /// Simlar to `insert_shreds_at_location_handle_duplicate`  but always inserts
+    /// Similar to `insert_shreds_at_location` but always inserts
     /// shreds in the original column specified by `BlockLocation::Original`
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn insert_shreds_handle_duplicate<'a, F>(
+    pub fn insert_shreds_with_recovery<'a>(
         &self,
         shreds: impl IntoIterator<
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool),
@@ -2369,15 +2194,11 @@ impl Blockstore {
         >,
         is_trusted: bool,
         shred_recovery_context: &mut ShredRecoveryContext,
-        handle_duplicate: &F,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<Vec<CompletedDataSetInfo>>
-    where
-        F: Fn(PossibleDuplicateShred),
-    {
+    ) -> Result<Vec<CompletedDataSetInfo>> {
         let mut pinnable_slice = self.new_pinnable_slice();
         let mut write_batch = self.get_write_batch();
-        self.insert_shreds_at_location_handle_duplicate(
+        self.insert_shreds_at_location(
             shreds
                 .into_iter()
                 .map(|(shred, is_repaired)| (shred, is_repaired, BlockLocation::Original)),
@@ -2385,7 +2206,6 @@ impl Blockstore {
             shred_recovery_context,
             &mut pinnable_slice,
             &mut write_batch,
-            handle_duplicate,
             metrics,
         )
     }
@@ -2396,7 +2216,7 @@ impl Blockstore {
     /// and handling duplicate shreds). Broadcast stage should instead call
     /// Blockstore::insert_shreds when inserting own shreds during leader slots.
     /// The pinnable slice and write batch can be reused across calls.
-    pub fn insert_shreds_at_location_handle_duplicate<'a, 'db, F>(
+    pub fn insert_shreds_at_location<'a, 'db>(
         &'db self,
         shreds: impl IntoIterator<
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
@@ -2406,29 +2226,16 @@ impl Blockstore {
         shred_recovery_context: &mut ShredRecoveryContext,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
-        handle_duplicate: &F,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<Vec<CompletedDataSetInfo>>
-    where
-        F: Fn(PossibleDuplicateShred),
-    {
-        let InsertResults {
-            completed_data_set_infos,
-            duplicate_shreds,
-        } = self.do_insert_shreds(
+    ) -> Result<Vec<CompletedDataSetInfo>> {
+        self.do_insert_shreds(
             shreds,
             is_trusted,
             Some(shred_recovery_context),
             pinnable_slice,
             write_batch,
             metrics,
-        )?;
-
-        for shred in duplicate_shreds {
-            handle_duplicate(shred);
-        }
-
-        Ok(completed_data_set_infos)
+        )
     }
 
     pub fn add_new_shred_signal(&self, s: Sender<bool>) {
@@ -2472,7 +2279,7 @@ impl Blockstore {
     /// Clear `slot` from the Blockstore
     ///
     /// This function currently requires `insert_shreds_lock`, as both
-    /// `clear_unconfirmed_slot()` and `insert_shreds_handle_duplicate()`
+    /// `clear_unconfirmed_slot()` and `insert_shreds_at_location()`
     /// try to perform read-modify-write operation on [`cf::SlotMeta`] column
     /// family.
     pub fn clear_unconfirmed_slot(&self, slot: Slot) {
@@ -2639,15 +2446,14 @@ impl Blockstore {
         let shreds = shreds
             .into_iter()
             .map(|shred| (shred, /*is_repaired:*/ false, BlockLocation::Original));
-        let insert_results = self.do_insert_shreds(
+        self.do_insert_shreds(
             shreds,
             is_trusted,
             None, // Skip recovery for locally produced shreds.
             pinnable_slice,
             write_batch,
             &mut BlockstoreInsertionMetrics::default(),
-        )?;
-        Ok(insert_results.completed_data_set_infos)
+        )
     }
 
     // Test-only function.
@@ -2660,27 +2466,6 @@ impl Blockstore {
         let mut write_batch = self.get_write_batch();
         let shreds = shreds.into_iter().map(Cow::Owned);
         self.insert_cow_shreds(shreds, is_trusted, &mut pinnable_slice, &mut write_batch)
-    }
-
-    #[cfg(test)]
-    fn insert_shred_return_duplicate(&self, shred: Shred) -> Vec<PossibleDuplicateShred> {
-        let mut pinnable_slice = self.new_pinnable_slice();
-        let mut write_batch = self.get_write_batch();
-        let insert_results = self
-            .do_insert_shreds(
-                [(
-                    Cow::Owned(shred),
-                    /*is_repaired:*/ false,
-                    BlockLocation::Original,
-                )],
-                false,
-                None, // Skip recovery for this direct insertion path.
-                &mut pinnable_slice,
-                &mut write_batch,
-                &mut BlockstoreInsertionMetrics::default(),
-            )
-            .unwrap();
-        insert_results.duplicate_shreds
     }
 
     /// Create an entry to the specified `write_batch` that performs coding shred
@@ -2751,7 +2536,7 @@ impl Blockstore {
         // So, all coding shreds in a given FEC block will have the same set index
         if !is_trusted {
             if index_meta.coding().contains(shred_index) {
-                duplicate_shreds.push(PossibleDuplicateShred::Exists(shred.into_owned()));
+                duplicate_shreds.push(shred.into_owned());
                 return Err(InsertCodingShredError::Exists);
             }
 
@@ -2771,7 +2556,6 @@ impl Blockstore {
                     BlockLocation::Original,
                     merkle_root_meta.as_ref(),
                     &shred,
-                    duplicate_shreds,
                 ) {
                     return Err(InsertCodingShredError::InvalidShred);
                 }
@@ -2806,11 +2590,6 @@ impl Blockstore {
                              {erasure_set:?} {e}"
                         );
                     }
-
-                    duplicate_shreds.push(PossibleDuplicateShred::ErasureConflict(
-                        shred.as_ref().clone(),
-                        conflicting_shred,
-                    ));
                 } else {
                     error!(
                         "Unable to find the conflicting coding shred that set {erasure_meta:?}. \
@@ -2992,7 +2771,7 @@ impl Blockstore {
 
         if !is_trusted {
             if Self::is_data_shred_present(&shred, slot_meta, index_meta.data()) {
-                duplicate_shreds.push(PossibleDuplicateShred::Exists(shred.into_owned()));
+                duplicate_shreds.push(shred.into_owned());
                 return Err(InsertDataShredError::Exists);
             }
 
@@ -3020,7 +2799,6 @@ impl Blockstore {
                 just_inserted_shreds,
                 self.max_root(),
                 shred_source,
-                duplicate_shreds,
             ) {
                 return Err(InsertDataShredError::InvalidShred);
             }
@@ -3035,7 +2813,6 @@ impl Blockstore {
                     location,
                     merkle_root_meta.as_ref(),
                     &shred,
-                    duplicate_shreds,
                 ) {
                     // This indicates there is an alternate version of this block.
                     // Similar to the last index case above, we might never get all the
@@ -3165,8 +2942,7 @@ impl Blockstore {
     /// Returns true if there is no merkle root conflict between
     /// the existing `merkle_root_meta` and `shred`
     ///
-    /// Otherwise return false and if not already present, add duplicate proof to
-    /// `duplicate_shreds`.
+    /// Otherwise return false and, if not already present, store a duplicate proof.
     fn check_merkle_root_consistency(
         &self,
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
@@ -3174,7 +2950,6 @@ impl Blockstore {
         location: BlockLocation,
         merkle_root_meta: &MerkleRootMeta,
         shred: &Shred,
-        duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) -> bool {
         let new_merkle_root = shred.merkle_root().ok();
         if merkle_root_meta.merkle_root() == new_merkle_root {
@@ -3223,152 +2998,8 @@ impl Blockstore {
                     shred.erasure_set(),
                 );
             }
-            duplicate_shreds.push(PossibleDuplicateShred::MerkleRootConflict(
-                shred.clone(),
-                conflicting_shred,
-            ));
         }
         false
-    }
-
-    /// Returns true if there is no chaining conflict between
-    /// the `shred` and `merkle_root_meta` of the next FEC set,
-    /// or if shreds from the next set are yet to be received.
-    ///
-    /// Otherwise return false and add duplicate proof to
-    /// `duplicate_shreds`.
-    ///
-    /// This is intended to be used right after `shred`'s `erasure_meta`
-    /// has been created for the first time.
-    ///
-    /// This check is only to be performed on the Original column, as Alternate
-    /// column shreds are already pre verified
-    fn check_forward_chained_merkle_root_consistency(
-        &self,
-        shred: &Shred,
-        next_erasure_set: ErasureSetId,
-        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-        merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
-    ) -> bool {
-        let slot = shred.slot();
-        let erasure_set = shred.erasure_set();
-
-        // If a shred from the next fec set has already been inserted, check the chaining
-        let Some(next_merkle_root_meta) = merkle_root_metas
-            .get(&(BlockLocation::Original, next_erasure_set))
-            .map(WorkingEntry::as_ref)
-            .map(Cow::Borrowed)
-            .or_else(|| {
-                self.merkle_root_meta(next_erasure_set)
-                    .unwrap()
-                    .map(Cow::Owned)
-            })
-        else {
-            // No shred from the next fec set has been received
-            return true;
-        };
-        let next_shred_id = ShredId::new(
-            slot,
-            next_merkle_root_meta.first_received_shred_index(),
-            next_merkle_root_meta.first_received_shred_type(),
-        );
-        let Some(next_shred) = Self::get_shred_from_just_inserted_or_db(
-            self,
-            just_inserted_shreds,
-            next_shred_id,
-            BlockLocation::Original,
-        )
-        .map(Cow::into_owned) else {
-            error!(
-                "Shred {next_shred_id:?} is missing from blockstore. This should only happen in \
-                 extreme cases where  blockstore cleanup has caught up to the root. Skipping the \
-                 forward chained merkle root consistency check"
-            );
-            return true;
-        };
-        let merkle_root = shred.merkle_root().ok();
-        let chained_merkle_root = shred::layout::get_chained_merkle_root(&next_shred);
-
-        if !self.check_chaining(merkle_root, chained_merkle_root) {
-            warn!(
-                "Received conflicting chained merkle roots for slot: {slot}, shred \
-                 {erasure_set:?} type {:?} has merkle root {merkle_root:?}, however next fec set \
-                 shred {next_erasure_set:?} type {:?} chains to merkle root \
-                 {chained_merkle_root:?}. Reporting as duplicate",
-                shred.shred_type(),
-                next_merkle_root_meta.first_received_shred_type(),
-            );
-
-            return false;
-        }
-
-        true
-    }
-
-    /// Returns true if there is no chaining conflict between
-    /// the `shred` and `merkle_root_meta` of the previous FEC set,
-    /// or if shreds from the previous set are yet to be received.
-    ///
-    /// Otherwise return false and add duplicate proof to
-    /// `duplicate_shreds`.
-    ///
-    /// This is intended to be used right after `shred`'s `merkle_root_meta`
-    /// has been created for the first time.
-    ///
-    /// This check is only to be performed on the Original column, as Alternate
-    /// column shreds are already pre verified
-    fn check_backwards_chained_merkle_root_consistency(
-        &self,
-        shred: &Shred,
-        prev_shred_id: ShredId,
-        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-    ) -> bool {
-        let slot = shred.slot();
-        let fec_set_index = shred.fec_set_index();
-
-        if fec_set_index == 0 {
-            // The first fec set chains to the last fec set of the parent block.
-            // Cross-slot chaining is validated during replay via
-            // check_chained_block_id, so this function only handles
-            // intra-slot chaining consistency.
-            return true;
-        }
-
-        let Some(prev_shred) = Self::get_shred_from_just_inserted_or_db(
-            self,
-            just_inserted_shreds,
-            prev_shred_id,
-            BlockLocation::Original,
-        )
-        .map(Cow::into_owned) else {
-            warn!(
-                "Shred {prev_shred_id:?} is missing from blockstore. This can happen if \
-                 blockstore cleanup has caught up to the root. Skipping the backwards chained \
-                 merkle root consistency check"
-            );
-            return true;
-        };
-        let merkle_root = shred::layout::get_merkle_root(&prev_shred);
-        let chained_merkle_root = shred.chained_merkle_root().ok();
-
-        if !self.check_chaining(merkle_root, chained_merkle_root) {
-            warn!(
-                "Received conflicting chained merkle roots for slot: {slot}, shred {:?} type {:?} \
-                 chains to merkle root {chained_merkle_root:?}, however previous fec set shred \
-                 {prev_shred_id:?} has merkle root {merkle_root:?}. Reporting as duplicate",
-                shred.erasure_set(),
-                shred.shred_type(),
-            );
-
-            return false;
-        }
-
-        true
-    }
-
-    /// Returns true if `chained_merkle_root` chains correctly to `merkle_root`.
-    fn check_chaining(&self, merkle_root: Option<Hash>, chained_merkle_root: Option<Hash>) -> bool {
-        chained_merkle_root == merkle_root
     }
 
     fn should_insert_data_shred(
@@ -3379,7 +3010,6 @@ impl Blockstore {
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         max_root: Slot,
         shred_source: ShredSource,
-        duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) -> bool {
         let shred_index = u64::from(shred.index());
         let slot = shred.slot();
@@ -3420,10 +3050,6 @@ impl Blockstore {
                 {
                     warn!("store duplicate error");
                 }
-                duplicate_shreds.push(PossibleDuplicateShred::LastIndexConflict(
-                    shred.clone(),
-                    ending_shred,
-                ));
             }
 
             datapoint_error!(
@@ -3468,10 +3094,6 @@ impl Blockstore {
                 {
                     warn!("store duplicate error");
                 }
-                duplicate_shreds.push(PossibleDuplicateShred::LastIndexConflict(
-                    shred.clone(),
-                    ending_shred,
-                ));
             }
 
             datapoint_error!(
@@ -5447,17 +5069,6 @@ impl Blockstore {
         self.dead_slots_cf.put(slot, &true)
     }
 
-    /// Marks a duplicate slot dead unless it is full, for external use.
-    pub fn set_dead_slot_if_duplicate_and_not_full(&self, slot: Slot) -> Result<()> {
-        let _lock = self.insert_shreds_lock.lock().unwrap();
-        if self.has_duplicate_shreds_in_slot(slot)
-            && !self.meta(slot)?.is_some_and(|meta| meta.is_full())
-        {
-            self.set_dead_slot(slot)?;
-        }
-        Ok(())
-    }
-
     pub fn remove_dead_slot(&self, slot: Slot) -> Result<()> {
         self.dead_slots_cf.delete(slot)
     }
@@ -5509,6 +5120,25 @@ impl Blockstore {
             error!("set retransmitter signature failed: {err:?}");
         }
         (other != **shred.payload()).then_some(other)
+    }
+
+    /// Records a conflicting shred after its insertion batch has committed.
+    ///
+    /// The occupying shred can be part of that same batch, so this check cannot
+    /// run when the occupied position is first detected.
+    fn handle_existing_shred(&self, shred: &Shred) -> Result<()> {
+        let slot = shred.slot();
+        if !self.has_duplicate_shreds_in_slot(slot)
+            && let Some(existing_shred_payload) = self.is_shred_duplicate(shred)
+        {
+            self.store_duplicate_slot(slot, existing_shred_payload, shred.payload().clone())?;
+        }
+        if self.has_duplicate_shreds_in_slot(slot)
+            && !self.meta(slot)?.is_some_and(|meta| meta.is_full())
+        {
+            self.set_dead_slot(slot)?;
+        }
+        Ok(())
     }
 
     pub fn has_duplicate_shreds_in_slot(&self, slot: Slot) -> bool {

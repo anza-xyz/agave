@@ -19,10 +19,7 @@ use {
     solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
-        blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType,
-            handle_duplicate_shred,
-        },
+        blockstore::{Blockstore, BlockstoreInsertionMetrics, PurgeType},
         blockstore_processor::verify_ticks,
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, Shred,
@@ -168,17 +165,13 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let (retransmit_sender, _retransmit_rx) = EvictingSender::<Vec<Payload>>::new_bounded(0);
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
-    let handle_duplicate = |duplicate: PossibleDuplicateShred| {
-        handle_duplicate_shred(&blockstore, duplicate).expect("handle duplicate shred");
-    };
     let shreds_iter = parsed
         .iter()
         .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
-    let _ = blockstore.insert_shreds_handle_duplicate(
+    let _ = blockstore.insert_shreds_with_recovery(
         shreds_iter,
         false, // is_trusted: keep dedup + integrity checks
         &mut recovery,
-        &handle_duplicate,
         &mut metrics,
     );
 
