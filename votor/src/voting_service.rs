@@ -8,8 +8,8 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_runtime::{
+        block_component_processor::validated_block_certs::validated_block_finalization::ValidatedBlockFinalizationCert,
         slot_params::slot_time_feature_gates,
-        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     std::{
         collections::{BTreeMap, HashSet},
@@ -18,7 +18,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::sync::{mpsc, mpsc::error::TrySendError},
+    tokio::sync::mpsc::{self, error::TrySendError},
 };
 
 /// Max new packets per slot in steady state:

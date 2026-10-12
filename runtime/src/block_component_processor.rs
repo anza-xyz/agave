@@ -1,14 +1,16 @@
 use {
     crate::{
         bank::Bank,
-        block_component_processor::vote_reward::{
-            CalcVoteRewardUpdateVoteStatesError, calc_vote_rewards_update_vote_states,
+        block_component_processor::{
+            validated_block_certs::{
+                ValidatedBlockCertsError, validated_reward_certificate::ValidatedRewardCert,
+                verify_certs,
+            },
+            vote_reward::{
+                CalcVoteRewardUpdateVoteStatesError, calc_vote_rewards_update_vote_states,
+            },
         },
         leader_schedule_utils::leader_slot_index,
-        validated_block_finalization::{
-            BlockFinalizationCertError, ValidatedBlockFinalizationCert,
-        },
-        validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_transaction_view::transaction_data::TransactionData,
     agave_votor_messages::{
@@ -19,6 +21,7 @@ use {
     },
     crossbeam_channel::{Sender, TrySendError},
     log::*,
+    rayon::ThreadPool,
     smallvec::{SmallVec, smallvec},
     solana_clock::Slot,
     solana_entry::{
@@ -35,6 +38,7 @@ use {
     thiserror::Error,
 };
 
+pub mod validated_block_certs;
 pub(crate) mod vote_reward;
 
 #[derive(Debug, Error)]
@@ -59,8 +63,6 @@ pub enum BlockComponentProcessorError {
     AlpenglowMigrationTransition,
     #[error("GenesisCertificate marker must immediately follow the block header")]
     GenesisCertificateOutOfOrder,
-    #[error("FinalizationCertificate was invalid or failed to verify {0}")]
-    InvalidFinalizationCertificate(#[from] BlockFinalizationCertError),
     #[error("Missing block footer")]
     MissingBlockFooter,
     #[error("Missing genesis certificate marker")]
@@ -96,10 +98,10 @@ pub enum BlockComponentProcessorError {
     UnexpectedInitialUpdateParent,
     #[error("Abandoned bank")]
     AbandonedBank(VersionedUpdateParent),
-    #[error("invalid reward certs {0}")]
-    InvalidRewardCerts(#[from] ValidatedRewardCertError),
     #[error("updating bank footer failed with \"{0}\"")]
     UpdateBankFooter(#[from] BankFooterError),
+    #[error("validating block certs failed with {0}")]
+    BlockCertsFailed(#[from] ValidatedBlockCertsError),
 }
 
 impl BlockComponentProcessorError {
@@ -125,9 +127,8 @@ impl BlockComponentProcessorError {
             | BlockComponentProcessorError::GenesisCertificateFailedVerification
             | BlockComponentProcessorError::SpuriousUpdateParent
             | BlockComponentProcessorError::AbandonedBank(_)
-            | BlockComponentProcessorError::InvalidRewardCerts(_)
-            | BlockComponentProcessorError::UpdateBankFooter(_)
-            | BlockComponentProcessorError::InvalidFinalizationCertificate(_) => true,
+            | BlockComponentProcessorError::BlockCertsFailed(_)
+            | BlockComponentProcessorError::UpdateBankFooter(_) => true,
             BlockComponentProcessorError::BlockComponentPreMigration
             | BlockComponentProcessorError::MissingBlockFooter
             | BlockComponentProcessorError::MissingGenesisCertificateMarker
@@ -399,6 +400,7 @@ impl BlockComponentProcessor {
     /// - Once the migration is complete all markers are allowed
     pub fn on_marker(
         &mut self,
+        thread_pool: &ThreadPool,
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
         shred_version: u16,
@@ -435,6 +437,7 @@ impl BlockComponentProcessor {
 
             // Everything else is only valid once migration is complete
             BlockMarkerV1::BlockFooter(footer) if markers_fully_enabled => self.on_footer(
+                thread_pool,
                 &migration_status.my_pubkey(),
                 bank,
                 parent_bank,
@@ -584,6 +587,7 @@ impl BlockComponentProcessor {
 
     fn on_footer(
         &mut self,
+        thread_pool: &ThreadPool,
         my_pubkey: &Pubkey,
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
@@ -606,20 +610,16 @@ impl BlockComponentProcessor {
             notar_reward_cert,
         } = footer;
 
-        let reward_cert = ValidatedRewardCert::try_new(
-            &bank,
-            shred_version,
-            &skip_reward_cert,
-            &notar_reward_cert,
-        )?;
         let block_producer_time_nanos =
             Self::block_producer_time_nanos_as_i64(block_producer_time_nanos)?;
-        let final_cert = block_final_cert
-            .map(|final_cert| {
-                ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank, shred_version)
-                    .map_err(BlockComponentProcessorError::InvalidFinalizationCertificate)
-            })
-            .transpose()?;
+        let (reward_cert, final_cert) = verify_certs(
+            thread_pool,
+            &bank,
+            shred_version,
+            block_final_cert,
+            skip_reward_cert,
+            notar_reward_cert,
+        )?;
 
         let (footer_input, pool_input) = match final_cert {
             None => (None, None),
@@ -808,6 +808,7 @@ mod tests {
         agave_votor_messages::consensus_message::BlockId,
         bytes::Bytes,
         rand::Rng,
+        rayon::ThreadPoolBuilder,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::DEFAULT_MS_PER_SLOT,
         solana_entry::block_component::{
@@ -965,6 +966,7 @@ mod tests {
 
     #[test]
     fn test_on_footer_sets_timestamp() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
 
@@ -988,6 +990,7 @@ mod tests {
 
         processor
             .on_footer(
+                &thread_pool,
                 &my_pubkey,
                 bank.clone(),
                 parent,
@@ -1005,6 +1008,7 @@ mod tests {
 
     #[test]
     fn test_footer_sets_epoch_start_timestamp_on_epoch_change() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
@@ -1056,6 +1060,7 @@ mod tests {
 
         processor
             .on_footer(
+                &thread_pool,
                 &my_pubkey,
                 bank.clone(),
                 parent,
@@ -1089,6 +1094,7 @@ mod tests {
         timestamp_fn: impl FnOnce(i64, i64, i64) -> i64,
         should_pass: bool,
     ) {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
@@ -1118,7 +1124,15 @@ mod tests {
             notar_reward_cert: None,
         });
 
-        let result = processor.on_footer(&my_pubkey, bank, parent, shred_version, footer, None);
+        let result = processor.on_footer(
+            &thread_pool,
+            &my_pubkey,
+            bank,
+            parent,
+            shred_version,
+            footer,
+            None,
+        );
         if should_pass {
             result.unwrap();
         } else {
@@ -1131,6 +1145,7 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_without_parent_nanosecond_clock_rejects_out_of_bounds() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
@@ -1158,7 +1173,15 @@ mod tests {
 
         assert!(matches!(
             processor
-                .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
+                .on_footer(
+                    &thread_pool,
+                    &my_pubkey,
+                    bank,
+                    parent,
+                    shred_version,
+                    footer,
+                    None
+                )
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1166,6 +1189,7 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_rejects_timestamp_above_i64() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
@@ -1186,7 +1210,15 @@ mod tests {
 
         assert!(matches!(
             processor
-                .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
+                .on_footer(
+                    &thread_pool,
+                    &my_pubkey,
+                    bank,
+                    parent,
+                    shred_version,
+                    footer,
+                    None
+                )
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1253,6 +1285,7 @@ mod tests {
     /// as on a full slot.
     #[test]
     fn test_processor_component_sequences() {
+        let thread_pool = Arc::new(ThreadPoolBuilder::new().num_threads(2).build().unwrap());
         use BlockComponentProcessorError as E;
 
         type Step = Box<
@@ -1285,11 +1318,14 @@ mod tests {
 
         // One step = one direct `on_marker` call
         let marker_step = {
+            let thread_pool = thread_pool.clone();
             let (bank, parent) = (bank.clone(), parent.clone());
             move |marker: VersionedBlockMarker, allow_initial_update_parent: bool| -> Step {
+                let thread_pool = thread_pool.clone();
                 let (bank, parent) = (bank.clone(), parent.clone());
                 Box::new(move |processor, migration_status| {
                     processor.on_marker(
+                        &thread_pool,
                         bank,
                         parent,
                         shred_version,
@@ -1337,11 +1373,14 @@ mod tests {
         // Same UpdateParent marker, sent to a bank whose slot is not the
         // first in its leader window
         let update_parent_not_window_start = {
+            let thread_pool = thread_pool.clone();
             let (bank, parent) = (bank_not_window_start.clone(), parent.clone());
             move |allow_initial_update_parent: bool| -> Step {
+                let thread_pool = thread_pool.clone();
                 let (bank, parent) = (bank.clone(), parent.clone());
                 Box::new(move |processor, migration_status| {
                     processor.on_marker(
+                        &thread_pool,
                         bank,
                         parent,
                         shred_version,

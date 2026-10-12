@@ -38,8 +38,8 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::SharableBanks,
+        block_component_processor::validated_block_certs::validated_block_finalization::ValidatedBlockFinalizationCert,
         leader_schedule_utils::last_of_consecutive_leader_slots,
-        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_validator_exit::Exit,
     stats::ConsensusPoolServiceStats,

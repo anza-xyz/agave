@@ -1,5 +1,8 @@
 use {
-    crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
+    crate::{
+        bank::Bank,
+        block_component_processor::validated_block_certs::validated_reward_certificate::ValidatedRewardCert,
+    },
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
@@ -603,13 +606,13 @@ mod tests {
         super::*,
         crate::{
             bank_forks::BankForks,
+            block_component_processor::validated_block_certs::validated_block_finalization::ValidatedBlockFinalizationCert,
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_leader_ex,
                 create_genesis_config_with_vote_accounts, create_validator,
             },
             inflation_rewards::{MAX_BPS, commission_split_preserve_lamports},
             stake_utils,
-            validated_block_finalization::ValidatedBlockFinalizationCert,
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{

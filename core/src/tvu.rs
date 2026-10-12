@@ -75,10 +75,10 @@ use {
     solana_runtime::{
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommandReceiver, BankForksController},
+        block_component_processor::validated_block_certs::validated_block_finalization::ValidatedBlockFinalizationCert,
         commitment::BlockCommitmentCache,
         snapshot_controller::SnapshotController,
         transaction_execution::TransactionStatusSender,
-        validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
     solana_streamer::evicting_sender::EvictingSender,

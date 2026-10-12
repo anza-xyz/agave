@@ -84,7 +84,7 @@ use {
     solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
     solana_runtime::{
         bank_forks::BankForks, bank_forks_controller::BankForksController,
-        validated_block_finalization::ValidatedBlockFinalizationCert,
+        block_component_processor::validated_block_certs::validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_streamer::evicting_sender::EvictingSender,
     solana_validator_exit::Exit,

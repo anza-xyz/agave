@@ -44,10 +44,14 @@ use {
         bank::{Bank, NewBankOptions},
         bank_forks::{BankForks, SharableBanks},
         bank_forks_controller::{BankForksController, BankForksControllerError},
-        block_component_processor::BlockComponentProcessor,
+        block_component_processor::{
+            BlockComponentProcessor,
+            validated_block_certs::{
+                validated_block_finalization::ValidatedBlockFinalizationCert,
+                validated_reward_certificate::ValidatedRewardCert,
+            },
+        },
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
-        validated_block_finalization::ValidatedBlockFinalizationCert,
-        validated_reward_certificate::ValidatedRewardCert,
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_version::version,
@@ -890,8 +894,8 @@ fn record_and_complete_block(
             notar,
             validators,
         } = reward_certs;
-        let reward_cert =
-            ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?;
+        let reward_cert = ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)
+            .map_err(PohRecorderError::InvalidRewardSlots)?;
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
