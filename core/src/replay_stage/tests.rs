@@ -119,6 +119,31 @@ fn alpenglow_replay_components(forks: Tree<Slot>) -> AlpenglowReplayComponents {
     }
 }
 
+#[test]
+fn test_has_active_leader_bank_while_sending_footer() {
+    let AlpenglowReplayComponents { bank_forks, .. } = alpenglow_replay_components(tr(0));
+    let frozen_bank = bank_forks.read().unwrap().root_bank();
+    let mut poh_leader_state = SharedLeaderState::new(0, None, None);
+
+    assert!(!ReplayStage::has_active_leader_bank(
+        &bank_forks,
+        &poh_leader_state,
+    ));
+
+    // PoH keeps publishing the working bank while BCL waits for the frozen bank's footer to be
+    // handed to broadcast.
+    poh_leader_state.store(Arc::new(solana_poh::poh_recorder::LeaderState::new(
+        Some(frozen_bank),
+        0,
+        None,
+        None,
+    )));
+    assert!(ReplayStage::has_active_leader_bank(
+        &bank_forks,
+        &poh_leader_state,
+    ));
+}
+
 impl ProcessActiveBanksContext {
     fn new_for_tests(bank_forks: Arc<RwLock<BankForks>>, blockstore: Arc<Blockstore>) -> Self {
         let (cost_update_sender, _) = bounded(1024);
@@ -243,7 +268,7 @@ fn dead_slot_context_for_tests(blockstore: Arc<Blockstore>) -> DeadSlotContext {
 }
 
 struct SlotStatusNotifierForTest {
-    dead_slots: Arc<Mutex<HashSet<Slot>>>,
+    dead_slots: Arc<Mutex<HashSet<(Slot, BankId)>>>,
 }
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
@@ -259,8 +284,8 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
 
     fn notify_created_bank(&self, _slot: Slot, _parent: Slot, _bank_id: BankId) {}
 
-    fn notify_slot_dead(&self, slot: Slot, _parent: Slot, _error: String) {
-        self.dead_slots.lock().unwrap().insert(slot);
+    fn notify_dead_bank(&self, slot: Slot, _parent: Slot, bank_id: BankId, _error: String) {
+        self.dead_slots.lock().unwrap().insert((slot, bank_id));
     }
 }
 
@@ -491,14 +516,24 @@ where
     if slot_was_full {
         assert_eq!(dead_reason, Some(&DeadSlotReason::Hard));
         assert!(blockstore.is_dead(bank1.slot()));
-        assert!(dead_slots.lock().unwrap().contains(&bank1.slot()));
+        assert!(
+            dead_slots
+                .lock()
+                .unwrap()
+                .contains(&(bank1.slot(), bank1.bank_id()))
+        );
     } else {
         assert_eq!(
             dead_reason,
             Some(&DeadSlotReason::ReplayFailureBeforeUpdateParent)
         );
         assert!(!blockstore.is_dead(bank1.slot()));
-        assert!(!dead_slots.lock().unwrap().contains(&bank1.slot()));
+        assert!(
+            !dead_slots
+                .lock()
+                .unwrap()
+                .contains(&(bank1.slot(), bank1.bank_id()))
+        );
     }
     bank1.quiesce_transaction_execution();
     let _ = bank1.wait_for_completed_scheduler();
@@ -586,12 +621,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     let missing_command = SetRootCommand {
         new_root: Block::new_unique(2),
     };
-    ReplayStage::process_set_root_command(
-        missing_command,
-        &context,
-        &my_pubkey,
-        &mut progress,
-    );
+    ReplayStage::process_set_root_command(missing_command, &context, &my_pubkey, &mut progress);
     assert_eq!(bank_forks.read().unwrap().root(), 0);
     assert!(!blockstore.is_root(2));
     assert!(transaction_status_receiver.is_empty());
@@ -599,12 +629,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     let mismatched_command = SetRootCommand {
         new_root: Block::new_unique(1),
     };
-    ReplayStage::process_set_root_command(
-        mismatched_command,
-        &context,
-        &my_pubkey,
-        &mut progress,
-    );
+    ReplayStage::process_set_root_command(mismatched_command, &context, &my_pubkey, &mut progress);
     assert_eq!(bank_forks.read().unwrap().root(), 0);
     assert!(!blockstore.is_root(1));
     assert!(transaction_status_receiver.is_empty());
@@ -806,48 +831,6 @@ fn test_dead_fork_entry_deserialize_failure() {
             BlockstoreError::InvalidShredData(_)
         ))
     );
-}
-
-struct SlotStatusNotifierForTest {
-    dead_slots: Arc<Mutex<HashSet<(Slot, BankId)>>>,
-}
-
-impl SlotStatusNotifierForTest {
-    pub fn new(dead_slots: Arc<Mutex<HashSet<(Slot, BankId)>>>) -> Self {
-        Self { dead_slots }
-    }
-}
-
-impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
-    fn notify_slot_confirmed(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
-
-    fn notify_slot_processed(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
-
-    fn notify_slot_rooted(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
-
-    fn notify_first_shred_received(&self, _slot: Slot) {}
-
-    fn notify_completed(&self, _slot: Slot) {}
-
-    fn notify_created_bank(&self, _slot: Slot, _parent: Slot, _bank_id: BankId) {}
-
-    fn notify_dead_bank(&self, slot: Slot, _parent: Slot, bank_id: BankId, _error: String) {
-        self.dead_slots.lock().unwrap().insert((slot, bank_id));
-    }
-}
-
-fn make_complete_slot_entries(bank: &BankWithScheduler, txs: Vec<Transaction>) -> Vec<Entry> {
-    let hashes_per_tick = bank.hashes_per_tick().unwrap();
-    let tx_entry = entry::next_entry(&bank.last_blockhash(), hashes_per_tick - 1, txs);
-    let first_tick = entry::next_entry(&tx_entry.hash, 1, vec![]);
-    let prev_hash = first_tick.hash;
-    let mut entries = vec![tx_entry, first_tick];
-    entries.extend(entry::create_ticks(
-        bank.ticks_per_slot() - 1,
-        hashes_per_tick,
-        prev_hash,
-    ));
-    entries
 }
 
 enum CompleteBankFailure {

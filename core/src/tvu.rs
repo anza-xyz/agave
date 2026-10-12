@@ -53,6 +53,7 @@ use {
         shred::filter::TurbineMode,
     },
     solana_net_utils::{PinnedXdpSender, quic_socket::QuicSocket},
+    solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::Pubkey,
     solana_rpc::{
         max_slots::MaxSlots, optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
@@ -200,6 +201,7 @@ impl Tvu {
         ledger_signal_receiver: Receiver<bool>,
         update_parent_receiver: UpdateParentReceiver,
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
+        poh_leader_state: SharedLeaderState,
         vote_history: VoteHistory,
         vote_history_storage: Arc<dyn VoteHistoryStorage>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
@@ -519,6 +521,7 @@ impl Tvu {
             blockstore: blockstore.clone(),
             bank_forks: bank_forks.clone(),
             cluster_info: cluster_info.clone(),
+            poh_leader_state,
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
@@ -589,5 +592,176 @@ impl Tvu {
         self.votor.join()?;
         self.commitment_service.join()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use {
+        super::*,
+        crate::{admin_rpc_post_init::KeyUpdaters, block_creation_loop::ReplayHighestFrozen},
+        agave_votor::{
+            event::{VotorEventReceiver, VotorEventSender},
+            vote_history::VoteHistory,
+            vote_history_storage::NullVoteHistoryStorage,
+        },
+        serial_test::serial,
+        solana_gossip::{cluster_info::ClusterInfo, node::Node},
+        solana_keypair::Keypair,
+        solana_ledger::{
+            blockstore::BlockstoreSignals,
+            blockstore_options::BlockstoreOptions,
+            create_new_tmp_ledger,
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        },
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+        solana_poh::poh_recorder::create_test_recorder,
+        solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
+        solana_runtime::{
+            bank::{Bank, SlotLeader},
+            bank_forks_controller::BankForksControllerHandle,
+        },
+        solana_signer::Signer,
+        std::sync::atomic::{AtomicU64, Ordering},
+    };
+
+    #[test]
+    #[serial]
+    fn test_tvu_exit() {
+        agave_logger::setup();
+        let leader = Node::new_localhost();
+        let target1_keypair = Keypair::new();
+        let target1 = Node::new_localhost_with_pubkey(&target1_keypair.pubkey());
+
+        let starting_balance = 10_000;
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(starting_balance);
+
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+
+        //start cluster_info1
+        let cluster_info1 = ClusterInfo::new(
+            target1.info.clone(),
+            target1_keypair.into(),
+            SocketAddrSpace::Unspecified,
+        );
+        cluster_info1.insert_info(leader.info);
+        let cref1 = Arc::new(cluster_info1);
+
+        let (blockstore_path, _) = create_new_tmp_ledger!(&genesis_config);
+        let BlockstoreSignals {
+            blockstore,
+            ledger_signal_receiver,
+            update_parent_receiver,
+            ..
+        } = Blockstore::open_with_signal(&blockstore_path, BlockstoreOptions::default())
+            .expect("Expected to successfully open ledger");
+        let blockstore = Arc::new(blockstore);
+        let bank = bank_forks.read().unwrap().working_bank();
+        // Give PoH a child bank outside of bank_forks (this also freezes bank 0).
+        // Otherwise PoH may complete bank 0, which ReplayStage tracks as active
+        // without a progress entry, and panics.
+        let poh_bank = Arc::new(Bank::new_from_parent(
+            bank.clone(),
+            SlotLeader::default(),
+            1,
+        ));
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            _transaction_recorder,
+            poh_service,
+            _entry_receiver,
+        ) = create_test_recorder(poh_bank, blockstore.clone(), None, None);
+        let vote_keypair = Keypair::new();
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) =
+            EvictingSender::new_bounded(1024);
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
+        let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
+        let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
+        let (leader_window_info_sender, _leader_window_info_receiver) = bounded(1024);
+        let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(1024);
+        let highest_parent_ready = Arc::new(RwLock::new((0, Block::new_unique(0))));
+        let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
+            bounded(1024);
+        let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
+        let (bank_forks_controller, bank_forks_controller_receiver) =
+            BankForksControllerHandle::new();
+        let bank_forks_controller = Arc::new(bank_forks_controller);
+        let (reward_vote_aggregates_sender, _reward_vote_aggregates_receiver) = bounded(1024);
+
+        let votor_server_sockets = vec![QuicSocket::Kernel(
+            bind_to_localhost_unique().expect("bind votor server socket"),
+        )];
+        let votor_client_socket =
+            QuicSocket::Kernel(bind_to_localhost_unique().expect("bind votor client socket"));
+        let tvu = Tvu::new(
+            &vote_keypair.pubkey(),
+            Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
+            bank_forks.clone(),
+            &cref1,
+            TvuSockets {
+                repair: target1.sockets.repair,
+                retransmit: target1.sockets.retransmit_sockets,
+                fetch: target1.sockets.tvu,
+                block_id_repair: target1.sockets.block_id_repair,
+            },
+            blockstore,
+            ledger_signal_receiver,
+            update_parent_receiver,
+            Some(Arc::new(RpcSubscriptions::new_for_tests(
+                exit.clone(),
+                max_complete_transaction_status_slot,
+                bank_forks.clone(),
+                block_commitment_cache.clone(),
+                OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
+            ))),
+            poh_recorder.read().unwrap().shared_leader_state(),
+            VoteHistory::default(),
+            Arc::new(NullVoteHistoryStorage::default()),
+            &leader_schedule_cache,
+            exit.clone(),
+            block_commitment_cache,
+            TurbineMode::default(),
+            None, // transaction_status_sender
+            None, // entry_notification_sender
+            verified_voter_slots_sender,
+            verified_voter_slots_receiver,
+            None, // completed_data_sets_sender
+            None, // bank_notification_sender
+            TvuConfig::default(),
+            &Arc::new(MaxSlots::default()),
+            None, // block_metadata_notifier
+            None, // wait_to_vote_slot
+            None, // snapshot_controller
+            outstanding_repair_requests,
+            None, // slot_status_notifier
+            AlpenglowInitializationState {
+                alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+                leader_window_info_sender,
+                optimistic_parent_sender,
+                optimistic_parent_receiver,
+                replay_highest_frozen,
+                highest_parent_ready,
+                votor_event_sender,
+                votor_event_receiver,
+                cancel: CancellationToken::new(),
+                validator_exit: Arc::default(),
+                key_notifiers,
+                votor_server_sockets,
+                votor_client_socket,
+                votor_peer_overrides: Arc::default(),
+                highest_finalized: Arc::new(RwLock::new(None)),
+                bank_forks_controller,
+                bank_forks_controller_receiver,
+            },
+            reward_vote_aggregates_sender,
+        )
+        .expect("assume success");
+        exit.store(true, Ordering::Relaxed);
+        tvu.join().unwrap();
+        poh_service.join().unwrap();
     }
 }

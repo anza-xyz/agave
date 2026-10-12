@@ -40,6 +40,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_measure::measure::Measure,
+    solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
@@ -263,6 +264,7 @@ pub struct ReplayStageConfig {
     pub blockstore: Arc<Blockstore>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub cluster_info: Arc<ClusterInfo>,
+    pub poh_leader_state: SharedLeaderState,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
@@ -392,6 +394,19 @@ pub struct ReplayStage {
 }
 
 impl ReplayStage {
+    fn has_active_leader_bank(
+        bank_forks: &RwLock<BankForks>,
+        poh_leader_state: &SharedLeaderState,
+    ) -> bool {
+        bank_forks
+            .read()
+            .unwrap()
+            .banks()
+            .values()
+            .any(|bank| !bank.is_frozen() && !bank.should_replay_from_blockstore())
+            || poh_leader_state.load().working_bank().is_some()
+    }
+
     pub fn new(
         config: ReplayStageConfig,
         senders: ReplaySenders,
@@ -407,6 +422,7 @@ impl ReplayStage {
             blockstore,
             bank_forks,
             cluster_info,
+            poh_leader_state,
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
@@ -618,13 +634,10 @@ impl ReplayStage {
                 );
                 let mut process_switch_bank_events_time =
                     Measure::start("process_switch_bank_events_time");
-                // BCL inserts its bank before publishing the active leader bank.
-                let has_active_leader_bank = bank_forks
-                    .read()
-                    .unwrap()
-                    .banks()
-                    .values()
-                    .any(|bank| !bank.is_frozen() && !bank.should_replay_from_blockstore());
+                // BCL inserts its bank before publishing it to PoH, and freezes it before sending
+                // the footer, so check both states.
+                let has_active_leader_bank =
+                    Self::has_active_leader_bank(&bank_forks, &poh_leader_state);
                 if !has_active_leader_bank
                     && let Err(err) = Self::process_switch_bank_events(
                         &my_pubkey,

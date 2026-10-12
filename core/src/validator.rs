@@ -1641,6 +1641,7 @@ impl Validator {
             ledger_signal_receiver,
             update_parent_receiver,
             rpc_subscriptions.clone(),
+            poh_recorder.read().unwrap().shared_leader_state(),
             vote_history,
             config.vote_history_storage.clone(),
             &leader_schedule_cache,
@@ -2011,6 +2012,11 @@ pub fn should_require_vote_history_file(
     vote_account: &Pubkey,
     identity: &Pubkey,
 ) -> bool {
+    let Some(genesis_certificate) = bank.get_alpenglow_genesis_certificate() else {
+        // Vote history is only used when Alpenglow is active
+        return false;
+    };
+
     let Some(Ok(vote_state)) = bank
         .get_account(vote_account)
         .map(|acct| wincode::config::deserialize(acct.data(), WINCODE_CONFIG))
@@ -2030,7 +2036,14 @@ pub fn should_require_vote_history_file(
         return false;
     }
 
-    vote_state_handler.last_voted_slot().is_some()
+    let Some(last_voted_slot) = vote_state_handler.last_voted_slot() else {
+        // New vote account
+        return false;
+    };
+    let genesis_slot = genesis_certificate.block.slot;
+
+    // We've voted past the alpenglow genesis
+    last_voted_slot > genesis_slot
 }
 
 fn restore_vote_history(
@@ -3092,6 +3105,7 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::certificate::{CertSignature, GenesisCert},
         crossbeam_channel::{RecvTimeoutError, bounded},
         solana_account::state_traits::StateMutWincode,
         solana_entry::entry,
@@ -3166,7 +3180,11 @@ mod tests {
 
     #[test]
     fn test_should_require_vote_history_file() {
-        use solana_account::AccountSharedData;
+        use {
+            agave_votor_messages::consensus_message::Block,
+            solana_account::AccountSharedData,
+            solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        };
 
         let genesis_config = create_genesis_config(1_000_000).0;
         let bank = Bank::new_for_tests(&genesis_config);
@@ -3206,7 +3224,21 @@ mod tests {
             .set_state(&VoteStateVersions::new_v4(vote_state.clone()))
             .unwrap();
         bank.store_account(&vote_account_pubkey, &vote_account);
-        assert!(should_require_vote_history_file(
+        assert!(!should_require_vote_history_file(
+            &bank,
+            &vote_account_pubkey,
+            &identity,
+        ));
+
+        let cert = GenesisCert {
+            block: Block::new_unique(40),
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
+        };
+        bank.set_alpenglow_genesis_certificate(&cert);
+        assert!(!should_require_vote_history_file(
             &bank,
             &vote_account_pubkey,
             &identity,
