@@ -13,47 +13,45 @@
 //!
 //! Bank needs to provide an interface for us to query the stake weight
 
+#[cfg(test)]
+use crate::epoch_slots::EpochSlots;
 use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{Crds, Cursor, GossipRoute, LOCK_CHUNK_SIZE, NodesCursor, VersionedCrdsValue},
-        crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
-        crds_filter::{GossipFilterDirection, should_retain_crds_value},
+        crds::{Crds, GossipRoute, LOCK_CHUNK_SIZE, NodesCursor, VersionedCrdsValue},
+        crds_data::{CrdsData, LowestSlot, SnapshotHashes},
+        crds_filter::should_retain_crds_value,
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
             self, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CRDS_GOSSIP_PURGE_DURATION, CrdsFilter,
             CrdsTimeouts, ProcessPullStats, PullRequest, get_max_bloom_filter_bytes,
         },
-        crds_value::{CrdsValue, CrdsValueLabel},
-        duplicate_shred::DuplicateShred,
-        epoch_slots::EpochSlots,
+        crds_value::CrdsValue,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
         ping_pong::Pong,
         protocol::{
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, GossipProtocolWincodeConfig,
-            MAX_INCREMENTAL_SNAPSHOT_HASHES, MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
-            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
-            Protocol, PruneData, deserialize_protocol, split_gossip_messages,
+            GossipProtocolWincodeConfig, MAX_INCREMENTAL_SNAPSHOT_HASHES, MAX_PRUNE_DATA_NODES,
+            PULL_RESPONSE_MAX_PAYLOAD_SIZE, PULL_RESPONSE_MIN_SERIALIZED_SIZE,
+            PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache, Protocol, PruneData,
+            deserialize_protocol, split_gossip_messages,
         },
         sigverify_cache::SigVerifyCache,
         weighted_shuffle::WeightedShuffle,
     },
-    agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
     arrayvec::ArrayVec,
     crossbeam_channel::{Receiver, TrySendError},
-    itertools::{Either, Itertools},
+    itertools::Either,
     parking_lot::{RwLock, RwLockReadGuard},
     rand::{CryptoRng, Rng, SeedableRng, prelude::IndexedMutRandom},
     rand_chacha::ChaCha8Rng,
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
-    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
-    solana_ledger::shred::Shred,
     solana_net_utils::{
         PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
         multihomed_sockets::BindIpAddrs,
@@ -74,8 +72,6 @@ use {
         streamer::{ChannelSend, PacketBatchReceiver},
     },
     solana_time_utils::timestamp,
-    solana_transaction::Transaction,
-    solana_vote::vote_parser,
     std::{
         borrow::Borrow,
         collections::{HashMap, HashSet},
@@ -209,8 +205,6 @@ pub struct ClusterInfo {
     socket_addr_space: SocketAddrSpace,
     bind_ip_addrs: Arc<BindIpAddrs>,
     sigverify_cache: SigVerifyCache,
-    /// Alpenglow migration status
-    migration_status: OnceLock<Arc<MigrationStatus>>,
 }
 
 impl ClusterInfo {
@@ -249,23 +243,9 @@ impl ClusterInfo {
             socket_addr_space,
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
-            migration_status: OnceLock::new(),
         };
         me.refresh_my_gossip_contact_info();
         me
-    }
-
-    /// Wires in the Alpenglow MigrationStatus.
-    pub fn set_migration_status(&self, migration_status: Arc<MigrationStatus>) {
-        let _ = self.migration_status.set(migration_status);
-    }
-
-    /// Returns `true` iff the migration status has been wired AND the cluster
-    /// has completed the full Alpenglow epoch transition.
-    fn is_full_alpenglow_epoch(&self) -> bool {
-        self.migration_status
-            .get()
-            .is_some_and(|m| m.is_full_alpenglow_epoch())
     }
 
     pub fn set_contact_debug_interval(&mut self, new: u64) {
@@ -518,18 +498,6 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn set_tpu_vote(
-        &self,
-        protocol: contact_info::Protocol,
-        tpu_vote_addr: SocketAddr,
-    ) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .set_tpu_vote(protocol, tpu_vote_addr)?;
-        self.refresh_my_gossip_contact_info();
-        Ok(())
-    }
-
     pub fn lookup_contact_info<R>(
         &self,
         id: &Pubkey,
@@ -570,17 +538,6 @@ impl ClusterInfo {
 
     pub fn my_shred_version(&self) -> u16 {
         self.my_contact_info.read().shred_version()
-    }
-
-    fn lookup_epoch_slots(&self, ix: EpochSlotsIndex) -> EpochSlots {
-        let self_pubkey = self.id();
-        let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
-        let gossip_crds = self.gossip.crds.read();
-        gossip_crds
-            .get::<&CrdsValue>(&label)
-            .and_then(|v| v.epoch_slots())
-            .cloned()
-            .unwrap_or_else(|| EpochSlots::new(self_pubkey, timestamp()))
     }
 
     fn addr_to_string(&self, default_ip: &Option<IpAddr>, addr: &Option<SocketAddr>) -> String {
@@ -665,10 +622,10 @@ impl ClusterInfo {
     pub fn contact_info_trace(&self) -> String {
         // This sets the format string for the table, defining the columns and their widths
         // For reference, this is the header of the table:
-        // IP Address        |Age(ms)|               Node identifier                |       Version       |Gossip|TPUvote| TPU |TPUfwd| TVU |ServeR|Alpeng|ShredVer
+        // IP Address        |Age(ms)|               Node identifier                |       Version       |Gossip| TPU |TPUfwd| TVU |ServeR|Alpeng|ShredVer
         macro_rules! format_string {
             () => {
-                "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^7}|{:^5}|{:^6}|{:^5}|{:^6}|{:^6}|{:^8}\n"
+                "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^5}|{:^6}|{:^5}|{:^6}|{:^6}|{:^8}\n"
             };
         }
         // Make sure format_string above has enough room for each column's title
@@ -680,7 +637,6 @@ impl ClusterInfo {
             "Node identifier",
             "Version",
             "Gossip",
-            "TPUvote",
             "TPU",
             "TPUfwd",
             "TVU",
@@ -729,7 +685,6 @@ impl ClusterInfo {
                     node.pubkey().to_string(),
                     node.version().to_string(),
                     self.addr_to_string(&ip_addr, &node.gossip()),
-                    self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
                     self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
                     self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::QUIC)),
                     self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
@@ -773,74 +728,6 @@ impl ClusterInfo {
         }
     }
 
-    // TODO: If two threads call into this function then epoch_slot_index has a
-    // race condition and the threads will overwrite each other in crds table.
-    pub fn push_epoch_slots(&self, mut update: &[Slot]) {
-        let self_keypair = self.keypair();
-        let self_pubkey = self_keypair.pubkey();
-        let current_slots: Vec<_> = {
-            let gossip_crds =
-                self.time_gossip_read_lock("lookup_epoch_slots", &self.stats.epoch_slots_lookup);
-            (0..crds_data::MAX_EPOCH_SLOTS)
-                .filter_map(|ix| {
-                    let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
-                    let crds_value = gossip_crds.get::<&CrdsValue>(&label)?;
-                    let epoch_slots = crds_value.epoch_slots()?;
-                    let first_slot = epoch_slots.first_slot()?;
-                    Some((epoch_slots.wallclock, first_slot, ix))
-                })
-                .collect()
-        };
-        let min_slot: Slot = current_slots
-            .iter()
-            .map(|(_wallclock, slot, _index)| *slot)
-            .min()
-            .unwrap_or_default();
-        let max_slot: Slot = update.iter().max().cloned().unwrap_or(0);
-        let total_slots = max_slot as isize - min_slot as isize;
-        // WARN if CRDS is not storing at least a full epoch worth of slots
-        if DEFAULT_SLOTS_PER_EPOCH as isize > total_slots
-            && crds_data::MAX_EPOCH_SLOTS as usize <= current_slots.len()
-        {
-            self.stats.epoch_slots_filled.add_relaxed(1);
-            warn!(
-                "EPOCH_SLOTS are filling up FAST {}/{}",
-                total_slots,
-                current_slots.len()
-            );
-        }
-        let mut reset = false;
-        let mut epoch_slot_index = match current_slots.iter().max() {
-            Some((_wallclock, _slot, index)) => *index,
-            None => 0,
-        };
-        let mut entries = Vec::default();
-        while !update.is_empty() {
-            let now = timestamp();
-            let mut slots = if !reset {
-                self.lookup_epoch_slots(epoch_slot_index)
-            } else {
-                EpochSlots::new(self_pubkey, now)
-            };
-            let n = slots.fill(update, now);
-            update = &update[n..];
-            if n > 0 {
-                let epoch_slots = CrdsData::EpochSlots(epoch_slot_index, slots);
-                let entry = CrdsValue::new(epoch_slots, &self_keypair);
-                entries.push(entry);
-            }
-            epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
-            reset = true;
-        }
-        let mut gossip_crds = self.gossip.crds.write();
-        let now = timestamp();
-        for entry in entries {
-            if let Err(err) = gossip_crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_epoch_slots failed: {err:?}");
-            }
-        }
-    }
-
     fn time_gossip_read_lock<'a>(
         &'a self,
         label: &'static str,
@@ -878,219 +765,12 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn push_vote_at_index(&self, vote: Transaction, vote_index: u8, self_keypair: &Keypair) {
-        assert!(vote_index < MAX_VOTES);
-        let self_pubkey = self_keypair.pubkey();
-        let now = timestamp();
-        let vote = Vote::new(self_pubkey, vote, now).unwrap();
-        let vote = CrdsData::Vote(vote_index, vote);
-        let vote = CrdsValue::new(vote, self_keypair);
-        let mut gossip_crds = self.gossip.crds.write();
-        if let Err(err) = gossip_crds.insert(vote, now, GossipRoute::LocalMessage) {
-            error!("push_vote failed: {err:?}");
-        }
-    }
-
-    /// If there are less than `MAX_LOCKOUT_HISTORY` votes present, returns the next index
-    /// without a vote. If there are `MAX_LOCKOUT_HISTORY` votes:
-    /// - Finds the oldest wallclock vote and returns its index
-    /// - Otherwise returns the total amount of observed votes
-    ///
-    /// If there exists a newer vote in gossip than `new_vote_slot` return `None` as this indicates
-    /// that we might be submitting slashable votes after an improper restart
-    fn find_vote_index_to_evict(&self, new_vote_slot: Slot) -> Option<u8> {
-        let self_pubkey = self.id();
-        let mut num_crds_votes = 0;
-        let mut exists_newer_vote = false;
-        let vote_index = {
-            let gossip_crds =
-                self.time_gossip_read_lock("gossip_read_push_vote", &self.stats.push_vote_read);
-            (0..MAX_VOTES)
-                .filter_map(|ix| {
-                    let vote = CrdsValueLabel::Vote(ix, self_pubkey);
-                    let vote: &CrdsData = gossip_crds.get(&vote)?;
-                    num_crds_votes += 1;
-                    match &vote {
-                        CrdsData::Vote(_, vote) if vote.slot() < Some(new_vote_slot) => {
-                            Some((vote.wallclock, ix))
-                        }
-                        CrdsData::Vote(_, _) => {
-                            exists_newer_vote = true;
-                            None
-                        }
-                        _ => panic!("this should not happen!"),
-                    }
-                })
-                .min() // Boot the oldest evicted vote by wallclock.
-                .map(|(_ /*wallclock*/, ix)| ix)
-        };
-        if exists_newer_vote {
-            return None;
-        }
-        if num_crds_votes < MAX_VOTES {
-            // Do not evict if there is space in crds
-            Some(num_crds_votes)
-        } else {
-            vote_index
-        }
-    }
-
-    pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
-        let self_keypair = self.keypair();
-        debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
-        // Find the oldest crds vote by wallclock that has a lower slot than `tower`
-        // and recycle its vote-index. If the crds buffer is not full we instead add a new vote-index.
-        let Some(vote_index) =
-            self.find_vote_index_to_evict(tower.last().copied().expect("Cannot push empty vote"))
-        else {
-            // In this case we have restarted with a mangled/missing tower and are attempting
-            // to push an old vote. This could be a slashable offense so better to panic here.
-            let (_, vote, hash, _) = vote_parser::parse_vote_transaction(&vote).unwrap();
-            panic!(
-                "Submitting old vote, switch: {}, vote slots: {:?}, tower: {:?}. The local \
-                 tower.bin was out of date or missing, and we are attempting to submit slashable \
-                 votes. Another possibility is that the node was not correctly started with wait \
-                 for supermajority during a cluster restart, and then later started with wait for \
-                 supermajority, causing the tower.bin to be pruned. To progress, either download \
-                 a newer snapshot or set --wait-to-vote-slot higher than the last vote present in \
-                 gossip",
-                hash.is_some(),
-                vote.slots(),
-                tower
-            );
-        };
-        debug_assert!(vote_index < MAX_VOTES);
-        self.push_vote_at_index(vote, vote_index, &self_keypair);
-    }
-
-    pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
-        let self_keypair = self.keypair();
-        let vote_index = {
-            let gossip_crds =
-                self.time_gossip_read_lock("gossip_read_push_vote", &self.stats.push_vote_read);
-            (0..MAX_VOTES).find(|ix| {
-                let vote = CrdsValueLabel::Vote(*ix, self_keypair.pubkey());
-                let Some(vote) = gossip_crds.get::<&CrdsData>(&vote) else {
-                    return false;
-                };
-                let CrdsData::Vote(_, prev_vote) = &vote else {
-                    panic!("this should not happen!");
-                };
-                match prev_vote.slot() {
-                    Some(prev_vote_slot) => prev_vote_slot == refresh_vote_slot,
-                    None => {
-                        error!("crds vote with no slots!");
-                        false
-                    }
-                }
-            })
-        };
-
-        // We don't write to an arbitrary index, because it may replace one of this validator's
-        // existing votes on the network.
-        if let Some(vote_index) = vote_index {
-            self.push_vote_at_index(refresh_vote, vote_index, &self_keypair);
-        } else {
-            // If you don't see a vote with the same slot yet, this means you probably
-            // restarted, and need to repush and evict the oldest vote
-            let Some(vote_index) = self.find_vote_index_to_evict(refresh_vote_slot) else {
-                warn!(
-                    "trying to refresh slot {refresh_vote_slot} but all votes in gossip table are \
-                     for newer slots",
-                );
-                return;
-            };
-            debug_assert!(vote_index < MAX_VOTES);
-            self.push_vote_at_index(refresh_vote, vote_index, &self_keypair);
-        }
-    }
-
-    /// Returns votes inserted since the given cursor.
-    pub fn get_votes(&self, cursor: &mut Cursor) -> Vec<Transaction> {
-        let txs: Vec<Transaction> = self
-            .time_gossip_read_lock("get_votes", &self.stats.get_votes)
-            .get_votes(cursor)
-            .map(|vote| {
-                let CrdsData::Vote(_, vote) = vote.value.data() else {
-                    panic!("this should not happen!");
-                };
-                vote.transaction().clone()
-            })
-            .collect();
-        self.stats.get_votes_count.add_relaxed(txs.len() as u64);
-        txs
-    }
-
-    /// Returns votes and the associated labels inserted since the given cursor.
-    pub fn get_votes_with_labels(
-        &self,
-        cursor: &mut Cursor,
-    ) -> (Vec<CrdsValueLabel>, Vec<Transaction>) {
-        let (labels, txs): (_, Vec<_>) = self
-            .time_gossip_read_lock("get_votes", &self.stats.get_votes)
-            .get_votes(cursor)
-            .map(|vote| {
-                let label = vote.value.label();
-                let CrdsData::Vote(_, vote) = vote.value.data() else {
-                    panic!("this should not happen!");
-                };
-                (label, vote.transaction().clone())
-            })
-            .unzip();
-        self.stats.get_votes_count.add_relaxed(txs.len() as u64);
-        (labels, txs)
-    }
-
-    pub fn push_duplicate_shred(
-        &self,
-        shred: &Shred,
-        other_payload: &[u8],
-    ) -> Result<(), GossipError> {
-        if self.is_full_alpenglow_epoch() {
-            // Alpenglow does not propagate duplicate-shred proofs via gossip.
-            return Ok(());
-        }
-        self.gossip.push_duplicate_shred(
-            &self.keypair(),
-            shred,
-            other_payload,
-            None::<fn(Slot) -> Option<Pubkey>>, // Leader schedule
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            self.my_shred_version(),
-        )?;
-        Ok(())
-    }
-
     pub fn get_snapshot_hashes_for_node(&self, pubkey: &Pubkey) -> Option<SnapshotHashes> {
         self.gossip
             .crds
             .read()
             .get::<&SnapshotHashes>(*pubkey)
             .cloned()
-    }
-
-    /// Returns epoch-slots inserted since the given cursor.
-    pub fn get_epoch_slots(&self, cursor: &mut Cursor) -> Vec<EpochSlots> {
-        let gossip_crds = self.gossip.crds.read();
-        gossip_crds
-            .get_epoch_slots(cursor)
-            .map(|entry| match entry.value.data() {
-                CrdsData::EpochSlots(_, slots) => slots.clone(),
-                _ => panic!("this should not happen!"),
-            })
-            .collect()
-    }
-
-    /// Returns duplicate-shreds inserted since the given cursor.
-    pub(crate) fn get_duplicate_shreds(&self, cursor: &mut Cursor) -> Vec<DuplicateShred> {
-        let gossip_crds = self.gossip.crds.read();
-        gossip_crds
-            .get_duplicate_shreds(cursor)
-            .map(|entry| match entry.value.data() {
-                CrdsData::DuplicateShred(_, dup) => dup.clone(),
-                _ => panic!("this should not happen!"),
-            })
-            .collect()
     }
 
     pub fn get_node_version(&self, pubkey: &Pubkey) -> Option<solana_version::Version> {
@@ -1334,18 +1014,12 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         let self_id = self.id();
-        let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let (entries, push_messages, num_pushes) = {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
             self.flush_push_queue();
             self.gossip
                 .new_push_messages(&self_id, timestamp(), stakes, |value| {
-                    should_retain_crds_value(
-                        value,
-                        stakes,
-                        GossipFilterDirection::EgressPush,
-                        is_full_alpenglow_epoch,
-                    )
+                    should_retain_crds_value(value, stakes)
                 })
         };
         self.stats
@@ -1638,7 +1312,6 @@ impl ClusterInfo {
 
     fn update_data_budget(&self, num_staked: usize) -> usize {
         const INTERVAL_MS: u64 = 100;
-        // epoch slots + votes ~= 1.5kB/slot ~= 4kB/s
         // Allow 10kB/s per staked validator.
         const BYTES_PER_INTERVAL: usize = 1024;
         const MAX_BUDGET_MULTIPLE: usize = 5; // allow budget build-up to 5x the interval default
@@ -1726,21 +1399,13 @@ impl ClusterInfo {
         });
         let now = timestamp();
         let self_id = self.id();
-        let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let pull_responses = {
             let _st = ScopedTimer::from(&self.stats.generate_pull_responses);
             self.gossip.generate_pull_responses(
                 &requests,
                 output_size_limit,
                 now,
-                |value| {
-                    should_retain_crds_value(
-                        value,
-                        stakes,
-                        GossipFilterDirection::EgressPullResponse,
-                        is_full_alpenglow_epoch,
-                    )
-                },
+                |value| should_retain_crds_value(value, stakes),
                 |request, scan_entries| {
                     self.try_consume_pull_request_scan_budget(request, scan_entries)
                 },
@@ -2205,7 +1870,6 @@ impl ClusterInfo {
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
             sigverify_cache: &SigVerifyCache,
-            is_full_alpenglow_epoch: bool,
         ) -> Option<(SocketAddr, Protocol)> {
             let result: wincode::ReadResult<Protocol> = packet
                 .data(..)
@@ -2216,14 +1880,7 @@ impl ClusterInfo {
             if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) =
                 &mut protocol
             {
-                values.retain(|value| {
-                    should_retain_crds_value(
-                        value,
-                        stakes,
-                        GossipFilterDirection::Ingress,
-                        is_full_alpenglow_epoch,
-                    )
-                });
+                values.retain(|value| should_retain_crds_value(value, stakes));
                 if values.is_empty() {
                     return None;
                 }
@@ -2236,7 +1893,6 @@ impl ClusterInfo {
         let stakes = epoch_specs
             .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
-        let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
             thread_pool.install(|| {
@@ -2244,13 +1900,7 @@ impl ClusterInfo {
                     packet_buf[0]
                         .par_iter()
                         .filter_map(|packet| {
-                            verify_packet(
-                                packet,
-                                &stakes,
-                                &self.stats,
-                                &self.sigverify_cache,
-                                is_full_alpenglow_epoch,
-                            )
+                            verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
                         })
                         .collect()
                 } else {
@@ -2258,13 +1908,7 @@ impl ClusterInfo {
                         .par_iter()
                         .flatten()
                         .filter_map(|packet| {
-                            verify_packet(
-                                packet,
-                                &stakes,
-                                &self.stats,
-                                &self.sigverify_cache,
-                                is_full_alpenglow_epoch,
-                            )
+                            verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
                         })
                         .collect()
                 }
@@ -2449,7 +2093,6 @@ pub struct Sockets {
     pub gossip: Arc<[UdpSocket]>,     // udp read/write
     pub ip_echo: Option<TcpListener>, // read/write (tcp)
     pub tvu: Vec<UdpSocket>,          // udp read only
-    pub tpu_vote: Vec<UdpSocket>,     // udp read only
     pub broadcast: Vec<UdpSocket>,    // udp write only
     // Socket sending out local repair requests,
     // and receiving repair responses from the cluster.
@@ -2457,25 +2100,17 @@ pub struct Sockets {
     pub retransmit_sockets: Vec<UdpSocket>, // udp write only
     // Socket receiving remote repair requests from the cluster,
     // and sending back repair responses.
-    pub serve_repair: UdpSocket, // udp read/write
-    // Socket sending out local RepairProtocol::AncestorHashes,
-    // and receiving AncestorHashesResponse from the cluster.
-    pub ancestor_hashes_requests: UdpSocket, // udp read/write
-    pub tpu_quic: Vec<UdpSocket>,            // quic read only
-    pub tpu_forwards_quic: Vec<UdpSocket>,   // quic read only
-    pub tpu_vote_quic: Vec<UdpSocket>,       // quic read only
+    pub serve_repair: UdpSocket,           // udp read/write
+    pub tpu_quic: Vec<UdpSocket>,          // quic read only
+    pub tpu_forwards_quic: Vec<UdpSocket>, // quic read only
     // Socket sending out BlockIdRepairType requests,
     // and receiving BlockIdRepairResponse from the cluster.
     pub block_id_repair: UdpSocket,
 
-    /// Client-side socket for ForwardingStage vote transactions
-    pub tpu_vote_forwarding_client: UdpSocket, // udp write only
-    /// Client-side socket for ForwardingStage non-vote transactions
+    /// Client-side socket for ForwardingStage transactions.
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
     /// UDP sockets for the alpenglow votor QUIC server endpoints.
     pub votor_server: Vec<UdpSocket>, // quic read only
-    /// Connection cache endpoint for QUIC-based Vote
-    pub quic_vote_client: UdpSocket, // quic write only
     /// Client-side socket for the alpenglow votor QUIC endpoint.
     pub quic_votor_client: UdpSocket, // quic write only
     /// Client-side socket for RPC/SendTransactionService.
@@ -2643,22 +2278,15 @@ mod tests {
         crate::{
             crds_gossip_pull::tests::MIN_NUM_BLOOM_FILTERS,
             crds_value::{CrdsValue, CrdsValueLabel},
-            duplicate_shred::tests::new_rand_shred,
             node::Node,
             protocol::{MAX_CRDS_VALUES_PER_PACKET, tests::new_rand_remote_node},
             socketaddr,
         },
-        itertools::izip,
-        rand::{SeedableRng, rngs::StdRng},
+        itertools::{Itertools, izip},
         solana_keypair::Keypair,
-        solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
         solana_signer::Signer,
         solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
-        solana_vote_program::{
-            vote_instruction,
-            vote_state::{MAX_LOCKOUT_HISTORY, Vote},
-        },
         std::{
             iter::repeat_with,
             net::{IpAddr, Ipv4Addr},
@@ -3183,338 +2811,6 @@ mod tests {
     }
 
     #[test]
-    fn test_refresh_vote_eviction() {
-        let keypair = Arc::new(Keypair::new());
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
-
-        // Push MAX_LOCKOUT_HISTORY votes into gossip, one for each slot between
-        // [lowest_vote_slot, lowest_vote_slot + MAX_LOCKOUT_HISTORY)
-        let lowest_vote_slot = 1;
-        let max_vote_slot = lowest_vote_slot + MAX_LOCKOUT_HISTORY as Slot;
-        let mut first_vote = None;
-        let mut prev_votes = vec![];
-        for slot in lowest_vote_slot..max_vote_slot {
-            prev_votes.push(slot);
-            let unrefresh_vote = Vote::new(vec![slot], Hash::new_unique());
-            let vote_ix = vote_instruction::vote(
-                &Pubkey::new_unique(), // vote_pubkey
-                &Pubkey::new_unique(), // authorized_voter_pubkey
-                unrefresh_vote,
-            );
-            let vote_tx = Transaction::new_with_payer(
-                &[vote_ix], // instructions
-                None,       // payer
-            );
-            if first_vote.is_none() {
-                first_vote = Some(vote_tx.clone());
-            }
-            cluster_info.push_vote(&prev_votes, vote_tx);
-            // Sleep to avoid votes with same timestamp causing the insert to
-            // fail when wallclocks collide (find_vote_index_to_evict breaks
-            // ties by ms timestamp during eviction).
-            // Since we only store MAX_VOTES, when conflict occurs we may end up evicting
-            // the newer votes if all timestamps are the same.
-            std::thread::sleep(Duration::from_millis(2));
-        }
-
-        // We should now have the MAX_VOTES most recent votes in CRDS, for slots
-        // [max_vote_slot - MAX_VOTES, max_vote_slot)
-        let initial_votes = cluster_info.get_votes(&mut Cursor::default());
-        assert_eq!(initial_votes.len(), MAX_VOTES as usize);
-
-        // Trying to refresh a vote less than all votes in gossip should do nothing
-        let refresh_slot = lowest_vote_slot - 1;
-        let refresh_vote = Vote::new(vec![refresh_slot], Hash::new_unique());
-        let refresh_ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            refresh_vote,
-        );
-        let refresh_tx = Transaction::new_with_payer(
-            &[refresh_ix], // instructions
-            None,          // payer
-        );
-        cluster_info.refresh_vote(refresh_tx.clone(), refresh_slot);
-        let current_votes = cluster_info.get_votes(&mut Cursor::default());
-        assert_eq!(initial_votes, current_votes);
-        assert!(
-            !current_votes.contains(&refresh_tx),
-            "Refresh on outdated vote should fail"
-        );
-
-        // Trying to refresh a vote should evict the first slot less than the refreshed vote slot
-        let refresh_slot = max_vote_slot + 1;
-        let refresh_vote = Vote::new(vec![refresh_slot], Hash::new_unique());
-        let refresh_ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            refresh_vote,
-        );
-        let refresh_tx = Transaction::new_with_payer(
-            &[refresh_ix], // instructions
-            None,          // payer
-        );
-        cluster_info.refresh_vote(refresh_tx.clone(), refresh_slot);
-
-        // This should evict the latest vote since it's for a slot less than refresh_slot
-        let votes = cluster_info.get_votes(&mut Cursor::default());
-        assert_eq!(votes.len(), MAX_VOTES as usize);
-        assert!(votes.contains(&refresh_tx), "Refresh vote not found");
-        assert!(!votes.contains(&first_vote.unwrap()));
-    }
-
-    #[test]
-    fn test_refresh_vote() {
-        let keypair = Arc::new(Keypair::new());
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
-
-        // Construct and push a vote for some other slot
-        let unrefresh_slot = 5;
-        let unrefresh_tower = vec![1, 3, unrefresh_slot];
-        let unrefresh_vote = Vote::new(unrefresh_tower.clone(), Hash::new_unique());
-        let unrefresh_ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            unrefresh_vote,
-        );
-        let unrefresh_tx = Transaction::new_with_payer(
-            &[unrefresh_ix], // instructions
-            None,            // payer
-        );
-        cluster_info.push_vote(&unrefresh_tower, unrefresh_tx.clone());
-        let mut cursor = Cursor::default();
-        let votes = cluster_info.get_votes(&mut cursor);
-        assert_eq!(votes, vec![unrefresh_tx.clone()]);
-
-        // Now construct vote for the slot to be refreshed later.
-        let refresh_slot = unrefresh_slot + 1;
-        let refresh_tower = vec![1, 3, unrefresh_slot, refresh_slot];
-        let refresh_vote = Vote::new(refresh_tower, Hash::new_unique());
-        let refresh_ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            refresh_vote.clone(),
-        );
-        let refresh_tx = Transaction::new_with_payer(
-            &[refresh_ix], // instructions
-            None,          // payer
-        );
-
-        // Trying to refresh vote when it doesn't yet exist in gossip
-        // should add the vote without eviction if there is room in the gossip table.
-        cluster_info.refresh_vote(refresh_tx.clone(), refresh_slot);
-
-        // Should be two votes in gossip
-        cursor = Cursor::default();
-        let votes = cluster_info.get_votes(&mut cursor);
-        assert_eq!(votes.len(), 2);
-        assert!(votes.contains(&unrefresh_tx));
-        assert!(votes.contains(&refresh_tx));
-
-        // Refresh a few times, we should only have the latest update
-        let mut latest_refresh_tx = refresh_tx;
-        for _ in 0..10 {
-            let latest_refreshed_recent_blockhash = Hash::new_unique();
-            let new_signer = Keypair::new();
-            let refresh_ix = vote_instruction::vote(
-                &new_signer.pubkey(), // vote_pubkey
-                &new_signer.pubkey(), // authorized_voter_pubkey
-                refresh_vote.clone(),
-            );
-            latest_refresh_tx = Transaction::new_signed_with_payer(
-                &[refresh_ix],
-                None,
-                &[&new_signer],
-                latest_refreshed_recent_blockhash,
-            );
-            cluster_info.refresh_vote(latest_refresh_tx.clone(), refresh_slot);
-            // Sleep to avoid votes with same timestamp causing later vote to not override prior vote
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        // The diff since `max_ts` should only be the latest refreshed vote
-        let votes = cluster_info.get_votes(&mut cursor);
-        assert_eq!(votes.len(), 1);
-        assert_eq!(votes[0], latest_refresh_tx);
-
-        // Should still be two votes in gossip
-        let votes = cluster_info.get_votes(&mut Cursor::default());
-        assert_eq!(votes.len(), 2);
-        assert!(votes.contains(&unrefresh_tx));
-        assert!(votes.contains(&latest_refresh_tx));
-    }
-
-    #[test]
-    fn test_push_vote() {
-        let keypair = Arc::new(Keypair::new());
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info =
-            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
-
-        // make sure empty crds is handled correctly
-        let mut cursor = Cursor::default();
-        let votes = cluster_info.get_votes(&mut cursor);
-        assert_eq!(votes, vec![]);
-
-        // add a vote
-        let vote = Vote::new(
-            vec![1, 3, 7], // slots
-            Hash::new_unique(),
-        );
-        let ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            vote,
-        );
-        let tx = Transaction::new_with_payer(
-            &[ix], // instructions
-            None,  // payer
-        );
-        let tower = vec![7]; // Last slot in the vote.
-        cluster_info.push_vote(&tower, tx.clone());
-
-        let (labels, votes) = cluster_info.get_votes_with_labels(&mut cursor);
-        assert_eq!(votes, vec![tx]);
-        assert_eq!(labels.len(), 1);
-        match labels[0] {
-            CrdsValueLabel::Vote(_, pubkey) => {
-                assert_eq!(pubkey, keypair.pubkey());
-            }
-
-            _ => panic!("Bad match"),
-        }
-        // make sure timestamp filter works
-        let votes = cluster_info.get_votes(&mut cursor);
-        assert_eq!(votes, vec![]);
-    }
-
-    fn new_vote_transaction(slots: Vec<Slot>) -> Transaction {
-        let vote = Vote::new(slots, Hash::new_unique());
-        let ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            vote,
-        );
-        Transaction::new_with_payer(
-            &[ix], // instructions
-            None,  // payer
-        )
-    }
-
-    #[test]
-    fn test_push_votes_with_tower() {
-        let get_vote_slots = |cluster_info: &ClusterInfo| -> Vec<Slot> {
-            let (labels, _) = cluster_info.get_votes_with_labels(&mut Cursor::default());
-            let gossip_crds = cluster_info.gossip.crds.read();
-            let mut vote_slots = HashSet::new();
-            for label in labels {
-                let CrdsData::Vote(_, vote) = &gossip_crds.get::<&CrdsData>(&label).unwrap() else {
-                    panic!("this should not happen!");
-                };
-                assert!(vote_slots.insert(vote.slot().unwrap()));
-            }
-            vote_slots.into_iter().sorted().collect()
-        };
-        let keypair = Arc::new(Keypair::new());
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
-        let mut tower = Vec::new();
-
-        // Evict the oldest vote
-        for k in 0..2 * MAX_LOCKOUT_HISTORY {
-            let slot = k as Slot;
-            tower.push(slot);
-            let vote = new_vote_transaction(vec![slot]);
-            cluster_info.push_vote(&tower, vote);
-
-            let vote_slots = get_vote_slots(&cluster_info);
-            let min_vote = k.saturating_sub(MAX_VOTES as usize - 1) as u64;
-            assert!(vote_slots.into_iter().eq(min_vote..=(k as u64)));
-            sleep(Duration::from_millis(1));
-        }
-
-        // Attempting to push an older vote will panic
-        let slot = 30;
-        tower.clear();
-        tower.extend(0..=slot);
-        let vote = new_vote_transaction(vec![slot]);
-        // `KeyedRateLimiter` is not unwind-safe; this test only checks the panic.
-        assert!(
-            panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                cluster_info.push_vote(&tower, vote)
-            }))
-            .err()
-            .and_then(|a| a
-                .downcast_ref::<String>()
-                .map(|s| { s.starts_with("Submitting old vote") }))
-            .unwrap_or_default()
-        );
-    }
-
-    #[test]
-    fn test_push_epoch_slots() {
-        let keypair = Arc::new(Keypair::new());
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
-        let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
-        assert!(slots.is_empty());
-        cluster_info.push_epoch_slots(&[0]);
-
-        let mut cursor = Cursor::default();
-        let slots = cluster_info.get_epoch_slots(&mut cursor);
-        assert_eq!(slots.len(), 1);
-
-        let slots = cluster_info.get_epoch_slots(&mut cursor);
-        assert!(slots.is_empty());
-    }
-
-    #[test]
-    fn test_push_epoch_slots_wraps() {
-        let keypair = Arc::new(Keypair::new());
-        let pubkey = keypair.pubkey();
-        let contact_info = ContactInfo::new_localhost(&pubkey, 0);
-        let cluster_info =
-            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
-        let mut rng = StdRng::seed_from_u64(0);
-        let slots: Vec<Slot> = repeat_with(|| rng.random_range(1..32))
-            .scan(0, |slot, step| {
-                *slot += step;
-                Some(*slot)
-            })
-            .take(32_000)
-            .collect();
-        let mut epoch_slots = EpochSlots::new(pubkey, timestamp());
-        let num_slots = epoch_slots.fill(&slots, timestamp());
-        assert!(num_slots < slots.len());
-        let next_slot = slots[num_slots];
-        assert_eq!(epoch_slots.clone().fill(&[next_slot], timestamp()), 0);
-
-        let value = CrdsValue::new(
-            CrdsData::EpochSlots(crds_data::MAX_EPOCH_SLOTS - 1, epoch_slots),
-            keypair.as_ref(),
-        );
-        cluster_info
-            .gossip
-            .crds
-            .write()
-            .insert(value, timestamp(), GossipRoute::LocalMessage)
-            .unwrap();
-        cluster_info.push_epoch_slots(&[next_slot]);
-
-        let crds = cluster_info.gossip.crds.read();
-        let label = CrdsValueLabel::EpochSlots(0, pubkey);
-        let value = crds.get::<&CrdsValue>(&label).unwrap();
-        assert!(value.sanitize().is_ok());
-        assert_eq!(
-            value.epoch_slots().unwrap().to_slots(next_slot).next(),
-            Some(next_slot)
-        );
-        let invalid_label = CrdsValueLabel::EpochSlots(crds_data::MAX_EPOCH_SLOTS, pubkey);
-        assert!(crds.get::<&CrdsValue>(&invalid_label).is_none());
-    }
-
-    #[test]
     fn test_append_entrypoint_to_pulls() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
         let node_keypair = Arc::new(Keypair::new());
@@ -3728,30 +3024,6 @@ mod tests {
     }
 
     #[test]
-    fn test_push_epoch_slots_large() {
-        let node_keypair = Arc::new(Keypair::new());
-        let cluster_info = ClusterInfo::new(
-            ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
-            node_keypair,
-            SocketAddrSpace::Unspecified,
-        );
-        //random should be hard to compress
-        let mut rng = rand::rng();
-        let range: Vec<Slot> = repeat_with(|| rng.random_range(1..32))
-            .scan(0, |slot, step| {
-                *slot += step;
-                Some(*slot)
-            })
-            .take(32000)
-            .collect();
-        cluster_info.push_epoch_slots(&range[..16000]);
-        cluster_info.push_epoch_slots(&range[16000..]);
-        let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
-        let slots: Vec<_> = slots.iter().flat_map(|x| x.to_slots(0)).collect();
-        assert_eq!(slots, range);
-    }
-
-    #[test]
     fn test_process_entrypoint_without_adopt_shred_version() {
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = Arc::new(ClusterInfo::new(
@@ -3789,61 +3061,6 @@ mod tests {
         assert_eq!(cluster_info.entrypoints.read()[0], gossiped_entrypoint_info,);
         assert!(entrypoints_processed);
         assert_eq!(cluster_info.my_shred_version(), 2); // <--- No change to shred version
-    }
-
-    #[test]
-    fn test_get_duplicate_shreds() {
-        let host1_key = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&host1_key.pubkey());
-        let cluster_info = Arc::new(ClusterInfo::new(
-            node.info,
-            host1_key.clone(),
-            SocketAddrSpace::Unspecified,
-        ));
-        let mut cursor = Cursor::default();
-        assert!(cluster_info.get_duplicate_shreds(&mut cursor).is_empty());
-
-        let mut rng = rand::rng();
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = 353;
-        let leader = Arc::new(Keypair::new());
-        let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let shred2 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        assert!(
-            cluster_info
-                .push_duplicate_shred(&shred1, shred2.payload())
-                .is_ok()
-        );
-        cluster_info.flush_push_queue();
-        let entries = cluster_info.get_duplicate_shreds(&mut cursor);
-        // One duplicate shred proof is split into 3 chunks.
-        assert_eq!(3, entries.len());
-        for (i, shred_data) in entries.iter().enumerate() {
-            assert_eq!(shred_data.from, host1_key.pubkey());
-            assert_eq!(shred_data.slot, 53084024);
-            assert_eq!(shred_data.chunk_index() as usize, i);
-        }
-
-        let slot = 53084025;
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = 354;
-        let shred3 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let shred4 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        assert!(
-            cluster_info
-                .push_duplicate_shred(&shred3, shred4.payload())
-                .is_ok()
-        );
-        cluster_info.flush_push_queue();
-        let entries1 = cluster_info.get_duplicate_shreds(&mut cursor);
-        // One duplicate shred proof is split into 3 chunks.
-        assert_eq!(3, entries1.len());
-        for (i, shred_data) in entries1.iter().enumerate() {
-            assert_eq!(shred_data.from, host1_key.pubkey());
-            assert_eq!(shred_data.slot, 53084025);
-            assert_eq!(shred_data.chunk_index() as usize, i);
-        }
     }
 
     #[test]

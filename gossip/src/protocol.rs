@@ -33,7 +33,6 @@ pub(crate) const PUSH_MESSAGE_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 44;
 /// is equal to PACKET_DATA_SIZE minus serialized size of an empty pull
 /// message: Protocol::PullResponse(Pubkey::default(), Vec::default())
 pub(crate) const PULL_RESPONSE_MAX_PAYLOAD_SIZE: usize = PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
-pub(crate) const DUPLICATE_SHRED_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 115;
 /// Maximum number of incremental hashes in SnapshotHashes a node publishes
 /// such that the serialized size of the push/pull message stays below
 /// PACKET_DATA_SIZE.
@@ -326,7 +325,7 @@ pub(crate) mod tests {
         crate::{
             contact_info::ContactInfo,
             crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
-            duplicate_shred::{self, MAX_DUPLICATE_SHREDS, tests::new_rand_shred},
+            duplicate_shred::DuplicateShred,
             epoch_slots::EpochSlots,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
@@ -334,16 +333,12 @@ pub(crate) mod tests {
         solana_clock::Slot,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::shred::Shredder,
-        solana_perf::test_tx::new_test_vote_tx,
+        solana_perf::test_tx::test_tx,
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        solana_transaction::Transaction,
-        solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
             iter::repeat_with,
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-            sync::Arc,
         },
     };
 
@@ -485,48 +480,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_duplicate_shred_max_payload_size() {
-        let mut rng = rand::rng();
-        let leader = Arc::new(Keypair::new());
-        let keypair = Keypair::new();
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
-        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let other_payload = {
-            let other_shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-            other_shred.into_payload()
-        };
-        let leader_schedule = |s| {
-            if s == slot {
-                Some(leader.pubkey())
-            } else {
-                None
-            }
-        };
-        let chunks: Vec<_> = duplicate_shred::from_shred(
-            shred,
-            keypair.pubkey(),
-            other_payload,
-            Some(leader_schedule),
-            timestamp(),
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            version,
-        )
-        .unwrap()
-        .collect();
-        assert!(chunks.len() > 1);
-        for chunk in chunks {
-            let data = CrdsData::DuplicateShred(MAX_DUPLICATE_SHREDS - 1, chunk);
-            let value = CrdsValue::new(data, &keypair);
-            let pull_response = Protocol::PullResponse(keypair.pubkey(), vec![value.clone()]);
-            assert!(pull_response.serialized_size() < PACKET_DATA_SIZE);
-            let push_message = Protocol::PushMessage(keypair.pubkey(), vec![value.clone()]);
-            assert!(push_message.serialized_size() < PACKET_DATA_SIZE);
-        }
-    }
-
-    #[test]
     fn test_pull_response_min_serialized_size() {
         let mut rng = rand::rng();
         for _ in 0..100 {
@@ -545,32 +498,9 @@ pub(crate) mod tests {
         let mut rng = rand::rng();
         let keypair = Keypair::new();
 
-        // Build a DuplicateShred for the corresponding variant.
-        let leader = Arc::new(Keypair::new());
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.random_range(0..32_000);
-        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let other_payload = {
-            let other = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-            other.into_payload()
-        };
-        let leader_schedule = |s| (s == slot).then_some(leader.pubkey());
-        let dup_shred = duplicate_shred::from_shred(
-            shred,
-            keypair.pubkey(),
-            other_payload,
-            Some(leader_schedule),
-            timestamp(),
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            version,
-        )
-        .unwrap()
-        .next()
-        .unwrap();
+        let dup_shred = DuplicateShred::new_for_tests(keypair.pubkey(), timestamp());
 
-        let vote =
-            CrdsVote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
+        let vote = CrdsVote::new(keypair.pubkey(), test_tx(), timestamp()).unwrap();
 
         // One representative per CrdsData variant. The array length is keyed to
         // strum::EnumCount, so adding a new CrdsData variant without listing it
@@ -758,26 +688,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_vote_size() {
-        let slots = vec![1; 32];
-        let vote = Vote::new(slots, Hash::default());
-        let keypair = Arc::new(Keypair::new());
-
-        // Create the biggest possible vote transaction
-        let vote_ix = vote_instruction::vote_switch(
-            &keypair.pubkey(),
-            &keypair.pubkey(),
-            vote,
-            Hash::default(),
-        );
-        let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
-
-        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
-        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
-
+    fn test_legacy_vote_size() {
+        let keypair = Keypair::new();
         let vote = CrdsVote::new(
             keypair.pubkey(),
-            vote_tx,
+            test_tx(),
             0, // wallclock
         )
         .unwrap();

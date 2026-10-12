@@ -16,7 +16,6 @@ use {
     solana_sanitize::{Sanitize, SanitizeError},
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
-    solana_vote::vote_parser,
     std::{collections::BTreeSet, mem::MaybeUninit},
     wincode::{
         ReadError, ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
@@ -398,13 +397,14 @@ impl Sanitize for Vote {
 }
 
 impl Vote {
-    // Returns None if cannot parse transaction into a vote.
+    // Retained for constructing the historical gossip vote wire type.
     pub fn new(from: Pubkey, transaction: Transaction, wallclock: u64) -> Option<Self> {
-        vote_parser::parse_vote_transaction(&transaction).map(|(_, vote, ..)| Self {
+        transaction.sanitize().ok()?;
+        Some(Self {
             from,
             transaction,
             wallclock,
-            slot: vote.last_voted_slot(),
+            slot: None,
         })
     }
 
@@ -418,6 +418,7 @@ impl Vote {
         }
     }
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn transaction(&self) -> &Transaction {
         &self.transaction
@@ -434,10 +435,6 @@ impl Vote {
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
-
-    pub(crate) fn slot(&self) -> Option<Slot> {
-        self.slot
-    }
 }
 
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for Vote {
@@ -451,11 +448,8 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Vote {
             wallclock: u64,
         }
         let lite = <VoteLite as SchemaRead<'de, C>>::get(reader)?;
-        lite.transaction
-            .sanitize()
-            .map_err(|_| ReadError::Custom("Vote: invalid transaction"))?;
         let vote = Vote::new(lite.from, lite.transaction, lite.wallclock)
-            .ok_or(ReadError::Custom("Vote: invalid vote tx"))?;
+            .ok_or(ReadError::Custom("Vote: invalid transaction"))?;
         dst.write(vote);
         Ok(())
     }
@@ -486,35 +480,20 @@ macro_rules! reject_deserialize {
 }
 pub(crate) use reject_deserialize;
 
-// `Vote` derives only `StableAbi` (not `StableAbiSample`): its `slot` field is
-// recomputed from the transaction on deserialize, and the transaction must parse
-// as a vote, so independent per-field sampling can't produce round-trippable
-// values. Building via `Vote::new` with a valid vote transaction does, which lets
-// the digest test use `test_roundtrip = "eq_and_wire"`.
+// `Vote` derives only `StableAbi` (not `StableAbiSample`) because its skipped
+// `slot` field must be initialized consistently for round trips.
 #[cfg(feature = "stable-abi")]
 impl solana_frozen_abi::rand::distr::Distribution<Vote>
     for solana_frozen_abi::rand::distr::StandardUniform
 {
     fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Vote {
-        use {solana_frozen_abi::stable_abi::StableAbi, solana_keypair::Keypair};
-        let node = Keypair::new_from_array(rng.random());
-        let vote = Keypair::new_from_array(rng.random());
-        let authorized_voter = Keypair::new_from_array(rng.random());
-        let transaction = solana_vote::vote_transaction::new_vote_transaction(
-            /*slots:*/ vec![rng.random()],
-            /*bank_hash:*/ <Hash as StableAbi>::random(rng),
-            /*blockhash:*/ <Hash as StableAbi>::random(rng),
-            &node,
-            &vote,
-            &authorized_voter,
-            /*switch_proof_hash:*/ None,
-        );
+        use solana_frozen_abi::stable_abi::StableAbi;
         Vote::new(
             <Pubkey as StableAbi>::random(rng),
-            transaction,
+            Transaction::default(),
             rng.random(),
         )
-        .expect("vote transaction must parse as a vote")
+        .expect("default transaction must sanitize")
     }
 }
 
@@ -547,13 +526,8 @@ impl solana_frozen_abi::rand::distr::Distribution<CrdsData>
 #[cfg(test)]
 mod test {
     use {
-        super::*,
-        crate::crds_value::CrdsValue,
-        solana_keypair::Keypair,
-        solana_perf::test_tx::new_test_vote_tx,
-        solana_signer::Signer,
-        solana_time_utils::timestamp,
-        solana_vote_program::{vote_instruction, vote_state},
+        super::*, crate::crds_value::CrdsValue, solana_keypair::Keypair,
+        solana_perf::test_tx::test_tx, solana_signer::Signer, solana_time_utils::timestamp,
     };
 
     #[test]
@@ -584,40 +558,25 @@ mod test {
 
     #[test]
     fn test_max_vote_index() {
-        let mut rng = rand::rng();
         let keypair = Keypair::new();
-        let vote = Vote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
+        let vote = Vote::new(keypair.pubkey(), test_tx(), timestamp()).unwrap();
         let vote = CrdsValue::new(CrdsData::Vote(OLD_MAX_VOTES, vote), &keypair);
         assert!(vote.sanitize().is_err());
     }
 
     #[test]
-    fn test_vote_round_trip() {
-        let mut rng = rand::rng();
-        let vote = vote_state::Vote::new(
-            vec![1, 3, 7], // slots
-            Hash::new_unique(),
-        );
-        let ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            vote,
-        );
-        let tx = Transaction::new_with_payer(
-            &[ix],                       // instructions
-            Some(&Pubkey::new_unique()), // payer
-        );
+    fn test_legacy_vote_round_trip() {
         let vote = Vote::new(
             Pubkey::new_unique(), // from
-            tx,
-            rng.random(), // wallclock
+            test_tx(),
+            timestamp(), // wallclock
         )
         .unwrap();
-        assert_eq!(vote.slot, Some(7));
+        assert_eq!(vote.slot, None);
         let bytes = wincode::serialize(&vote).unwrap();
         let other: Vote = wincode::deserialize(&bytes[..]).unwrap();
         assert_eq!(vote, other);
-        assert_eq!(other.slot, Some(7));
+        assert_eq!(other.slot, None);
     }
 
     #[test]
