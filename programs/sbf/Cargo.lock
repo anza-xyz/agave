@@ -10234,6 +10234,7 @@ dependencies = [
  "solana-system-interface",
  "solana-transaction-context",
  "solana-vote-interface 7.0.0",
+ "wincode",
 ]
 
 [[package]]
