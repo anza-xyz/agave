@@ -48,6 +48,11 @@ while [[ $latest_slot -le $((snapshot_slot + 1)) ]]; do
   latest_slot=$($solana_cli --url http://localhost:8899 slot --commitment processed)
 done
 
+# Ensure the copied range contains a transaction. Tower votes used to put a
+# transaction in every slot, but Alpenglow votes are block components.
+$solana_cli --url http://localhost:8899 airdrop 1
+latest_slot=$($solana_cli --url http://localhost:8899 slot --commitment processed)
+
 $agave_validator --ledger config/ledger exit --force || true
 
 wait $pid
@@ -59,13 +64,15 @@ $solana_ledger_tool copy --ledger config/ledger \
   --target-ledger config/snapshot-ledger --starting-slot "$snapshot_slot" --ending-slot "$latest_slot"
 
 set -x
-$solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
+$solana_ledger_tool --ledger config/snapshot-ledger --verbose --verbose print \
+  --starting-slot "$snapshot_slot" --ending-slot "$latest_slot" \
   |& grep -q "Log Messages:$" && exit 1
 
 $solana_ledger_tool verify --abort-on-invalid-block \
   --ledger config/snapshot-ledger --enable-rpc-transaction-history \
   --enable-extended-tx-metadata-storage
 
-$solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
+$solana_ledger_tool --ledger config/snapshot-ledger --verbose --verbose print \
+  --starting-slot "$snapshot_slot" --ending-slot "$latest_slot" \
   |& grep -q "Log Messages:$"
 set +x
