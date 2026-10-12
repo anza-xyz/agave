@@ -303,13 +303,12 @@ impl BlockIdRepairService {
             .name("solBlockIdRep".to_string())
             .spawn(move || {
                 info!("BlockIdRepairService started");
-                let (sharable_banks, migration_status) = {
-                    let bank_forks_r = context.repair_info.bank_forks.read().unwrap();
-                    (
-                        bank_forks_r.sharable_banks(),
-                        bank_forks_r.migration_status(),
-                    )
-                };
+                let sharable_banks = context
+                    .repair_info
+                    .bank_forks
+                    .read()
+                    .unwrap()
+                    .sharable_banks();
                 let mut state = RepairState {
                     // One day we'll actually split out the build request functionality from the full ServeRepair :'(
                     serve_repair: ServeRepair::new(
@@ -317,7 +316,6 @@ impl BlockIdRepairService {
                         sharable_banks.clone(),
                         context.repair_info.repair_whitelist.clone(),
                         Box::new(StandardRepairHandler::new(context.blockstore.clone())),
-                        migration_status,
                     ),
                     peers_cache: LruCache::new(REPAIR_PEERS_CACHE_CAPACITY),
                     outstanding_requests: OutstandingBlockIdRepairs::default(),
