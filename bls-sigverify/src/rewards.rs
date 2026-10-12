@@ -23,10 +23,7 @@ pub fn rewards_wants_vote(
     vote: &Vote,
 ) -> bool {
     match vote {
-        Vote::Finalize(_)
-        | Vote::NotarizeFallback(_)
-        | Vote::SkipFallback(_)
-        | Vote::Genesis(_) => return false,
+        Vote::Finalize(_) | Vote::NotarizeFallback(_) | Vote::SkipFallback(_) => return false,
         Vote::Notarize(_) | Vote::Skip(_) => (),
     }
     let vote_slot = vote.slot();

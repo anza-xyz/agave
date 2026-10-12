@@ -85,7 +85,6 @@ fn runtime_transaction_from_proto(
     RuntimeTransaction::try_create(
         versioned_tx,
         MessageHash::Compute,
-        None,
         SimpleAddressLoader::Enabled(loaded_addresses),
         &std::collections::HashSet::new(),
     )

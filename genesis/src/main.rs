@@ -208,6 +208,9 @@ fn features_to_deactivate_for_cluster(
     matches: &ArgMatches<'_>,
 ) -> Result<Vec<Pubkey>, Box<dyn error::Error>> {
     let mut features_to_deactivate = pubkeys_of(matches, "deactivate_feature").unwrap_or_default();
+    if features_to_deactivate.contains(&agave_feature_set::alpenglow::id()) {
+        return Err("Alpenglow is always enabled and cannot be deactivated".into());
+    }
     if cluster_type == &ClusterType::Development {
         return Ok(features_to_deactivate);
     }
@@ -236,11 +239,12 @@ fn features_to_deactivate_for_cluster(
             .into_iter()
             .zip(feature_ids)
             .for_each(|(maybe_account, feature_id)| {
-                if maybe_account
-                    .as_ref()
-                    .and_then(feature::from_account)
-                    .and_then(|feature| feature.activated_at)
-                    .is_none()
+                if feature_id != &agave_feature_set::alpenglow::id()
+                    && maybe_account
+                        .as_ref()
+                        .and_then(feature::from_account)
+                        .and_then(|feature| feature.activated_at)
+                        .is_none()
                 {
                     features_to_deactivate.push(*feature_id);
                 }
@@ -829,11 +833,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
 
-    if features_to_deactivate.contains(&agave_feature_set::alpenglow::id()) {
-        solana_runtime::genesis_utils::activate_all_features_tower(&mut genesis_config);
-    } else {
-        solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
-    }
+    solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
 
     if !features_to_deactivate.is_empty() {
         solana_runtime::genesis_utils::deactivate_features(

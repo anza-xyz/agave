@@ -15,7 +15,6 @@ use {
         input_validators::normalize_to_url_if_moniker,
     },
     solana_clock::Slot,
-    solana_core::consensus::tower_storage::FileTowerStorage,
     solana_epoch_schedule::EpochSchedule,
     solana_faucet::faucet::{Faucet, run_faucet},
     solana_inflation::Inflation,
@@ -386,12 +385,6 @@ fn main() {
     });
 
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
-    if matches.is_present("alpenglow") {
-        println!(
-            "Warning: --alpenglow is deprecated to be removed in a future release, \
-             solana-test-validator will always run alpenglow"
-        );
-    }
 
     if TestValidatorGenesis::ledger_exists(&ledger_path) {
         for (name, long) in &[
@@ -436,7 +429,6 @@ fn main() {
         value_t!(matches, "transaction_account_lock_limit", usize).ok();
     genesis.enable_scheduler_bindings = matches.is_present("enable_scheduler_bindings");
 
-    let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
     let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(ledger_path.clone()));
 
     let admin_service_post_init = genesis.admin_rpc_service_post_init.clone();
@@ -459,7 +451,6 @@ fn main() {
             authorized_voter_keypairs: genesis.authorized_voter_keypairs.clone(),
             staked_nodes_overrides: genesis.staked_nodes_overrides.clone(),
             post_init: admin_service_post_init,
-            tower_storage: tower_storage.clone(),
             vote_history_storage: vote_history_storage.clone(),
             rpc_to_plugin_manager_sender,
         },
@@ -494,7 +485,6 @@ fn main() {
 
     genesis
         .ledger_path(&ledger_path)
-        .tower_storage(tower_storage)
         .add_account(
             faucet_pubkey,
             AccountSharedData::new(faucet_lamports, 0, &system_program::id()),

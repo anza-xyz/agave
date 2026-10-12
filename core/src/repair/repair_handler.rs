@@ -6,17 +6,12 @@ use {
         serve_repair::{FecSetRoot, ServeRepair},
         standard_repair_handler::StandardRepairHandler,
     },
-    crate::repair::{
-        repair_response,
-        serve_repair::{AncestorHashesResponse, BlockIdRepairResponse, MAX_ANCESTOR_RESPONSES},
-    },
-    agave_votor_messages::migration::MigrationStatus,
+    crate::repair::{repair_response, serve_repair::BlockIdRepairResponse},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
-        ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
         blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
         shred::{DATA_SHREDS_PER_FEC_BLOCK, Nonce},
@@ -112,25 +107,6 @@ pub trait RepairHandler {
         nonce: Nonce,
     ) -> Option<PacketBatch>;
 
-    fn run_ancestor_hashes(
-        &self,
-        from_addr: &SocketAddr,
-        slot: Slot,
-        nonce: Nonce,
-    ) -> Option<PacketBatch> {
-        let ancestor_slot_hashes = if self.blockstore().is_duplicate_confirmed(slot) {
-            let ancestor_iterator = AncestorIteratorWithHash::from(
-                AncestorIterator::new_inclusive(slot, self.blockstore()),
-            );
-            ancestor_iterator.take(MAX_ANCESTOR_RESPONSES).collect()
-        } else {
-            // If this slot is not duplicate confirmed, return nothing
-            vec![]
-        };
-        let response = AncestorHashesResponse::Hashes(ancestor_slot_hashes);
-        create_response_packet_batch(&response, from_addr, nonce)
-    }
-
     fn run_parent_fec_set_count(
         &self,
         from_addr: &SocketAddr,
@@ -216,7 +192,6 @@ impl RepairHandlerType {
         serve_repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
         leader_state: SharedLeaderState,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        migration_status: Arc<MigrationStatus>,
     ) -> ServeRepair {
         let identity_keypair = cluster_info.keypair();
         ServeRepair::new_with_leader_state(
@@ -225,7 +200,6 @@ impl RepairHandlerType {
             serve_repair_whitelist,
             self.to_handler(blockstore, identity_keypair, leader_schedule_cache),
             leader_state,
-            migration_status,
         )
     }
 }

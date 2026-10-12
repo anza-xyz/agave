@@ -190,11 +190,6 @@ fn writeln_block_marker(
             "{prefix}Block Marker - UpdateParent: new_parent_slot: {}, new_parent_block_id: {}",
             update_parent.new_parent_slot, update_parent.new_parent_block_id,
         ),
-        CliPopulatedBlockMarker::GenesisCertificate(certificate) => writeln!(
-            f,
-            "{prefix}Block Marker - GenesisCertificate: slot: {}, block_id: {}",
-            certificate.slot, certificate.block_id,
-        ),
     }
 }
 
@@ -263,7 +258,6 @@ pub enum CliPopulatedBlockMarker {
     BlockFooter(CliPopulatedFooter),
     BlockHeader(CliPopulatedHeader),
     UpdateParent(CliPopulatedUpdateParent),
-    GenesisCertificate(CliPopulatedGenesisCertificate),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -323,13 +317,6 @@ pub struct CliPopulatedHeader {
 pub struct CliPopulatedUpdateParent {
     new_parent_slot: Slot,
     new_parent_block_id: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CliPopulatedGenesisCertificate {
-    slot: Slot,
-    block_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -577,15 +564,6 @@ fn cli_populated_block_marker_from(
                 CliPopulatedUpdateParent {
                     new_parent_slot: update_parent.new_parent_slot,
                     new_parent_block_id: update_parent.new_parent_block_id.to_string(),
-                },
-            ))
-        }
-        BlockMarkerV1::GenesisCertificate(certificate) => {
-            let certificate = certificate.into_inner();
-            Ok(CliPopulatedBlockMarker::GenesisCertificate(
-                CliPopulatedGenesisCertificate {
-                    slot: certificate.slot,
-                    block_id: certificate.block_id.to_string(),
                 },
             ))
         }

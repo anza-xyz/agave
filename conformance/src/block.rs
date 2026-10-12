@@ -61,6 +61,20 @@ use {prost::Message, std::ffi::c_int};
 const LEADER_SCHEDULE_HASH_SEED: u64 = 0xDEADFACE;
 const SECONDS_PER_YEAR: f64 = 365.242199 * 24.0 * 60.0 * 60.0;
 
+/// Returns true when a block fixture predates the Alpenglow vote-reward state
+/// account. Such fixtures describe Tower-era bank state and cannot be replayed
+/// by the full-Alpenglow runtime.
+pub fn is_pre_alpenglow_fixture(context: &ProtoBlockContext) -> bool {
+    let (vote_reward_account, _) = Pubkey::find_program_address(
+        &[b"vote_reward_account"],
+        &agave_feature_set::alpenglow::id(),
+    );
+    !context
+        .acct_states
+        .iter()
+        .any(|account| account.address.as_slice() == vote_reward_account.as_ref())
+}
+
 #[allow(deprecated)]
 pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
     let bank_ctx = context.bank.as_ref().unwrap();
@@ -763,7 +777,10 @@ mod tests {
     #![allow(deprecated)]
 
     use {
-        super::{LEADER_SCHEDULE_HASH_SEED, execute_block_proto, hash_epoch_leaders},
+        super::{
+            LEADER_SCHEDULE_HASH_SEED, execute_block_proto, hash_epoch_leaders,
+            is_pre_alpenglow_fixture,
+        },
         protosol::protos::{
             AcctState, BlockBank as ProtoBlockBank, BlockContext as ProtoBlockContext,
             BlockhashQueueEntry as ProtoBlockhashQueueEntry,
@@ -782,7 +799,7 @@ mod tests {
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_runtime::sysvar_account::create_account,
+        solana_runtime::{genesis_utils::create_genesis_config, sysvar_account::create_account},
         solana_sdk_ids::{native_loader, system_program, sysvar},
         solana_slot_hashes::SlotHashes,
         solana_slot_history::SlotHistory,
@@ -804,6 +821,29 @@ mod tests {
     const VOTE_ACCOUNT_T_2: [u8; 32] = [0x99; 32];
     const LEADER_NODE_T_2: [u8; 32] = [0xaa; 32];
     const LAMPORTS_PER_SIGNATURE: u32 = 5_000;
+
+    fn genesis_vote_reward_account() -> AcctState {
+        let (vote_reward_account, _) = Pubkey::find_program_address(
+            &[b"vote_reward_account"],
+            &agave_feature_set::alpenglow::id(),
+        );
+        let genesis_config = create_genesis_config(1).genesis_config;
+        let account = genesis_config
+            .accounts
+            .get(&vote_reward_account)
+            .expect("genesis must include Alpenglow vote-reward state")
+            .clone();
+        input_account(vote_reward_account, account)
+    }
+
+    #[test]
+    fn test_is_pre_alpenglow_fixture() {
+        let mut context = ProtoBlockContext::default();
+        assert!(is_pre_alpenglow_fixture(&context));
+
+        context.acct_states.push(genesis_vote_reward_account());
+        assert!(!is_pre_alpenglow_fixture(&context));
+    }
 
     /// Build an input account carrying raw data, as block contexts expect.
     fn input_account(pubkey: Pubkey, account: Account) -> AcctState {
@@ -957,6 +997,7 @@ mod tests {
         let epoch_schedule = EpochSchedule::default();
         let mut acct_states = block_sysvar_accounts(parent_slot, &epoch_schedule);
         acct_states.extend([
+            genesis_vote_reward_account(),
             account(
                 Pubkey::new_from_array(LEADER_NODE_T_1),
                 1_000_000,

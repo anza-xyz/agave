@@ -4,18 +4,18 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
+    agave_votor::slot_clock::SharedAlpenglowSlotClock,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
-    smallvec::SmallVec,
     solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeDetails,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
     solana_keypair::Keypair,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
+    solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
     solana_packet as packet,
-    solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, CollectorFeeDetails},
@@ -25,7 +25,6 @@ use {
         runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
         transaction_meta::TransactionMeta,
     },
-    solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
         ConnectionWorkersScheduler, WireTransaction,
@@ -39,7 +38,7 @@ use {
     std::{
         net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
-        sync::{Arc, RwLock},
+        sync::Arc,
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
@@ -77,68 +76,51 @@ const SCHEDULER_CHANNEL_CAPACITY: usize = FORWARD_BATCH_SIZE;
 /// Worker channel capacity in transactions.
 const WORKER_CHANNEL_CAPACITY: usize = FORWARD_BATCH_SIZE;
 
-/// How far ahead to look in the leader schedule when determining forwarding
-/// addresses. The unit is `NUM_CONSECUTIVE_LEADER_SLOTS`.
-///
-/// This lookahead is needed because the immediate next leader might not have
-/// shared their forwarding ports. In such cases, we skip them and attempt to
-/// forward to the next available leader (up to this limit).
-///
-/// The value is chosen to ensure that the likelihood of the same leader occupying
-/// all lookahead slots is negligible.
-const NUM_LOOKAHEAD_LEADERS: u64 = 3;
-
-/// [`ForwardAddressGetter`] provides helper methods for retrieving forwarding
-/// addresses for both vote and non-vote transactions.
+/// [`ForwardAddressGetter`] provides helper methods for retrieving transaction
+/// forwarding addresses.
 #[derive(Clone)]
 pub(crate) struct ForwardAddressGetter {
     cluster_info: Arc<ClusterInfo>,
-    poh_recorder: Arc<RwLock<PohRecorder>>,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
+    sharable_banks: SharableBanks,
+    alpenglow_slot_clock: SharedAlpenglowSlotClock,
 }
 
 impl ForwardAddressGetter {
-    pub fn new(cluster_info: Arc<ClusterInfo>, poh_recorder: Arc<RwLock<PohRecorder>>) -> Self {
+    pub fn new(
+        cluster_info: Arc<ClusterInfo>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        sharable_banks: SharableBanks,
+        alpenglow_slot_clock: SharedAlpenglowSlotClock,
+    ) -> Self {
         Self {
             cluster_info,
-            poh_recorder,
+            leader_schedule_cache,
+            sharable_banks,
+            alpenglow_slot_clock,
         }
     }
 
-    /// Appends forwarding addresses for non-vote transactions to `leaders`.
-    fn non_vote_forwarding_addresses(&self, max_count: u64, leaders: &mut Vec<SocketAddr>) {
-        let mut leader_pubkeys = Vec::with_capacity(max_count as usize);
-        let recorder = self.poh_recorder.read().unwrap();
-        leader_pubkeys.extend((0..max_count).filter_map(|i| {
-            recorder.leader_after_n_slots(
-                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET
-                    + i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64,
-            )
-        }));
-        drop(recorder);
-
-        leaders.extend(leader_pubkeys.iter().filter_map(|leader_pubkey| {
-            self.cluster_info
-                .lookup_contact_info(leader_pubkey, |node| node.tpu_forwards(Protocol::QUIC))?
-                .filter(|addr| self.cluster_info.socket_addr_space().check(addr))
-        }));
+    fn leader_pubkeys(&self, max_count: u64) -> impl Iterator<Item = Pubkey> + '_ {
+        let current_slot = self.alpenglow_slot_clock.current_slot();
+        let working_bank = self.sharable_banks.working();
+        (0..max_count).filter_map(move |i| {
+            let target_slot = current_slot?
+                .checked_add(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET)?
+                .checked_add(i.saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64))?;
+            self.leader_schedule_cache
+                .slot_leader_at(target_slot, Some(&working_bank))
+                .map(|leader| leader.id)
+        })
     }
 
-    /// Returns the TPU vote forwarding address of the next leader, if available.
-    fn next_vote_forwarding_address(&self) -> Option<SocketAddr> {
-        let mut leader_pubkeys = SmallVec::<[Pubkey; NUM_LOOKAHEAD_LEADERS as usize]>::new();
-        let recorder = self.poh_recorder.read().unwrap();
-        leader_pubkeys.extend((0..NUM_LOOKAHEAD_LEADERS).filter_map(|i| {
-            recorder.leader_after_n_slots(
-                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET
-                    + i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64,
-            )
-        }));
-        drop(recorder);
-        leader_pubkeys.into_iter().find_map(|leader_pubkey| {
+    /// Appends transaction forwarding addresses to `leaders`.
+    fn transaction_forwarding_addresses(&self, max_count: u64, leaders: &mut Vec<SocketAddr>) {
+        leaders.extend(self.leader_pubkeys(max_count).filter_map(|leader_pubkey| {
             self.cluster_info
-                .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(Protocol::UDP))?
+                .lookup_contact_info(&leader_pubkey, |node| node.tpu_forwards(Protocol::QUIC))?
                 .filter(|addr| self.cluster_info.socket_addr_space().check(addr))
-        })
+        }));
     }
 }
 
@@ -151,14 +133,11 @@ pub(crate) struct SpawnForwardingStageResult {
 }
 
 pub(crate) fn spawn_forwarding_stage(
-    receiver: Receiver<(BankingPacketBatch, bool)>,
+    receiver: Receiver<BankingPacketBatch>,
     tpu_forwarding_client_config: ForwardingClientConfig<'_>,
-    vote_client_udp_socket: UdpSocket,
     sharable_banks: SharableBanks,
     forward_address_getter: ForwardAddressGetter,
 ) -> SpawnForwardingStageResult {
-    let vote_client = VoteClient::new(vote_client_udp_socket, forward_address_getter.clone());
-
     let ForwardingClientConfig {
         stake_identity,
         tpu_client_sockets,
@@ -169,7 +148,7 @@ pub(crate) fn spawn_forwarding_stage(
 
     // Create TPU clients for each socket provided.
     // Number of clients is same as number of bind IP addresses.
-    let non_vote_clients: Box<[TpuClientNextClient]> = tpu_client_sockets
+    let transaction_clients: Box<[TpuClientNextClient]> = tpu_client_sockets
         .into_vec()
         .into_iter()
         .map(|socket| {
@@ -184,8 +163,7 @@ pub(crate) fn spawn_forwarding_stage(
         .collect();
     let forwarding_stage = ForwardingStage::new(
         receiver,
-        vote_client,
-        non_vote_clients.clone(),
+        transaction_clients.clone(),
         sharable_banks,
         Some(node_multihoming.bind_ip_addrs.clone()),
     );
@@ -194,7 +172,7 @@ pub(crate) fn spawn_forwarding_stage(
             .name("solFwdStage".to_string())
             .spawn(move || forwarding_stage.run())
             .unwrap(),
-        client_updater: Arc::new(UpdateHandles(non_vote_clients))
+        client_updater: Arc::new(UpdateHandles(transaction_clients))
             as Arc<dyn NotifyKeyUpdate + Send + Sync>,
     }
 }
@@ -207,24 +185,20 @@ impl NotifyKeyUpdate for UpdateHandles {
     }
 }
 
-struct ForwardingStage<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient> {
-    receiver: Receiver<(BankingPacketBatch, bool)>,
+struct ForwardingStage<Client: ForwardingClient> {
+    receiver: Receiver<BankingPacketBatch>,
     packet_container: PacketContainer,
     sharable_banks: SharableBanks,
-    vote_client: VoteClient,
-    non_vote_clients: Box<[NonVoteClient]>,
+    clients: Box<[Client]>,
     data_budget: TokenBucket,
     metrics: ForwardingStageMetrics,
     bind_ip_addrs: Option<Arc<BindIpAddrs>>,
 }
 
-impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
-    ForwardingStage<VoteClient, NonVoteClient>
-{
+impl<Client: ForwardingClient> ForwardingStage<Client> {
     fn new(
-        receiver: Receiver<(BankingPacketBatch, bool)>,
-        vote_client: VoteClient,
-        non_vote_clients: Box<[NonVoteClient]>,
+        receiver: Receiver<BankingPacketBatch>,
+        clients: Box<[Client]>,
         sharable_banks: SharableBanks,
         bind_ip_addrs: Option<Arc<BindIpAddrs>>,
     ) -> Self {
@@ -237,8 +211,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
             receiver,
             packet_container: PacketContainer::with_capacity(4 * 4096),
             sharable_banks,
-            non_vote_clients,
-            vote_client,
+            clients,
             data_budget,
             metrics: ForwardingStageMetrics::default(),
             bind_ip_addrs,
@@ -265,16 +238,14 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
         let now = Instant::now();
         match self.receiver.recv_timeout(TIMEOUT) {
-            Ok((packet_batches, tpu_vote_batch)) => {
+            Ok(packet_batches) => {
                 self.metrics.did_something = true;
-                self.buffer_packet_batches(packet_batches, tpu_vote_batch, bank);
+                self.buffer_packet_batches(packet_batches, bank);
 
                 // Drain the channel up to timeout
                 while now.elapsed() < TIMEOUT {
                     match self.receiver.try_recv() {
-                        Ok((packet_batches, tpu_vote_batch)) => {
-                            self.buffer_packet_batches(packet_batches, tpu_vote_batch, bank)
-                        }
+                        Ok(packet_batches) => self.buffer_packet_batches(packet_batches, bank),
                         Err(_) => break,
                     }
                 }
@@ -287,12 +258,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
     }
 
     /// Insert received packets into the packet container.
-    fn buffer_packet_batches(
-        &mut self,
-        packet_batch: BankingPacketBatch,
-        is_tpu_vote_batch: bool,
-        bank: &Bank,
-    ) {
+    fn buffer_packet_batches(&mut self, packet_batch: BankingPacketBatch, bank: &Bank) {
         let sanitize_config = sanitize_config();
         for packet in packet_batch
             .iter()
@@ -305,11 +271,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 );
             };
 
-            let vote_count = usize::from(is_tpu_vote_batch);
-            let non_vote_count = usize::from(!is_tpu_vote_batch);
-
-            self.metrics.votes_received += vote_count;
-            self.metrics.non_votes_received += non_vote_count;
+            self.metrics.packets_received += 1;
 
             // Perform basic sanitization checks and calculate priority.
             // If any steps fail, drop the packet.
@@ -320,15 +282,13 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                         RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                             transaction,
                             MessageHash::Compute,
-                            Some(packet.meta().is_simple_vote_tx()),
                         )
                         .map_err(|_| ())
                     })
                     .ok()
                     .and_then(|transaction| calculate_priority(&transaction, bank))
             else {
-                self.metrics.votes_dropped_on_receive += vote_count;
-                self.metrics.non_votes_dropped_on_receive += non_vote_count;
+                self.metrics.packets_dropped_on_receive += 1;
                 continue;
             };
 
@@ -338,16 +298,12 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 // If priority of current packet is not higher than the min
                 // drop the current packet.
                 if min_priority >= priority {
-                    self.metrics.votes_dropped_on_capacity += vote_count;
-                    self.metrics.non_votes_dropped_on_capacity += non_vote_count;
+                    self.metrics.packets_dropped_on_capacity += 1;
                     continue;
                 }
 
-                let dropped_packet = self.packet_container.pop_min().expect("not empty");
-                self.metrics.votes_dropped_on_capacity +=
-                    usize::from(dropped_packet.meta().is_simple_vote_tx());
-                self.metrics.non_votes_dropped_on_capacity +=
-                    usize::from(!dropped_packet.meta().is_simple_vote_tx());
+                self.packet_container.pop_min().expect("not empty");
+                self.metrics.packets_dropped_on_capacity += 1;
             }
 
             self.packet_container.insert(packet.clone(), priority);
@@ -360,18 +316,17 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
     fn forward_buffered_packets(&mut self) {
         self.metrics.did_something |= !self.packet_container.is_empty();
 
-        let mut non_vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
-        let mut vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
+        let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
 
         // determine the client to use for next batch based on current active interface
         // use primary interface bind (index 0) if not in multihoming context.
-        let active_non_vote_client = {
+        let active_client = {
             let active_index = self
                 .bind_ip_addrs
                 .as_ref()
                 .map(|binds| binds.active_index())
                 .unwrap_or(0);
-            &self.non_vote_clients[active_index]
+            &self.clients[active_index]
         };
         // Loop through packets creating batches of packets to forward.
         while let Some(packet) = self.packet_container.pop_max() {
@@ -381,54 +336,27 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 .consume_tokens(packet.meta().size as u64)
                 .is_err()
             {
-                self.metrics.votes_dropped_on_data_budget +=
-                    usize::from(packet.meta().is_simple_vote_tx());
-                self.metrics.non_votes_dropped_on_data_budget +=
-                    usize::from(!packet.meta().is_simple_vote_tx());
+                self.metrics.packets_dropped_on_data_budget += 1;
                 continue;
             }
 
             let packet_data_vec = packet.data(..).expect("packet has data").to_vec();
 
-            if packet.meta().is_simple_vote_tx() {
-                vote_batch.push(packet_data_vec);
-                send_batch_if_full(
-                    &mut vote_batch,
-                    &self.vote_client,
-                    &mut self.metrics.votes_forwarded,
-                    &mut self.metrics.votes_dropped_on_send,
-                );
-            } else {
-                non_vote_batch.push(packet_data_vec);
-                send_batch_if_full(
-                    &mut non_vote_batch,
-                    active_non_vote_client,
-                    &mut self.metrics.non_votes_forwarded,
-                    &mut self.metrics.non_votes_dropped_on_send,
-                );
-            }
+            batch.push(packet_data_vec);
+            send_batch_if_full(
+                &mut batch,
+                active_client,
+                &mut self.metrics.packets_forwarded,
+                &mut self.metrics.packets_dropped_on_send,
+            );
         }
 
         // Send out remaining packets
-        if !vote_batch.is_empty() {
-            let num_votes = vote_batch.len();
-            self.metrics.votes_forwarded += num_votes;
-            if self
-                .vote_client
-                .send_transactions_in_batch(vote_batch)
-                .is_err()
-            {
-                self.metrics.votes_dropped_on_send += num_votes;
-            }
-        }
-        if !non_vote_batch.is_empty() {
-            let num_non_votes = non_vote_batch.len();
-            self.metrics.non_votes_forwarded += num_non_votes;
-            if active_non_vote_client
-                .send_transactions_in_batch(non_vote_batch)
-                .is_err()
-            {
-                self.metrics.non_votes_dropped_on_send += num_non_votes;
+        if !batch.is_empty() {
+            let num_packets = batch.len();
+            self.metrics.packets_forwarded += num_packets;
+            if active_client.send_transactions_in_batch(batch).is_err() {
+                self.metrics.packets_dropped_on_send += num_packets;
             }
         }
     }
@@ -440,15 +368,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 enum ForwardingClientError {
     /// Failed to send transaction to the provided host.
     Failed,
-    /// Failed to send the transaction because no contact information was found
-    /// for any of the next `NUM_LOOKAHEAD_LEADERS` scheduled leaders.
-    LeaderContactMissing,
-}
-
-impl From<SendPktsError> for ForwardingClientError {
-    fn from(_err: SendPktsError) -> Self {
-        ForwardingClientError::Failed
-    }
 }
 
 impl From<TransportError> for ForwardingClientError {
@@ -468,43 +387,9 @@ trait ForwardingClient: Send + Sync + 'static {
     ) -> Result<(), ForwardingClientError>;
 }
 
-struct VoteClient {
-    bind_socket: UdpSocket,
-    forward_address_getter: ForwardAddressGetter,
-}
-
-impl VoteClient {
-    fn new(bind_socket: UdpSocket, forward_address_getter: ForwardAddressGetter) -> Self {
-        Self {
-            bind_socket,
-            forward_address_getter,
-        }
-    }
-
-    fn next_valid_leader(&self) -> Option<SocketAddr> {
-        self.forward_address_getter.next_vote_forwarding_address()
-    }
-}
-
-impl ForwardingClient for VoteClient {
-    fn send_transactions_in_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), ForwardingClientError> {
-        let Some(current_address) = self.next_valid_leader() else {
-            return Err(ForwardingClientError::LeaderContactMissing);
-        };
-        let batch_with_addresses = wire_transactions
-            .iter()
-            .map(|bytes| (bytes, current_address));
-        batch_send(&self.bind_socket, batch_with_addresses)?;
-        Ok(())
-    }
-}
-
 impl LeaderUpdater for ForwardAddressGetter {
     fn next_leaders(&mut self, lookahead_slots: usize, leaders: &mut Vec<SocketAddr>) {
-        self.non_vote_forwarding_addresses(lookahead_slots as u64, leaders);
+        self.transaction_forwarding_addresses(lookahead_slots as u64, leaders);
     }
 }
 
@@ -673,28 +558,12 @@ fn send_batch_if_full(
 struct ForwardingStageMetrics {
     last_reported: Instant,
     did_something: bool,
-
-    /// Number of votes received for forwarding.
-    votes_received: usize,
-    /// Number of votes that failed basic sanitization or priority calculation.
-    votes_dropped_on_receive: usize,
-    /// Number of votes dropped because forwarding container is full and the
-    /// priority of transaction is lower than the priority of other transaction
-    /// in the container.
-    votes_dropped_on_capacity: usize,
-    /// Number of votes dropped due to exceeding outbound data traffic limit.
-    votes_dropped_on_data_budget: usize,
-    /// Number of votes we tried to forward.
-    votes_forwarded: usize,
-    /// Number of votes dropped due to send failure.
-    votes_dropped_on_send: usize,
-
-    non_votes_received: usize,
-    non_votes_dropped_on_receive: usize,
-    non_votes_dropped_on_capacity: usize,
-    non_votes_dropped_on_data_budget: usize,
-    non_votes_forwarded: usize,
-    non_votes_dropped_on_send: usize,
+    packets_received: usize,
+    packets_dropped_on_receive: usize,
+    packets_dropped_on_capacity: usize,
+    packets_dropped_on_data_budget: usize,
+    packets_forwarded: usize,
+    packets_dropped_on_send: usize,
 }
 
 impl ForwardingStageMetrics {
@@ -712,44 +581,26 @@ impl ForwardingStageMetrics {
 
             datapoint_info!(
                 "forwarding_stage",
-                ("votes_received", metrics.votes_received, i64),
+                ("packets_received", metrics.packets_received, i64),
                 (
-                    "votes_dropped_on_receive",
-                    metrics.votes_dropped_on_receive,
+                    "packets_dropped_on_receive",
+                    metrics.packets_dropped_on_receive,
                     i64
                 ),
                 (
-                    "votes_dropped_on_capacity",
-                    metrics.votes_dropped_on_capacity,
+                    "packets_dropped_on_capacity",
+                    metrics.packets_dropped_on_capacity,
                     i64
                 ),
                 (
-                    "votes_dropped_on_data_budget",
-                    metrics.votes_dropped_on_data_budget,
+                    "packets_dropped_on_data_budget",
+                    metrics.packets_dropped_on_data_budget,
                     i64
                 ),
-                ("votes_forwarded", metrics.votes_forwarded, i64),
-                ("votes_dropped_on_send", metrics.votes_dropped_on_send, i64),
-                ("non_votes_received", metrics.non_votes_received, i64),
+                ("packets_forwarded", metrics.packets_forwarded, i64),
                 (
-                    "non_votes_dropped_on_receive",
-                    metrics.non_votes_dropped_on_receive,
-                    i64
-                ),
-                (
-                    "non_votes_dropped_on_capacity",
-                    metrics.non_votes_dropped_on_capacity,
-                    i64
-                ),
-                (
-                    "non_votes_dropped_on_data_budget",
-                    metrics.non_votes_dropped_on_data_budget,
-                    i64
-                ),
-                ("non_votes_forwarded", metrics.non_votes_forwarded, i64),
-                (
-                    "non_votes_dropped_on_send",
-                    metrics.non_votes_dropped_on_send,
+                    "packets_dropped_on_send",
+                    metrics.packets_dropped_on_send,
                     i64
                 ),
             );
@@ -762,18 +613,12 @@ impl Default for ForwardingStageMetrics {
         Self {
             last_reported: Instant::now(),
             did_something: false,
-            votes_received: 0,
-            votes_dropped_on_receive: 0,
-            votes_dropped_on_capacity: 0,
-            votes_dropped_on_data_budget: 0,
-            votes_forwarded: 0,
-            votes_dropped_on_send: 0,
-            non_votes_received: 0,
-            non_votes_dropped_on_receive: 0,
-            non_votes_dropped_on_capacity: 0,
-            non_votes_dropped_on_data_budget: 0,
-            non_votes_forwarded: 0,
-            non_votes_dropped_on_send: 0,
+            packets_received: 0,
+            packets_dropped_on_receive: 0,
+            packets_dropped_on_capacity: 0,
+            packets_dropped_on_data_budget: 0,
+            packets_forwarded: 0,
+            packets_dropped_on_send: 0,
         }
     }
 }
@@ -868,40 +713,21 @@ mod tests {
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let vote_mock_client = MockClient::new();
-        let non_vote_mock_client = MockClient::new();
+        let mock_client = MockClient::new();
         let mut forwarding_stage = ForwardingStage::new(
             packet_batch_receiver,
-            vote_mock_client.clone(),
-            Box::new([non_vote_mock_client.clone()]),
+            Box::new([mock_client.clone()]),
             sharable_banks,
             None,
         );
 
         // Send packet batches.
-        let non_vote_packets = BankingPacketBatch::new(PacketBatch::from(vec![
+        let packets = BankingPacketBatch::new(PacketBatch::from(vec![
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
         ]));
-        let vote_packets = BankingPacketBatch::new(PacketBatch::from(vec![
-            simple_transfer_with_flags(PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE),
-            simple_transfer_with_flags(
-                PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD,
-            ),
-            simple_transfer_with_flags(
-                PacketFlags::SIMPLE_VOTE_TX
-                    | PacketFlags::FROM_STAKED_NODE
-                    | PacketFlags::FORWARDED,
-            ),
-        ]));
-
-        packet_batch_sender
-            .send((non_vote_packets.clone(), false))
-            .unwrap();
-        packet_batch_sender
-            .send((vote_packets.clone(), true))
-            .unwrap();
+        packet_batch_sender.send(packets.clone()).unwrap();
 
         let bank = forwarding_stage.sharable_banks.root();
         forwarding_stage.receive_and_buffer(&bank);
@@ -910,21 +736,10 @@ mod tests {
         }
         forwarding_stage.forward_buffered_packets();
 
-        assert_eq!(forwarding_stage.metrics.non_votes_forwarded, 1);
-        assert_eq!(forwarding_stage.metrics.votes_forwarded, 1);
+        assert_eq!(forwarding_stage.metrics.packets_forwarded, 1);
 
-        let vote_wired_txs = vote_mock_client.get_packets();
-        assert_eq!(vote_wired_txs.len(), 1);
-        assert_eq!(
-            vote_wired_txs[0],
-            vote_packets.first().unwrap().data(..).unwrap()
-        );
-
-        let non_vote_wired_txs = non_vote_mock_client.get_packets();
-        assert_eq!(non_vote_wired_txs.len(), 1);
-        assert_eq!(
-            non_vote_wired_txs[0],
-            non_vote_packets.first().unwrap().data(..).unwrap()
-        );
+        let wired_txs = mock_client.get_packets();
+        assert_eq!(wired_txs.len(), 1);
+        assert_eq!(wired_txs[0], packets.first().unwrap().data(..).unwrap());
     }
 }

@@ -642,7 +642,6 @@ mod tests {
         let rt = RuntimeTransaction::try_create(
             tx,
             MessageHash::Compute,
-            None,
             address_loader,
             &ReservedAccountKeys::empty_key_set(),
         );

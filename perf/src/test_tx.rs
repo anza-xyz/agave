@@ -1,6 +1,4 @@
 use {
-    rand::{CryptoRng, Rng, RngCore},
-    solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::{
@@ -12,8 +10,6 @@ use {
     solana_signer::Signer,
     solana_system_interface::instruction::SystemInstruction,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
-    solana_vote::vote_transaction,
-    solana_vote_program::vote_state::TowerSync,
 };
 
 pub fn test_tx() -> Transaction {
@@ -46,25 +42,6 @@ pub fn test_multisig_tx() -> Transaction {
         blockhash,
         program_ids,
         instructions,
-    )
-}
-
-pub fn new_test_vote_tx<R>(rng: &mut R) -> Transaction
-where
-    R: CryptoRng + RngCore,
-{
-    let mut slots: Vec<Slot> = std::iter::repeat_with(|| rng.random()).take(5).collect();
-    slots.sort_unstable();
-    slots.dedup();
-    let switch_proof_hash = rng.random_bool(0.5).then(Hash::new_unique);
-    let tower_sync = TowerSync::new_from_slots(slots, Hash::default(), None);
-    vote_transaction::new_tower_sync_transaction(
-        tower_sync,
-        Hash::new_unique(), // blockhash
-        &Keypair::new(),    // node_keypair
-        &Keypair::new(),    // vote_keypair
-        &Keypair::new(),    // authorized_voter_keypair
-        switch_proof_hash,
     )
 }
 

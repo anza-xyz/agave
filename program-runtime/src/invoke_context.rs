@@ -159,7 +159,6 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
-    alpenglow_migration_succeeded: bool,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
     program_runtime_environments: &'a ProgramRuntimeEnvironments,
@@ -169,7 +168,6 @@ impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
-        alpenglow_migration_succeeded: bool,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
         program_runtime_environments: &'a ProgramRuntimeEnvironments,
@@ -178,7 +176,6 @@ impl<'a> EnvironmentConfig<'a> {
         Self {
             blockhash,
             blockhash_lamports_per_signature,
-            alpenglow_migration_succeeded,
             epoch_stake_callback,
             feature_set,
             program_runtime_environments,
@@ -749,11 +746,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.log_collector.clone()
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_alpenglow_migration_succeeded_for_tests(&mut self, succeeded: bool) {
-        self.environment_config.alpenglow_migration_succeeded = succeeded;
-    }
-
     /// Get this invocation's compute budget
     pub fn get_compute_budget(&self) -> &SVMTransactionExecutionBudget {
         &self.compute_budget
@@ -773,16 +765,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config
             .program_runtime_environments
             .get_env_for_deployment()
-    }
-
-    pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
-        self.environment_config
-            .feature_set
-            .deprecate_legacy_vote_ixs
-    }
-
-    pub fn is_alpenglow_migration_succeeded(&self) -> bool {
-        self.environment_config.alpenglow_migration_succeeded
     }
 
     /// Get cached epoch total stake.
@@ -909,7 +891,6 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockInvokeContextCallback {},
             $feature_set,
             &program_runtime_environments,
@@ -2214,7 +2195,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2266,7 +2246,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2304,7 +2283,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2430,7 +2408,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2461,7 +2438,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2497,7 +2473,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2654,7 +2629,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,

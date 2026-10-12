@@ -12,7 +12,6 @@ pub trait TransactionNotifier {
         transaction_slot_index: usize,
         signature: &Signature,
         message_hash: &Hash,
-        is_vote: bool,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &VersionedTransaction,
     );

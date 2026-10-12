@@ -7,7 +7,6 @@
 
 use {
     agave_feature_set::FeatureSet,
-    agave_votor_messages::migration::MigrationStatus,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
     solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
@@ -20,10 +19,7 @@ use {
     solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
-        blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType,
-            handle_duplicate_shred,
-        },
+        blockstore::{Blockstore, BlockstoreInsertionMetrics, PurgeType},
         blockstore_processor::verify_ticks,
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, Shred,
@@ -122,9 +118,9 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     // Bank at the root slot: drives the filter/recovery slot bounds, verify_ticks
     // tick params, and the dup feature gate.
     // FD: resolver + sched config (shred_version, advance_slot_old(root_slot)).
-    let feature_set = FeatureSet::default();
+    let mut feature_set = FeatureSet::default();
+    feature_set.activate(&agave_feature_set::alpenglow::id(), 0);
     let bank = build_root_bank(root_slot, feature_set);
-    let migration = MigrationStatus::default();
 
     // Step 1: parse each shred; record whether it's a chained Merkle shred.
     // FD: fd_shred_parse + fd_shred_is_chained. should_discard_shred only gates accumulation.
@@ -169,22 +165,13 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let (retransmit_sender, _retransmit_rx) = EvictingSender::<Vec<Payload>>::new_bounded(0);
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
-    let handle_duplicate = |duplicate: PossibleDuplicateShred| {
-        let _duplicate_proof = handle_duplicate_shred(
-            &blockstore,
-            duplicate,
-            false, // no_verify_chained_merkle_root: keep pre-Alpenglow validation
-        )
-        .expect("handle duplicate shred");
-    };
     let shreds_iter = parsed
         .iter()
         .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
-    let _ = blockstore.insert_shreds_handle_duplicate(
+    let _ = blockstore.insert_shreds_with_recovery(
         shreds_iter,
         false, // is_trusted: keep dedup + integrity checks
         &mut recovery,
-        &handle_duplicate,
         &mut metrics,
     );
 
@@ -218,7 +205,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             }
         }
         let mut tick_hash_count = 0u64;
-        if verify_ticks(&bank, &entries, is_full, &mut tick_hash_count, &migration).is_err() {
+        if verify_ticks(&bank, &entries, is_full, &mut tick_hash_count).is_err() {
             effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
         }
     }

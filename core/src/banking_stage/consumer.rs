@@ -1,11 +1,10 @@
 use {
     super::{
         committer::{CommitTransactionDetails, Committer},
-        leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
+        execute_and_commit_timings::ExecuteAndCommitTimings,
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
-    smallvec::SmallVec,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -27,7 +26,6 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::{TransactionError, TransactionResult},
-    solana_vote::vote_parser,
     std::num::Saturating,
 };
 
@@ -88,7 +86,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
     // A result that indicates whether transactions were successfully
     // committed into the Poh stream.
     pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
-    pub(crate) execute_and_commit_timings: LeaderExecuteAndCommitTimings,
+    pub(crate) execute_and_commit_timings: ExecuteAndCommitTimings,
     pub(crate) error_counters: TransactionErrorMetrics,
 }
 
@@ -96,8 +94,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
 pub struct LeaderProcessedTransactionCounts {
     // Total number of transactions that were passed as candidates for processing
     pub(crate) attempted_processing_count: u64,
-    // The number of transactions of that were processed. See description of in `ProcessTransactionsSummary`
-    // for possible outcomes of execution.
+    // The number of transactions that were processed.
     pub(crate) processed_count: u64,
     // Total number of the processed transactions that returned success/not
     // an error.
@@ -123,14 +120,14 @@ impl Consumer {
         }
     }
 
-    pub fn process_and_record_transactions(
+    #[cfg(test)]
+    fn process_and_record_transactions(
         &self,
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
-        let pre_results =
-            SmallVec::<[_; TARGET_NUM_TRANSACTIONS_PER_BATCH]>::from_elem(Ok(()), txs.len());
+        let pre_results = std::iter::repeat_n(Ok(()), txs.len()).collect::<Vec<_>>();
         let check_results = Self::check_transactions_for_scheduling(
             bank,
             txs,
@@ -138,19 +135,7 @@ impl Consumer {
             bank.max_processing_age(),
             &mut error_counters,
         );
-        let check_results = check_results
-            .into_iter()
-            .zip(txs.iter())
-            .map(|(result, tx)| match result {
-                Ok(_) => {
-                    if bank.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(tx) {
-                        Err(TransactionError::SanitizeFailure)
-                    } else {
-                        Ok(())
-                    }
-                }
-                Err(err) => Err(err),
-            });
+        let check_results = check_results.into_iter().map(|result| result.map(|_| ()));
 
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
@@ -264,7 +249,7 @@ impl Consumer {
         flags: &ExecutionFlags,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
-        let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
+        let mut execute_and_commit_timings = ExecuteAndCommitTimings::default();
 
         let mut error_counters = TransactionErrorMetrics::default();
         let mut retryable_transaction_indexes: Vec<_> = batch
@@ -627,8 +612,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
+        let committer = Committer::new(transaction_status_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
 
         TestFrame {
@@ -650,8 +634,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(None, replay_vote_sender, None);
+        let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
     }
@@ -1470,7 +1453,6 @@ mod tests {
         let sanitized_tx = RuntimeTransaction::try_create(
             tx,
             MessageHash::Compute,
-            Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),
         )

@@ -1500,57 +1500,6 @@ pub mod test {
         start.stop();
         info!("{start} pre {pre_txs} post {post_txs}");
     }
-
-    #[test]
-    #[serial]
-    fn test_halt_accounts_creation_at_max() {
-        agave_logger::setup();
-        let mut validator_config = ValidatorConfig::default_for_test();
-        initialize_and_add_secondary_indexes(&mut validator_config);
-        let num_nodes = 1;
-        let mut config = ClusterConfig {
-            mint_lamports: TEST_CLUSTER_MINT_LAMPORTS,
-            node_stakes: vec![100; num_nodes],
-            validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
-            ..ClusterConfig::default()
-        };
-
-        let cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
-        let iterations = 100;
-        let maybe_space = None;
-        let batch_size = 20;
-        let close_nth_batch = 0;
-        let maybe_lamports = None;
-        let num_instructions = 2;
-        let mut start = Measure::start("total accounts run");
-        let rpc_addr = cluster.entry_point_info.rpc().unwrap();
-        let client = Arc::new(RpcClient::new_socket_with_commitment(
-            rpc_addr,
-            CommitmentConfig::confirmed(),
-        ));
-        let mint = None;
-        let reclaim_accounts = false;
-        let pre_txs = client.get_transaction_count().unwrap();
-        run_accounts_bench(
-            client.clone(),
-            &[&cluster.funding_keypair],
-            iterations,
-            maybe_space,
-            batch_size,
-            close_nth_batch,
-            maybe_lamports,
-            num_instructions,
-            Some(90),
-            mint,
-            reclaim_accounts,
-            Some(vec![RpcBench::ProgramAccounts]),
-            1,
-        );
-        let post_txs = client.get_transaction_count().unwrap();
-        start.stop();
-        info!("{start} pre {pre_txs} post {post_txs}");
-    }
-
     #[test]
     #[serial]
     fn test_create_then_reclaim_spl_token_accounts() {

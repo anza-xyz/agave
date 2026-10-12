@@ -23,6 +23,11 @@ fn exec(input: &PathBuf) -> bool {
         return false;
     };
 
+    if solana_svm_conformance::instr::is_legacy_vote_fixture(&context) {
+        println!("SKIP: {input:?} (retired Tower-era vote instruction)");
+        return true;
+    }
+
     let effects = solana_svm_conformance::instr::execute_instr_proto(context);
 
     let ok = effects == expected;

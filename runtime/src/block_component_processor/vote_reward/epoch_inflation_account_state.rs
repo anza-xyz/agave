@@ -136,6 +136,22 @@ impl EpochInflationAccountState {
             .insert(*VOTE_REWARD_ACCOUNT_ADDR, account);
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub(crate) fn ensure_initialized_for_tests(bank: &Bank) {
+        if Self::new_from_bank(bank).is_some() {
+            return;
+        }
+        Self {
+            current: EpochInflationState {
+                max_possible_validator_reward: 0,
+                slots_per_epoch: bank.epoch_schedule().slots_per_epoch,
+                epoch: bank.epoch(),
+            },
+            prev: None,
+        }
+        .set_state(bank);
+    }
+
     /// Computes a new version of `Self` for `bank.epoch` and serializes it into accounts in the `bank`.
     ///
     /// At the start of a new epoch, over several slots we pay the inflation rewards from the
@@ -183,8 +199,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config,
-                create_genesis_config_with_tower_leader, create_genesis_config_with_vote_accounts,
-                deactivate_features,
+                create_genesis_config_with_vote_accounts, deactivate_features,
             },
             slot_params::slot_time_feature_ids,
         },
@@ -211,7 +226,8 @@ mod tests {
 
     #[test]
     fn set_state_works() {
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
+        let genesis_config = create_genesis_config(1).genesis_config;
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank = bank_forks.read().unwrap().root_bank();
         let state = get_rand_state();
         state.set_state(&bank);
@@ -335,28 +351,5 @@ mod tests {
                 "{case}",
             );
         }
-    }
-
-    #[test]
-    fn handles_prefunded_account() {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 0);
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let root_bank = bank_forks.read().unwrap().root_bank();
-
-        let prefund_lamports = 100;
-        root_bank
-            .transfer(prefund_lamports, &mint_keypair, &VOTE_REWARD_ACCOUNT_ADDR)
-            .unwrap();
-
-        assert!(root_bank.get_account(&VOTE_REWARD_ACCOUNT_ADDR).is_some());
-        assert_eq!(
-            root_bank.get_balance(&VOTE_REWARD_ACCOUNT_ADDR),
-            prefund_lamports,
-        );
-        assert_eq!(EpochInflationAccountState::new_from_bank(&root_bank), None);
     }
 }

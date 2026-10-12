@@ -8,13 +8,12 @@ use {
     },
     clap::ArgMatches,
     log::info,
-    solana_clap_utils::input_parsers::{parse_cpu_ranges, value_of},
+    solana_clap_utils::input_parsers::parse_cpu_ranges,
     solana_core::{
         system_monitor_service::XdpNetworkConfigReport,
         validator::{XdpComponents, XdpTransmitSetup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
-    solana_poh::poh_service,
     std::{
         net::IpAddr,
         sync::{Arc, atomic::AtomicBool},
@@ -81,53 +80,34 @@ pub(super) fn build_xdp_config(
     }
     let xdp_interface = matches.value_of("xdp_interface");
     let xdp_zero_copy = matches.is_present("xdp_zero_copy");
-    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
-        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
-        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
     let xdp_cpu_cores = matches.value_of("xdp_cpu_cores");
-    let cpus = if let Some(cpu_str) = xdp_cpu_cores {
-        let parsed =
-            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
-        if parsed.is_empty() {
-            return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
-        }
-        if let Some(poh_core) = poh_pinned_cpu_core
-            && parsed.contains(&poh_core)
-        {
-            return Err(format!(
-                "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a CPU \
-                 core"
-            ));
-        }
-        Some(parsed)
-    } else {
-        // Auto-select a single core, avoiding the PoH core.
-        match cpu_affinity(None) {
-            Ok(allowed) => {
-                match allowed
-                    .iter()
-                    .rev()
-                    .map(|cpu| **cpu)
-                    .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
-                {
-                    Some(cpu) => Some(vec![cpu]),
+    let cpus =
+        if let Some(cpu_str) = xdp_cpu_cores {
+            let parsed =
+                parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+            if parsed.is_empty() {
+                return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
+            }
+            Some(parsed)
+        } else {
+            // Auto-select a single core.
+            match cpu_affinity(None) {
+                Ok(allowed) => match allowed.iter().next_back() {
+                    Some(cpu) => Some(vec![**cpu]),
                     None => {
-                        return Err(format!(
-                            "XDP requires a dedicated CPU core separate from PoH (core \
-                             {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to \
-                             disable XDP."
-                        ));
+                        return Err("XDP requires a CPU core, but none is available. Pass \
+                                    --no-xdp to disable XDP."
+                            .to_string());
                     }
+                },
+                Err(e) => {
+                    return Err(format!(
+                        "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or \
+                         provide --xdp-cpu-cores explicitly."
+                    ));
                 }
             }
-            Err(e) => {
-                return Err(format!(
-                    "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
-                     --xdp-cpu-cores explicitly."
-                ));
-            }
-        }
-    };
+        };
     Ok(cpus.map(|cpus| {
         info!("XDP enabled on CPU cores: {cpus:?}");
         // Map the CPU list onto hardware queues sequentially (queue i -> cpus[i]).
@@ -188,19 +168,13 @@ mod xdp_tests {
         ] {
             let default_args = DefaultArgs::default();
             let app = add_args(clap::App::new("agave-validator"), &default_args);
-            let mut args = vec![
-                "agave-validator",
-                "--xdp-cpu-cores",
-                "1",
-                "--poh-pinned-cpu-core",
-                "0",
-            ];
+            let mut args = vec!["agave-validator", "--xdp-cpu-cores", "1"];
             args.extend(flag);
             let matches = app
                 .get_matches_from_safe(args)
                 .expect("valid XDP copy mode selection should be accepted");
             let config = build_xdp_config(&matches, &Operation::Run, &build_single_ip_bind())
-                .expect("distinct XDP and PoH cores should be valid")
+                .expect("explicit XDP core should be valid")
                 .expect("copy mode selection should keep XDP enabled");
             assert_eq!(
                 config.zero_copy, zero_copy,
@@ -244,21 +218,6 @@ mod xdp_tests {
         assert!(
             result.unwrap_err().contains("multihoming"),
             "multihoming context must produce an error"
-        );
-    }
-
-    #[test]
-    fn test_explicit_xdp_core_conflicts_with_poh_core_is_error() {
-        let default_args = DefaultArgs::default();
-        let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE
-            .unwrap_or(0)
-            .to_string();
-        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", &poh_core]);
-        let result = build_xdp_config(&matches, &Operation::Run, &build_single_ip_bind());
-        assert!(
-            result.unwrap_err().contains("PoH core"),
-            "XDP core overlapping PoH core must produce an error"
         );
     }
 }

@@ -18,7 +18,6 @@ enum VoteType {
     NotarizeFallback,
     Skip,
     SkipFallback,
-    Genesis,
 }
 
 impl From<&Vote> for VoteType {
@@ -29,7 +28,6 @@ impl From<&Vote> for VoteType {
             Vote::Skip(_) => VoteType::Skip,
             Vote::SkipFallback(_) => VoteType::SkipFallback,
             Vote::Finalize(_) => VoteType::Finalize,
-            Vote::Genesis(_) => VoteType::Genesis,
         }
     }
 }

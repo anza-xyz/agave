@@ -7,7 +7,6 @@ use {
         StakeRewardCalculation, epoch_rewards_hasher::hash_rewards_into_partitions,
     },
     crate::{
-        alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
         bank::{
             RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
             fee_distribution::{ExternalCollectorType, default_system_account},
@@ -16,11 +15,10 @@ use {
         block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
         inflation_rewards::{
             delegation_may_need_adjustment,
-            points::{
-                CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points_for_tower,
-            },
+            points::{CalculationEnvironment, DelegatedVoteState, PointValue},
             redeem_rewards,
         },
+        reward_epoch_delegated_stakes::RewardEpochDelegatedStakes,
         reward_info::RewardInfo,
         stake_account::StakeAccount,
         stakes::{Stakes, is_delegation_inert},
@@ -175,7 +173,7 @@ fn calculate_block_reward(
     delegation: &Delegation,
     stake_history: &StakeHistory,
     distribution_epoch_vote_accounts: &VoteAccounts,
-    ag_epoch_type: &AlpenglowEpochType,
+    reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes,
     new_warmup_cooldown_rate_epoch: Option<Epoch>,
 ) -> u64 {
     let vote_pubkey = delegation.voter_pubkey;
@@ -189,18 +187,6 @@ fn calculate_block_reward(
     // includes updated stake activation values from after the new epoch
     // calculation, so we need to use `RewardEpochDelegatedStakes` for the exact
     // values at the end of the reward epoch.
-    let (AlpenglowEpochType::Alpenglow {
-        reward_epoch_delegated_stakes,
-        ..
-    }
-    | AlpenglowEpochType::MigrationEpoch {
-        reward_epoch_delegated_stakes,
-        ..
-    }) = ag_epoch_type
-    else {
-        debug!("Alpenglow must be enabled for block reward calculation");
-        return 0;
-    };
     let total_active_stake = reward_epoch_delegated_stakes
         .delegated_stakes
         .get(&vote_pubkey)
@@ -520,19 +506,11 @@ impl Bank {
         metrics: &mut RewardsMetrics,
     ) -> PartitionedRewardsCalculation {
         let capitalization = self.capitalization();
-        let epoch_inflation_rewards =
-            if AlpenglowEpochType::is_alpenglow_or_migration_epoch(self, rewarded_epoch) {
-                EpochInflationAccountState::new_from_bank(self)
-                    .and_then(|state| state.inflation_rewards_for_epoch(rewarded_epoch))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Missing epoch inflation state for non-Tower reward epoch \
-                             {rewarded_epoch}"
-                        )
-                    })
-            } else {
-                self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch)
-            };
+        let epoch_inflation_rewards = EpochInflationAccountState::new_from_bank(self)
+            .and_then(|state| state.inflation_rewards_for_epoch(rewarded_epoch))
+            .unwrap_or_else(|| {
+                panic!("Missing epoch inflation state for reward epoch {rewarded_epoch}")
+            });
         // `distribution_epoch_vote_accounts` is the post-VAT-filter snapshot
         // produced upstream of this call, so its length is the right value for
         // the `epoch_rewards` metric.
@@ -585,15 +563,13 @@ impl Bank {
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
     ) -> Option<CalculateValidatorRewardsResult> {
-        let ag_epoch_type =
-            AlpenglowEpochType::get(self, rewarded_epoch, Some(reward_epoch_delegated_stakes));
+        assert_eq!(reward_epoch_delegated_stakes.epoch, rewarded_epoch);
         self.calculate_reward_points_partitioned(
             stake_history,
             &stake_delegations,
             &cached_vote_accounts,
             rewarded_epoch,
             epoch_inflation_rewards,
-            &ag_epoch_type,
             thread_pool,
             metrics,
         )
@@ -605,7 +581,7 @@ impl Bank {
                     cached_vote_accounts,
                     rewarded_epoch,
                     point_value.clone(),
-                    &ag_epoch_type,
+                    reward_epoch_delegated_stakes,
                     thread_pool,
                     reward_calc_tracer,
                     metrics,
@@ -662,7 +638,7 @@ impl Bank {
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
         adjust_delegations_for_rent: bool,
-        ag_epoch_type: &AlpenglowEpochType,
+        reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes,
         custom_commission_collector: bool,
     ) -> Option<InflationRewardWithCommission> {
         // curry closure to add the contextual stake_pubkey
@@ -774,7 +750,7 @@ impl Bank {
                 adjust_delegations_for_rent,
             },
             reward_calc_tracer,
-            ag_epoch_type,
+            reward_epoch_delegated_stakes,
             current_lamports,
             minimum_lamports,
         ) {
@@ -821,7 +797,7 @@ impl Bank {
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
         point_value: PointValue,
-        ag_epoch_type: &AlpenglowEpochType,
+        reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes,
         thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         metrics: &mut RewardsMetrics,
@@ -872,7 +848,7 @@ impl Bank {
                             stake_account.delegation(),
                             stake_history,
                             cached_vote_accounts.distribution_epoch_vote_accounts,
-                            ag_epoch_type,
+                            reward_epoch_delegated_stakes,
                             new_warmup_cooldown_rate_epoch,
                         )
                     } else {
@@ -890,7 +866,7 @@ impl Bank {
                         delay_commission_updates,
                         commission_rate_in_basis_points,
                         adjust_delegations_for_rent,
-                        ag_epoch_type,
+                        reward_epoch_delegated_stakes,
                         custom_commission_collector,
                     );
 
@@ -987,81 +963,17 @@ impl Bank {
     /// Returns reward lamports and points for the epoch or none if points == 0.
     fn calculate_reward_points_partitioned<'a>(
         &self,
-        stake_history: &StakeHistory,
-        stake_delegations: &Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-        cached_vote_accounts: &CachedVoteAccounts<'_>,
-        rewarded_epoch: Epoch,
+        _stake_history: &StakeHistory,
+        _stake_delegations: &Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+        _cached_vote_accounts: &CachedVoteAccounts<'_>,
+        _rewarded_epoch: Epoch,
         epoch_inflation_rewards: u64,
-        ag_epoch_type: &AlpenglowEpochType,
-        thread_pool: &ThreadPool,
-        metrics: &RewardsMetrics,
+        _thread_pool: &ThreadPool,
+        _metrics: &RewardsMetrics,
     ) -> Option<PointValue> {
-        let CachedVoteAccounts {
-            distribution_epoch_vote_accounts,
-            ..
-        } = cached_vote_accounts;
-
-        let solana_vote_program: Pubkey = solana_vote_program::id();
-        let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-        match ag_epoch_type {
-            AlpenglowEpochType::Alpenglow { .. } => {
-                // In alpenglow, we do not need to compute `PointValue::points` as the final
-                // rewards are simply the total credits stored in the vote account.  We just need
-                // to return a `Some` value with valid rewards.
-                return Some(PointValue {
-                    rewards: epoch_inflation_rewards,
-                    points: 0,
-                });
-            }
-            AlpenglowEpochType::Tower => {
-                // For tower we need to compute the valid `PointValue::points`.
-            }
-            AlpenglowEpochType::MigrationEpoch { .. } => {
-                // For the migrating epoch, we need to compute the tower portion of `PointValue::points`.
-            }
-        }
-
-        let remove_inactive_stakes = self.feature_set.snapshot().remove_inactive_stakes;
-        let (points, measure_us) = measure_us!(thread_pool.install(|| {
-            stake_delegations
-                .par_iter()
-                .map(|(_stake_pubkey, stake_account)| {
-                    let delegation = stake_account.delegation();
-                    if remove_inactive_stakes
-                        && is_delegation_inert(
-                            delegation,
-                            rewarded_epoch,
-                            stake_history,
-                            new_warmup_cooldown_rate_epoch,
-                        )
-                    {
-                        return 0;
-                    }
-                    let vote_pubkey = delegation.voter_pubkey;
-
-                    let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey)
-                    else {
-                        return 0;
-                    };
-                    if vote_account.owner() != &solana_vote_program {
-                        return 0;
-                    }
-
-                    calculate_points_for_tower(
-                        stake_account.stake_state(),
-                        DelegatedVoteState::from(vote_account.vote_state_view()),
-                        stake_history,
-                        new_warmup_cooldown_rate_epoch,
-                    )
-                    .unwrap_or(0)
-                })
-                .sum::<u128>()
-        }));
-        metrics.calculate_points_us.fetch_add(measure_us, Relaxed);
-
-        (points > 0).then_some(PointValue {
+        Some(PointValue {
             rewards: epoch_inflation_rewards,
-            points,
+            points: 0,
         })
     }
 
@@ -1113,9 +1025,9 @@ impl Bank {
             stake_delegations,
             cached_vote_accounts,
         } = self.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(self);
-        let ag_epoch_type =
-            AlpenglowEpochType::get(self, rewarded_epoch, reward_epoch_delegated_stakes.as_ref());
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(self)
+            .expect("reward epoch delegated stakes must exist during reward recalculation");
+        assert_eq!(reward_epoch_delegated_stakes.epoch, rewarded_epoch);
 
         // On recalculation, only the `StakeRewardCalculation::stake_rewards`
         // field is relevant. It is assumed that reward commission accounts have
@@ -1137,7 +1049,7 @@ impl Bank {
                 cached_vote_accounts,
                 rewarded_epoch,
                 point_value,
-                &ag_epoch_type,
+                &reward_epoch_delegated_stakes,
                 thread_pool,
                 null_tracer(),
                 &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
@@ -1357,13 +1269,11 @@ mod tests {
                 RewardInfo, SlotLeader, null_tracer,
                 partitioned_epoch_rewards::{
                     EpochRewardPhase, EpochRewardStatus, PartitionedStakeRewards,
-                    StartBlockHeightAndPartitionedRewards,
                     tests::{
-                        RewardBank, SLOTS_PER_EPOCH, add_vote_and_stake_accounts,
-                        build_partitioned_stake_rewards, create_default_reward_bank,
-                        create_reward_bank, create_reward_bank_for_block_revenue_sharing,
+                        RewardBank, SLOTS_PER_EPOCH, build_partitioned_stake_rewards,
+                        create_default_reward_bank, create_reward_bank,
+                        create_reward_bank_for_block_revenue_sharing,
                         create_reward_bank_with_specific_stakes, modify_vote_state,
-                        populate_vote_accounts_with_votes,
                     },
                 },
                 tests::create_genesis_config,
@@ -1376,9 +1286,7 @@ mod tests {
             stakes::{Stakes, tests::create_staked_node_accounts},
         },
         agave_feature_set::{FeatureSet, delay_commission_updates},
-        agave_votor_messages::{
-            consensus_message::BLS_KEYPAIR_DERIVE_SEED, migration::AG_MIGRATION_EPOCH_CREDIT,
-        },
+        agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
         proptest::prelude::*,
         rand::Rng,
         rayon::ThreadPoolBuilder,
@@ -1408,7 +1316,7 @@ mod tests {
         },
         solana_vote_program::vote_state::{self, create_bls_proof_of_possession},
         std::{
-            collections::{HashMap, HashSet},
+            collections::HashMap,
             sync::{Arc, RwLock, RwLockReadGuard},
         },
         test_case::{test_case, test_matrix},
@@ -1508,6 +1416,8 @@ mod tests {
                 rewarded_epoch_vote_accounts: None,
                 distribution_epoch_vote_accounts: &distribution_epoch_vote_accounts,
             };
+            let reward_epoch_delegated_stakes =
+                reward_epoch_delegated_stakes_for_tests(rewarded_epoch);
 
             let maybe_reward = bank.redeem_delegation_rewards(
                 rewarded_epoch,
@@ -1521,7 +1431,7 @@ mod tests {
                 false, // delay_commission_updates
                 true,  // commission_rate_in_basis_points
                 true,  // adjust_delegations_for_rent (SIMD-0392)
-                &AlpenglowEpochType::Tower,
+                &reward_epoch_delegated_stakes,
                 false, // custom_commission_collector
             );
 
@@ -1611,85 +1521,13 @@ mod tests {
         assert_eq!(0, total_reward_commissions);
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    /// Test rewards computation and partitioned rewards distribution at the epoch boundary
-    fn test_rewards_computation_via_onchain_votes(is_alpenglow: bool) {
-        agave_logger::setup();
-
-        // Delegations to get rewards (2 SOL).
-        let delegations = 100;
-        let stakes = (0..delegations).map(|_| 2_000_000_000).collect::<Vec<_>>();
-        let bank = create_reward_bank_with_specific_stakes(
-            stakes,
-            PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
-            SLOTS_PER_EPOCH,
-            is_alpenglow,
-        )
-        .0
-        .bank;
-
-        // Calculate rewards
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let mut rewards_metrics = RewardsMetrics::default();
-        let expected_rewards = 100_000_000_000;
-
-        let stakes = bank.stakes_cache.stakes();
-        let rewarded_epoch = 0;
-        let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-        } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(&bank)
-            .unwrap_or_else(|| reward_epoch_delegated_stakes_for_tests(rewarded_epoch));
-        let calculated_rewards = bank.calculate_validator_rewards(
-            &stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-            rewarded_epoch,
-            expected_rewards,
-            &reward_epoch_delegated_stakes,
-            null_tracer(),
-            &thread_pool,
-            &mut rewards_metrics,
-        );
-
-        let reward_commissions = &calculated_rewards.as_ref().unwrap().reward_commissions;
-        let stake_rewards = &calculated_rewards
-            .as_ref()
-            .unwrap()
-            .stake_reward_calculation;
-
-        let total_reward_commissions: u64 = reward_commissions
-            .values()
-            .map(|rc| rc.commission_lamports)
-            .sum();
-
-        // An Alpenglow genesis starts with one Tower slot in its migration epoch (slot 0).
-        // This test processes vote txs which are disabled in AG, so in AG only the slot 0 will get rewards.
-        let expected_distributed_rewards = if is_alpenglow {
-            expected_rewards / SLOTS_PER_EPOCH
-        } else {
-            expected_rewards
-        };
-        // assert that total rewards matches the sum of reward commissions and stake rewards
-        assert_eq!(
-            stake_rewards.total_stake_rewards_lamports + total_reward_commissions,
-            expected_distributed_rewards
-        );
-
-        // assert that number of stake rewards matches
-        assert_eq!(stake_rewards.stake_rewards.num_rewards(), delegations);
-    }
-
     #[test]
     fn test_rewards_point_calculation() {
         agave_logger::setup();
 
         let expected_num_delegations = 100;
         let RewardBank { bank, .. } =
-            create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH, true).0;
+            create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).0;
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let rewards_metrics = RewardsMetrics::default();
@@ -1702,27 +1540,19 @@ mod tests {
             stake_delegations,
             cached_vote_accounts,
         } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(&bank);
-        let ag_epoch_type = AlpenglowEpochType::get(
-            &bank,
-            rewarded_epoch,
-            reward_epoch_delegated_stakes.as_ref(),
-        );
-
         let point_value = bank.calculate_reward_points_partitioned(
             &stake_history,
             &stake_delegations,
             &cached_vote_accounts,
             rewarded_epoch,
             expected_rewards,
-            &ag_epoch_type,
             &thread_pool,
             &rewards_metrics,
         );
 
         assert!(point_value.is_some());
         assert_eq!(point_value.as_ref().unwrap().rewards, expected_rewards);
-        assert_eq!(point_value.as_ref().unwrap().points, 8400000000000);
+        assert_eq!(point_value.as_ref().unwrap().points, 0);
     }
 
     #[test]
@@ -1750,12 +1580,11 @@ mod tests {
             &cached_vote_accounts,
             rewarded_epoch,
             expected_rewards,
-            &AlpenglowEpochType::Tower,
             &thread_pool,
             &rewards_metrics,
         );
 
-        assert!(point_value.is_none());
+        assert_eq!(point_value.unwrap().points, 0);
     }
 
     #[test]
@@ -1850,23 +1679,15 @@ mod tests {
         genesis_utils::minimum_vote_account_balance_for_vat(100)
     }
 
-    fn create_epoch_operations_genesis(is_alpenglow: bool) -> GenesisConfigInfo {
+    fn create_epoch_operations_genesis() -> GenesisConfigInfo {
         let mint_lamports = 1_000_000 * LAMPORTS_PER_SOL;
         let validator_pubkey = Pubkey::new_unique();
         let validator_stake_lamports = 42 * LAMPORTS_PER_SOL;
-        if is_alpenglow {
-            genesis_utils::create_genesis_config_with_leader(
-                mint_lamports,
-                &validator_pubkey,
-                validator_stake_lamports,
-            )
-        } else {
-            genesis_utils::create_genesis_config_with_tower_leader(
-                mint_lamports,
-                &validator_pubkey,
-                validator_stake_lamports,
-            )
-        }
+        genesis_utils::create_genesis_config_with_leader(
+            mint_lamports,
+            &validator_pubkey,
+            validator_stake_lamports,
+        )
     }
 
     fn recalculate_reward_commissions_for_tests(bank: &Bank) -> RewardCommissions {
@@ -1886,9 +1707,8 @@ mod tests {
             stake_delegations,
             cached_vote_accounts,
         } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(bank);
-        let ag_epoch_type =
-            AlpenglowEpochType::get(bank, rewarded_epoch, reward_epoch_delegated_stakes.as_ref());
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(bank)
+            .expect("reward epoch delegated stakes must exist");
 
         let (reward_commissions, ..) = bank.calculate_stake_rewards_and_commissions(
             &stake_history,
@@ -1896,7 +1716,7 @@ mod tests {
             cached_vote_accounts,
             rewarded_epoch,
             point_value,
-            &ag_epoch_type,
+            &reward_epoch_delegated_stakes,
             &thread_pool,
             null_tracer(),
             &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
@@ -2035,9 +1855,7 @@ mod tests {
                 modify_vote_state(&bank, vote_address, &|vote_state: &mut VoteStateV4| {
                     let last_credits = vote_state
                         .epoch_credits
-                        .iter()
-                        .rev()
-                        .find(|entry| **entry != AG_MIGRATION_EPOCH_CREDIT)
+                        .last()
                         .map(|(_epoch, credits, _)| *credits)
                         .unwrap_or(0);
                     vote_state.epoch_credits.push((
@@ -2045,20 +1863,6 @@ mod tests {
                         last_credits + earned_credits,
                         last_credits,
                     ));
-                    // Slot 0 is the only Tower slot in the default test genesis, so credits
-                    // synthesized there precede the migration marker. Later credits are AG.
-                    let is_migration_epoch =
-                        bank.get_alpenglow_migration_slot()
-                            .is_some_and(|migration_slot| {
-                                bank.epoch_schedule().get_epoch(migration_slot) == bank.epoch()
-                            });
-                    if is_migration_epoch
-                        && !vote_state
-                            .epoch_credits
-                            .contains(&AG_MIGRATION_EPOCH_CREDIT)
-                    {
-                        vote_state.epoch_credits.push(AG_MIGRATION_EPOCH_CREDIT);
-                    }
                 });
             }
         }
@@ -2102,9 +1906,7 @@ mod tests {
                     .epoch_schedule()
                     .get_leader_schedule_epoch(bank.slot());
                 let (collector_vat_burn, vat_transferred_to_collector) =
-                    if bank.feature_set.snapshot().alpenglow
-                        && prev_bank.epoch_stakes(leader_schedule_epoch).is_none()
-                    {
+                    if prev_bank.epoch_stakes(leader_schedule_epoch).is_none() {
                         let vote_accounts = bank
                             .epoch_stakes(leader_schedule_epoch)
                             .unwrap()
@@ -2174,17 +1976,12 @@ mod tests {
         bank
     }
 
-    #[test_case(true, true; "alpenglow_delay_commission_updates")]
-    #[test_case(false, true; "alpenglow_instant_commission_updates")]
-    #[test_case(true, false; "towerbft_delay_commission_updates")]
-    #[test_case(false, false; "towerbft_instant_commission_updates")]
-    fn test_calculate_stake_vote_rewards_new_vote_account(
-        delay_commission_updates: bool,
-        is_alpenglow: bool,
-    ) {
+    #[test_case(true; "delay_commission_updates")]
+    #[test_case(false; "instant_commission_updates")]
+    fn test_calculate_stake_vote_rewards_new_vote_account(delay_commission_updates: bool) {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_epoch_operations_genesis(is_alpenglow);
+        } = create_epoch_operations_genesis();
 
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         if !delay_commission_updates {
@@ -2253,12 +2050,11 @@ mod tests {
         );
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_calculate_stake_vote_rewards_prestaked_vote_account(is_alpenglow: bool) {
+    #[test]
+    fn test_calculate_stake_vote_rewards_prestaked_vote_account() {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_epoch_operations_genesis(is_alpenglow);
+        } = create_epoch_operations_genesis();
 
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         let (bank, bank_forks) =
@@ -2346,7 +2142,7 @@ mod tests {
             mut genesis_config,
             voting_keypair,
             ..
-        } = create_epoch_operations_genesis(false);
+        } = create_epoch_operations_genesis();
         let genesis_vote_address = voting_keypair.pubkey();
 
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
@@ -2421,7 +2217,7 @@ mod tests {
             mut genesis_config,
             voting_keypair,
             ..
-        } = create_epoch_operations_genesis(false);
+        } = create_epoch_operations_genesis();
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         genesis_config.rent = Rent::default();
         let genesis_vote_address = voting_keypair.pubkey();
@@ -2516,14 +2312,13 @@ mod tests {
         assert_eq!(stake_state.stake().unwrap().delegation.stake, delegation);
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_calculate_stake_vote_rewards_genesis_vote_account(is_alpenglow: bool) {
+    #[test]
+    fn test_calculate_stake_vote_rewards_genesis_vote_account() {
         let GenesisConfigInfo {
             mut genesis_config,
             voting_keypair,
             ..
-        } = create_epoch_operations_genesis(is_alpenglow);
+        } = create_epoch_operations_genesis();
 
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         let (bank, bank_forks) =
@@ -2619,105 +2414,6 @@ mod tests {
         );
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_calculate_stake_vote_rewards_via_on_chain_votes(is_alpenglow: bool) {
-        agave_logger::setup();
-
-        let expected_num_delegations = 1;
-        let RewardBank {
-            bank,
-            voters,
-            stakers,
-        } = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH, is_alpenglow).0;
-
-        let vote_pubkey = voters.first().unwrap();
-        let stake_pubkey = *stakers.first().unwrap();
-        let stake_account = bank
-            .load_slow_with_fixed_root(&bank.ancestors, &stake_pubkey)
-            .unwrap()
-            .0;
-
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let mut rewards_metrics = RewardsMetrics::default();
-
-        let point_value = PointValue {
-            rewards: 100000, // lamports to split
-            points: 1000,    // over these points
-        };
-        let tracer = |_event: &RewardCalculationEvent| {};
-        let reward_calc_tracer = Some(tracer);
-        let rewarded_epoch = bank.epoch() - 1;
-        let stakes: RwLockReadGuard<Stakes<StakeAccount<Delegation>>> = bank.stakes_cache.stakes();
-        let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-        } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(&bank);
-        let ag_epoch_type = AlpenglowEpochType::get(
-            &bank,
-            rewarded_epoch,
-            reward_epoch_delegated_stakes.as_ref(),
-        );
-        let (vote_rewards_accounts, stake_reward_calculation) = bank
-            .calculate_stake_rewards_and_commissions(
-                &stake_history,
-                stake_delegations,
-                cached_vote_accounts,
-                rewarded_epoch,
-                point_value,
-                &ag_epoch_type,
-                &thread_pool,
-                reward_calc_tracer,
-                &mut rewards_metrics,
-            );
-        drop(stakes);
-
-        let vote_account = bank
-            .load_slow_with_fixed_root(&bank.ancestors, vote_pubkey)
-            .unwrap()
-            .0;
-        let vote_state = VoteStateV4::deserialize(vote_account.data(), vote_pubkey).unwrap();
-
-        assert_eq!(vote_rewards_accounts.len(), 1);
-        let reward_commission = vote_rewards_accounts.get(vote_pubkey).unwrap();
-        let vote_rewards = 0;
-        assert_eq!(reward_commission.commission_lamports, vote_rewards);
-        assert_eq!(reward_commission.commission_bps, None);
-
-        assert_eq!(stake_reward_calculation.stake_rewards.num_rewards(), 1);
-        let expected_reward = {
-            let stake_reward = if is_alpenglow {
-                8_400_000_000_000 / SLOTS_PER_EPOCH
-            } else {
-                8_400_000_000_000
-            };
-            let stake_state: StakeStateV2 = stake_account.state().unwrap();
-            let mut stake = stake_state.stake().unwrap();
-            stake.credits_observed = vote_state.credits();
-            stake.delegation.stake += stake_reward;
-            PartitionedStakeReward {
-                stake_pubkey,
-                inflation: InflationReward {
-                    stake,
-                    stake_reward,
-                    commission_bps: None,
-                },
-                block_reward: 0,
-            }
-        };
-        assert_eq!(
-            stake_reward_calculation
-                .stake_rewards
-                .get(0)
-                .unwrap()
-                .as_ref()
-                .unwrap(),
-            &expected_reward
-        );
-    }
-
     fn compare_stake_rewards(
         expected_stake_rewards: &[PartitionedStakeRewards],
         received_stake_rewards: &[PartitionedStakeRewards],
@@ -2742,6 +2438,8 @@ mod tests {
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let mut rewards_metrics = RewardsMetrics::default();
+        let reward_epoch_delegated_stakes =
+            RewardEpochDelegatedStakes::get(&bank).expect("reward epoch stakes must exist");
         let stakes = bank.stakes_cache.stakes();
         let EpochRewardCalculateParamInfo {
             stake_history,
@@ -2760,7 +2458,7 @@ mod tests {
             stake_delegations,
             cached_vote_accounts,
             rewarded_epoch,
-            &reward_epoch_delegated_stakes_for_tests(rewarded_epoch),
+            &reward_epoch_delegated_stakes,
             null_tracer(),
             &thread_pool,
             &mut rewards_metrics,
@@ -2838,156 +2536,6 @@ mod tests {
         }
 
         assert!(!bank.get_epoch_rewards_sysvar().active);
-    }
-
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_recalculate_partitioned_rewards_via_onchain_votes(is_alpenglow: bool) {
-        let expected_num_delegations = 4;
-        let num_rewards_per_block = 2;
-        // Distribute 4 rewards over 2 blocks
-        let mut stakes = vec![2_000_000_000; expected_num_delegations - 1];
-        // Add stake large enough to be affected by total-rewards discrepancy
-        stakes.push(40_000_000_000);
-        let (RewardBank { bank, .. }, _bank_forks) = create_reward_bank_with_specific_stakes(
-            stakes,
-            num_rewards_per_block,
-            SLOTS_PER_EPOCH - 1,
-            is_alpenglow,
-        );
-        let rewarded_epoch = bank.epoch();
-
-        // Advance to next epoch boundary to update EpochStakes Kludgy because
-        // mutable Bank methods require the bank not be Arc-wrapped.
-        let new_slot = bank.slot() + 1;
-        let mut bank = Bank::new_from_parent(bank, SlotLeader::default(), new_slot);
-        let expected_starting_block_height = bank.block_height() + 1;
-
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let mut rewards_metrics = RewardsMetrics::default();
-        let stakes = bank.stakes_cache.stakes();
-        let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-        } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(&bank)
-            .unwrap_or_else(|| reward_epoch_delegated_stakes_for_tests(rewarded_epoch));
-        let PartitionedRewardsCalculation {
-            stake_rewards:
-                StakeRewardCalculation {
-                    stake_rewards: expected_stake_rewards,
-                    ..
-                },
-            point_value,
-            ..
-        } = bank.calculate_rewards_for_partitioning(
-            &stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-            rewarded_epoch,
-            &reward_epoch_delegated_stakes,
-            null_tracer(),
-            &thread_pool,
-            &mut rewards_metrics,
-        );
-        drop(stakes);
-
-        bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
-        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
-            StartBlockHeightAndPartitionedRewards {
-                distribution_starting_block_height,
-                all_stake_rewards: ref recalculated_rewards,
-                ref partition_indices,
-            },
-        )) = bank.epoch_reward_status
-        else {
-            panic!("{:?} not active", bank.epoch_reward_status);
-        };
-        assert_eq!(
-            expected_starting_block_height,
-            distribution_starting_block_height
-        );
-
-        let recalculated_rewards =
-            build_partitioned_stake_rewards(recalculated_rewards, partition_indices);
-
-        let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        let expected_partition_indices = hash_rewards_into_partitions(
-            &expected_stake_rewards,
-            &epoch_rewards_sysvar.parent_blockhash,
-            epoch_rewards_sysvar.num_partitions as usize,
-        );
-        let expected_stake_rewards =
-            build_partitioned_stake_rewards(&expected_stake_rewards, &expected_partition_indices);
-
-        assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
-        compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
-
-        let sysvar = bank.get_epoch_rewards_sysvar();
-        assert_eq!(point_value.rewards, sysvar.total_rewards);
-        if is_alpenglow {
-            assert_eq!(sysvar.total_rewards, 0);
-        }
-
-        // Advance to first distribution slot (bank_forks kept in scope so parent has fork_graph)
-        let mut bank =
-            Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), SLOTS_PER_EPOCH + 1);
-
-        bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
-        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
-            StartBlockHeightAndPartitionedRewards {
-                distribution_starting_block_height,
-                all_stake_rewards: ref recalculated_rewards,
-                ref partition_indices,
-            },
-        )) = bank.epoch_reward_status
-        else {
-            panic!("{:?} not active", bank.epoch_reward_status);
-        };
-
-        // Note that recalculated rewards are **NOT** the same as expected
-        // rewards, which were calculated before any distribution. This is
-        // because "Recalculated rewards" doesn't include already distributed
-        // stake rewards. Therefore, the partition_indices are different too.
-        // However, the actual rewards for the remaining partitions should be
-        // the same. The following code use the test helper function to build
-        // the partitioned stake rewards for the remaining partitions and verify
-        // that they are the same.
-        let recalculated_rewards =
-            build_partitioned_stake_rewards(recalculated_rewards, partition_indices);
-        assert_eq!(
-            expected_starting_block_height,
-            distribution_starting_block_height
-        );
-        assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
-        if is_alpenglow {
-            // This migration epoch has a zero reward budget and no Alpenglow reward credits, so
-            // the zero-lamport rewards were not stored and remain present during recalculation.
-            compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
-        } else {
-            // First partition has already been distributed, so recalculation returns 0 rewards.
-            assert_eq!(recalculated_rewards[0].num_rewards(), 0);
-            let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-            let starting_index = (bank.block_height() + 1
-                - epoch_rewards_sysvar.distribution_starting_block_height)
-                as usize;
-            compare_stake_rewards(
-                &expected_stake_rewards[starting_index..],
-                &recalculated_rewards[starting_index..],
-            );
-        }
-
-        // Advance until reward distribution has completed.
-        let mut bank = bank;
-        for _ in 1..bank.get_epoch_rewards_sysvar().num_partitions {
-            assert!(bank.get_epoch_rewards_sysvar().active);
-            let next_slot = bank.slot() + 1;
-            bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), next_slot);
-            bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
-        }
-
-        assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
 
     #[test]
@@ -3248,9 +2796,8 @@ mod tests {
         );
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_initialize_after_snapshot_restore(is_alpenglow: bool) {
+    #[test]
+    fn test_initialize_after_snapshot_restore() {
         let expected_num_stake_rewards = 4;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
@@ -3264,7 +2811,6 @@ mod tests {
             stakes,
             num_rewards_per_block,
             SLOTS_PER_EPOCH - 1,
-            is_alpenglow,
         );
 
         // Advance to next epoch boundary (bank_forks kept in scope so parent has fork_graph)
@@ -3306,9 +2852,8 @@ mod tests {
         let _ = &bank_forks; // Keep in scope so parent banks retain fork_graph
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_initialize_after_snapshot_restore_preserves_vat_filtered_rewards(is_alpenglow: bool) {
+    #[test]
+    fn test_initialize_after_snapshot_restore_preserves_vat_filtered_rewards() {
         let num_validators = crate::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS + 1;
         let num_rewards_per_block = 64;
         // Use unique stakes so VAT filtering deterministically excludes exactly
@@ -3327,7 +2872,6 @@ mod tests {
             stakes,
             num_rewards_per_block,
             SLOTS_PER_EPOCH - 1,
-            is_alpenglow,
         );
 
         let filtered_vote_pubkey = *voters.last().unwrap();
@@ -3772,207 +3316,6 @@ mod tests {
         }
     }
 
-    fn add_voters_and_populate(
-        bank: &Bank,
-        voters: &mut HashSet<Pubkey>,
-        stakers: &mut HashSet<Pubkey>,
-        count: usize,
-        stake_lamports: u64,
-        commission: u8,
-    ) {
-        let vote_lamports = 1; // avoid getting cleaned up
-        for _ in 0..count {
-            let _ =
-                add_vote_and_stake_accounts(bank, voters, stakers, stake_lamports, vote_lamports);
-        }
-        populate_vote_accounts_with_votes(bank, voters.iter().copied(), commission);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn assert_cached_rewards(
-        bank: &Arc<Bank>,
-        expected_cache_len: usize,
-        expected_voters: &HashSet<Pubkey>,
-        expected_stakers: &HashSet<Pubkey>,
-        expected_reward_commissions: u64,
-        expected_stake_rewards: u64,
-        expected_rewards: u64,
-        expected_points: u128,
-        parent_capitalization: Option<u64>,
-    ) {
-        let cache = bank.epoch_rewards_calculation_cache.lock().unwrap();
-        assert_eq!(cache.len(), expected_cache_len);
-        let partitioned = cache.get(&bank.parent_hash()).unwrap().as_ref();
-        let reward_commissions = &partitioned.reward_commissions;
-        let StakeRewardCalculation {
-            stake_rewards,
-            total_stake_rewards_lamports,
-            ..
-        } = &partitioned.stake_rewards;
-        let point_value = &partitioned.point_value;
-        let voters: HashSet<_> = reward_commissions.keys().copied().collect();
-        let stakers: HashSet<_> = stake_rewards
-            .rewards
-            .iter()
-            .filter_map(|reward| reward.as_ref())
-            .map(|reward| reward.stake_pubkey)
-            .collect();
-        assert_eq!(expected_voters, &voters);
-        assert_eq!(expected_stakers, &stakers);
-        let total_reward_commission_lamports: u64 = reward_commissions
-            .values()
-            .map(|rc| rc.commission_lamports)
-            .sum();
-        assert_eq!(
-            total_reward_commission_lamports,
-            expected_reward_commissions
-        );
-        assert_eq!(*total_stake_rewards_lamports, expected_stake_rewards);
-        assert_eq!(point_value.rewards, expected_rewards);
-        assert_eq!(point_value.points, expected_points);
-        if let Some(parent_cap) = parent_capitalization {
-            assert_eq!(
-                bank.capitalization(),
-                parent_cap + expected_reward_commissions
-            );
-        }
-    }
-
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_epoch_boundary_for_onchain_votes(is_alpenglow: bool) {
-        let delegations = 100;
-        let stake_lamports = 2_000_000_000;
-        let stakes: Vec<_> = (0..delegations).map(|_| stake_lamports).collect();
-        let (
-            RewardBank {
-                bank: bank1,
-                voters,
-                stakers,
-                ..
-            },
-            _bank_forks,
-        ) = create_reward_bank_with_specific_stakes(
-            stakes,
-            PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
-            SLOTS_PER_EPOCH,
-            is_alpenglow,
-        );
-        let mut voters: HashSet<_> = voters.into_iter().collect();
-        let mut stakers: HashSet<_> = stakers.into_iter().collect();
-
-        // The sysvar account holds the rent-exempt lamport added after
-        // reward calculation, so the bank capitalization exceeds the cached
-        // value by this amount.
-        let epoch_rewards_sysvar_balance = bank1.get_balance(&solana_sysvar::epoch_rewards::id());
-        assert_eq!(epoch_rewards_sysvar_balance, 1);
-
-        let (expected_stake_rewards, expected_rewards) = if is_alpenglow {
-            (0, 0)
-        } else {
-            (499500, 499542)
-        };
-        assert_cached_rewards(
-            &bank1,
-            1,        // expected_cache_len
-            &voters,  // expected_voters
-            &stakers, // expected_stakers
-            0,        // expected_reward_commissions
-            expected_stake_rewards,
-            expected_rewards,
-            8_400_000_000_000u128, // expected_points
-            None,                  // parent_capitalization
-        );
-
-        add_voters_and_populate(&bank1, &mut voters, &mut stakers, 5, 5_000_000_000, 10);
-        let parent_capitalization = bank1.capitalization();
-
-        let bank2 = Arc::new(Bank::new_from_parent(
-            Arc::clone(&bank1),
-            SlotLeader::default(),
-            SLOTS_PER_EPOCH * 2,
-        ));
-
-        // This helper synthesizes Tower vote credits, but not Alpenglow reward-certificate
-        // credits. Full Alpenglow epochs therefore retain their reward budget without producing
-        // reward accounts in this fixture.
-        let no_reward_accounts = HashSet::new();
-        let (
-            expected_voters,
-            expected_stakers,
-            expected_reward_commissions,
-            expected_stake_rewards,
-            expected_rewards,
-            expected_points,
-        ) = if is_alpenglow {
-            (&no_reward_accounts, &no_reward_accounts, 0, 0, 499542, 0)
-        } else {
-            (&voters, &stakers, 5555, 494730, 500313, 9_450_000_000_000)
-        };
-        let capitalization_after_vat_burn = if is_alpenglow {
-            let num_vat_burns = RewardEpochDelegatedStakes::get(&bank2)
-                .unwrap()
-                .delegated_stakes
-                .len() as u64;
-            parent_capitalization - bank2.vat_to_burn_per_epoch() * num_vat_burns
-        } else {
-            parent_capitalization
-        };
-        assert_cached_rewards(
-            &bank2,
-            2, // expected_cache_len
-            expected_voters,
-            expected_stakers,
-            expected_reward_commissions,
-            expected_stake_rewards,
-            expected_rewards,
-            expected_points,
-            Some(capitalization_after_vat_burn),
-        );
-
-        add_voters_and_populate(&bank2, &mut voters, &mut stakers, 10, 8_000_000_000, 10);
-        let parent_capitalization = bank2.capitalization();
-
-        let bank3 = Arc::new(Bank::new_from_parent(
-            Arc::clone(&bank2),
-            SlotLeader::default(),
-            SLOTS_PER_EPOCH * 3,
-        ));
-
-        let (
-            expected_voters,
-            expected_stakers,
-            expected_reward_commissions,
-            expected_stake_rewards,
-            expected_rewards,
-            expected_points,
-        ) = if is_alpenglow {
-            (&no_reward_accounts, &no_reward_accounts, 0, 0, 495380, 0)
-        } else {
-            (&voters, &stakers, 17300, 485365, 502779, 12_810_000_000_000)
-        };
-        let capitalization_after_vat_burn = if is_alpenglow {
-            let num_vat_burns = RewardEpochDelegatedStakes::get(&bank3)
-                .unwrap()
-                .delegated_stakes
-                .len() as u64;
-            parent_capitalization - bank3.vat_to_burn_per_epoch() * num_vat_burns
-        } else {
-            parent_capitalization
-        };
-        assert_cached_rewards(
-            &bank3,
-            3, // expected_cache_len
-            expected_voters,
-            expected_stakers,
-            expected_reward_commissions,
-            expected_stake_rewards,
-            expected_rewards,
-            expected_points,
-            Some(capitalization_after_vat_burn),
-        );
-    }
-
     #[test]
     fn test_load_and_reward_commission_accounts_empty() {
         let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
@@ -4123,12 +3466,11 @@ mod tests {
         }
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_inflation_rewards_collector(is_alpenglow: bool) {
+    #[test]
+    fn test_inflation_rewards_collector() {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_epoch_operations_genesis(is_alpenglow);
+        } = create_epoch_operations_genesis();
 
         genesis_config.rent = Rent::default();
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
@@ -4221,12 +3563,11 @@ mod tests {
         }
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_inflation_rewards_collector_becomes_rent_exempt(is_alpenglow: bool) {
+    #[test]
+    fn test_inflation_rewards_collector_becomes_rent_exempt() {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_epoch_operations_genesis(is_alpenglow);
+        } = create_epoch_operations_genesis();
 
         genesis_config.rent = Rent::default();
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
@@ -4274,12 +3615,11 @@ mod tests {
         );
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_repeated_inflation_rewards_collector(is_alpenglow: bool) {
+    #[test]
+    fn test_repeated_inflation_rewards_collector() {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_epoch_operations_genesis(is_alpenglow);
+        } = create_epoch_operations_genesis();
 
         genesis_config.rent = Rent::default();
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
@@ -4352,12 +3692,11 @@ mod tests {
         );
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_invalid_inflation_rewards_collector_burns_sysvar_rewards(is_alpenglow: bool) {
+    #[test]
+    fn test_invalid_inflation_rewards_collector_burns_sysvar_rewards() {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_epoch_operations_genesis(is_alpenglow);
+        } = create_epoch_operations_genesis();
 
         genesis_config.rent = Rent::default();
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
@@ -4420,16 +3759,8 @@ mod tests {
             reward_commission.commission_lamports + reward_commission.burned_lamports;
 
         // The burned commission lamports must be reflected in the epoch rewards sysvar. Alpenglow
-        // tracks the full epoch budget in total rewards, while TowerBFT's total is the amount
-        // actually earned.
-        if is_alpenglow {
-            assert!(epoch_rewards.total_rewards > epoch_rewards.distributed_rewards);
-        } else {
-            assert_eq!(
-                epoch_rewards.total_rewards,
-                epoch_rewards.distributed_rewards
-            );
-        }
+        // tracks the full epoch budget in total rewards.
+        assert!(epoch_rewards.total_rewards > epoch_rewards.distributed_rewards);
         assert_eq!(
             epoch_rewards.distributed_rewards,
             expected_distributed_rewards
@@ -4473,12 +3804,11 @@ mod tests {
         assert_eq!(result.amounts.burned_lamports, 0);
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_inflation_collector_becomes_vote_account_burns_rewards(is_alpenglow: bool) {
+    #[test]
+    fn test_inflation_collector_becomes_vote_account_burns_rewards() {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_epoch_operations_genesis(is_alpenglow);
+        } = create_epoch_operations_genesis();
 
         genesis_config.rent = Rent::default();
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
@@ -4576,11 +3906,7 @@ mod tests {
         assert_eq!(vote_reward.lamports, 0);
 
         let balance_after_conversion = bank.get_balance(&collector_into_vote_address);
-        let vat = if is_alpenglow {
-            bank.vat_to_burn_per_epoch()
-        } else {
-            0
-        };
+        let vat = bank.vat_to_burn_per_epoch();
         assert_eq!(balance_after_conversion + vat, pre_balance);
 
         // `collector_into_vote_address` receives its rewards, but `vote_address`
@@ -4686,12 +4012,9 @@ mod tests {
         let vote_accounts = [(voter_pubkey, (total_stake, vote_account))]
             .into_iter()
             .collect();
-        let ag_epoch_type = AlpenglowEpochType::Alpenglow {
-            migration_epoch: 0,
-            reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes {
-                epoch: rewarded_epoch,
-                delegated_stakes: [(voter_pubkey, total_stake)].into_iter().collect(),
-            },
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: rewarded_epoch,
+            delegated_stakes: [(voter_pubkey, total_stake)].into_iter().collect(),
         };
 
         let delegation = Delegation {
@@ -4713,7 +4036,7 @@ mod tests {
             &delegation,
             &stake_history,
             &vote_accounts,
-            &ag_epoch_type,
+            &reward_epoch_delegated_stakes,
             new_warmup_cooldown_rate_epoch,
         )
     }

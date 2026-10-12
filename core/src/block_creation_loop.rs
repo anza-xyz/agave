@@ -17,13 +17,11 @@ use {
     agave_votor::{event::LeaderWindowInfo, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::{
         consensus_message::{Block, BlockId},
-        reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
-    solana_entry::block_component::{
-        BlockFooterV1, GenesisCertBlockMarker, UpdateParentV1, VersionedBlockMarker,
-    },
+    solana_entry::block_component::{BlockFooterV1, UpdateParentV1, VersionedBlockMarker},
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_ledger::{
@@ -35,13 +33,13 @@ use {
     solana_measure::measure::Measure,
     solana_perf::packet::{BytesPacket, Meta, PacketBatch, bytes::Bytes},
     solana_poh::{
-        poh_recorder::{GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS, PohRecorder, PohRecorderError},
+        poh_recorder::{MAX_LEADER_SLOT_RANGE, PohRecorder, PohRecorderError},
         record_channels::RecordReceiver,
     },
     solana_pubkey::Pubkey,
     solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
     solana_runtime::{
-        bank::{Bank, NewBankOptions},
+        bank::Bank,
         bank_forks::{BankForks, SharableBanks},
         bank_forks_controller::{BankForksController, BankForksControllerError},
         block_component_processor::BlockComponentProcessor,
@@ -153,8 +151,7 @@ pub struct BlockCreationLoopConfig {
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
-    // Channel to receive RecordReceiver from PohService
-    pub record_receiver_receiver: Receiver<RecordReceiver>,
+    pub record_receiver: RecordReceiver,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
 
     /// Sender for packets to banking stage (used to re-inject transactions after sad leader handover).
@@ -191,9 +188,6 @@ struct LeaderContext {
 
     // Metrics
     metrics: LoopMetrics,
-
-    // Migration information
-    genesis_cert_block_marker: GenesisCertBlockMarker,
 }
 
 #[derive(Default)]
@@ -268,7 +262,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         banking_tracer,
         slot_status_notifier,
         entry_notification_sender,
-        record_receiver_receiver,
+        record_receiver,
         leader_window_info_receiver,
         replay_highest_frozen,
         highest_parent_ready,
@@ -287,25 +281,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
 
     info!("{my_pubkey}: Block creation loop initialized");
 
-    // Wait for PohService to be shutdown
-    let record_receiver = match record_receiver_receiver.recv() {
-        Ok(receiver) => receiver,
-        Err(e) => {
-            info!("{my_pubkey}: Failed to receive RecordReceiver from PohService. Exiting: {e:?}",);
-            return;
-        }
-    };
-
-    let genesis_cert = bank_forks
-        .read()
-        .unwrap()
-        .migration_status()
-        .genesis_certificate()
-        .expect("Migration complete, genesis certificate must exist");
-    let genesis_cert_block_marker = GenesisCertBlockMarker::try_from((*genesis_cert).clone())
-        .expect("Genesis certificate must be valid");
-
-    info!("{my_pubkey}: PohService has shutdown, BlockCreationLoop is enabled");
+    info!("{my_pubkey}: BlockCreationLoop is enabled");
 
     let mut ctx = LeaderContext {
         exit,
@@ -330,20 +306,8 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         banking_stage_sender,
         metrics: LoopMetrics::default(),
         highest_finalized,
-        genesis_cert_block_marker,
     };
 
-    // Setup poh
-    // Important this is called *before* any new alpenglow
-    // leaders call `set_bank()`, otherwise, the old PoH
-    // tick producer will still tick in that alpenglow bank
-    // Since we received the `record_receiver` from PohService, we know that PohService has shutdown
-    // AND that replay no longer touches poh recorder. At this point BlockCreationLoop is the sole
-    // modifier of poh_recorder
-    {
-        let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
-        w_poh_recorder.enable_alpenglow();
-    }
     reset_poh_recorder(&ctx.bank_forks.read().unwrap().working_bank(), &ctx);
 
     while !ctx.exit.load(Ordering::Relaxed) {
@@ -448,7 +412,7 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
         bank.slot(),
         bank,
         Some(ctx.blockstore.as_ref()),
-        GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
+        MAX_LEADER_SLOT_RANGE,
     );
 
     ctx.poh_recorder
@@ -743,20 +707,10 @@ fn record_and_complete_block(
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
-    // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
-    // would be tower slots.
-    let reward_cert_request = if bank_slot
-        > ctx
-            .genesis_cert_block_marker
-            .slot
-            .saturating_add(NUM_SLOTS_FOR_REWARD)
-    {
-        ctx.reward_certs_requestor
-            .request_reward_certs(slot_metrics, ctx.my_pubkey, bank_slot)
-            .map_err(|()| PohRecorderError::ChannelDisconnected)?
-    } else {
-        None
-    };
+    let reward_cert_request = ctx
+        .reward_certs_requestor
+        .request_reward_certs(slot_metrics, ctx.my_pubkey, bank_slot)
+        .map_err(|()| PohRecorderError::ChannelDisconnected)?;
     let mut accumulated_txs = vec![];
     let mut records_shutdown = false;
     let window_has_moved_on = loop {
@@ -876,8 +830,7 @@ fn record_and_complete_block(
     };
 
     let max_tick_height = bank.max_tick_height();
-    // Set the tick height for the bank to max_tick_height - 1, so that PohRecorder::flush_cache()
-    // will properly increment the tick_height to max_tick_height.
+    // Leave room for PohRecorder's final Alpenglow tick to complete the bank.
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
@@ -1397,7 +1350,6 @@ fn create_and_insert_leader_bank(
         leader,
         ctx.rpc_subscriptions.as_deref(),
         &ctx.slot_status_notifier,
-        NewBankOptions::default(),
     )
     .mark_leader_bank();
     // make sure parent is frozen for finalized hashes via the above
@@ -1407,13 +1359,6 @@ fn create_and_insert_leader_bank(
         &parent_bank.last_blockhash(),
         &parent_bank.hash(),
     );
-
-    // If this is the first alpenglow block, set PoH to low power mode.
-    // This is persisted in the recorder when we set bank.
-    // Replayers will update hashes_per_tick when they process the genesis certificate block marker.
-    if should_include_genesis_certificate(parent_slot, &ctx.genesis_cert_block_marker) {
-        tpu_bank.set_hashes_per_tick(None);
-    }
 
     // A sad leader handover recreates the bank for the same slot, but the entries emitted before
     // the UpdateParent marker still occupy shreds in that slot. Preserve their reservations before
@@ -1444,14 +1389,6 @@ fn create_and_insert_leader_bank(
         return Err(StartLeaderError::PohRecorder(err));
     }
 
-    // If this is the first alpenglow block, emit the genesis certificate marker.
-    // This happens before record intake restarts, so a send failure can be
-    // recovered by clearing the just-created bank and resetting PoH.
-    if let Err(err) = maybe_include_genesis_certificate(parent_slot, ctx) {
-        abort_working_bank(ctx, slot)?;
-        return Err(StartLeaderError::PohRecorder(err));
-    }
-
     // Wakeup banking stage
     ctx.record_receiver.restart(bank_id);
 
@@ -1462,44 +1399,6 @@ fn create_and_insert_leader_bank(
     Ok(())
 }
 
-///  If this the very first alpenglow block, include the genesis certificate
-///  Note: if the alpenglow genesis is 0, then this is a test cluster with Alpenglow enabled
-///  by default. No need to put in the genesis marker as the genesis account is already populated
-///  during cluster creation.
-fn maybe_include_genesis_certificate(
-    parent_slot: Slot,
-    ctx: &LeaderContext,
-) -> Result<(), PohRecorderError> {
-    if !should_include_genesis_certificate(parent_slot, &ctx.genesis_cert_block_marker) {
-        return Ok(());
-    }
-
-    // Send the genesis certificate
-    let block_marker =
-        VersionedBlockMarker::from_genesis_cert_block_marker(ctx.genesis_cert_block_marker.clone());
-    let mut poh_recorder = ctx.poh_recorder.write().unwrap();
-    poh_recorder.send_marker(block_marker)?;
-
-    // Process the genesis certificate
-    let bank = poh_recorder.bank().expect("Bank cannot have been cleared");
-    let mut processor = bank.block_component_processor.write().unwrap();
-    processor
-        .on_genesis_cert_block_marker_leader(
-            bank.clone(),
-            ctx.genesis_cert_block_marker.clone(),
-            &ctx.bank_forks.read().unwrap().migration_status(),
-        )
-        .expect("Recording genesis certificate should not fail");
-    Ok(())
-}
-
-fn should_include_genesis_certificate(
-    parent_slot: Slot,
-    genesis_cert_block_marker: &GenesisCertBlockMarker,
-) -> bool {
-    parent_slot == genesis_cert_block_marker.slot && parent_slot != 0
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -1508,7 +1407,6 @@ mod tests {
         agave_banking_stage_ingress_types::BankingPacketReceiver,
         agave_votor_messages::consensus_message::BlockId,
         crossbeam_channel::bounded,
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{block_component::VersionedUpdateParent, recorder_message::RecorderMessage},
         solana_keypair::Keypair,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
@@ -1534,15 +1432,6 @@ mod tests {
             lamports,
             Hash::new_unique(),
         ))
-    }
-
-    fn test_genesis_cert_block_marker() -> GenesisCertBlockMarker {
-        GenesisCertBlockMarker {
-            slot: Slot::MAX,
-            block_id: BlockId::default(),
-            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
-        }
     }
 
     fn fixed_leader_schedule(my_pubkey: Pubkey, root_bank: &Bank) -> Arc<LeaderScheduleCache> {
@@ -1678,7 +1567,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -1689,7 +1578,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (_record_sender, record_receiver) = record_channels(false);
@@ -1721,7 +1609,6 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
-            genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
         // A window for the new identity can arrive before the loop refreshes its cached identity.
         let err = produce_window(
@@ -1794,7 +1681,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -1805,7 +1692,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (_record_sender, record_receiver) = record_channels(false);
@@ -1837,7 +1723,6 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
-            genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
         create_and_insert_leader_bank(1, root_bank.clone(), 0, &mut ctx).unwrap();
@@ -1882,91 +1767,6 @@ mod tests {
     }
 
     #[test]
-    fn test_marker_send_clears_bank() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let my_pubkey = Pubkey::new_unique();
-        let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
-        let root_bank = Bank::new_for_tests(&genesis.genesis_config);
-        root_bank.freeze();
-        let bank_forks = BankForks::new_rw_arc(root_bank);
-        let root_bank = bank_forks.read().unwrap().root_bank();
-        let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
-        let parent_bank = Bank::new_from_parent(
-            root_bank.clone(),
-            SlotLeader {
-                id: my_pubkey,
-                vote_address: Pubkey::new_unique(),
-            },
-            1,
-        );
-        parent_bank.freeze();
-        bank_forks.write().unwrap().insert(parent_bank);
-        let parent_bank = bank_forks.read().unwrap().get(1).unwrap();
-
-        let exit = Arc::new(AtomicBool::new(false));
-        let poh_config = PohConfig::default();
-        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
-            root_bank.tick_height(),
-            root_bank.last_blockhash(),
-            root_bank,
-            Some((2, 2)),
-            parent_bank.ticks_per_slot(),
-            blockstore.clone(),
-            &leader_schedule_cache,
-            &poh_config,
-            exit.clone(),
-        );
-        poh_recorder.enable_alpenglow();
-        drop(entry_receiver);
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-
-        let (_record_sender, record_receiver) = record_channels(false);
-        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
-        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
-        let mut genesis_cert_block_marker = test_genesis_cert_block_marker();
-        genesis_cert_block_marker.slot = parent_bank.slot();
-        let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
-        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
-
-        let mut ctx = LeaderContext {
-            exit,
-            my_pubkey,
-            leader_window_info_receiver,
-            pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
-            highest_finalized: Arc::new(RwLock::new(None)),
-            blockstore,
-            record_receiver,
-            poh_recorder,
-            leader_schedule_cache,
-            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
-            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
-            bank_forks: bank_forks.clone(),
-            bank_forks_controller,
-            rpc_subscriptions: None,
-            slot_status_notifier: None,
-            entry_notification_sender: None,
-            banking_tracer: BankingTracer::new_disabled(),
-            replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            reward_certs_requestor,
-            banking_stage_sender,
-            metrics: LoopMetrics::default(),
-            genesis_cert_block_marker,
-        };
-
-        let err = create_and_insert_leader_bank(2, parent_bank, 0, &mut ctx).unwrap_err();
-        assert!(matches!(
-            err,
-            StartLeaderError::PohRecorder(PohRecorderError::SendError(_))
-        ));
-        assert!(!ctx.poh_recorder.read().unwrap().has_bank());
-        assert!(ctx.bank_forks.read().unwrap().get(2).is_none());
-        assert!(ctx.record_receiver.is_shutdown());
-        assert!(ctx.record_receiver.is_safe_to_restart());
-    }
-
-    #[test]
     fn test_moved_on_aborts() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -1980,7 +1780,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -1991,7 +1791,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (record_sender, record_receiver) = record_channels(false);
@@ -2023,7 +1822,6 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
-            genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
         create_and_insert_leader_bank(1, root_bank, 0, &mut ctx).unwrap();
@@ -2116,7 +1914,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -2127,7 +1925,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (record_sender, record_receiver) = record_channels(false);
@@ -2166,7 +1963,6 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
-            genesis_cert_block_marker: test_genesis_cert_block_marker(),
         };
 
         let leader_slot = 4;

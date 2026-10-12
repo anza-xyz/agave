@@ -13,9 +13,9 @@ use {
         genesis_utils::{
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
-            create_genesis_config_with_leader, create_genesis_config_with_tower_leader,
-            create_genesis_config_with_vote_accounts, create_lockup_stake_account,
-            genesis_sysvar_and_builtin_program_lamports, minimum_vote_account_balance_for_vat,
+            create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
+            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
+            minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
@@ -61,10 +61,7 @@ use {
         partitioned_rewards::PartitionedEpochRewardsConfig,
     },
     solana_client_traits::SyncClient,
-    solana_clock::{
-        DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot,
-        UnixTimestamp,
-    },
+    solana_clock::{Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot},
     solana_cluster_type::ClusterType,
     solana_compute_budget::{
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
@@ -101,7 +98,6 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_packet::PACKET_DATA_SIZE,
-    solana_poh_config::PohConfig,
     solana_program_runtime::{
         declare_process_instruction,
         execution_budget::{self, MAX_COMPUTE_UNIT_LIMIT},
@@ -150,8 +146,8 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, BlockTimestamp, MAX_LOCKOUT_HISTORY, VoteAuthorize, VoteInit, VoteStateV4,
-            VoteStateVersions, VoterWithBLSArgs, create_bls_pubkey_and_proof_of_possession,
+            self, BlockTimestamp, VoteAuthorize, VoteInit, VoteStateV4, VoteStateVersions,
+            VoterWithBLSArgs, create_bls_pubkey_and_proof_of_possession,
             create_v4_account_with_authorized, handler::VoteStateHandler,
         },
     },
@@ -194,7 +190,9 @@ fn create_genesis_config_no_tx_fee(lamports: u64) -> (GenesisConfig, Keypair) {
 }
 
 pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, Keypair) {
-    solana_genesis_config::create_genesis_config(lamports)
+    let (mut genesis_config, mint_keypair) = solana_genesis_config::create_genesis_config(lamports);
+    activate_feature(&mut genesis_config, feature_set::alpenglow::id());
+    (genesis_config, mint_keypair)
 }
 
 fn create_genesis_config_with_legacy_hashes(lamports: u64) -> (GenesisConfig, Keypair) {
@@ -438,11 +436,6 @@ fn bank1_sysvar_delta() -> u64 {
     SLOT_HASHES_SYSVAR_MIN_BALANCE
 }
 
-fn bank2_sysvar_delta() -> u64 {
-    const EPOCH_REWARDS_SYSVAR_MIN_BALANCE: u64 = 1_454_640;
-    EPOCH_REWARDS_SYSVAR_MIN_BALANCE
-}
-
 #[test]
 fn test_bank_capitalization() {
     let (bank0, _bank_forks) = Bank::new_for_tests(&GenesisConfig {
@@ -644,14 +637,6 @@ pub(in crate::bank) fn new_from_parent_next_epoch(
     Bank::new_from_parent_with_bank_forks(bank_forks, parent, SlotLeader::default(), slot)
 }
 
-#[test]
-fn test_bank_update_vote_stake_rewards() {
-    let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-    check_bank_update_vote_stake_rewards(|bank: &Bank| {
-        bank._load_vote_and_stake_accounts(&thread_pool, null_tracer())
-    });
-}
-
 impl Bank {
     fn _load_vote_and_stake_accounts(
         &self,
@@ -743,284 +728,6 @@ impl Bank {
 
 type StakeDelegations = Vec<(Pubkey, StakeAccount<Delegation>)>;
 type StakeDelegationsMap = DashMap<Pubkey, StakeDelegations>;
-
-#[cfg(test)]
-fn check_bank_update_vote_stake_rewards<F>(load_vote_and_stake_accounts: F)
-where
-    F: Fn(&Bank) -> StakeDelegationsMap,
-{
-    agave_logger::setup();
-
-    // create a bank that ticks really slowly...
-    let bank0 = Bank::new_for_tests(&GenesisConfig {
-        accounts: (0..42)
-            .map(|_| {
-                (
-                    solana_pubkey::new_rand(),
-                    Account::new(1_000_000_000, 0, &Pubkey::default()),
-                )
-            })
-            .collect(),
-        // set it up so the first epoch is a full year long
-        poh_config: PohConfig {
-            target_tick_duration: Duration::from_secs(
-                SECONDS_PER_YEAR as u64 / MINIMUM_SLOTS_PER_EPOCH / DEFAULT_TICKS_PER_SLOT,
-            ),
-            hashes_per_tick: None,
-            target_tick_count: None,
-        },
-        cluster_type: ClusterType::MainnetBeta,
-
-        ..GenesisConfig::default()
-    });
-    let (bank0, _bank_forks) = bank0.wrap_with_bank_forks_for_tests();
-
-    assert_eq!(
-        bank0.capitalization(),
-        42 * 1_000_000_000 + genesis_sysvar_and_builtin_program_lamports(),
-    );
-
-    let ((vote_id, mut vote_account), (stake_id, stake_account)) =
-        crate::stakes::tests::create_staked_node_accounts(10_000, &bank0.rent_collector.rent);
-    let vote_account_balance = bank0.minimum_vote_account_balance_for_vat();
-    vote_account.set_lamports(vote_account_balance);
-    let starting_vote_and_stake_balance = 10_000
-        + vote_account_balance
-        + bank0
-            .rent_collector
-            .rent
-            .minimum_balance(StakeStateV2::size_of());
-
-    // set up accounts
-    bank0.store_account_and_update_capitalization(&stake_id, &stake_account);
-
-    // generate some rewards
-    let mut vote_state =
-        VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
-    for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-        vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
-        let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
-        vote_account.set_state(&versioned).unwrap();
-        bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
-    }
-    bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
-    bank0.freeze();
-
-    assert_eq!(
-        bank0.capitalization(),
-        42 * 1_000_000_000
-            + genesis_sysvar_and_builtin_program_lamports()
-            + starting_vote_and_stake_balance
-            + bank0_sysvar_delta(),
-    );
-    assert!(bank0.rewards.read().unwrap().is_empty());
-
-    load_vote_and_stake_accounts(&bank0);
-
-    // put a child bank in epoch 1
-    let bank1 = Arc::new(Bank::new_from_parent(
-        bank0.clone(),
-        SlotLeader::default(),
-        bank0.get_slots_in_epoch(bank0.epoch()) + 1,
-    ));
-
-    // verify that there's inflation
-    assert_ne!(bank1.capitalization(), bank0.capitalization());
-
-    // check voting rewards show up in rewards vector
-    assert_eq!(
-        *bank1.rewards.read().unwrap(),
-        vec![(
-            vote_id,
-            RewardInfo {
-                reward_type: RewardType::Voting,
-                lamports: 0,
-                post_balance: bank1.get_balance(&vote_id),
-                commission_bps: Some(0),
-            }
-        ),]
-    );
-    bank1.freeze();
-
-    // advance past partitioned epoch staking rewards delivery
-    let bank2 = Arc::new(Bank::new_from_parent(
-        bank1.clone(),
-        SlotLeader::default(),
-        bank1.slot() + 1,
-    ));
-    // verify that there's inflation
-    assert_ne!(bank2.capitalization(), bank0.capitalization());
-
-    // verify the inflation is represented in validator_points
-    let paid_rewards = bank2.capitalization()
-        - bank0.capitalization()
-        - bank1_sysvar_delta()
-        - bank2_sysvar_delta();
-
-    // this assumes that no new builtins or precompiles were activated in bank1 or bank2
-    let validator_rewards_lamports =
-        bank2.calculate_epoch_inflation_rewards(bank0.capitalization(), bank0.epoch());
-
-    // verify the stake and vote accounts are the right size
-    assert!(
-        ((bank2.get_balance(&stake_id) - stake_account.lamports() + bank2.get_balance(&vote_id)
-            - vote_account.lamports()) as f64
-            - validator_rewards_lamports as f64)
-            .abs()
-            < 1.0
-    );
-
-    // verify the rewards are the right size
-    assert!((validator_rewards_lamports as f64 - paid_rewards as f64).abs() < 1.0); // rounding, truncating
-
-    // verify validator rewards show up in rewards vectors
-    assert_eq!(
-        *bank2.rewards.read().unwrap(),
-        vec![(
-            stake_id,
-            RewardInfo {
-                reward_type: RewardType::Staking,
-                lamports: validator_rewards_lamports as i64,
-                post_balance: bank2.get_balance(&stake_id),
-                commission_bps: Some(0),
-            }
-        )]
-    );
-    bank2.freeze();
-    add_root_and_flush_write_cache(&bank0);
-    add_root_and_flush_write_cache(&bank1);
-    add_root_and_flush_write_cache(&bank2);
-    assert_eq!(
-        bank2.capitalization(),
-        bank2.calculate_capitalization_for_tests()
-    );
-}
-
-fn do_test_bank_update_rewards_determinism() -> u64 {
-    // create a bank that ticks really slowly...
-    let (bank, _bank_forks) = Bank::new_for_tests(&GenesisConfig {
-        accounts: (0..42)
-            .map(|_| {
-                (
-                    solana_pubkey::new_rand(),
-                    Account::new(1_000_000_000, 0, &Pubkey::default()),
-                )
-            })
-            .collect(),
-        // set it up so the first epoch is a full year long
-        poh_config: PohConfig {
-            target_tick_duration: Duration::from_secs(
-                SECONDS_PER_YEAR as u64 / MINIMUM_SLOTS_PER_EPOCH / DEFAULT_TICKS_PER_SLOT,
-            ),
-            hashes_per_tick: None,
-            target_tick_count: None,
-        },
-        cluster_type: ClusterType::MainnetBeta,
-
-        ..GenesisConfig::default()
-    })
-    .wrap_with_bank_forks_for_tests();
-
-    assert_eq!(
-        bank.capitalization(),
-        42 * 1_000_000_000 + genesis_sysvar_and_builtin_program_lamports()
-    );
-
-    let vote_id = solana_pubkey::new_rand();
-    let node_pubkey = solana_pubkey::new_rand();
-    let mut vote_account = vote_state::create_v4_account_with_authorized(
-        &node_pubkey,
-        &vote_id,
-        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-        &vote_id,
-        0,
-        &vote_id,
-        0,
-        &node_pubkey,
-        bank.minimum_vote_account_balance_for_vat(),
-    );
-    let stake_id1 = solana_pubkey::new_rand();
-    let stake_account1 = crate::stakes::tests::create_stake_account(
-        123,
-        &vote_id,
-        &stake_id1,
-        &bank.rent_collector.rent,
-    );
-    let stake_id2 = solana_pubkey::new_rand();
-    let stake_account2 = crate::stakes::tests::create_stake_account(
-        456,
-        &vote_id,
-        &stake_id2,
-        &bank.rent_collector.rent,
-    );
-
-    // set up accounts
-    bank.store_account_and_update_capitalization(&stake_id1, &stake_account1);
-    bank.store_account_and_update_capitalization(&stake_id2, &stake_account2);
-
-    // generate some rewards
-    let mut vote_state =
-        VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
-    for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-        vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
-        let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
-        vote_account.set_state(&versioned).unwrap();
-        bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-    }
-    bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-
-    // put a child bank in epoch 1, which calls update_rewards()...
-    let bank1 = Arc::new(Bank::new_from_parent(
-        bank.clone(),
-        SlotLeader::default(),
-        bank.get_slots_in_epoch(bank.epoch()) + 1,
-    ));
-    // verify that there's inflation
-    assert_ne!(bank1.capitalization(), bank.capitalization());
-
-    bank1.freeze();
-    add_root_and_flush_write_cache(&bank);
-    add_root_and_flush_write_cache(&bank1);
-    assert_eq!(
-        bank1.capitalization(),
-        bank1.calculate_capitalization_for_tests()
-    );
-
-    // verify voting and staking rewards are recorded
-    let rewards = bank1.rewards.read().unwrap();
-    rewards
-        .iter()
-        .find(|(_address, reward)| reward.reward_type == RewardType::Voting)
-        .unwrap();
-
-    // put another child bank, since partitioned staking rewards are delivered
-    // after the epoch-boundary slot
-    let bank2 = Bank::new_from_parent(bank1.clone(), SlotLeader::default(), bank1.slot() + 1);
-    let rewards = bank2.rewards.read().unwrap();
-    rewards
-        .iter()
-        .find(|(_address, reward)| {
-            reward.reward_type == RewardType::Staking
-                || reward.reward_type == RewardType::DeactivatedStake
-        })
-        .unwrap();
-
-    bank1.capitalization()
-}
-
-#[test]
-fn test_bank_update_rewards_determinism() {
-    agave_logger::setup();
-
-    // The same reward should be distributed given same credits
-    let expected_capitalization = do_test_bank_update_rewards_determinism();
-    // Repeat somewhat large number of iterations to expose possible different behavior
-    // depending on the randomly-seeded HashMap ordering
-    for _ in 0..30 {
-        let actual_capitalization = do_test_bank_update_rewards_determinism();
-        assert_eq!(actual_capitalization, expected_capitalization);
-    }
-}
 
 // Test that purging 0 lamports accounts works.
 #[test]
@@ -1133,7 +840,6 @@ fn test_two_payments_to_one_party() {
     bank.transfer(amount * 2, &mint_keypair, &pubkey).unwrap();
     assert_eq!(bank.get_balance(&pubkey), amount * 3);
     assert_eq!(bank.transaction_count(), 2);
-    assert_eq!(bank.non_vote_transaction_count_since_restart(), 2);
 }
 
 #[test]
@@ -1264,7 +970,6 @@ fn test_account_not_found() {
         Err(TransactionError::AccountNotFound)
     );
     assert_eq!(bank.transaction_count(), 0);
-    assert_eq!(bank.non_vote_transaction_count_since_restart(), 0);
 }
 
 #[test]
@@ -1276,7 +981,6 @@ fn test_insufficient_funds() {
     let amount = genesis_config.rent.minimum_balance(0);
     bank.transfer(amount, &mint_keypair, &pubkey).unwrap();
     assert_eq!(bank.transaction_count(), 1);
-    assert_eq!(bank.non_vote_transaction_count_since_restart(), 1);
     assert_eq!(bank.get_balance(&pubkey), amount);
     assert_eq!(
         bank.transfer((mint_amount - amount) + 1, &mint_keypair, &pubkey),
@@ -1288,7 +992,6 @@ fn test_insufficient_funds() {
     // transaction_count returns the count of all committed transactions since
     // bank_transaction_count_fix was activated, regardless of success
     assert_eq!(bank.transaction_count(), 2);
-    assert_eq!(bank.non_vote_transaction_count_since_restart(), 2);
 
     let mint_pubkey = mint_keypair.pubkey();
     assert_eq!(bank.get_balance(&mint_pubkey), mint_amount - amount);
@@ -1692,10 +1395,6 @@ fn test_debits_before_credits(relax_fee_payer_constraint: bool) {
 
     // Assert bad transactions aren't counted.
     assert_eq!(bank.transaction_count(), expected_transactions);
-    assert_eq!(
-        bank.non_vote_transaction_count_since_restart(),
-        expected_transactions
-    );
 }
 
 #[test]
@@ -2689,7 +2388,6 @@ fn test_bank_squash() {
     assert_eq!(parent.process_transaction(&tx_transfer_mint_to_1), Ok(()));
     trace!("done parent process tx ");
     assert_eq!(parent.transaction_count(), 1);
-    assert_eq!(parent.non_vote_transaction_count_since_restart(), 1);
     assert_eq!(
         parent.get_signature_status(&tx_transfer_mint_to_1.signatures[0]),
         Some(Ok(()))
@@ -2704,17 +2402,11 @@ fn test_bank_squash() {
     );
 
     assert_eq!(bank.transaction_count(), parent.transaction_count());
-    assert_eq!(
-        bank.non_vote_transaction_count_since_restart(),
-        parent.non_vote_transaction_count_since_restart()
-    );
     let tx_transfer_1_to_2 =
         system_transaction::transfer(&key1, &key2.pubkey(), amount, genesis_config.hash());
     assert_eq!(bank.process_transaction(&tx_transfer_1_to_2), Ok(()));
     assert_eq!(bank.transaction_count(), 2);
-    assert_eq!(bank.non_vote_transaction_count_since_restart(), 2);
     assert_eq!(parent.transaction_count(), 1);
-    assert_eq!(parent.non_vote_transaction_count_since_restart(), 1);
     assert_eq!(
         parent.get_signature_status(&tx_transfer_1_to_2.signatures[0]),
         None
@@ -2740,9 +2432,7 @@ fn test_bank_squash() {
         bank.squash();
 
         assert_eq!(parent.transaction_count(), 1);
-        assert_eq!(parent.non_vote_transaction_count_since_restart(), 1);
         assert_eq!(bank.transaction_count(), 2);
-        assert_eq!(bank.non_vote_transaction_count_since_restart(), 2);
     }
 }
 
@@ -3264,20 +2954,14 @@ fn test_bank_inherit_tx_count() {
     );
 
     assert_eq!(bank0.transaction_count(), 0);
-    assert_eq!(bank0.non_vote_transaction_count_since_restart(), 0);
     assert_eq!(bank2.transaction_count(), 0);
-    assert_eq!(bank2.non_vote_transaction_count_since_restart(), 0);
     assert_eq!(bank1.transaction_count(), 1);
-    assert_eq!(bank1.non_vote_transaction_count_since_restart(), 1);
 
     bank1.squash();
 
     assert_eq!(bank0.transaction_count(), 0);
-    assert_eq!(bank0.non_vote_transaction_count_since_restart(), 0);
     assert_eq!(bank2.transaction_count(), 0);
-    assert_eq!(bank2.non_vote_transaction_count_since_restart(), 0);
     assert_eq!(bank1.transaction_count(), 1);
-    assert_eq!(bank1.non_vote_transaction_count_since_restart(), 1);
 
     let bank6 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
@@ -3286,13 +2970,10 @@ fn test_bank_inherit_tx_count() {
         3,
     );
     assert_eq!(bank1.transaction_count(), 1);
-    assert_eq!(bank1.non_vote_transaction_count_since_restart(), 1);
     assert_eq!(bank6.transaction_count(), 1);
-    assert_eq!(bank6.non_vote_transaction_count_since_restart(), 1);
 
     bank6.squash();
     assert_eq!(bank6.transaction_count(), 1);
-    assert_eq!(bank6.non_vote_transaction_count_since_restart(), 1);
 }
 
 #[test]
@@ -5453,9 +5134,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
     let mut vote_state = VoteStateHandler::new_v4(
         VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
     );
-    for slot in 0..4 {
-        vote_state::process_slot_vote_unchecked(&mut vote_state, slot);
-    }
+    vote_state.increment_credits(bank.epoch(), 4);
     vote_account
         .set_state(&VoteStateVersions::V4(Box::new(vote_state.unwrap_v4())))
         .unwrap();
@@ -5513,9 +5192,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "G1rANcscD2mdoaAwdXn29ERibx3o7Ks1Nk7h1C6Sfhk2"
+                    "EGi1Xb5Yh7hMEthZehURkUFgn2gqVwDZiEtvkBeVsZgs"
                 } else {
-                    "6gnFRPMgyQ1fj2xLKoQFwHqMCQ6HPPYLG7TUZFmuCen9"
+                    "7YumyFT8BfhEZRiGNn8av8kFkrmZX6hWR2ahHEL51sPL"
                 },
             );
         }
@@ -5525,9 +5204,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "TDnXLFxaMVtN4KFKmdSc28zTfQjd2sPVazrVkfUFv3G"
+                    "Gv7QT9QnmCJ1AB8pDmgVMcvx9YTHbqP3BYW2KsJRWBUb"
                 } else {
-                    "9HL7PKa6Xt6CPqJFmdM4zWziH2YZzA7U92cbhLvTuubF"
+                    "FneUqZfn18RpDxskxQMbkkmyBu53tKpPmvXQmGvr9CDX"
                 },
             );
         }
@@ -5536,9 +5215,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "G8mgrJ1vGXTfjRS8mmjYeHzkGwRLN5jvyirpApzB6Box"
+                    "GrQVe1VzyHh1aPLryLFyca4XAvb7iyv2JhjzTnM7DE1M"
                 } else {
-                    "6wrhEo1vT3P6bH8SuJrs7orouw7ivBkWs2XetuneH3hT"
+                    "A5H7Tn65AEvEpq5fFPbmNwh1yVupbQV39maBUikPfGuB"
                 },
             );
             break;
@@ -5589,9 +5268,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         let mut vote_state = VoteStateHandler::new_v4(
             VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
         );
-        for slot in 0..MAX_LOCKOUT_HISTORY + 42 {
-            vote_state::process_slot_vote_unchecked(&mut vote_state, slot as u64);
-        }
+        vote_state.increment_credits(bank0.epoch(), 42);
         vote_account
             .set_state(&VoteStateVersions::V4(Box::new(vote_state.unwrap_v4())))
             .unwrap();
@@ -5837,7 +5514,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "wSbqZyqZ2KXJFf3j2qQNwqipBqJHN9U7pgMDZPJv1vH",
+        "4FWGWrkGH2B2exJoBnihLZErFxjxK68Y6E4CwD5iYVee",
     );
 }
 
@@ -5956,7 +5633,8 @@ fn test_shrink_candidate_slots_cached() {
     // No more slots should be shrunk
     assert_eq!(bank2.shrink_candidate_slots(), 0);
     // alive_counts represents the count of alive accounts in the three slots 0,1,2
-    assert_eq!(alive_counts, vec![14, 1, 6]);
+    // Slot 0 includes the always-active Alpenglow feature and reward metadata accounts.
+    assert_eq!(alive_counts, vec![16, 1, 6]);
 }
 
 #[test]
@@ -6784,7 +6462,6 @@ fn test_block_limits() {
 
 fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
     assert_eq!(bank.ns_per_slot, params.ns_per_slot());
-    assert_eq!(bank.hashes_per_tick(), params.hashes_per_tick());
     assert_eq!(
         bank.slots_per_year.to_bits(),
         params.slots_per_year().to_bits()
@@ -6880,7 +6557,6 @@ fn test_vat_burn_slot_params() {
             ClusterType::Development,
             FeatureSet::default(),
         );
-        activate_feature(&mut genesis_config, feature_set::alpenglow::id());
         if let Some(feature_id) = slot_time_feature_id {
             activate_feature(&mut genesis_config, feature_id);
         }
@@ -6999,7 +6675,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
     assert_reduced_slot_time_hashes_per_tick(
         genesis_config,
         Some(LEGACY_HASHES_PER_TICK),
-        SLOT_PARAMS_200MS.hashes_per_tick(),
+        Some(LEGACY_HASHES_PER_TICK),
     );
 
     let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
@@ -7085,54 +6761,6 @@ fn test_reduce_slot_time_range_duration() {
         bank.slot_range_duration_nanos(0, SLOTS_PER_EPOCH * 3 - 1),
         u128::from(SLOTS_PER_EPOCH) * LEGACY_SLOT_PARAMS.ns_per_slot()
             + u128::from(SLOTS_PER_EPOCH * 2) * SLOT_PARAMS_200MS.ns_per_slot()
-    );
-}
-
-#[test]
-fn test_update_clock_slot_range_duration() {
-    const SLOTS_PER_EPOCH: Slot = 32;
-
-    let leader_pubkey = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        voting_keypair,
-        ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
-    genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
-    activate_feature(
-        &mut genesis_config,
-        feature_set::reduce_slot_time_to_200ms::id(),
-    );
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let vote_timestamp_slot = 4;
-    let vote_timestamp = bank.unix_timestamp_from_genesis();
-    update_vote_account_timestamp(
-        BlockTimestamp {
-            slot: vote_timestamp_slot,
-            timestamp: vote_timestamp,
-        },
-        &bank,
-        &voting_keypair.pubkey(),
-    );
-
-    let current_slot = SLOTS_PER_EPOCH + 3;
-    let bank = Bank::new_from_parent_with_bank_forks(
-        &bank_forks,
-        bank,
-        SlotLeader::default(),
-        current_slot,
-    );
-    let expected_elapsed = Duration::from_nanos_u128(
-        bank.slot_range_duration_nanos(vote_timestamp_slot + 1, current_slot),
-    );
-    let scalar_elapsed =
-        Duration::from_nanos(bank.ns_per_slot as u64) * (current_slot - vote_timestamp_slot) as u32;
-
-    assert_ne!(expected_elapsed.as_secs(), scalar_elapsed.as_secs());
-    assert_eq!(
-        bank.clock().unix_timestamp,
-        vote_timestamp + expected_elapsed.as_secs() as i64
     );
 }
 
@@ -7577,17 +7205,6 @@ fn test_update_clock_timestamp() {
     assert_eq!(bank.clock().unix_timestamp, parent_timestamp);
 }
 
-fn poh_estimate_offset(bank: &Bank) -> Duration {
-    let mut epoch_start_slot = bank.epoch_schedule.get_first_slot_in_epoch(bank.epoch());
-    if epoch_start_slot == bank.slot() {
-        epoch_start_slot = bank
-            .epoch_schedule
-            .get_first_slot_in_epoch(bank.epoch() - 1);
-    }
-    bank.slot().saturating_sub(epoch_start_slot) as u32
-        * Duration::from_nanos(bank.ns_per_slot as u64)
-}
-
 #[test]
 fn test_ns_per_slot() {
     let (genesis_config, _) = create_genesis_config(1);
@@ -7683,94 +7300,6 @@ fn test_slot_params_use_genesis_baseline_without_features() {
         bank.max_entry_bytes_per_slot(),
         DEFAULT_MAX_ENTRY_BYTES_PER_SLOT
     );
-}
-
-#[test]
-fn test_timestamp_slow() {
-    fn max_allowable_delta_since_epoch(bank: &Bank, max_allowable_drift: u32) -> i64 {
-        let poh_estimate_offset = poh_estimate_offset(bank);
-        (poh_estimate_offset.as_secs()
-            + (poh_estimate_offset * max_allowable_drift / 100).as_secs()) as i64
-    }
-
-    let leader_pubkey = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        voting_keypair,
-        ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
-    let slots_in_epoch = 32;
-    genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
-    let (mut bank, _bank_forks) =
-        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-    let slot_duration = Duration::from_nanos(bank.ns_per_slot as u64);
-
-    let recent_timestamp: UnixTimestamp = bank.unix_timestamp_from_genesis();
-    let additional_secs =
-        ((slot_duration * MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2 * 32) / 100).as_secs() as i64 + 1; // Greater than max_allowable_drift_slow_v2 for full epoch
-    update_vote_account_timestamp(
-        BlockTimestamp {
-            slot: bank.slot(),
-            timestamp: recent_timestamp + additional_secs,
-        },
-        &bank,
-        &voting_keypair.pubkey(),
-    );
-
-    // additional_secs greater than MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2 for an epoch
-    // timestamp bounded to 150% deviation
-    for _ in 0..31 {
-        bank = Arc::new(new_from_parent(bank));
-        assert_eq!(
-            bank.clock().unix_timestamp,
-            bank.clock().epoch_start_timestamp
-                + max_allowable_delta_since_epoch(&bank, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2),
-        );
-        assert_eq!(bank.clock().epoch_start_timestamp, recent_timestamp);
-    }
-}
-
-#[test]
-fn test_timestamp_fast() {
-    fn max_allowable_delta_since_epoch(bank: &Bank, max_allowable_drift: u32) -> i64 {
-        let poh_estimate_offset = poh_estimate_offset(bank);
-        (poh_estimate_offset.as_secs()
-            - (poh_estimate_offset * max_allowable_drift / 100).as_secs()) as i64
-    }
-
-    let leader_pubkey = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        voting_keypair,
-        ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
-    let slots_in_epoch = 32;
-    genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
-    let (mut bank, _bank_forks) =
-        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-
-    let recent_timestamp: UnixTimestamp = bank.unix_timestamp_from_genesis();
-    let additional_secs = 5; // Greater than MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST for full epoch
-    update_vote_account_timestamp(
-        BlockTimestamp {
-            slot: bank.slot(),
-            timestamp: recent_timestamp - additional_secs,
-        },
-        &bank,
-        &voting_keypair.pubkey(),
-    );
-
-    // additional_secs greater than MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST for an epoch
-    // timestamp bounded to 25% deviation
-    for _ in 0..31 {
-        bank = Arc::new(new_from_parent(bank));
-        assert_eq!(
-            bank.clock().unix_timestamp,
-            bank.clock().epoch_start_timestamp
-                + max_allowable_delta_since_epoch(&bank, MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST),
-        );
-        assert_eq!(bank.clock().epoch_start_timestamp, recent_timestamp);
-    }
 }
 
 #[test]

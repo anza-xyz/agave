@@ -15,7 +15,7 @@ use {
         stake::check_current_authority,
     },
     agave_feature_set::{
-        alpenglow, bls_pubkey_management_in_vote_account, commission_rate_in_basis_points,
+        bls_pubkey_management_in_vote_account, commission_rate_in_basis_points,
         custom_commission_collector, delay_commission_updates, vote_account_initialize_v2,
     },
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
@@ -33,11 +33,10 @@ use {
         offline::*,
     },
     solana_cli_output::{
-        CliVoteAccount, ReturnSignersConfig, VotesObserved, display::build_balance_message,
+        CliLandedVote, CliVoteAccount, ReturnSignersConfig, display::build_balance_message,
         get_epoch_history, return_signers_with_config,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_feature_gate_interface::from_account,
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -2018,33 +2017,8 @@ pub async fn process_show_vote_account(
         get_vote_account(rpc_client, vote_account_address, config.commitment).await?;
 
     let epoch_schedule = rpc_client.get_epoch_schedule().await?;
-    let tvc_activation_slot = rpc_client
-        .get_account_with_commitment(
-            &agave_feature_set::timely_vote_credits::id(),
-            config.commitment,
-        )
-        .await
-        .ok()
-        .and_then(|response| response.value)
-        .and_then(|account| from_account(&account))
-        .and_then(|feature| feature.activated_at);
-    let tvc_activation_epoch = tvc_activation_slot.map(|s| epoch_schedule.get_epoch(s));
-
-    let ag_is_active = get_feature_is_active(rpc_client, &alpenglow::id())
-        .await
-        .unwrap_or(false);
-    let ag_genesis_cert = if ag_is_active {
-        rpc_client.get_ag_genesis_cert().await?
-    } else {
-        None
-    };
-    let votes_observed = VotesObserved::new(&vote_state, &ag_genesis_cert);
-    let epoch_voting_history = get_epoch_history(
-        &epoch_schedule,
-        &vote_state,
-        &ag_genesis_cert,
-        tvc_activation_epoch,
-    );
+    let votes_observed = vote_state.votes.back().map(CliLandedVote::from);
+    let epoch_voting_history = get_epoch_history(&epoch_schedule, &vote_state);
 
     let epoch_rewards = if let Some(num_epochs) = with_rewards {
         match crate::stake::fetch_epoch_rewards(

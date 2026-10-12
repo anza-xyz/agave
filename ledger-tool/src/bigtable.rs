@@ -249,7 +249,6 @@ fn get_shred_config_from_ledger(
 
 struct BlockMarkers {
     header: VersionedBlockMarker,
-    genesis: Option<VersionedBlockMarker>,
     footer: VersionedBlockMarker,
 }
 
@@ -262,13 +261,11 @@ fn classify_alpenglow_block_markers(
     }
 
     let mut header = None;
-    let mut genesis = None;
     let mut footer = None;
     for marker in block_markers {
         let VersionedBlockMarker::V1(marker_v1) = &marker;
         let (marker_kind, destination) = match marker_v1 {
             BlockMarkerV1::BlockHeader(_) => ("header", &mut header),
-            BlockMarkerV1::GenesisCertificate(_) => ("genesis certificate", &mut genesis),
             BlockMarkerV1::BlockFooter(_) => ("footer", &mut footer),
             BlockMarkerV1::UpdateParent(_) => {
                 warn!(
@@ -290,11 +287,7 @@ fn classify_alpenglow_block_markers(
         header.ok_or_else(|| format!("Missing header block marker for Alpenglow slot {slot}"))?;
     let footer =
         footer.ok_or_else(|| format!("Missing footer block marker for Alpenglow slot {slot}"))?;
-    Ok(Some(BlockMarkers {
-        header,
-        genesis,
-        footer,
-    }))
+    Ok(Some(BlockMarkers { header, footer }))
 }
 
 fn entries_from_summaries(
@@ -417,7 +410,6 @@ fn make_alpenglow_shreds(
     let mut next_code_index = 0;
 
     let mut components = vec![BlockComponent::new_block_marker(markers.header)];
-    components.extend(markers.genesis.map(BlockComponent::new_block_marker));
     if !entries.is_empty() {
         components.push(BlockComponent::EntryBatch(entries));
     }
@@ -1841,9 +1833,7 @@ fn missing_blocks(reference: &[Slot], owned: &[Slot]) -> MissingBlocksData {
 mod tests {
     use {
         super::*,
-        agave_votor_messages::consensus_message::BlockId,
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_entry::block_component::{BlockFooterV1, BlockHeaderV1, GenesisCertBlockMarker},
+        solana_entry::block_component::{BlockFooterV1, BlockHeaderV1},
     };
 
     fn deshred_batch(batch: &[Shred]) -> Vec<u8> {
@@ -1858,11 +1848,6 @@ mod tests {
     fn marker_is_footer(marker: &VersionedBlockMarker) -> bool {
         let VersionedBlockMarker::V1(marker_v1) = marker;
         marker_v1.as_block_footer().is_some()
-    }
-
-    fn marker_is_genesis(marker: &VersionedBlockMarker) -> bool {
-        let VersionedBlockMarker::V1(marker_v1) = marker;
-        marker_v1.as_genesis_certificate().is_some()
     }
 
     #[test]
@@ -1884,14 +1869,6 @@ mod tests {
                 parent_slot,
                 parent_block_id: Hash::default(),
             }),
-            genesis: Some(VersionedBlockMarker::from_genesis_cert_block_marker(
-                GenesisCertBlockMarker {
-                    slot: 42,
-                    block_id: BlockId::from(blockhash),
-                    bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    bitmap: vec![1, 2, 3],
-                },
-            )),
             footer: VersionedBlockMarker::from_block_footer(BlockFooterV1 {
                 bank_hash: Hash::new_unique(),
                 block_producer_time_nanos: 0,
@@ -1930,31 +1907,26 @@ mod tests {
         let batches = data_shreds
             .split_inclusive(|shred| shred.data_complete())
             .collect::<Vec<_>>();
-        assert_eq!(batches.len(), 5);
+        assert_eq!(batches.len(), 4);
         assert!(!batches[0].last().unwrap().last_in_slot());
         assert!(!batches[1].last().unwrap().last_in_slot());
         assert!(!batches[2].last().unwrap().last_in_slot());
-        assert!(!batches[3].last().unwrap().last_in_slot());
-        assert!(batches[4].last().unwrap().last_in_slot());
+        assert!(batches[3].last().unwrap().last_in_slot());
 
         let header_component: BlockComponent =
             wincode::deserialize(&deshred_batch(batches[0])).unwrap();
         assert!(header_component.as_marker().is_some_and(marker_is_header));
 
-        let genesis_component: BlockComponent =
-            wincode::deserialize(&deshred_batch(batches[1])).unwrap();
-        assert!(genesis_component.as_marker().is_some_and(marker_is_genesis));
-
         let entry_component: BlockComponent =
-            wincode::deserialize(&deshred_batch(batches[2])).unwrap();
+            wincode::deserialize(&deshred_batch(batches[1])).unwrap();
         assert_eq!(entry_component, BlockComponent::EntryBatch(vec![entry]));
 
         let footer_component: BlockComponent =
-            wincode::deserialize(&deshred_batch(batches[3])).unwrap();
+            wincode::deserialize(&deshred_batch(batches[2])).unwrap();
         assert!(footer_component.as_marker().is_some_and(marker_is_footer));
 
         let alpentick_entries: Vec<Entry> =
-            wincode::deserialize(&deshred_batch(batches[4])).unwrap();
+            wincode::deserialize(&deshred_batch(batches[3])).unwrap();
         assert_eq!(alpentick_entries.len(), 1);
         assert!(alpentick_entries[0].is_tick());
         assert_eq!(alpentick_entries[0].num_hashes, 1);

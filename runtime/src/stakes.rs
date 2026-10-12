@@ -6,7 +6,7 @@ use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_s
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::{
-        alpenglow_epoch_type::RewardEpochDelegatedStakes, stake_account,
+        reward_epoch_delegated_stakes::RewardEpochDelegatedStakes, stake_account,
         stake_history::StakeHistory,
     },
     imbl::HashMap as ImblHashMap,

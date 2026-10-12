@@ -6,7 +6,6 @@ mod account_saver;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod account_saver;
 pub mod accounts_background_service;
-mod alpenglow_epoch_type;
 pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
@@ -26,6 +25,7 @@ pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
 mod read_optimized_dashmap;
 pub mod rent_collector;
+mod reward_epoch_delegated_stakes;
 mod reward_info;
 pub mod runtime_config;
 pub mod serde_snapshot;
@@ -55,7 +55,6 @@ pub mod transaction_batch;
 pub mod transaction_execution;
 pub mod validated_block_finalization;
 pub mod validated_reward_certificate;
-pub mod vote_sender_types;
 
 #[macro_use]
 extern crate solana_metrics;

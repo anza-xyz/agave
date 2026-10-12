@@ -139,17 +139,11 @@ pub(crate) fn translate_sanitized_to_runtime_view<D: TransactionData>(
     transaction_account_lock_limit: usize,
     preloaded_addresses: Option<(Option<LoadedAddresses>, Slot)>,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, Slot), PacketHandlingError> {
-    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-        view,
-        MessageHash::Compute,
-        None,
-    ) else {
+    let Ok(view) =
+        RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute)
+    else {
         return Err(PacketHandlingError::Sanitization);
     };
-
-    if bank.vote_only_bank() && !view.is_simple_vote_transaction() {
-        return Err(PacketHandlingError::Sanitization);
-    }
 
     if usize::from(view.total_num_accounts()) > transaction_account_lock_limit {
         return Err(PacketHandlingError::LockValidation);

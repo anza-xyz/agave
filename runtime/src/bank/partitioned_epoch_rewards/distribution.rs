@@ -424,7 +424,6 @@ mod tests {
     use {
         super::*,
         crate::{
-            alpenglow_epoch_type::AlpenglowEpochType,
             bank::{
                 partitioned_epoch_rewards::{
                     InflationReward, PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS,
@@ -436,6 +435,7 @@ mod tests {
                 points::{CalculationEnvironment, DelegatedVoteState, PointValue, null_tracer},
                 redeem_rewards,
             },
+            reward_epoch_delegated_stakes::RewardEpochDelegatedStakes,
             reward_info::RewardInfo,
             stake_utils,
             sysvar_account::from_account,
@@ -1299,6 +1299,15 @@ mod tests {
         let new_rate_activation_epoch = None;
         let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: rewarded_epoch,
+            delegated_stakes: [(
+                pre_stake.delegation.voter_pubkey,
+                pre_stake.delegation.stake,
+            )]
+            .into_iter()
+            .collect(),
+        };
 
         let maybe_rewards = redeem_rewards(
             pre_stake,
@@ -1316,7 +1325,7 @@ mod tests {
                 adjust_delegations_for_rent,
             },
             null_tracer(),
-            &AlpenglowEpochType::Tower,
+            &reward_epoch_delegated_stakes,
             pre_lamports,
             new_minimum_balance,
         );
@@ -1483,11 +1492,8 @@ mod tests {
             )),
         );
 
-        // Rewards partially cover minimum balance change
-        // -> decrease stake
-        // This case is confusing because it pays out 2 lamports in rewards,
-        // so we adjust minimum up so that even with 2 lamports in rewards, the
-        // delegation goes down.
+        // Rewards partially cover minimum balance change, but leave no lamports available for
+        // delegation, so the stake is deactivated.
         check_rent_adjusted_stake_delegation(
             rewarded_epoch,
             Stake {
@@ -1501,10 +1507,11 @@ mod tests {
             new_minimum_balance + 1,
             1,
             Some((
-                2,
+                1,
                 Stake {
                     delegation: Delegation {
-                        stake: 1,
+                        stake: 0,
+                        deactivation_epoch: rewarded_epoch,
                         ..Default::default()
                     },
                     credits_observed: 1,

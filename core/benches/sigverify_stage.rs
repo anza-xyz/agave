@@ -75,15 +75,11 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
     let sharable_banks = bank_forks.read().unwrap().sharable_banks();
     let (packet_s, packet_r) = bounded(1024);
-    let (vote_packet_s, vote_packet_r) = bounded(1024);
     let (verified_s, verified_r) = BankingTracer::channel_for_test();
-    let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
     let (forward_stage_s, _forward_stage_r) = bounded(1024);
-    let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+    let stage = SigVerifyStage::new(
         packet_r,
-        vote_packet_r,
         verified_s,
-        tpu_vote_s,
         forward_stage_s,
         NonZeroUsize::new(sigverify::threadpool_for_benches().current_num_threads()).unwrap(),
         false,
@@ -123,8 +119,6 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     });
     // This will wait for all packets to make it through sigverify.
     drop(packet_s);
-    drop(vote_packet_s);
-    drop(gossip_sigverify_handle);
     stage.join().unwrap();
 }
 
@@ -175,7 +169,7 @@ fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32)
         let mut batches = batches0.clone();
 
         let mut verify_time = Measure::start("sigverify_batch_time");
-        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_valid_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, num_valid_packets);
         verify_time.stop();
         black_box(sigverify::count_valid_packets(&batches));
 

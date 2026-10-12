@@ -1,12 +1,10 @@
 use {
     crate::{
         bank::{Bank, BankId, TransactionBalancesSet},
-        bank_utils,
         dependency_tracker::DependencyTracker,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_balances::compile_collected_balances,
         transaction_batch::TransactionBatch,
-        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     log::{trace, warn},
     solana_clock::Slot,
@@ -62,8 +60,6 @@ pub fn execute_batch<'a>(
     batch: &'a TransactionBatchWithIndexes<impl TransactionWithMeta>,
     bank: &'a Arc<Bank>,
     transaction_status_sender: Option<&'a TransactionStatusSender>,
-    replay_vote_sender: Option<&'a ReplayVoteSender>,
-    replay_vote_send_type: ReplayVoteSendType,
     timings: &'a mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&'a PrioritizationFeeCache>,
@@ -98,13 +94,6 @@ pub fn execute_batch<'a>(
     timings.saturating_add_in_place(
         ExecuteTimingType::CheckBlockLimitsUs,
         check_block_costs_elapsed.as_us(),
-    );
-
-    bank_utils::find_and_send_votes(
-        batch.sanitized_transactions(),
-        &commit_results,
-        replay_vote_sender,
-        replay_vote_send_type,
     );
 
     if let Some(prioritization_fee_cache) = prioritization_fee_cache {
@@ -455,8 +444,6 @@ mod tests {
                 sender,
                 dependency_tracker: None,
             }),
-            None,
-            ReplayVoteSendType::VerifiedExecuted,
             &mut timing,
             None,
             None,

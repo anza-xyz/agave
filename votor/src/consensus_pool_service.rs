@@ -27,7 +27,6 @@ use {
     agave_votor_messages::{
         certificate::Certificate,
         consensus_message::{Block, BlockId, VoteMessage},
-        migration::MigrationStatus,
         vote::Vote,
     },
     crossbeam_channel::{Receiver, RecvError, Sender, TrySendError, select_biased},
@@ -86,7 +85,6 @@ const ADDITIONAL_MESSAGES_PER_RECEIVE: u64 = MAX_MESSAGES_PER_RECEIVE - 1;
 pub(crate) struct ConsensusPoolContext {
     pub(crate) exit: Arc<AtomicBool>,
     pub(crate) validator_exit: Arc<RwLock<Exit>>,
-    pub(crate) migration_status: Arc<MigrationStatus>,
     pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
 
     pub(crate) cluster_info: Arc<ClusterInfo>,
@@ -116,37 +114,24 @@ impl ConsensusPoolContext {
             self.cluster_info.clone(),
             &root_bank,
             self.generated_cert_types.clone(),
-            self.migration_status.clone(),
             initial_parent_ready,
         )
     }
 
     /// Finds the initial parent ready that we should use for instantiating the ConsensusPool or kicking off votor
-    /// The max of genesis block, root block, or the restored parent ready from vote history
+    /// Uses the restored parent ready from vote history when it is ahead of the root.
     fn initial_parent_ready(&self) -> ParentReady {
         let root_bank = self.sharable_banks.root();
         let root_block = root_block(&root_bank);
-        let genesis_block = self.migration_status.genesis_block();
-        Self::_initial_parent_ready(
-            genesis_block,
-            root_block,
-            self.vote_history_highest_parent_ready,
-        )
+        Self::_initial_parent_ready(root_block, self.vote_history_highest_parent_ready)
     }
 
     /// Pulled the implementation outside to enable testing.
     fn _initial_parent_ready(
-        genesis_block: Option<Block>,
         root_block: Block,
         vote_history_highest_parent_ready: Option<(Slot, Block)>,
     ) -> ParentReady {
-        let Some(genesis_block) = genesis_block else {
-            // Alpenglow is not yet enabled, start with just the root
-            return (root_block.slot.checked_add(1).unwrap(), root_block);
-        };
-
-        let initial_block = genesis_block.max(root_block);
-        let initial_parent_ready = (initial_block.slot.checked_add(1).unwrap(), initial_block);
+        let initial_parent_ready = (root_block.slot.checked_add(1).unwrap(), root_block);
 
         if let Some(restored @ (restored_slot, _)) = vote_history_highest_parent_ready
             && restored_slot > initial_parent_ready.0
@@ -169,8 +154,6 @@ impl ConsensusPoolService {
             .spawn(move || {
                 // Dropped before `ctx`, so the channel senders it owns outlive the shutdown.
                 let _exit_on_drop = ExitOnDrop::new(ctx.validator_exit.clone());
-                // Unlike the other votor threads, consensus pool starts even before Alpenglow is enabled
-                // because it must track the genesis vote.
                 let mut consensus_pool = ctx.new_consensus_pool();
                 let mut stats = ConsensusPoolServiceStats::new();
                 if let Err(channel_name) =
@@ -280,26 +263,14 @@ impl ConsensusPoolService {
         // Standstill tracking
         let mut standstill_timer = Instant::now();
 
-        // Kick off parent ready
-        let mut kick_off_parent_ready = false;
+        let (slot, parent_block) = ctx.initial_parent_ready();
+        events.push(VotorEvent::ParentReady { slot, parent_block });
 
         // Track pending safe-to-notar blocks for intrawindow slots.
         let mut pending_safe_to_notar = HashSet::new();
 
         // Ingest votes into consensus pool and notify voting loop of new events
         while !ctx.exit.load(Ordering::Relaxed) {
-            // Kick off parent ready event, this either happens:
-            // - When we first migrate to alpenglow from TowerBFT - kick off with genesis block
-            // - If we startup post alpenglow migration - kick off with root block
-            // - If restored vote history is farther ahead, resume from its highest parent-ready
-            if !kick_off_parent_ready && ctx.migration_status.is_alpenglow_enabled() {
-                let (slot, parent_block) = ctx.initial_parent_ready();
-                events.push(VotorEvent::ParentReady { slot, parent_block });
-                kick_off_parent_ready = true;
-                // Intentionally do not increment `highest_parent_ready` in case
-                // this is a cluster restart and we are the very first leader.
-            }
-
             Self::add_produce_block_event(
                 &mut highest_parent_ready,
                 consensus_pool,
@@ -309,17 +280,12 @@ impl ConsensusPoolService {
             );
 
             if standstill_timer.elapsed() > DELTA_STANDSTILL {
-                // No reason to pollute channel with Standstill before the
-                // migration is complete. We still need standstill to refresh the
-                // Genesis cert though.
-                if kick_off_parent_ready {
-                    events.push(VotorEvent::Standstill(
-                        consensus_pool
-                            .highest_finalized_slot()
-                            .map(|s| s.slot())
-                            .unwrap_or(ctx.sharable_banks.root().slot()),
-                    ));
-                }
+                events.push(VotorEvent::Standstill(
+                    consensus_pool
+                        .highest_finalized_slot()
+                        .map(|s| s.slot())
+                        .unwrap_or(ctx.sharable_banks.root().slot()),
+                ));
                 stats.standstill = true;
                 standstill_timer = Instant::now();
                 Self::refresh_certs(ctx, consensus_pool.get_certs_for_standstill(), stats)?;
@@ -728,7 +694,6 @@ mod tests {
     use {
         super::*,
         crate::tests::{get_cluster_info, new_vote_aggregate},
-        agave_bls_sigverify::bls_sigverifier::MAX_VOTE_SLOT_DISTANCE_FROM_ROOT,
         agave_votor_messages::{
             certificate::CertificateType,
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
@@ -741,11 +706,9 @@ mod tests {
             BLS_SIGNATURE_AFFINE_SIZE, keypair::Keypair as BLSKeypair,
             signature::Signature as BLSSignature,
         },
-        solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_runtime::{
-            bank::SlotLeader,
             bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
@@ -762,14 +725,10 @@ mod tests {
         pub event_receiver: Receiver<VotorEvent>,
         pub _repair_event_receiver: Receiver<RepairEvent>,
         pub validator_keypairs: Vec<ValidatorVoteKeypairs>,
-        pub bank_forks: Arc<RwLock<BankForks>>,
     }
 
     impl TestContext {
-        fn new(
-            epoch_schedule: Option<EpochSchedule>,
-            migration_status: Arc<MigrationStatus>,
-        ) -> Self {
+        fn new() -> Self {
             let (bls_sender, bls_receiver) = bounded(1024);
             // Create 10 node validatorvotekeypairs vec
             let validator_keypairs = (0..10)
@@ -780,11 +739,8 @@ mod tests {
                 .rev()
                 .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
                 .collect::<Vec<_>>();
-            let mut genesis =
+            let genesis =
                 create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stake);
-            if let Some(epoch_schedule) = epoch_schedule {
-                genesis.genesis_config.epoch_schedule = epoch_schedule;
-            }
             let my_keypair = validator_keypairs[0].node_keypair.insecure_clone();
             let bank0 = Bank::new_for_tests(&genesis.genesis_config);
             let bank_forks = BankForks::new_rw_arc(bank0);
@@ -807,7 +763,6 @@ mod tests {
             let ctx = ConsensusPoolContext {
                 exit: Arc::new(AtomicBool::new(false)),
                 validator_exit: Arc::default(),
-                migration_status,
                 generated_cert_types,
                 cluster_info: cluster_info.clone(),
                 blockstore,
@@ -835,72 +790,14 @@ mod tests {
                 event_receiver,
                 _repair_event_receiver: repair_event_receiver,
                 validator_keypairs,
-                bank_forks,
             }
         }
     }
 
     impl Default for TestContext {
         fn default() -> Self {
-            Self::new(None, Arc::new(MigrationStatus::post_migration_status()))
+            Self::new()
         }
-    }
-
-    #[test]
-    fn test_first_vote_uses_current_root_after_delayed_activation() {
-        let migration_status = Arc::new(MigrationStatus::default());
-        let mut ctx = TestContext::new(
-            Some(EpochSchedule::without_warmup()),
-            migration_status.clone(),
-        );
-        assert!(migration_status.is_pre_feature_activation());
-        let startup_root = ctx.ctx.sharable_banks.root().slot();
-        let new_root_slot = startup_root + MAX_VOTE_SLOT_DISTANCE_FROM_ROOT + 1;
-        let parent = ctx.ctx.sharable_banks.root();
-        let new_root = Bank::new_from_parent(parent, SlotLeader::default(), new_root_slot);
-        new_root.freeze();
-        {
-            let mut bank_forks = ctx.bank_forks.write().unwrap();
-            bank_forks.insert(new_root);
-            bank_forks.set_root(new_root_slot, None, None);
-        }
-        let root_bank = ctx.ctx.sharable_banks.root();
-        assert_eq!(root_bank.slot(), new_root_slot);
-        migration_status.enable_alpenglow_for_tests();
-
-        let vote = Vote::new_skip_vote(new_root_slot);
-        let rank_map = root_bank.get_rank_map(new_root_slot).unwrap();
-        let mut generated_certificate = false;
-        for rank in 0..ctx.validator_keypairs.len() {
-            let vote_keypair = &ctx.validator_keypairs[rank].vote_keypair;
-            let bls_keypair =
-                BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-            let vote_message = VoteMessage {
-                vote,
-                signature: bls_keypair
-                    .sign(&get_vote_payload_to_sign(
-                        vote,
-                        ctx.ctx.cluster_info.my_shred_version(),
-                    ))
-                    .into(),
-                rank: rank as u16,
-                stake: rank_map.get_pubkey_stake_entry(rank).unwrap().stake,
-            };
-            let (_, certificates) = ConsensusPoolService::add_pool_msg(
-                &root_bank,
-                &ctx.ctx.cluster_info.id(),
-                PoolMessage::Votes(vec![PoolVote::Own(vote_message)]),
-                &mut ctx.consensus_pool,
-                &mut vec![],
-                &mut ConsensusPoolServiceStats::new(),
-            );
-            generated_certificate |= !certificates.is_empty();
-        }
-
-        assert!(
-            generated_certificate,
-            "votes at the current root should not be rejected relative to the startup root"
-        );
     }
 
     /// Test the full consensus message flow:
@@ -1338,22 +1235,21 @@ mod tests {
 
     #[test]
     fn test_kick_off_parent_ready_uses_restored_vote_history() {
-        let genesis_block = Some(Block::new_unique(10));
         let root_block = Block::new_unique(12);
         assert_eq!(
-            ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, None),
+            ConsensusPoolContext::_initial_parent_ready(root_block, None),
             (13, root_block)
         );
 
         let restored = (16, Block::new_unique(15));
         assert_eq!(
-            ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, Some(restored)),
+            ConsensusPoolContext::_initial_parent_ready(root_block, Some(restored)),
             restored
         );
 
         let stale = (12, Block::new_unique(11));
         assert_eq!(
-            ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, Some(stale)),
+            ConsensusPoolContext::_initial_parent_ready(root_block, Some(stale)),
             (13, root_block)
         );
     }

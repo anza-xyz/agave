@@ -301,13 +301,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Use DIR as incremental snapshot archives location [default: --snapshots value]"),
     )
     .arg(
-        Arg::with_name("tower")
-            .long("tower")
-            .value_name("DIR")
-            .takes_value(true)
-            .help("Use DIR as file tower storage location [default: --ledger value]"),
-    )
-    .arg(
         Arg::with_name("gossip_port")
             .long("gossip-port")
             .value_name("PORT")
@@ -494,12 +487,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Milliseconds between printing contact debug from gossip."),
     )
     .arg(
-        Arg::with_name("no_poh_speed_test")
-            .long("no-poh-speed-test")
-            .hidden(hidden_unless_forced())
-            .help("Skip the check for PoH speed."),
-    )
-    .arg(
         Arg::with_name("no_os_network_limits_test")
             .hidden(hidden_unless_forced())
             .long("no-os-network-limits-test")
@@ -543,12 +530,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("skip-startup-ledger-verification")
             .takes_value(false)
             .help("Skip ledger verification at validator bootup."),
-    )
-    .arg(
-        clap::Arg::with_name("require_tower")
-            .long("require-tower")
-            .takes_value(false)
-            .help("Refuse to start if saved tower state is not found"),
     )
     .arg(
         clap::Arg::with_name("do_not_require_vote_history")
@@ -611,17 +592,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_slot)
             .help(
                 "Do not vote until reaching this slot. This can be used to avoid submitting \
-                 slashable votes after restoring a stale/missing Tower / VoteHistory",
-            ),
-    )
-    .arg(
-        Arg::with_name("no_wait_for_vote_to_start_leader")
-            .hidden(hidden_unless_forced())
-            .long("no-wait-for-vote-to-start-leader")
-            .help(
-                "If the validator starts up with no ledger, it will wait to start block \
-                 production until it sees a vote land in a rooted slot. This prevents double \
-                 signing. Turn off to risk double signing a block.",
+                 slashable votes after restoring stale or missing vote history",
             ),
     )
     .arg(
@@ -823,8 +794,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Provide path to a yaml file with custom overrides for stakes of specific \
                  identities. Overriding the amount of stake this validator considers as valid for \
                  other peers in network. The stake amount is used for calculating the number of \
-                 QUIC streams permitted from the peer and vote packet sender stage. Format of the \
-                 file: `staked_map_id: {<pubkey>: <SOL stake amount>}",
+                 QUIC streams permitted from the peer and for block-production forwarding. Format \
+                 of the file: `staked_map_id: {<pubkey>: <SOL stake amount>}",
             ),
     )
     .arg(
@@ -889,22 +860,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  generally produce higher compression ratio at the expense of speed and memory. \
                  See the zstd manpage for more information.",
             ),
-    )
-    .arg(
-        Arg::with_name("poh_pinned_cpu_core")
-            .long("poh-pinned-cpu-core")
-            .takes_value(true)
-            .value_name("CPU_ID")
-            .validator(is_parsable::<usize>)
-            .help("Specify which CPU core PoH is pinned to. Defaults to CPU 0 on Linux"),
-    )
-    .arg(
-        Arg::with_name("poh_hashes_per_batch")
-            .hidden(hidden_unless_forced())
-            .long("poh-hashes-per-batch")
-            .takes_value(true)
-            .value_name("NUM")
-            .help("Specify hashes per batch in PoH service"),
     )
     .arg(
         Arg::with_name("process_ledger_before_services")

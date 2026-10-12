@@ -13,7 +13,6 @@ use {
         SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
-    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::unbounded,
     jsonrpc_core::{MetaIoHandler, futures::prelude::*},
     jsonrpc_http_server::{
@@ -34,7 +33,6 @@ use {
     solana_metrics::inc_new_counter_info,
     solana_net_utils::Protocol,
     solana_perf::thread::renice_this_thread,
-    solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
@@ -500,7 +498,6 @@ pub struct JsonRpcServiceConfig<'a> {
     pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     pub blockstore: Arc<Blockstore>,
     pub cluster_info: Arc<ClusterInfo>,
-    pub poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
     pub genesis_hash: Hash,
     pub ledger_path: PathBuf,
     pub validator_exit: Arc<RwLock<Exit>>,
@@ -531,16 +528,11 @@ impl JsonRpcService {
             config.rpc_config.rpc_blocking_threads,
             config.rpc_config.rpc_niceness_adj,
         );
-        let migration_status = config.bank_forks.read().unwrap().migration_status();
-        let leader_info = config.poh_recorder.clone().map(|recorder| {
-            ClusterTpuInfo::new(
-                config.cluster_info.clone(),
-                recorder,
-                config.block_commitment_cache.clone(),
-                config.leader_schedule_cache.clone(),
-                migration_status.clone(),
-            )
-        });
+        let leader_info = Some(ClusterTpuInfo::new(
+            config.cluster_info.clone(),
+            config.block_commitment_cache.clone(),
+            config.leader_schedule_cache.clone(),
+        ));
 
         let RpcTpuClientArgs(identity_keypair, tpu_client_socket, client_runtime, cancel) =
             config.rpc_tpu_client_args;
@@ -581,7 +573,6 @@ impl JsonRpcService {
             config.override_health_check,
             config.optimistically_confirmed_bank,
             config.highest_finalized,
-            migration_status,
             config.send_transaction_service_config,
             config.max_slots,
             config.leader_schedule_cache,
@@ -610,7 +601,6 @@ impl JsonRpcService {
         override_health_check: Arc<AtomicBool>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
-        migration_status: Arc<MigrationStatus>,
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -626,9 +616,7 @@ impl JsonRpcService {
 
         let health = Arc::new(RpcHealth::new(
             Arc::clone(&optimistically_confirmed_bank),
-            Arc::clone(&blockstore),
             highest_finalized,
-            migration_status,
             config.health_check_slot_distance,
             override_health_check,
         ));
@@ -1188,7 +1176,6 @@ mod tests {
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let migration_status = bank_forks.read().unwrap().migration_status();
         let json_rpc_config = JsonRpcConfig::default();
         let runtime = service_runtime(
             json_rpc_config.rpc_threads,
@@ -1223,7 +1210,6 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             optimistically_confirmed_bank,
             Arc::default(),
-            migration_status,
             send_transaction_service_config,
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
@@ -1314,11 +1300,10 @@ mod tests {
     #[test]
     fn test_is_file_get_path() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let bank_forks = create_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank, blockstore);
+        let health = RpcHealth::stub(optimistically_confirmed_bank);
 
         let bank_forks = create_bank_forks();
         let rrm = RpcRequestMiddleware::new(
@@ -1442,7 +1427,6 @@ mod tests {
         let runtime = Runtime::new().unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let genesis_path = ledger_path.path().join(DEFAULT_GENESIS_ARCHIVE);
         let bank_forks = create_bank_forks();
         let optimistically_confirmed_bank =
@@ -1451,7 +1435,7 @@ mod tests {
             ledger_path.path().to_path_buf(),
             None,
             bank_forks,
-            RpcHealth::stub(optimistically_confirmed_bank, blockstore),
+            RpcHealth::stub(optimistically_confirmed_bank),
         );
 
         // File does not exist => request should fail.
