@@ -2860,7 +2860,6 @@ mod tests {
                 )
                 .unwrap(),
                 MessageHash::Compute,
-                None,
                 loader,
                 &HashSet::default(),
             )

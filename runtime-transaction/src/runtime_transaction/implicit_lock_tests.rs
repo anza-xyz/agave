@@ -55,13 +55,11 @@ fn test_implicit_locks_after_resolution(
     let sdk = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
         transaction,
         MessageHash::Compute,
-        None,
     )
     .unwrap();
     let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
         SanitizedTransactionView::try_new_sanitized(bytes).unwrap(),
         MessageHash::Compute,
-        None,
     )
     .unwrap();
     for locks in [sdk.implicit_read_locks(), view.implicit_read_locks()] {

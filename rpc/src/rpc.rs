@@ -4807,7 +4807,6 @@ fn resolve_transaction_view<D: AsRef<[u8]>>(
     let sanitized_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<D>>::try_new(
         transaction,
         MessageHash::Compute,
-        None,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))?;
     RuntimeTransaction::<ResolvedTransactionView<D>>::try_new(

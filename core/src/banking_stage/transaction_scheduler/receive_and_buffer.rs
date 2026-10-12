@@ -177,11 +177,9 @@ pub(crate) fn translate_sanitized_to_runtime_view<D: AsRef<[u8]>>(
     preloaded_addresses: Option<(Option<LoadedAddresses>, Slot)>,
     enable_implicit_read_locks: bool,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, Slot), PacketHandlingError> {
-    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-        view,
-        MessageHash::Compute,
-        None,
-    ) else {
+    let Ok(view) =
+        RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute)
+    else {
         return Err(PacketHandlingError::Sanitization);
     };
 

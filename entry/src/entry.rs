@@ -847,7 +847,6 @@ mod tests {
                     RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
                         sanitized,
                         MessageHash::Compute,
-                        None,
                     )?;
                 ReplayTransaction::try_new(
                     statically_loaded,
@@ -882,7 +881,6 @@ mod tests {
                     RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
                         sanitized,
                         MessageHash::Compute,
-                        None,
                     )?;
                 ReplayTransaction::try_new(
                     statically_loaded,
