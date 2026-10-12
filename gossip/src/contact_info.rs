@@ -51,8 +51,9 @@ const SOCKET_TAG_ALPENGLOW: u8 = 13;
 const_assert_eq!(SOCKET_CACHE_SIZE, 14);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
 
-// An alias for a function that reads data from a ContactInfo entry stored in
-// the gossip CRDS table.
+/// An alias for a function that reads data from a ContactInfo entry stored in
+/// the gossip CRDS table.
+/// Runs under the CRDS read lock, so it must not call back into `ClusterInfo`.
 pub trait ContactInfoQuery<R>: Fn(&ContactInfo) -> R {}
 impl<R, F: Fn(&ContactInfo) -> R> ContactInfoQuery<R> for F {}
 

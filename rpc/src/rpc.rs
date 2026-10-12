@@ -3862,47 +3862,55 @@ pub mod rpc_full {
             debug!("get_cluster_nodes rpc request received");
             let cluster_info = &meta.cluster_info;
             let socket_addr_space = cluster_info.socket_addr_space();
+            struct Node {
+                pubkey: Pubkey,
+                version: solana_version::Version,
+                shred_version: u16,
+                gossip: SocketAddr,
+                tvu: Option<SocketAddr>,
+                tpu_quic: Option<SocketAddr>,
+                tpu_forwards_quic: Option<SocketAddr>,
+                serve_repair: Option<SocketAddr>,
+                rpc: Option<SocketAddr>,
+                pubsub: Option<SocketAddr>,
+            }
             Ok(cluster_info
-                .all_peers()
-                .iter()
-                .filter_map(|(contact_info, _)| {
-                    if contact_info
-                        .gossip()
-                        .map(|addr| socket_addr_space.check(&addr))
-                        .unwrap_or_default()
-                    {
-                        let version = contact_info.version();
-                        Some(RpcContactInfo {
-                            pubkey: contact_info.pubkey().to_string(),
-                            gossip: contact_info.gossip(),
-                            tvu: contact_info
-                                .tvu(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            tpu: None,
-                            tpu_quic: contact_info
-                                .tpu(Protocol::QUIC)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_forwards: None,
-                            tpu_forwards_quic: contact_info
-                                .tpu_forwards(Protocol::QUIC)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            serve_repair: contact_info
-                                .serve_repair(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            rpc: contact_info
-                                .rpc()
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            pubsub: contact_info
-                                .rpc_pubsub()
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            version: Some(version.to_string()),
-                            client_id: Some(version.client().to_string()),
-                            feature_set: Some(version.feature_set()),
-                            shred_version: Some(contact_info.shred_version()),
-                        })
-                    } else {
-                        None // Exclude spy nodes
-                    }
+                .contact_infos(|node| {
+                    // Exclude nodes without a valid gossip address
+                    let gossip = node.gossip().filter(|addr| socket_addr_space.check(addr))?;
+                    Some(Node {
+                        pubkey: *node.pubkey(),
+                        version: node.version().clone(),
+                        shred_version: node.shred_version(),
+                        gossip,
+                        tvu: node.tvu(Protocol::UDP),
+                        tpu_quic: node.tpu(Protocol::QUIC),
+                        tpu_forwards_quic: node.tpu_forwards(Protocol::QUIC),
+                        serve_repair: node.serve_repair(Protocol::UDP),
+                        rpc: node.rpc(),
+                        pubsub: node.rpc_pubsub(),
+                    })
+                })
+                .into_iter()
+                .map(|(node, _)| RpcContactInfo {
+                    pubkey: node.pubkey.to_string(),
+                    gossip: Some(node.gossip),
+                    tvu: node.tvu.filter(|addr| socket_addr_space.check(addr)),
+                    tpu: None,
+                    tpu_quic: node.tpu_quic.filter(|addr| socket_addr_space.check(addr)),
+                    tpu_forwards: None,
+                    tpu_forwards_quic: node
+                        .tpu_forwards_quic
+                        .filter(|addr| socket_addr_space.check(addr)),
+                    serve_repair: node
+                        .serve_repair
+                        .filter(|addr| socket_addr_space.check(addr)),
+                    rpc: node.rpc.filter(|addr| socket_addr_space.check(addr)),
+                    pubsub: node.pubsub.filter(|addr| socket_addr_space.check(addr)),
+                    version: Some(node.version.to_string()),
+                    client_id: Some(node.version.client().to_string()),
+                    feature_set: Some(node.version.feature_set()),
+                    shred_version: Some(node.shred_version),
                 })
                 .collect())
         }
