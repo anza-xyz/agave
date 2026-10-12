@@ -232,12 +232,11 @@ mod tests {
         solana_cost_model::cost_tracker::CostTrackerLimits,
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        solana_vote::vote_transaction,
-        solana_vote_program::vote_state::TowerSync,
         std::sync::Arc,
     };
 
@@ -250,17 +249,15 @@ mod tests {
         let transfer_tx = RuntimeTransaction::from_transaction_for_tests(
             system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
         );
-        let vote_tx = RuntimeTransaction::from_transaction_for_tests(
-            vote_transaction::new_tower_sync_transaction(
-                TowerSync::from(vec![(42, 1)]),
-                Hash::default(),
-                &keypair,
-                &keypair,
-                &keypair,
-                None,
-            ),
+        let second_transfer_tx = RuntimeTransaction::from_transaction_for_tests(
+            system_transaction::transfer(&keypair, &Pubkey::new_unique(), 1, Hash::default()),
         );
-        let txs = [transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
+        let txs = [
+            transfer_tx.clone(),
+            second_transfer_tx.clone(),
+            second_transfer_tx,
+            transfer_tx,
+        ];
 
         let txs_costs = QosService::compute_transaction_costs(
             &FeatureSet::all_enabled(),
@@ -288,21 +285,20 @@ mod tests {
         let transfer_tx = RuntimeTransaction::from_transaction_for_tests(
             system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
         );
-        let vote_tx = RuntimeTransaction::from_transaction_for_tests(
-            vote_transaction::new_tower_sync_transaction(
-                TowerSync::from(vec![(42, 1)]),
-                Hash::default(),
-                &keypair,
-                &keypair,
-                &keypair,
-                None,
-            ),
+        let second_transfer_tx = RuntimeTransaction::from_transaction_for_tests(
+            system_transaction::transfer(&keypair, &Pubkey::new_unique(), 1, Hash::default()),
         );
         let transfer_tx_cost =
             CostModel::calculate_cost(&transfer_tx, &FeatureSet::all_enabled()).sum();
-        let vote_tx_cost = CostModel::calculate_cost(&vote_tx, &FeatureSet::all_enabled()).sum();
+        let second_transfer_tx_cost =
+            CostModel::calculate_cost(&second_transfer_tx, &FeatureSet::all_enabled()).sum();
         // make a vec of txs
-        let txs = [transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
+        let txs = [
+            transfer_tx.clone(),
+            second_transfer_tx.clone(),
+            transfer_tx,
+            second_transfer_tx,
+        ];
 
         let txs_costs = QosService::compute_transaction_costs(
             &FeatureSet::all_enabled(),
@@ -311,8 +307,8 @@ mod tests {
         );
 
         // set cost tracker limit to bare minimum that will fit 1 transfer tx
-        // and 1 vote tx
-        let cost_limit = transfer_tx_cost + vote_tx_cost;
+        // and one second transfer
+        let cost_limit = transfer_tx_cost + second_transfer_tx_cost;
         bank.write_cost_tracker()
             .unwrap()
             .set_limits(CostTrackerLimits::new(cost_limit, cost_limit, 0));

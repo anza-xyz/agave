@@ -89,7 +89,10 @@ impl StatsSnapshot {
         let bank = forks.root_bank();
         Self {
             num_transactions: bank.transaction_count(),
-            num_non_vote_transactions: bank.non_vote_transaction_count_since_restart(),
+            // Consensus votes are no longer transactions, so every accepted transaction is a
+            // non-vote transaction. Keep populating the historical performance-sample field for
+            // RPC and blockstore compatibility.
+            num_non_vote_transactions: bank.transaction_count(),
             highest_slot: forks.highest_slot(),
         }
     }

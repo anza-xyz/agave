@@ -6,7 +6,6 @@ use {
     crate::banking_stage::consume_worker::ConsumeWorkerMetrics,
     agave_scheduler_bindings::ProgressMessage,
     agave_votor::slot_clock::SharedAlpenglowSlotClock,
-    agave_votor_messages::migration::MigrationStatus,
     solana_clock::Slot,
     solana_cost_model::cost_tracker::{SharedAllocatedAccountsDataSize, SharedBlockCost},
     solana_poh::poh_recorder::SharedLeaderState,
@@ -29,8 +28,6 @@ pub fn spawn(
     mut producer: shaq::spsc::Producer<ProgressMessage>,
     shared_leader_state: SharedLeaderState,
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-    ticks_per_slot: u64,
-    migration_status: Arc<MigrationStatus>,
     alpenglow_slot_clock: SharedAlpenglowSlotClock,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
@@ -40,8 +37,6 @@ pub fn spawn(
                 exit,
                 shared_leader_state,
                 worker_metrics,
-                ticks_per_slot,
-                migration_status,
                 alpenglow_slot_clock,
             )
             .run(&mut producer);
@@ -53,8 +48,6 @@ struct ProgressTracker {
     exit: Arc<AtomicBool>,
     shared_leader_state: SharedLeaderState,
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-    ticks_per_slot: u64,
-    migration_status: Arc<MigrationStatus>,
     alpenglow_slot_clock: SharedAlpenglowSlotClock,
 
     last_observed_bank_id: Option<BankId>,
@@ -67,16 +60,12 @@ impl ProgressTracker {
         exit: Arc<AtomicBool>,
         shared_leader_state: SharedLeaderState,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-        ticks_per_slot: u64,
-        migration_status: Arc<MigrationStatus>,
         alpenglow_slot_clock: SharedAlpenglowSlotClock,
     ) -> Self {
         Self {
             exit,
             shared_leader_state,
             worker_metrics,
-            ticks_per_slot,
-            migration_status,
             alpenglow_slot_clock,
 
             last_observed_bank_id: None,
@@ -113,17 +102,13 @@ impl ProgressTracker {
     }
 
     fn wait_for_next_progress_boundary(&self) {
-        let deadline = if self.migration_status.is_alpenglow_enabled() {
-            self.alpenglow_slot_clock.load().and_then(|slot_info| {
-                next_alpenglow_progress_deadline(
-                    slot_info.started_at,
-                    slot_info.slot_duration,
-                    Instant::now(),
-                )
-            })
-        } else {
-            None
-        };
+        let deadline = self.alpenglow_slot_clock.load().and_then(|slot_info| {
+            next_alpenglow_progress_deadline(
+                slot_info.started_at,
+                slot_info.slot_duration,
+                Instant::now(),
+            )
+        });
         let Some(deadline) = deadline else {
             std::thread::yield_now();
             return;
@@ -173,21 +158,18 @@ impl ProgressTracker {
                 self.last_observed_bank_id = Some(bank_id);
             }
 
-            let current_slot_progress = if self.migration_status.is_alpenglow_enabled() {
-                self.alpenglow_slot_clock
-                    .load()
-                    .map(|slot_info| {
-                        alpenglow_bank_progress(
-                            working_bank.slot(),
-                            slot_info.slot,
-                            slot_info.started_at.elapsed(),
-                            Duration::from_nanos_u128(working_bank.ns_per_slot),
-                        )
-                    })
-                    .unwrap_or(0)
-            } else {
-                progress(working_bank.slot(), tick_height, self.ticks_per_slot)
-            };
+            let current_slot_progress = self
+                .alpenglow_slot_clock
+                .load()
+                .map(|slot_info| {
+                    alpenglow_bank_progress(
+                        working_bank.slot(),
+                        slot_info.slot,
+                        slot_info.started_at.elapsed(),
+                        Duration::from_nanos_u128(working_bank.ns_per_slot),
+                    )
+                })
+                .unwrap_or(0);
 
             ProgressMessage {
                 leader_state: agave_scheduler_bindings::LEADER_READY,
@@ -206,29 +188,18 @@ impl ProgressTracker {
             self.last_observed_bank_id = None;
             self.limit_and_shared_block_cost = None;
             self.limit_and_shared_allocated_accounts_data_size = None;
-            let (current_slot, current_slot_progress, window_expired) =
-                if self.migration_status.is_alpenglow_enabled() {
-                    let slot_info = self.alpenglow_slot_clock.load()?;
-                    let elapsed = slot_info.started_at.elapsed();
-                    let remaining_slots =
-                        last_of_consecutive_leader_slots(slot_info.slot) - slot_info.slot + 1;
-                    let remaining_window_duration = slot_info
-                        .slot_duration
-                        .saturating_mul(remaining_slots as u32);
-                    // The estimate is only valid within the anchored window.
-                    // Stop reporting LEADER_STARTING when the anchored window expires.
-                    let window_expired = elapsed >= remaining_window_duration;
-                    let (slot, progress) =
-                        alpenglow_slot_progress(slot_info.slot, elapsed, slot_info.slot_duration);
-                    (slot, progress, window_expired)
-                } else {
-                    let current_slot = slot_from_tick_height(tick_height, self.ticks_per_slot);
-                    (
-                        current_slot,
-                        progress(current_slot, tick_height, self.ticks_per_slot),
-                        false,
-                    )
-                };
+            let slot_info = self.alpenglow_slot_clock.load()?;
+            let elapsed = slot_info.started_at.elapsed();
+            let remaining_slots =
+                last_of_consecutive_leader_slots(slot_info.slot) - slot_info.slot + 1;
+            let remaining_window_duration = slot_info
+                .slot_duration
+                .saturating_mul(remaining_slots as u32);
+            // The estimate is only valid within the anchored window.
+            // Stop reporting LEADER_STARTING when the anchored window expires.
+            let window_expired = elapsed >= remaining_window_duration;
+            let (current_slot, current_slot_progress) =
+                alpenglow_slot_progress(slot_info.slot, elapsed, slot_info.slot_duration);
 
             // No bank yet but we may already be inside our leader window.
             let leader_state = if !window_expired
@@ -315,214 +286,9 @@ fn alpenglow_bank_progress(
     }
 }
 
-/// Calculate progress through a slot based on tick-height.
-fn progress(slot: Slot, tick_height: u64, ticks_per_slot: u64) -> u8 {
-    debug_assert!(ticks_per_slot < u8::MAX as u64 && ticks_per_slot > 0);
-
-    ((100 * tick_height.saturating_sub(slot * ticks_per_slot)) / ticks_per_slot) as u8
-}
-
-/// Calculate a slot based on tick-height - optimistic on boundaries.
-/// i.e. tick_height 64 = slot 1 (with 0 progress) rather than slot 0
-/// being complete.
-fn slot_from_tick_height(tick_height: u64, ticks_per_slot: u64) -> u64 {
-    tick_height / ticks_per_slot
-}
-
 #[cfg(test)]
 mod tests {
-    use {
-        super::*, solana_clock::DEFAULT_TICKS_PER_SLOT,
-        solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH, solana_leader_schedule::SlotLeader,
-        solana_poh::poh_recorder::LeaderState, solana_runtime::bank::Bank,
-    };
-
-    #[test]
-    fn test_progress_tracker_produce_progress_message() {
-        let mut shared_leader_state = SharedLeaderState::new(0, None, None);
-        let ticks_per_slot = DEFAULT_TICKS_PER_SLOT;
-
-        let mut progress_tracker = ProgressTracker::new(
-            Arc::default(),
-            shared_leader_state.clone(),
-            vec![],
-            ticks_per_slot,
-            Arc::default(),
-            SharedAlpenglowSlotClock::default(),
-        );
-
-        let (message, tick_height) = progress_tracker.produce_progress_message().unwrap();
-        assert_eq!(tick_height, 0);
-        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
-        assert_eq!(message.current_slot, 0);
-        assert_eq!(message.current_slot_progress, 0);
-        assert_eq!(message.next_leader_slot, u64::MAX);
-        assert_eq!(message.leader_range_end, u64::MAX);
-        assert_eq!(message.epoch, 0);
-        assert_eq!(message.remaining_cost_units, 0);
-        assert_eq!(message.remaining_allocated_accounts_data_size, 0);
-        assert_eq!(message.latest_blockhash, [0; 32]);
-        assert_eq!(message.target_bank_time_ms, 0);
-
-        let expected_tick_height = 2 * ticks_per_slot;
-        shared_leader_state.store(Arc::new(LeaderState::new(
-            None,
-            expected_tick_height,
-            None,
-            None,
-        )));
-        let (message, tick_height) = progress_tracker.produce_progress_message().unwrap();
-        assert_eq!(tick_height, expected_tick_height);
-        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
-        assert_eq!(message.current_slot, 2);
-        assert_eq!(message.next_leader_slot, u64::MAX);
-        assert_eq!(message.leader_range_end, u64::MAX);
-        assert_eq!(message.current_slot_progress, 0);
-        assert_eq!(message.epoch, 0);
-        assert_eq!(message.latest_blockhash, [0; 32]);
-        assert_eq!(message.target_bank_time_ms, 0);
-
-        // Next leader slot is in the future - should be NOT_LEADER.
-        shared_leader_state.store(Arc::new(LeaderState::new(
-            None,
-            expected_tick_height,
-            Some(4 * ticks_per_slot),
-            Some((4, 7)),
-        )));
-        let (message, tick_height) = progress_tracker.produce_progress_message().unwrap();
-        assert_eq!(tick_height, expected_tick_height);
-        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
-        assert_eq!(message.current_slot, 2);
-        assert_eq!(message.next_leader_slot, 4);
-        assert_eq!(message.leader_range_end, 7);
-        assert_eq!(message.current_slot_progress, 0);
-        assert_eq!(message.epoch, 0);
-        assert_eq!(message.latest_blockhash, [0; 32]);
-        assert_eq!(message.target_bank_time_ms, 0);
-
-        // In leader slot but no bank yet - should be LEADER_STARTING.
-        // leader_first_tick_height is at start of slot 4, and we're at tick_height
-        // that puts us in slot 4.
-        let leader_first_tick = 4 * ticks_per_slot + 1;
-        shared_leader_state.store(Arc::new(LeaderState::new(
-            None,
-            leader_first_tick, // tick_height >= leader_first_tick_height
-            Some(leader_first_tick),
-            Some((4, 7)),
-        )));
-        let (message, tick_height) = progress_tracker.produce_progress_message().unwrap();
-        assert_eq!(tick_height, leader_first_tick);
-        assert_eq!(
-            message.leader_state,
-            agave_scheduler_bindings::LEADER_STARTING
-        );
-        assert_eq!(message.current_slot, 4);
-        assert_eq!(message.next_leader_slot, 4);
-        assert_eq!(message.leader_range_end, 7);
-        assert_eq!(message.current_slot_progress, 1);
-        assert_eq!(message.epoch, 0);
-        assert_eq!(message.latest_blockhash, [0; 32]);
-        assert_eq!(message.target_bank_time_ms, 0);
-
-        // Slot boundary mid-window: tick_height one tick before leader_first_tick_height.
-        let slot_5_boundary = 5 * ticks_per_slot;
-        shared_leader_state.store(Arc::new(LeaderState::new(
-            None,
-            slot_5_boundary,
-            Some(slot_5_boundary + 1),
-            Some((5, 7)),
-        )));
-        let (message, _) = progress_tracker.produce_progress_message().unwrap();
-        assert_eq!(message.current_slot, 5);
-        assert_eq!(
-            message.leader_state,
-            agave_scheduler_bindings::LEADER_STARTING
-        );
-
-        let (bank, _bank_forks) =
-            Bank::new_for_tests(&solana_genesis_config::create_genesis_config(1).0)
-                .wrap_with_bank_forks_for_tests();
-        shared_leader_state.store(Arc::new(LeaderState::new(
-            Some(bank.clone()),
-            bank.tick_height(),
-            Some(4 * ticks_per_slot),
-            Some((4, 7)),
-        )));
-
-        // With a working bank - should be LEADER_READY.
-        assert!(!bank.is_complete());
-        let (message, tick_height) = progress_tracker.produce_progress_message().unwrap();
-        assert_eq!(tick_height, bank.tick_height());
-        assert_eq!(message.leader_state, agave_scheduler_bindings::LEADER_READY);
-        assert_eq!(message.current_slot, bank.slot());
-        assert_eq!(message.next_leader_slot, 4);
-        assert_eq!(message.leader_range_end, 7);
-        assert_eq!(message.current_slot_progress, 0);
-        assert_eq!(message.epoch, bank.epoch());
-        assert_eq!(
-            message.remaining_allocated_accounts_data_size,
-            bank.read_cost_tracker()
-                .unwrap()
-                .get_allocated_data_size_limit()
-        );
-        assert_eq!(message.latest_blockhash, bank.last_blockhash().to_bytes());
-        assert_eq!(
-            message.target_bank_time_ms,
-            target_bank_time_ms(bank.ns_per_slot)
-        );
-
-        bank.fill_bank_with_ticks_for_tests();
-        assert!(bank.is_complete());
-        shared_leader_state.store(Arc::new(LeaderState::new(
-            Some(bank.clone()),
-            bank.tick_height(),
-            Some(4 * ticks_per_slot),
-            Some((4, 7)),
-        )));
-        let (message, tick_height) = progress_tracker.produce_progress_message().unwrap();
-        assert_eq!(tick_height, bank.tick_height());
-        assert_eq!(message.leader_state, agave_scheduler_bindings::LEADER_READY);
-        assert_eq!(message.current_slot, bank.slot());
-        assert_eq!(message.next_leader_slot, 4);
-        assert_eq!(message.leader_range_end, 7);
-        assert_eq!(message.current_slot_progress, 100);
-        assert_eq!(message.epoch, bank.epoch());
-        assert_eq!(message.latest_blockhash, bank.last_blockhash().to_bytes());
-        assert_eq!(
-            message.target_bank_time_ms,
-            target_bank_time_ms(bank.ns_per_slot)
-        );
-
-        // Child bank past the first epoch boundary - epoch should advance.
-        let child_bank = Arc::new(Bank::new_from_parent(
-            bank,
-            SlotLeader::new_unique(),
-            MINIMUM_SLOTS_PER_EPOCH,
-        ));
-        assert_eq!(child_bank.epoch(), 1);
-        shared_leader_state.store(Arc::new(LeaderState::new(
-            Some(child_bank.clone()),
-            child_bank.tick_height(),
-            Some(MINIMUM_SLOTS_PER_EPOCH),
-            Some((MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH + 3)),
-        )));
-        let (message, tick_height) = progress_tracker.produce_progress_message().unwrap();
-        assert_eq!(tick_height, child_bank.tick_height());
-        assert_eq!(message.leader_state, agave_scheduler_bindings::LEADER_READY);
-        assert_eq!(message.current_slot, child_bank.slot());
-        assert_eq!(message.next_leader_slot, MINIMUM_SLOTS_PER_EPOCH);
-        assert_eq!(message.leader_range_end, MINIMUM_SLOTS_PER_EPOCH + 3);
-        assert_eq!(message.current_slot_progress, 0);
-        assert_eq!(message.epoch, child_bank.epoch());
-        assert_eq!(
-            message.latest_blockhash,
-            child_bank.last_blockhash().to_bytes()
-        );
-        assert_eq!(
-            message.target_bank_time_ms,
-            target_bank_time_ms(child_bank.ns_per_slot)
-        );
-    }
+    use {super::*, solana_poh::poh_recorder::LeaderState, solana_runtime::bank::Bank};
 
     #[test]
     fn test_next_alpenglow_progress_deadline() {
@@ -592,10 +358,8 @@ mod tests {
         let alpenglow_slot_clock = SharedAlpenglowSlotClock::default();
         let mut progress_tracker = ProgressTracker::new(
             Arc::default(),
-            SharedLeaderState::new(0, None, Some((4, 7))),
+            SharedLeaderState::new(0, Some((4, 7))),
             vec![],
-            DEFAULT_TICKS_PER_SLOT,
-            Arc::new(MigrationStatus::post_migration_status()),
             alpenglow_slot_clock.clone(),
         );
 
@@ -641,10 +405,8 @@ mod tests {
             let clock = SharedAlpenglowSlotClock::default();
             let mut tracker = ProgressTracker::new(
                 Arc::default(),
-                SharedLeaderState::new(0, None, Some((24, 27))),
+                SharedLeaderState::new(0, Some((24, 27))),
                 vec![],
-                DEFAULT_TICKS_PER_SLOT,
-                Arc::new(MigrationStatus::post_migration_status()),
                 clock.clone(),
             );
             let window_duration = slot_duration * (8 - anchor_slot) as u32;
@@ -674,28 +436,21 @@ mod tests {
             Instant::now() - Duration::from_secs(4),
             Duration::from_secs(1),
         );
-        let mut shared_leader_state = SharedLeaderState::new(0, None, Some((0, 3)));
+        let mut shared_leader_state = SharedLeaderState::new(0, Some((0, 3)));
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             0,
-            None,
             Some((0, 3)),
         )));
-        let mut tracker = ProgressTracker::new(
-            Arc::default(),
-            shared_leader_state.clone(),
-            vec![],
-            DEFAULT_TICKS_PER_SLOT,
-            Arc::new(MigrationStatus::post_migration_status()),
-            clock,
-        );
+        let mut tracker =
+            ProgressTracker::new(Arc::default(), shared_leader_state.clone(), vec![], clock);
 
         let (message, _) = tracker.produce_progress_message().unwrap();
         assert_eq!(message.leader_state, agave_scheduler_bindings::LEADER_READY);
         assert_eq!(message.current_slot, bank.slot());
         assert_eq!(message.current_slot_progress, 100);
 
-        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None, Some((4, 7)))));
+        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, Some((4, 7)))));
         let (message, _) = tracker.produce_progress_message().unwrap();
         assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
         assert_eq!(message.current_slot, 3);
@@ -706,10 +461,8 @@ mod tests {
     fn test_progress_tracker_remaining_costs() {
         let mut progress_tracker = ProgressTracker::new(
             Arc::default(),
-            SharedLeaderState::new(0, None, None),
+            SharedLeaderState::new(0, None),
             vec![],
-            DEFAULT_TICKS_PER_SLOT,
-            Arc::default(),
             SharedAlpenglowSlotClock::default(),
         );
 
@@ -740,36 +493,6 @@ mod tests {
         assert_eq!(
             allocated_accounts_data_size_limit / 2,
             progress_tracker.remaining_allocated_accounts_data_size()
-        );
-    }
-
-    #[test]
-    fn test_progress() {
-        let ticks_per_slot = DEFAULT_TICKS_PER_SLOT;
-        assert_eq!(0, progress(0, 0, ticks_per_slot));
-        assert_eq!(1, progress(0, 1, ticks_per_slot));
-        assert_eq!(3, progress(0, 2, ticks_per_slot));
-        assert_eq!(98, progress(0, ticks_per_slot - 1, ticks_per_slot));
-        assert_eq!(100, progress(0, ticks_per_slot, ticks_per_slot));
-        assert_eq!(0, progress(1, ticks_per_slot, ticks_per_slot));
-        assert_eq!(3, progress(1, ticks_per_slot + 2, ticks_per_slot));
-    }
-
-    #[test]
-    fn test_slot_from_tick_height() {
-        let ticks_per_slot = DEFAULT_TICKS_PER_SLOT;
-        assert_eq!(0, slot_from_tick_height(0, ticks_per_slot));
-        assert_eq!(0, slot_from_tick_height(ticks_per_slot - 1, ticks_per_slot));
-        assert_eq!(1, slot_from_tick_height(ticks_per_slot, ticks_per_slot));
-        assert_eq!(1, slot_from_tick_height(ticks_per_slot + 1, ticks_per_slot));
-        assert_eq!(
-            1,
-            slot_from_tick_height(2 * ticks_per_slot - 1, ticks_per_slot)
-        );
-        assert_eq!(2, slot_from_tick_height(2 * ticks_per_slot, ticks_per_slot));
-        assert_eq!(
-            2,
-            slot_from_tick_height(2 * ticks_per_slot + 1, ticks_per_slot)
         );
     }
 }

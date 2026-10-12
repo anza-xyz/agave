@@ -33,13 +33,10 @@ use {
     },
 };
 
-/// Capacity of the vote channel between sigverify and the banking-stage.
-/// Sized to fit all votes from a reasonably sized cluster for 1 slot, + margin.
-const VOTE_CHANNEL_CAPACITY: usize = 1024 * 8;
+const TEST_CHANNEL_CAPACITY: usize = 1024 * 8;
 
-/// Capacity of the non-vote (transaction) channel between sigverify and the banking-stage.
-/// Larger than the vote channel to absorb bursty TPU load.
-const NON_VOTE_CHANNEL_CAPACITY: usize = 1024 * 16;
+/// Capacity of the transaction channel between sigverify and the banking stage.
+const TRANSACTION_CHANNEL_CAPACITY: usize = 1024 * 16;
 
 pub type BankingPacketSender = TracedSender;
 pub type TracerThreadResult = Result<(), TraceError>;
@@ -89,7 +86,7 @@ pub struct BankingTracer {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
-        abi_digest = "AGYC1vpcM7bBZDeLoc2Lckf9JLEVQ1GsKYCFqFqBsneF",
+        abi_digest = "FMi1FMR7aGfVCtRRL8auUDp7rZ9toCarotVBKJYcs3PU",
         test_roundtrip = "eq_and_wire",
     )
 )]
@@ -113,9 +110,7 @@ pub enum TracedEvent {
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ChannelLabel {
-    NonVote,
-    TpuVote,
-    GossipVote,
+    Transaction,
     Dummy,
 }
 
@@ -285,15 +280,10 @@ pub fn receiving_loop_with_minimized_sender_overhead<T, E, const SLEEP_MS: u64>(
     Ok(())
 }
 
-/// A small grouping struct to temporarily hold banking packet channel senders and receivers with
-/// different source labels for the banking stage setup.
+/// Banking packet channel endpoints used during banking-stage setup.
 pub struct Channels {
-    pub non_vote_sender: BankingPacketSender,
-    pub non_vote_receiver: BankingPacketReceiver,
-    pub tpu_vote_sender: BankingPacketSender,
-    pub tpu_vote_receiver: BankingPacketReceiver,
-    pub gossip_vote_sender: BankingPacketSender,
-    pub gossip_vote_receiver: BankingPacketReceiver,
+    pub transaction_sender: BankingPacketSender,
+    pub transaction_receiver: BankingPacketReceiver,
 }
 
 impl BankingTracer {
@@ -359,39 +349,24 @@ impl BankingTracer {
     }
 
     pub fn create_channels(&self) -> Channels {
-        let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
-
-        let (tpu_vote_sender, tpu_vote_receiver) = Self::channel(
-            ChannelLabel::TpuVote,
-            VOTE_CHANNEL_CAPACITY,
-            self.active_tracer.as_ref().cloned(),
-        );
-        let (gossip_vote_sender, gossip_vote_receiver) = Self::channel(
-            ChannelLabel::GossipVote,
-            VOTE_CHANNEL_CAPACITY,
-            self.active_tracer.as_ref().cloned(),
-        );
+        let (transaction_sender, transaction_receiver) = self.create_transaction_channel();
 
         Channels {
-            non_vote_sender,
-            non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
+            transaction_sender,
+            transaction_receiver,
         }
     }
 
-    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    pub fn create_transaction_channel(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         Self::channel(
-            ChannelLabel::NonVote,
-            NON_VOTE_CHANNEL_CAPACITY,
+            ChannelLabel::Transaction,
+            TRANSACTION_CHANNEL_CAPACITY,
             self.active_tracer.as_ref().cloned(),
         )
     }
 
     pub fn channel_for_test() -> (TracedSender, Receiver<BankingPacketBatch>) {
-        Self::channel(ChannelLabel::Dummy, VOTE_CHANNEL_CAPACITY, None)
+        Self::channel(ChannelLabel::Dummy, TEST_CHANNEL_CAPACITY, None)
     }
 
     fn channel(
@@ -461,18 +436,7 @@ impl BankingTracer {
 
 /// A small wrapper around the sender of crossbeam channels to message banking packet batches.
 ///
-/// The underlying channels are used by the banking stage to receive packets from multiple sources.
-/// The sources are labelled as non-vote, tpu-vote, and gossip-vote respectively. As such, traced
-/// senders are separately constructed for each of these sources, then all are grouped under the
-/// `Channels` struct transiently during setup.
-///
-/// This wrapper exists to enable the banking trace functionality conditionally on creation.
-///
-/// Also, this wrapper can dynamically switch sending batches to an alternate channel, called the
-/// unified channel, depending on a flag. Both the actual crossbeam sender for the unified channel
-/// and the flag are expected to be shared among all of traced sender instances, which will be used
-/// by the trio of sources respectively. This routing functionality is needed for unified scheduler
-/// and its runtime switching.
+/// This wrapper records packet batches when banking trace functionality is enabled.
 #[derive(Clone)]
 pub struct TracedSender {
     label: ChannelLabel,
@@ -573,22 +537,22 @@ mod tests {
         let exit = Arc::<AtomicBool>::default();
 
         let tracer = BankingTracer::new_disabled();
-        let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+        let (transaction_sender, transaction_receiver) = tracer.create_transaction_channel();
 
         let dummy_main_thread = thread::spawn(move || {
             receiving_loop_with_minimized_sender_overhead::<_, TraceError, 0>(
                 exit,
-                non_vote_receiver,
+                transaction_receiver,
                 |_packet_batch| Ok(()),
             )
         });
 
-        non_vote_sender
+        transaction_sender
             .send(BankingPacketBatch::new(
                 solana_perf::packet::PacketBatch::Bytes(BytesPacketBatch::new()),
             ))
             .unwrap();
-        for_test::terminate_tracer(tracer, None, dummy_main_thread, non_vote_sender, None);
+        for_test::terminate_tracer(tracer, None, dummy_main_thread, transaction_sender, None);
     }
 
     #[test]
@@ -598,14 +562,14 @@ mod tests {
         let exit = Arc::<AtomicBool>::default();
         let (tracer, tracer_thread) =
             BankingTracer::new(Some((&path, exit.clone(), DirByteLimit::MAX))).unwrap();
-        let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+        let (transaction_sender, transaction_receiver) = tracer.create_transaction_channel();
 
         let exit_for_dummy_thread = Arc::<AtomicBool>::default();
         let exit_for_dummy_thread2 = exit_for_dummy_thread.clone();
         let dummy_main_thread = thread::spawn(move || {
             receiving_loop_with_minimized_sender_overhead::<_, TraceError, 0>(
                 exit_for_dummy_thread,
-                non_vote_receiver,
+                transaction_receiver,
                 |_packet_batch| Ok(()),
             )
         });
@@ -623,7 +587,7 @@ mod tests {
 
         // .send() must succeed even after exit is already set to true and further tracer is
         // already dropped
-        non_vote_sender
+        transaction_sender
             .send(for_test::sample_packet_batch())
             .unwrap();
 
@@ -639,17 +603,17 @@ mod tests {
         let exit = Arc::<AtomicBool>::default();
         let (tracer, tracer_thread) =
             BankingTracer::new(Some((&path, exit.clone(), DirByteLimit::MAX))).unwrap();
-        let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+        let (transaction_sender, transaction_receiver) = tracer.create_transaction_channel();
 
         let dummy_main_thread = thread::spawn(move || {
             receiving_loop_with_minimized_sender_overhead::<_, TraceError, 0>(
                 exit,
-                non_vote_receiver,
+                transaction_receiver,
                 |_packet_batch| Ok(()),
             )
         });
 
-        non_vote_sender
+        transaction_sender
             .send(for_test::sample_packet_batch())
             .unwrap();
         let blockhash = Hash::from_str("B1ockhash1111111111111111111111111111111111").unwrap();
@@ -660,7 +624,7 @@ mod tests {
             tracer,
             tracer_thread,
             dummy_main_thread,
-            non_vote_sender,
+            transaction_sender,
             None,
         );
 
@@ -674,7 +638,7 @@ mod tests {
             results[i],
             Ok(TimedTracedEvent(
                 _,
-                TracedEvent::PacketBatch(ChannelLabel::NonVote, _)
+                TracedEvent::PacketBatch(ChannelLabel::Transaction, _)
             ))
         );
         i += 1;

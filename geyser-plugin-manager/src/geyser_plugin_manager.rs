@@ -869,7 +869,6 @@ mod tests {
             23,
             31,
             &transaction.signatures[0],
-            true,
             &transaction,
             Some(&loaded_addresses),
         );
@@ -896,7 +895,7 @@ mod tests {
             enabled_notifications[0].signature,
             transaction.signatures[0]
         );
-        assert!(enabled_notifications[0].is_vote);
+        assert!(!enabled_notifications[0].is_vote);
         assert_eq!(enabled_notifications[0].transaction, transaction);
         assert_eq!(
             enabled_notifications[0].loaded_addresses,

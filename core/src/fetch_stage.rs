@@ -1,23 +1,16 @@
-//! The `fetch_stage` batches input from a UDP socket and sends it to a channel.
+//! Filters forwarded transaction packets before sending them to sigverify.
 
 use {
     crate::result::{Error, Result},
-    crossbeam_channel::{RecvTimeoutError, TrySendError, unbounded},
-    solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
+    agave_votor::slot_clock::SharedAlpenglowSlotClock,
+    crossbeam_channel::{RecvTimeoutError, TrySendError},
+    solana_clock::HOLD_TRANSACTIONS_SLOT_OFFSET,
     solana_packet::PacketFlags,
-    solana_perf::packet::{BytesPacket, PacketBatch},
-    solana_poh::poh_recorder::PohRecorder,
-    solana_streamer::{
-        evicting_sender::EvictingSender,
-        streamer::{self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats},
-    },
+    solana_perf::packet::BytesPacket,
+    solana_poh::poh_recorder::SharedLeaderState,
+    solana_streamer::streamer::{PacketBatchReceiver, PacketBatchSender},
     std::{
-        net::UdpSocket,
-        sync::{
-            Arc, RwLock,
-            atomic::{AtomicBool, Ordering},
-        },
-        thread::{self, Builder, JoinHandle, sleep},
+        thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
@@ -67,60 +60,48 @@ impl ForwardingStats {
 }
 
 pub struct FetchStage {
-    thread_hdls: Vec<JoinHandle<()>>,
+    thread_hdl: JoinHandle<()>,
 }
 
 impl FetchStage {
-    pub fn new(
-        tpu_vote_sockets: Vec<UdpSocket>,
-        exit: Arc<AtomicBool>,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
-        coalesce: Option<Duration>,
-    ) -> (Self, PacketBatchReceiver, PacketBatchReceiver) {
-        let (sender, receiver) = unbounded();
-        let (vote_sender, vote_receiver) =
-            EvictingSender::new_bounded(crate::tpu::TPU_VOTE_CHANNEL_SIZE);
-        let (_forward_sender, forward_receiver) = unbounded();
-        (
-            Self::new_with_sender(
-                tpu_vote_sockets,
-                exit,
-                &sender,
-                &vote_sender,
-                forward_receiver,
-                poh_recorder,
-                coalesce,
-            ),
-            receiver,
-            vote_receiver,
-        )
-    }
-
     pub fn new_with_sender(
-        tpu_vote_sockets: Vec<UdpSocket>,
-        exit: Arc<AtomicBool>,
         sender: &PacketBatchSender,
-        vote_sender: &EvictingSender<PacketBatch>,
         forward_receiver: PacketBatchReceiver,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
-        coalesce: Option<Duration>,
+        shared_leader_state: SharedLeaderState,
+        alpenglow_slot_clock: SharedAlpenglowSlotClock,
     ) -> Self {
-        let tpu_vote_sockets = tpu_vote_sockets.into_iter().map(Arc::new).collect();
-        Self::new_multi_socket(
-            tpu_vote_sockets,
-            exit,
-            sender,
-            vote_sender,
-            forward_receiver,
-            poh_recorder,
-            coalesce,
-        )
+        let sender = sender.clone();
+        let thread_hdl = Builder::new()
+            .name("solFetchStgFwRx".to_string())
+            .spawn(move || {
+                let mut stats = ForwardingStats::new();
+                loop {
+                    if let Err(e) = Self::handle_forwarded_packets(
+                        &forward_receiver,
+                        &sender,
+                        &shared_leader_state,
+                        &alpenglow_slot_clock,
+                        &mut stats,
+                    ) {
+                        match e {
+                            Error::RecvTimeout(RecvTimeoutError::Disconnected) => break,
+                            Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
+                            Error::Recv(_) | Error::Send => break,
+                            _ => error!("{e:?}"),
+                        }
+                    }
+                    stats.maybe_report_and_reset();
+                }
+            })
+            .unwrap();
+        Self { thread_hdl }
     }
 
     fn handle_forwarded_packets(
         recvr: &PacketBatchReceiver,
         sendr: &PacketBatchSender,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        shared_leader_state: &SharedLeaderState,
+        alpenglow_slot_clock: &SharedAlpenglowSlotClock,
         stats: &mut ForwardingStats,
     ) -> Result<()> {
         let mark_forwarded = |packet: &mut BytesPacket| {
@@ -141,11 +122,20 @@ impl FetchStage {
             }
         }
 
-        if poh_recorder
-            .read()
-            .unwrap()
-            .would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET.saturating_mul(DEFAULT_TICKS_PER_SLOT))
-        {
+        let leader_state = shared_leader_state.load();
+        let would_be_leader = leader_state.working_bank().is_some()
+            || leader_state.next_leader_slot_range().is_some_and(
+                |(first_leader_slot, last_leader_slot)| {
+                    alpenglow_slot_clock
+                        .current_slot()
+                        .is_some_and(|current_slot| {
+                            current_slot <= last_leader_slot
+                                && current_slot.saturating_add(HOLD_TRANSACTIONS_SLOT_OFFSET)
+                                    >= first_leader_slot
+                        })
+                },
+            );
+        if would_be_leader {
             for packet_batch in packet_batches {
                 let packets_in_batch = packet_batch.len();
                 match sendr.try_send(packet_batch) {
@@ -165,87 +155,7 @@ impl FetchStage {
         Ok(())
     }
 
-    fn new_multi_socket(
-        tpu_vote_sockets: Vec<Arc<UdpSocket>>,
-        exit: Arc<AtomicBool>,
-        sender: &PacketBatchSender,
-        vote_sender: &EvictingSender<PacketBatch>,
-        forward_receiver: PacketBatchReceiver,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
-        coalesce: Option<Duration>,
-    ) -> Self {
-        let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
-        let tpu_vote_threads: Vec<_> = tpu_vote_sockets
-            .into_iter()
-            .enumerate()
-            .map(|(i, socket)| {
-                streamer::receiver(
-                    format!("solRcvrTpuVot{i:02}"),
-                    socket,
-                    exit.clone(),
-                    vote_sender.clone(),
-                    tpu_vote_stats.clone(),
-                    coalesce,
-                    true, // only staked connections should be voting
-                )
-            })
-            .collect();
-
-        let sender = sender.clone();
-        let poh_recorder = poh_recorder.clone();
-
-        let fwd_thread_hdl = Builder::new()
-            .name("solFetchStgFwRx".to_string())
-            .spawn(move || {
-                let mut stats = ForwardingStats::new();
-
-                loop {
-                    if let Err(e) = Self::handle_forwarded_packets(
-                        &forward_receiver,
-                        &sender,
-                        &poh_recorder,
-                        &mut stats,
-                    ) {
-                        match e {
-                            Error::RecvTimeout(RecvTimeoutError::Disconnected) => break,
-                            Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
-                            Error::Recv(_) => break,
-                            Error::Send => break,
-                            _ => error!("{e:?}"),
-                        }
-                    }
-                    stats.maybe_report_and_reset();
-                }
-            })
-            .unwrap();
-
-        let metrics_thread_hdl = Builder::new()
-            .name("solFetchStgMetr".to_string())
-            .spawn(move || {
-                loop {
-                    sleep(Duration::from_secs(1));
-
-                    tpu_vote_stats.report();
-
-                    if exit.load(Ordering::Relaxed) {
-                        return;
-                    }
-                }
-            })
-            .unwrap();
-
-        Self {
-            thread_hdls: [tpu_vote_threads, vec![fwd_thread_hdl, metrics_thread_hdl]]
-                .into_iter()
-                .flatten()
-                .collect(),
-        }
-    }
-
     pub fn join(self) -> thread::Result<()> {
-        for thread_hdl in self.thread_hdls {
-            thread_hdl.join()?;
-        }
-        Ok(())
+        self.thread_hdl.join()
     }
 }

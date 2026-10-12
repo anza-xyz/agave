@@ -806,7 +806,7 @@ pub(crate) mod external {
             let (check_worker_to_pack, response_receiver) = shaq::mpmc::pair(16).unwrap();
             let worker_allocator = rts_alloc::Allocator::join_from_existing(&allocator)
                 .expect("join allocator from test allocator");
-            let shared_leader_state = SharedLeaderState::new(0, None, None);
+            let shared_leader_state = SharedLeaderState::new(0, None);
             let worker = ExternalCheckWorker::new(
                 Arc::new(AtomicBool::new(false)),
                 receiver,

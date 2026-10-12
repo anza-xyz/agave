@@ -1,7 +1,7 @@
 use {
     super::{
         consumer::{Consumer, ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
-        leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
+        execute_and_commit_timings::ExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crate::banking_stage::consumer::{ExecutionFlags, RetryableIndex},
@@ -692,7 +692,6 @@ pub(crate) mod external {
             agave_scheduler_bindings::{SharableTransactionBatchRegion, processed_codes},
             agave_scheduler_handshake::{ClientLogon, setup_local_session},
             agave_scheduling_utils::responses_region::ExecutionResponsesPtr,
-            crossbeam_channel::bounded,
             solana_genesis_config::GenesisConfig,
             solana_keypair::Keypair,
             solana_leader_schedule::SlotLeader,
@@ -702,7 +701,7 @@ pub(crate) mod external {
                 transaction_recorder::TransactionRecorder,
             },
             solana_pubkey::Pubkey,
-            solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
+            solana_runtime::bank_forks::BankForks,
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
             std::sync::{RwLock, atomic::AtomicBool},
@@ -719,7 +718,6 @@ pub(crate) mod external {
             genesis_config: GenesisConfig,
             bank: Arc<Bank>,
             _bank_forks: Arc<RwLock<BankForks>>,
-            _replay_vote_receiver: ReplayVoteReceiver,
             record_receiver: RecordReceiver,
             allocator: rts_alloc::Allocator,
             pack_to_worker: shaq::spsc::Producer<PackToExecutionWorkerMessage>,
@@ -735,7 +733,6 @@ pub(crate) mod external {
                 self.shared_leader_state.store(Arc::new(LeaderState::new(
                     Some(self.bank.clone()),
                     self.bank.tick_height(),
-                    None,
                     None,
                 )));
             }
@@ -890,10 +887,9 @@ pub(crate) mod external {
 
             let (record_sender, record_receiver) = record_channels(false);
             let recorder = TransactionRecorder::new(record_sender);
-            let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
-            let committer = Committer::new(None, replay_vote_sender, None);
+            let committer = Committer::new(None, None);
             let consumer = Consumer::new(committer, recorder, None);
-            let shared_leader_state = SharedLeaderState::new(0, None, None);
+            let shared_leader_state = SharedLeaderState::new(0, None);
             let exit = Arc::new(AtomicBool::new(false));
 
             let worker = ExternalWorker::new(
@@ -910,7 +906,6 @@ pub(crate) mod external {
                 genesis_config,
                 bank,
                 _bank_forks: bank_forks,
-                _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 allocator: client_session.allocator,
                 pack_to_worker: client_worker.pack_to_worker,
@@ -1660,14 +1655,14 @@ impl ConsumeWorkerMetrics {
 
     fn update_on_execute_and_commit_timings(
         &self,
-        LeaderExecuteAndCommitTimings {
+        ExecuteAndCommitTimings {
             load_execute_us,
             freeze_lock_us,
             record_us,
             commit_us,
-            find_and_send_votes_us,
+            transaction_status_update_us,
             ..
-        }: &LeaderExecuteAndCommitTimings,
+        }: &ExecuteAndCommitTimings,
     ) {
         self.timing_metrics
             .load_execute_us_min
@@ -1688,8 +1683,8 @@ impl ConsumeWorkerMetrics {
             .commit_us
             .fetch_add(*commit_us, Ordering::Relaxed);
         self.timing_metrics
-            .find_and_send_votes_us
-            .fetch_add(*find_and_send_votes_us, Ordering::Relaxed);
+            .transaction_status_update_us
+            .fetch_add(*transaction_status_update_us, Ordering::Relaxed);
         self.timing_metrics
             .num_batches_processed
             .fetch_add(1, Ordering::Relaxed);
@@ -1872,7 +1867,7 @@ struct ConsumeWorkerTimingMetrics {
     freeze_lock_us: AtomicU64,
     record_us: AtomicU64,
     commit_us: AtomicU64,
-    find_and_send_votes_us: AtomicU64,
+    transaction_status_update_us: AtomicU64,
     num_batches_processed: AtomicU64,
 }
 
@@ -1914,8 +1909,8 @@ impl ConsumeWorkerTimingMetrics {
             ("record_us", self.record_us.swap(0, Ordering::Relaxed), i64),
             ("commit_us", self.commit_us.swap(0, Ordering::Relaxed), i64),
             (
-                "find_and_send_votes_us",
-                self.find_and_send_votes_us.swap(0, Ordering::Relaxed),
+                "transaction_status_update_us",
+                self.transaction_status_update_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
@@ -2092,9 +2087,7 @@ mod tests {
             transaction_recorder::TransactionRecorder,
         },
         solana_pubkey::Pubkey,
-        solana_runtime::{
-            bank::Bank, bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver,
-        },
+        solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
@@ -2118,7 +2111,6 @@ mod tests {
         genesis_config: GenesisConfig,
         bank: Arc<Bank>,
         _bank_forks: Arc<RwLock<BankForks>>,
-        _replay_vote_receiver: ReplayVoteReceiver,
         record_receiver: RecordReceiver,
         shared_leader_state: SharedLeaderState,
 
@@ -2147,10 +2139,9 @@ mod tests {
         let (record_sender, record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
 
-        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(None, replay_vote_sender, None);
+        let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
-        let shared_leader_state = SharedLeaderState::new(0, None, None);
+        let shared_leader_state = SharedLeaderState::new(0, None);
 
         let (consume_sender, consume_receiver) = bounded(1024);
         let (consumed_sender, consumed_receiver) = bounded(1024);
@@ -2169,7 +2160,6 @@ mod tests {
                 genesis_config,
                 bank,
                 _bank_forks: bank_forks,
-                _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 shared_leader_state,
                 consume_sender,
@@ -2297,7 +2287,6 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             None,
-            None,
         )));
         let worker_thread = std::thread::spawn(move || worker.run());
 
@@ -2356,7 +2345,6 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             None,
-            None,
         )));
         record_receiver.restart(bank.bank_id());
 
@@ -2409,7 +2397,6 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
-            None,
             None,
         )));
         record_receiver.restart(bank.bank_id());
@@ -2467,7 +2454,6 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
-            None,
             None,
         )));
         record_receiver.restart(bank.bank_id());
@@ -2549,7 +2535,6 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             None,
-            None,
         )));
         record_receiver.restart(bank.bank_id());
         assert!(bank.slot() > 0);
@@ -2596,7 +2581,6 @@ mod tests {
                 )
                 .unwrap(),
                 MessageHash::Compute,
-                None,
                 loader,
                 &HashSet::default(),
             )

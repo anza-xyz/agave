@@ -1,16 +1,14 @@
 use {
-    super::leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
+    super::execute_and_commit_timings::ExecuteAndCommitTimings,
     itertools::Itertools,
     solana_cost_model::cost_model::CostModel,
     solana_measure::measure_us,
     solana_runtime::{
         bank::{Bank, ProcessedTransactionCounts},
-        bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_balances::compile_collected_balances,
         transaction_batch::TransactionBatch,
         transaction_execution::TransactionStatusSender,
-        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
@@ -36,19 +34,16 @@ pub enum CommitTransactionDetails {
 #[derive(Clone)]
 pub struct Committer {
     transaction_status_sender: Option<TransactionStatusSender>,
-    replay_vote_sender: ReplayVoteSender,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
 }
 
 impl Committer {
     pub fn new(
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: ReplayVoteSender,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> Self {
         Self {
             transaction_status_sender,
-            replay_vote_sender,
             prioritization_fee_cache,
         }
     }
@@ -64,7 +59,7 @@ impl Committer {
         starting_transaction_index: Option<usize>,
         bank: &Bank,
         balance_collector: Option<BalanceCollector>,
-        execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
+        execute_and_commit_timings: &mut ExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
     ) -> (u64, Vec<CommitTransactionDetails>) {
         let (commit_results, commit_time_us) = measure_us!(bank.commit_transactions(
@@ -93,14 +88,7 @@ impl Committer {
             })
             .collect();
 
-        let ((), find_and_send_votes_us) = measure_us!({
-            bank_utils::find_and_send_votes(
-                batch.sanitized_transactions(),
-                &commit_results,
-                Some(&self.replay_vote_sender),
-                ReplayVoteSendType::VerifiedExecuted,
-            );
-
+        let ((), transaction_status_update_us) = measure_us!({
             if let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_ref() {
                 let fee_paying_transactions = commit_results
                     .iter()
@@ -117,7 +105,7 @@ impl Committer {
                 starting_transaction_index,
             );
         });
-        execute_and_commit_timings.find_and_send_votes_us = find_and_send_votes_us;
+        execute_and_commit_timings.transaction_status_update_us = transaction_status_update_us;
         (commit_time_us, commit_transaction_statuses)
     }
 

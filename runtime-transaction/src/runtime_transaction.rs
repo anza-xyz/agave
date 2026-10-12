@@ -53,9 +53,6 @@ impl<T> TransactionMeta for RuntimeTransaction<T> {
     fn message_hash(&self) -> &Hash {
         &self.meta.message_hash
     }
-    fn is_simple_vote_transaction(&self) -> bool {
-        self.meta.is_simple_vote_transaction
-    }
     fn signature_details(&self) -> &TransactionSignatureDetails {
         &self.meta.signature_details
     }

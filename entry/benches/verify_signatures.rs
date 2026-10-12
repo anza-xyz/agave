@@ -38,7 +38,6 @@ fn build_unverified_signatures(num_transactions: usize) -> UnverifiedSignatures<
             let statically_loaded = RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
                 sanitized,
                 MessageHash::Compute,
-                None,
             )?;
             ReplayTransaction::try_new(
                 statically_loaded,
