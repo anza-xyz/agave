@@ -1369,9 +1369,9 @@ fn create_and_insert_leader_bank(
         ctx.my_pubkey
     );
 
-    let Some(leader) = ctx
+    let Some(leaders) = ctx
         .leader_schedule_cache
-        .slot_leader_at(slot, Some(&parent_bank))
+        .slot_leaders_at(slot, Some(&parent_bank))
     else {
         panic!(
             "{}: No leader found for slot {slot} with parent {parent_slot}. Something has gone \
@@ -1379,6 +1379,7 @@ fn create_and_insert_leader_bank(
             ctx.my_pubkey,
         );
     };
+    let leader = leaders.leader;
 
     if ctx.my_pubkey != leader.id {
         return Err(StartLeaderError::LeaderIdentityMismatch {
@@ -1416,7 +1417,7 @@ fn create_and_insert_leader_bank(
         parent_bank.clone(),
         slot,
         root_slot,
-        leader,
+        leaders,
         ctx.rpc_subscriptions.as_deref(),
         &ctx.slot_status_notifier,
         NewBankOptions::default(),

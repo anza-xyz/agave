@@ -2862,6 +2862,11 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochStake {
     }
 }
 
+/// Compute units charged by `sol_get_leader` (SIMD-0558):
+/// `sysvar_base_cost + max(mem_op_base_cost, size_of::<LeaderInfo>() / cpi_bytes_per_unit)`
+/// = `100 + max(10, 128 / 250)` = 110.
+pub const SOL_GET_LEADER_COMPUTE_UNITS: u64 = 110;
+
 /// Get the current and next leader.
 pub struct SyscallGetLeader {}
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
@@ -2874,7 +2879,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
         _arg4: u64,
         _arg5: u64,
     ) -> Result<u64, Error> {
-        invoke_context.consume_checked(110)?;
+        invoke_context.consume_checked(SOL_GET_LEADER_COMPUTE_UNITS)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         if !check_aligned {
@@ -4769,9 +4774,9 @@ mod tests {
         use solana_svm_callback::LeaderInfo;
 
         const LEADER_INFO: LeaderInfo = LeaderInfo {
-            leader_id: Pubkey::new_from_array([1; 32]),
-            next_leader_id: Pubkey::new_from_array([2; 32]),
-            leader_vote: Pubkey::new_from_array([3; 32]),
+            leader_identity: Pubkey::new_from_array([1; 32]),
+            leader_vote: Pubkey::new_from_array([2; 32]),
+            next_leader_identity: Pubkey::new_from_array([3; 32]),
             next_leader_vote: Pubkey::new_from_array([4; 32]),
         };
 
@@ -4786,7 +4791,7 @@ mod tests {
             }
         }
 
-        let expected_cus = 110;
+        let expected_cus = SOL_GET_LEADER_COMPUTE_UNITS;
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);

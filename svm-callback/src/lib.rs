@@ -32,6 +32,8 @@ pub trait InvokeContextCallback {
         Err(PrecompileError::InvalidPublicKey)
     }
 
+    /// Returns the leaders of the current and next slot for the
+    /// `sol_get_leader` syscall.
     fn get_leader_info(&self) -> LeaderInfo {
         LeaderInfo::default()
     }
@@ -55,11 +57,14 @@ pub trait TransactionProcessingCallback: AccountLoadCallback {
     }
 }
 
+/// The block producer of the current slot and of the slot after it, as written
+/// by the `sol_get_leader` syscall (SIMD-0558). This is the syscall's ABI:
+/// four pubkeys, 128 bytes, in this order.
 #[repr(C)]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct LeaderInfo {
-    pub leader_id: Pubkey,
-    pub next_leader_id: Pubkey,
+    pub leader_identity: Pubkey,
     pub leader_vote: Pubkey,
+    pub next_leader_identity: Pubkey,
     pub next_leader_vote: Pubkey,
 }

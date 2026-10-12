@@ -34,6 +34,27 @@ impl SlotLeader {
     }
 }
 
+/// The leader of a slot together with the leader of the slot after it, as
+/// resolved from the leader schedule by whoever creates the bank for that slot.
+///
+/// `next_leader` is `None` when the creator could not resolve it (for example
+/// tests that build banks by hand); the bank then derives it from its own
+/// epoch stakes on first use.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct SlotLeaders {
+    pub leader: SlotLeader,
+    pub next_leader: Option<SlotLeader>,
+}
+
+impl From<SlotLeader> for SlotLeaders {
+    fn from(leader: SlotLeader) -> Self {
+        Self {
+            leader,
+            next_leader: None,
+        }
+    }
+}
+
 // Used for testing
 #[derive(Clone, Debug)]
 pub struct FixedSchedule {

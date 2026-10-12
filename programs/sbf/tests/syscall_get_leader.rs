@@ -2,24 +2,20 @@
 
 use {
     solana_instruction::Instruction,
-    solana_leader_schedule::LeaderSchedule,
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
+        bank::{Bank, SlotLeader, SlotLeaders},
         bank_client::BankClient,
-        epoch_stakes::VersionedEpochStakes,
         genesis_utils::{
             GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
         },
         loader_utils::create_program,
-        stakes::SerdeStakesToStakeFormat,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_signer::Signer,
     solana_transaction::Transaction,
-    std::num::NonZeroUsize,
 };
 
 #[test]
@@ -37,41 +33,23 @@ fn test_syscall_get_leader() {
         vec![100_000_000],
     );
 
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    assert_eq!(bank.slot(), 0);
-
-    let current = SlotLeader {
-        id: Pubkey::new_unique(),
-        vote_address: Pubkey::new_unique(),
-    };
-    let next = SlotLeader {
-        id: Pubkey::new_unique(),
-        vote_address: Pubkey::new_unique(),
-    };
-
-    // The child bank is slot 1, so `next_leader` reads the schedule at slot 2.
-    let (epoch, slot_index) = bank.epoch_schedule().get_epoch_and_slot_index(2);
-    let slot_index = usize::try_from(slot_index).unwrap();
-    let mut slot_leaders = vec![SlotLeader::default(); slot_index];
-    slot_leaders.push(next);
-    let leader_schedule =
-        LeaderSchedule::new_from_schedule(slot_leaders, NonZeroUsize::new(1).unwrap());
-    let stakes = SerdeStakesToStakeFormat::from(bank.get_top_epoch_stakes());
-    bank.set_epoch_stakes_for_test(
-        epoch,
-        VersionedEpochStakes::new(stakes, epoch, Some(leader_schedule)),
-    );
-
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let program_id = create_program(
         &bank,
         &bpf_loader_upgradeable::id(),
         "solana_sbf_syscall_get_leader",
     );
+
+    // The leaders arrive with the bank, the way the block creation loop and
+    // replay stage supply them from the leader schedule cache.
+    let leaders = SlotLeaders {
+        leader: SlotLeader::new_unique(),
+        next_leader: Some(SlotLeader::new_unique()),
+    };
     let mut bank_client = BankClient::new_shared(bank);
-    let bank = bank_client.advance_slot(1, &bank_forks, current).unwrap();
+    let bank = bank_client.advance_slot(1, &bank_forks, leaders).unwrap();
     bank.freeze();
-    assert_eq!(bank.leader(), &current);
+    assert_eq!(bank.leader(), &leaders.leader);
 
     let mint_pubkey = mint_keypair.pubkey();
     let message = Message::new(
@@ -87,12 +65,15 @@ fn test_syscall_get_leader() {
         result.result
     );
 
+    // `LeaderInfo` layout (SIMD-0558): leader identity, leader vote, next
+    // leader identity, next leader vote.
+    let next_leader = leaders.next_leader.unwrap();
     let data = &result.return_data.unwrap().data;
     assert_eq!(data.len(), 128);
-    assert_eq!(read_pubkey(data, 0), current.id);
-    assert_eq!(read_pubkey(data, 32), next.id);
-    assert_eq!(read_pubkey(data, 64), current.vote_address);
-    assert_eq!(read_pubkey(data, 96), next.vote_address);
+    assert_eq!(read_pubkey(data, 0), leaders.leader.id);
+    assert_eq!(read_pubkey(data, 32), leaders.leader.vote_address);
+    assert_eq!(read_pubkey(data, 64), next_leader.id);
+    assert_eq!(read_pubkey(data, 96), next_leader.vote_address);
 }
 
 fn read_pubkey(data: &[u8], offset: usize) -> Pubkey {

@@ -39,7 +39,7 @@ pub use {
     crate::slot_params::DEFAULT_MAX_ENTRY_BYTES_PER_SLOT,
     partitioned_epoch_rewards::KeyedRewardsAndNumPartitions,
     solana_accounts_db::bank_id::{BankId, BankIdGenerator},
-    solana_leader_schedule::SlotLeader,
+    solana_leader_schedule::{SlotLeader, SlotLeaders},
     solana_reward_info::RewardType,
 };
 use {
@@ -686,6 +686,7 @@ impl PartialEq for Bank {
             epoch,
             block_height,
             leader,
+            next_leader: _,
             fee_rate_governor,
             rent_collector,
             epoch_schedule,
@@ -974,6 +975,10 @@ pub struct Bank {
 
     /// The leader who produced this block
     leader: SlotLeader,
+
+    /// The leader of `slot + 1`. Seeded by the creator of this bank from the
+    /// leader schedule cache; derived from epoch stakes on first use otherwise.
+    next_leader: OnceLock<SlotLeader>,
 
     /// Track cluster signature throughput and adjust fee rate
     pub(crate) fee_rate_governor: FeeRateGovernor,
@@ -1316,6 +1321,7 @@ impl Bank {
             epoch: Epoch::default(),
             block_height: u64::default(),
             leader: SlotLeader::default(),
+            next_leader: OnceLock::new(),
             fee_rate_governor: FeeRateGovernor::default(),
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
@@ -1421,15 +1427,8 @@ impl Bank {
             let stakes = bank.get_top_epoch_stakes();
             let stakes = SerdeStakesToStakeFormat::from(stakes);
             for epoch in 0..=bank.get_leader_schedule_epoch(bank.slot) {
-                let leader_schedule = Self::leader_schedule_from_stakes(
-                    epoch,
-                    bank.epoch_schedule(),
-                    stakes.vote_accounts().as_ref(),
-                );
-                bank.epoch_stakes.insert(
-                    epoch,
-                    VersionedEpochStakes::new(stakes.clone(), epoch, leader_schedule),
-                );
+                bank.epoch_stakes
+                    .insert(epoch, VersionedEpochStakes::new(stakes.clone(), epoch));
             }
             bank.update_stake_history(None);
         }
@@ -1447,7 +1446,7 @@ impl Bank {
     }
 
     /// Create a new bank that points to an immutable checkpoint of another bank.
-    pub fn new_from_parent(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
+    pub fn new_from_parent(parent: Arc<Bank>, leader: impl Into<SlotLeaders>, slot: Slot) -> Self {
         Self::_new_from_parent(
             parent,
             leader,
@@ -1459,7 +1458,7 @@ impl Bank {
 
     pub fn new_from_parent_with_options(
         parent: Arc<Bank>,
-        leader: SlotLeader,
+        leader: impl Into<SlotLeaders>,
         slot: Slot,
         new_bank_options: NewBankOptions,
     ) -> Self {
@@ -1468,7 +1467,7 @@ impl Bank {
 
     pub fn new_from_parent_with_tracer(
         parent: Arc<Bank>,
-        leader: SlotLeader,
+        leader: impl Into<SlotLeaders>,
         slot: Slot,
         reward_calc_tracer: impl RewardCalcTracer,
     ) -> Self {
@@ -1487,13 +1486,17 @@ impl Bank {
 
     fn _new_from_parent(
         parent: Arc<Bank>,
-        leader: SlotLeader,
+        leader: impl Into<SlotLeaders>,
         slot: Slot,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_bank_options: NewBankOptions,
     ) -> Self {
         let mut time = Measure::start("bank::new_from_parent");
         let NewBankOptions { vote_only_bank } = new_bank_options;
+        let SlotLeaders {
+            leader,
+            next_leader,
+        } = leader.into();
 
         parent.freeze();
         assert_ne!(slot, parent.slot());
@@ -1587,6 +1590,7 @@ impl Bank {
             parent_hash: parent.hash(),
             parent_slot: parent.slot(),
             leader,
+            next_leader: next_leader.map_or_else(OnceLock::new, OnceLock::from),
             ancestors: Ancestors::default(),
             hash: RwLock::new(Hash::default()),
             is_delta: AtomicBool::new(false),
@@ -2064,7 +2068,7 @@ impl Bank {
     ///   in the past
     /// * Adjusts the new bank's tick height to avoid having to run PoH for millions of slots
     /// * Freezes the new bank, assuming that the user will `Bank::new_from_parent` from this bank
-    pub fn warp_from_parent(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
+    pub fn warp_from_parent(parent: Arc<Bank>, leader: impl Into<SlotLeaders>, slot: Slot) -> Self {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, leader, slot);
@@ -2173,19 +2177,6 @@ impl Bank {
             cache_preparation_time_us,
             update_sysvars_time_us,
             fill_sysvar_cache_time_us,
-        }
-    }
-
-    fn next_leader(&self) -> SlotLeader {
-        let (epoch, slot_index) = self
-            .epoch_schedule()
-            .get_epoch_and_slot_index(self.slot + 1);
-        let VersionedEpochStakes::Current {
-            leader_schedule, ..
-        } = self.epoch_stakes.get(&epoch).unwrap();
-        match leader_schedule.get() {
-            Some(leader_schedule) => leader_schedule.get_slot_leader_at_index(slot_index as usize),
-            None => SlotLeader::default(),
         }
     }
 
@@ -2309,6 +2300,7 @@ impl Bank {
             epoch,
             block_height: fields.block_height,
             leader,
+            next_leader: OnceLock::new(),
             fee_rate_governor: fields.fee_rate_governor,
             rent_collector: RentCollector::new(
                 epoch,
@@ -2398,20 +2390,6 @@ impl Bank {
         bank
     }
 
-    fn leader_schedule_from_stakes(
-        epoch: Epoch,
-        epoch_schedule: &EpochSchedule,
-        epoch_vote_accounts: &VoteAccountsHashMap,
-    ) -> Option<solana_leader_schedule::LeaderSchedule> {
-        if epoch_vote_accounts
-            .values()
-            .all(|(stake, _account)| *stake == 0)
-        {
-            return None;
-        }
-        leader_schedule_from_vote_accounts(epoch, epoch_schedule, epoch_vote_accounts)
-    }
-
     /// Compute the slot leader from epoch stakes during snapshot restoration.
     fn slot_leader_from_epoch_stakes(
         slot: Slot,
@@ -2469,6 +2447,37 @@ impl Bank {
 
     pub fn leader_id(&self) -> &Pubkey {
         &self.leader.id
+    }
+
+    /// The leader of the slot after this bank's slot.
+    ///
+    /// Normally seeded by whoever created this bank, from the same leader
+    /// schedule cache that supplied [`Self::leader`]. A bank created without
+    /// it derives the value here from the epoch stakes it already holds; those
+    /// cover `leader_schedule_epoch`, so the lookup also works when the next
+    /// slot starts a new epoch.
+    pub fn next_leader(&self) -> &SlotLeader {
+        self.next_leader.get_or_init(|| {
+            let next_slot = self.slot.saturating_add(1);
+            let (epoch, slot_index) = self.epoch_schedule().get_epoch_and_slot_index(next_slot);
+            let next_leader = self
+                .epoch_vote_accounts(epoch)
+                // `LeaderSchedule::new` panics without any staked vote account
+                .filter(|vote_accounts| vote_accounts.values().any(|(stake, _)| *stake > 0))
+                .and_then(|vote_accounts| {
+                    leader_schedule_from_vote_accounts(epoch, self.epoch_schedule(), vote_accounts)
+                })
+                .map(|leader_schedule| {
+                    leader_schedule.get_slot_leader_at_index(slot_index as usize)
+                })
+                .unwrap_or_default();
+            warn!(
+                "bank {}: next leader (slot {next_slot}) was not provided at creation; derived it \
+                 from epoch stakes",
+                self.slot
+            );
+            next_leader
+        })
     }
 
     pub fn genesis_creation_time(&self) -> UnixTimestamp {
@@ -2840,13 +2849,7 @@ impl Bank {
                 None => self.get_top_epoch_stakes(),
             };
             let stakes = SerdeStakesToStakeFormat::from(stakes);
-            let leader_schedule = Self::leader_schedule_from_stakes(
-                leader_schedule_epoch,
-                self.epoch_schedule(),
-                stakes.vote_accounts().as_ref(),
-            );
-            let new_epoch_stakes =
-                VersionedEpochStakes::new(stakes, leader_schedule_epoch, leader_schedule);
+            let new_epoch_stakes = VersionedEpochStakes::new(stakes, leader_schedule_epoch);
             info!(
                 "new epoch stakes, epoch: {}, total_stake: {}",
                 leader_schedule_epoch,
@@ -6918,12 +6921,12 @@ impl InvokeContextCallback for Bank {
     }
 
     fn get_leader_info(&self) -> LeaderInfo {
-        let current_leader = self.leader();
+        let leader = self.leader();
         let next_leader = self.next_leader();
         LeaderInfo {
-            leader_id: current_leader.id,
-            next_leader_id: next_leader.id,
-            leader_vote: current_leader.vote_address,
+            leader_identity: leader.id,
+            leader_vote: leader.vote_address,
+            next_leader_identity: next_leader.id,
             next_leader_vote: next_leader.vote_address,
         }
     }
@@ -7235,7 +7238,7 @@ impl Bank {
     pub fn new_from_parent_with_bank_forks(
         bank_forks: &RwLock<BankForks>,
         parent: Arc<Bank>,
-        leader: SlotLeader,
+        leader: impl Into<SlotLeaders>,
         slot: Slot,
     ) -> Arc<Self> {
         let bank = Bank::new_from_parent(parent, leader, slot);

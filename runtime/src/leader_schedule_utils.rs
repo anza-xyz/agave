@@ -102,8 +102,10 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{
-            bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
+            GenesisConfigInfo, ValidatorVoteKeypairs, bootstrap_validator_stake_lamports,
+            create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
         },
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
     };
 
     #[test]
@@ -129,6 +131,38 @@ mod tests {
                 .genesis_config;
         let bank = Bank::new_for_tests(&genesis_config);
         assert_eq!(slot_leader_at(bank.slot(), &bank).unwrap(), pubkey);
+    }
+
+    #[test]
+    fn test_bank_next_leader() {
+        let voting_keypairs: Vec<_> = (0..3).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_vote_accounts(
+            1_000_000_000,
+            &voting_keypairs,
+            vec![10_000_000_000, 20_000_000_000, 30_000_000_000],
+        );
+        genesis_config.epoch_schedule.warmup = false;
+        let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        // Provided at creation: reported as-is.
+        let provided = SlotLeaders {
+            leader: SlotLeader::new_unique(),
+            next_leader: Some(SlotLeader::new_unique()),
+        };
+        let bank = Bank::new_from_parent(bank0.clone(), provided, 1);
+        assert_eq!(bank.leader(), &provided.leader);
+        assert_eq!(Some(*bank.next_leader()), provided.next_leader);
+
+        // Not provided: derived from the schedule, also across the epoch boundary.
+        let last_slot = genesis_config.epoch_schedule.get_last_slot_in_epoch(0);
+        for slot in [1, 2, last_slot] {
+            let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), slot);
+            let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot + 1);
+            let expected = leader_schedule(epoch, &bank).unwrap()[slot_index];
+            assert_eq!(bank.next_leader(), &expected);
+        }
     }
 
     #[test]
