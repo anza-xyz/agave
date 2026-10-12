@@ -34,12 +34,10 @@ shuttle = { workspace = true, optional = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-hash = { workspace = true }
-solana-leader-schedule = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-poh-config = { workspace = true }
-solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-transaction = { workspace = true }
 thiserror = { workspace = true }
@@ -47,11 +45,8 @@ thiserror = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 bencher = { workspace = true }
-rand = { workspace = true }
 solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
-solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-poh = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
@@ -59,10 +54,6 @@ solana-system-transaction = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
-
-[[bench]]
-name = "poh"
-harness = false
 
 [[bench]]
 name = "poh_verify"
