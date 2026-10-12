@@ -133,9 +133,12 @@ impl BorrowedInstructionAccount<'_, '_> {
         }
 
         let lamports_balance = (lamports as i128).saturating_sub(old_lamports as i128);
-        self.transaction_context
-            .accounts
-            .add_lamports_delta(lamports_balance)?;
+        let delta = self.transaction_context.lamports_delta.get();
+        self.transaction_context.lamports_delta.set(
+            delta
+                .checked_add(lamports_balance)
+                .ok_or(InstructionError::ArithmeticOverflow)?,
+        );
 
         self.touch()?;
         self.account.set_lamports(lamports);
