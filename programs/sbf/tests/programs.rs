@@ -7,7 +7,7 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
 
-#[cfg(feature = "sbf_c")]
+#[cfg(any(feature = "sbf_c", all(feature = "sbf_rust", not(feature = "sbpf-v3"))))]
 use solana_account::state_traits::StateMutWincode as _;
 #[cfg(not(feature = "sbf_sanity_list"))]
 use solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT;
@@ -420,8 +420,6 @@ fn test_program_sbf_loader_deprecated() {
 // In SBPFv3, we don't have a verification step for undefined syscalls, and we don't do dynamic
 // symbol resolution, so this test would pass.
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
-    use solana_account::state_traits::StateMutWincode as _;
-
     agave_logger::setup();
 
     // Populate loader account with `solana_sbf_rust_deprecated_loader` elf, which
