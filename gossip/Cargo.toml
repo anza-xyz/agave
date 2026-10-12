@@ -24,18 +24,14 @@ stable-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-bloom/stable-abi",
     "solana-hash/stable-abi",
-    "solana-ledger/stable-abi",
     "solana-perf/stable-abi",
     "solana-pubkey/stable-abi",
     "solana-signature/stable-abi",
     "solana-transaction/stable-abi",
     "solana-version/stable-abi",
-    "solana-vote-program/stable-abi",
-    "solana-vote/stable-abi",
 ]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "agave-votor-messages/dev-context-only-utils",
     "dep:qualifier_attr",
     "solana-bloom/dev-context-only-utils",
 ]
@@ -43,7 +39,6 @@ dev-context-only-utils = [
 [dependencies]
 agave-logger = { workspace = true }
 agave-random = { workspace = true }
-agave-votor-messages = { workspace = true }
 arc-swap = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
@@ -64,13 +59,11 @@ rand_chacha = { workspace = true }
 rayon = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clock = { workspace = true }
-solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
-solana-hash = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
@@ -88,8 +81,6 @@ solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode"] }
 solana-version = { workspace = true }
-solana-vote = { workspace = true }
-solana-vote-program = { workspace = true }
 solana-wincode-varint = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
@@ -102,13 +93,10 @@ criterion = { workspace = true }
 num_cpus = { workspace = true }
 serial_test = { workspace = true }
 solana-gossip = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
-solana-system-transaction = { workspace = true }
-solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }

@@ -75,7 +75,6 @@ solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
-solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
@@ -90,7 +89,6 @@ solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-test-validator = { workspace = true }
-solana-turbine = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
