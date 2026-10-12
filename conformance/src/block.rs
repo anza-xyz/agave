@@ -799,9 +799,7 @@ mod tests {
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_runtime::{
-            genesis_utils::create_genesis_config, sysvar_account::create_account,
-        },
+        solana_runtime::{genesis_utils::create_genesis_config, sysvar_account::create_account},
         solana_sdk_ids::{native_loader, system_program, sysvar},
         solana_slot_hashes::SlotHashes,
         solana_slot_history::SlotHistory,
