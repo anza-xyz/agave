@@ -7953,7 +7953,6 @@ dependencies = [
  "solana-account",
  "solana-accounts-db",
  "solana-address-lookup-table-interface",
- "solana-bincode",
  "solana-bls-signatures",
  "solana-bpf-loader-program",
  "solana-client",
@@ -11557,7 +11556,6 @@ version = "4.5.0-alpha.2"
 dependencies = [
  "arbitrary",
  "bencher",
- "bincode",
  "log",
  "qualifier_attr",
  "rand 0.9.4",

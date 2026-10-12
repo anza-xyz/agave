@@ -6405,7 +6405,6 @@ dependencies = [
  "solana-account",
  "solana-accounts-db",
  "solana-address-lookup-table-interface",
- "solana-bincode",
  "solana-bls-signatures",
  "solana-client",
  "solana-clock",
@@ -9066,13 +9065,11 @@ dependencies = [
 name = "solana-vote"
 version = "4.5.0-alpha.2"
 dependencies = [
- "bincode",
  "log",
  "qualifier_attr",
  "rand 0.9.4",
  "serde",
  "solana-account",
- "solana-bincode",
  "solana-bls-signatures",
  "solana-clock",
  "solana-hash",
