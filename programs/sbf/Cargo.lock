@@ -7917,6 +7917,7 @@ dependencies = [
  "rand 0.9.4",
  "solana-account",
  "solana-account-info",
+ "solana-account-view 3.0.0",
  "solana-clock",
  "solana-epoch-rewards",
  "solana-epoch-schedule",

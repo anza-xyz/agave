@@ -1,6 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 pub use self::{
-    cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
+    cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust, SyscallInvokeSignedV2},
     logging::{
         SyscallLog, SyscallLogBpfComputeUnits, SyscallLogData, SyscallLogPubkey, SyscallLogU64,
     },
@@ -447,6 +447,7 @@ pub fn create_program_runtime_environment(
     // Cross-program invocation
     SyscallInvokeSignedC::register(&mut result, "sol_invoke_signed_c")?;
     SyscallInvokeSignedRust::register(&mut result, "sol_invoke_signed_rust")?;
+    SyscallInvokeSignedV2::register(&mut result, "sol_invoke_signed_v2")?;
 
     // Memory allocator
     register_feature_gated_function!(
