@@ -71,7 +71,7 @@ impl NotarEntry {
         // different block ids. Try them in descending stake order to maximize leader rewards,
         // skipping empty candidates and aggregates with an identity signature.
         let mut candidates = self.partials.into_iter().collect::<Vec<_>>();
-        candidates.sort_unstable_by_key(|(_block_id, partial)| Reverse(partial.stake()));
+        candidates.sort_unstable_by_key(|(_block_id, partial)| Reverse(partial.validators.len()));
         for (block_id, partial) in candidates {
             let (signature, bitmap, validators) = match partial.build_sig_bitmap() {
                 BuildResult::Empty | BuildResult::Identity => continue,

@@ -102,7 +102,7 @@ impl StakesCache {
         new_rate_activation_epoch: Option<Epoch>,
         in_epoch_rewards_period: bool,
         remove_inactive_stakes: bool,
-    ) {
+    ) -> Option<VoteAccount> {
         // TODO: If the account is already cached as a vote or stake account
         // but the owner changes, then this needs to evict the account from
         // the cache. see:
@@ -120,35 +120,31 @@ impl StakesCache {
                 let mut stakes = self.0.write().unwrap();
                 stakes.remove_stake_delegation(pubkey, new_rate_activation_epoch);
             }
-            return;
+            return None;
         }
         debug_assert_ne!(account.lamports(), 0u64);
+
         if solana_vote_program::check_id(owner) {
-            if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
-                match VoteAccount::try_from(account.clone()) {
-                    Ok(vote_account) => {
-                        // drop the old account after releasing the lock
-                        let _old_vote_account = {
+            let old_vote_account =
+                if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
+                    match VoteAccount::try_from(account.clone()) {
+                        Ok(vote_account) => {
                             let mut stakes = self.0.write().unwrap();
                             stakes.upsert_vote_account(pubkey, vote_account)
-                        };
-                    }
-                    Err(_) => {
-                        // drop the old account after releasing the lock
-                        let _old_vote_account = {
+                        }
+                        Err(_) => {
                             let mut stakes = self.0.write().unwrap();
                             stakes.remove_vote_account(pubkey)
-                        };
+                        }
                     }
-                }
-            } else {
-                // drop the old account after releasing the lock
-                let _old_vote_account = {
+                } else {
                     let mut stakes = self.0.write().unwrap();
                     stakes.remove_vote_account(pubkey)
                 };
-            };
-        } else if stake_program::check_id(owner) {
+            return old_vote_account;
+        }
+
+        if stake_program::check_id(owner) {
             match StakeAccount::try_from(account.clone()) {
                 Ok(stake_account) => {
                     let mut stakes = self.0.write().unwrap();
@@ -166,6 +162,7 @@ impl StakesCache {
                 }
             }
         }
+        None
     }
 
     pub(crate) fn activate_epoch(
