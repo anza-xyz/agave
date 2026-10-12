@@ -103,34 +103,6 @@ impl VoteHistory {
         self.voted.contains(&slot)
     }
 
-    /// Initialize vote history at the Alpenglow genesis block. The genesis vote
-    /// is cast and refreshed outside Votor during migration, so its voted and
-    /// notarized state is initialized without adding it to `votes_cast`.
-    pub fn initialize_genesis(&mut self, genesis_block: Block) {
-        if genesis_block.slot < self.root {
-            return;
-        }
-        if let Some(block_id) = self.voted_notar.get(&genesis_block.slot) {
-            assert_eq!(
-                *block_id, genesis_block.block_id,
-                "genesis block does not match existing notarization vote for slot {}",
-                genesis_block.slot,
-            );
-        }
-        assert!(
-            self.notarized_blocks.iter().all(|block| {
-                block.slot != genesis_block.slot || block.block_id == genesis_block.block_id
-            }),
-            "genesis block does not match existing notarized block for slot {}",
-            genesis_block.slot,
-        );
-        self.set_root(genesis_block.slot);
-        self.voted.insert(genesis_block.slot);
-        self.voted_notar
-            .insert(genesis_block.slot, genesis_block.block_id);
-        self.notarized_blocks.insert(genesis_block);
-    }
-
     /// The block for which we voted notarize in slot `slot`
     pub fn voted_notar(&self, slot: Slot) -> Option<BlockId> {
         assert!(slot >= self.root);
@@ -236,11 +208,6 @@ impl VoteHistory {
                 assert!(!self.its_over(vote.slot));
                 self.skipped.insert(vote.slot);
                 self.voted_skip_fallback.insert(vote.slot);
-            }
-            Vote::Genesis(_vote) => {
-                // Genesis votes are only used during migration.
-                // Since these votes are tracked and sent outside of
-                // votor, we do not need to insert anything here.
             }
         }
         self.votes_cast
@@ -507,57 +474,6 @@ mod test {
         );
         // set_root doesn't automatically set its_over to true
         assert!(!vote_history.its_over(2));
-    }
-
-    #[test]
-    fn test_initialize_genesis() {
-        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        vote_history.add_vote(Vote::new_skip_vote(1));
-        let genesis_block = Block::new_unique(2);
-        vote_history.initialize_genesis(genesis_block);
-        vote_history.initialize_genesis(genesis_block);
-
-        assert_eq!(vote_history.root(), 2);
-        assert!(vote_history.voted(2));
-        assert_eq!(vote_history.voted_notar(2), Some(genesis_block.block_id));
-        assert!(vote_history.is_block_notarized(&genesis_block));
-        assert!(!vote_history.skipped(2));
-        assert!(vote_history.votes_cast_since(0).is_empty());
-
-        let old_genesis_block = Block::new_unique(1);
-        vote_history.initialize_genesis(old_genesis_block);
-        assert_eq!(vote_history.root(), 2);
-        assert!(vote_history.voted(2));
-        assert_eq!(vote_history.voted_notar(2), Some(genesis_block.block_id));
-        assert!(vote_history.is_block_notarized(&genesis_block));
-        assert!(!vote_history.is_block_notarized(&old_genesis_block));
-    }
-
-    #[test]
-    #[should_panic(expected = "genesis block does not match existing notarization vote")]
-    fn test_initialize_genesis_panics_on_voted_notar_mismatch() {
-        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let genesis_block = Block::new_unique(2);
-        vote_history
-            .voted_notar
-            .insert(genesis_block.slot, BlockId::new_unique());
-
-        vote_history.initialize_genesis(genesis_block);
-    }
-
-    #[test]
-    #[should_panic(expected = "genesis block does not match existing notarized block")]
-    fn test_initialize_genesis_panics_on_notarized_block_mismatch() {
-        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let genesis_block = Block::new_unique(2);
-        vote_history
-            .voted_notar
-            .insert(genesis_block.slot, genesis_block.block_id);
-        vote_history
-            .notarized_blocks
-            .insert(Block::new_unique(genesis_block.slot));
-
-        vote_history.initialize_genesis(genesis_block);
     }
 
     #[test]

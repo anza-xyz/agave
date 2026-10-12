@@ -1,7 +1,7 @@
 //! Definitions of Alpenglow consensus certificates
 
 use {
-    crate::{consensus_message::Block, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD},
+    crate::{consensus_message::Block, fraction::Fraction},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
 };
@@ -14,15 +14,6 @@ pub struct CertSignature {
     /// A rank bitmap for validators' signatures included in the aggregate.
     /// See solana-signer-store for encoding format.
     pub bitmap: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Genesis cert
-pub struct GenesisCert {
-    /// Block the cert is for.
-    pub block: Block,
-    /// the signature on the cert
-    pub signature: CertSignature,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,8 +69,6 @@ pub enum CertificateType {
     NotarizeFallback(Block),
     /// Skip certificate
     Skip(Slot),
-    /// Genesis certificate
-    Genesis(Block),
 }
 
 impl CertificateType {
@@ -102,7 +91,6 @@ impl CertificateType {
             | CertificateType::FinalizeFast(Block { slot, block_id: _ })
             | CertificateType::NotarizeFallback(Block { slot, block_id: _ })
             | CertificateType::Notarize(Block { slot, block_id: _ })
-            | CertificateType::Genesis(Block { slot, block_id: _ })
             | CertificateType::Skip(slot) => *slot,
         }
     }
@@ -115,7 +103,6 @@ impl CertificateType {
             Self::Notarize(_) => Fraction::from_percentage(60),
             Self::NotarizeFallback(_) => Fraction::from_percentage(60),
             Self::FinalizeFast(_) => Fraction::from_percentage(80),
-            Self::Genesis(_) => GENESIS_VOTE_THRESHOLD,
         }
     }
 
@@ -147,10 +134,5 @@ impl CertificateType {
     /// Is this a skip certificate?
     pub fn is_skip(&self) -> bool {
         matches!(self, Self::Skip(_))
-    }
-
-    /// Is this a genesis certificate?
-    pub fn is_genesis(&self) -> bool {
-        matches!(self, Self::Genesis(_))
     }
 }

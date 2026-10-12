@@ -13,12 +13,10 @@ use {
     agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
         certificate::{
-            CertSignature, Certificate, CertificateType, FastFinalizeCert, FinalizeCert,
-            GenesisCert, NotarCert,
+            CertSignature, Certificate, CertificateType, FastFinalizeCert, FinalizeCert, NotarCert,
         },
         consensus_message::Block,
         finalized_slot::FinalizedSlot,
-        migration::MigrationStatus,
         stake::Stake,
     },
     log::trace,
@@ -81,8 +79,6 @@ pub(crate) struct ConsensusPool {
     stats: ConsensusPoolStats,
     /// Slot stake counters, used to calculate safe_to_notar and safe_to_skip
     slot_stake_counters_map: BTreeMap<Slot, SlotStakeCounters>,
-    /// Stores details about the genesis vote during the migration.
-    migration_status: Arc<MigrationStatus>,
     /// Pending safe-to-notar blocks for intrawindow slots that need parent verification.
     /// These are blocks that have reached the safe-to-notar threshold but are not the
     /// first block in their leader window. They need to be verified that their parent
@@ -97,7 +93,6 @@ impl ConsensusPool {
         cluster_info: Arc<ClusterInfo>,
         root: &Bank,
         generated_cert_types: Arc<GeneratedCertTypes>,
-        migration_status: Arc<MigrationStatus>,
         initial_parent_ready: ParentReady,
     ) -> Self {
         let parent_ready_tracker =
@@ -111,7 +106,6 @@ impl ConsensusPool {
             parent_ready_tracker,
             stats: ConsensusPoolStats::default(),
             slot_stake_counters_map: BTreeMap::new(),
-            migration_status,
             generated_cert_types,
             pending_safe_to_notar: vec![],
             last_pruned_slot: 0,
@@ -236,18 +230,6 @@ impl ConsensusPool {
                             root_bank,
                         ));
                 }
-            }
-            CertificateType::Genesis(block) => {
-                let genesis_cert = Arc::new(GenesisCert {
-                    block,
-                    signature: CertSignature {
-                        signature: cert.signature,
-                        bitmap: cert.bitmap.clone(),
-                    },
-                });
-                self.migration_status.set_genesis_certificate(genesis_cert);
-                // The genesis block is automatically certified
-                self.parent_ready_tracker.add_genesis(block, events);
             }
         }
     }
@@ -493,14 +475,9 @@ impl ConsensusPool {
     }
 
     #[cfg(test)]
-    fn make_start_leader_decision(
-        &self,
-        my_leader_slot: Slot,
-        parent_slot: Slot,
-        first_alpenglow_slot: Slot,
-    ) -> bool {
+    fn make_start_leader_decision(&self, my_leader_slot: Slot, parent_slot: Slot) -> bool {
         // TODO: for GCE tests we WFSM on 1 so slot 1 is exempt
-        let needs_notar_cert = parent_slot >= first_alpenglow_slot && parent_slot > 1;
+        let needs_notar_cert = parent_slot > 1;
 
         if needs_notar_cert
             && !self.slot_has_notar_fallback_or_notar(parent_slot)
@@ -510,14 +487,10 @@ impl ConsensusPool {
             return false;
         }
 
-        let needs_skip_cert =
-            // handles cases where we are entering the alpenglow epoch, where the first
-            // slot in the epoch will pass my_leader_slot == parent_slot
-            my_leader_slot != first_alpenglow_slot &&
-            my_leader_slot != parent_slot.saturating_add(1);
+        let needs_skip_cert = my_leader_slot != parent_slot.saturating_add(1);
 
         if needs_skip_cert {
-            let begin_skip_slot = first_alpenglow_slot.max(parent_slot.saturating_add(1));
+            let begin_skip_slot = parent_slot.saturating_add(1);
             for slot in begin_skip_slot..my_leader_slot {
                 if !self.skip_certified(slot) {
                     error!(
@@ -587,7 +560,7 @@ impl ConsensusPool {
 #[cfg(test)]
 mod tests {
     use {
-        super::{parent_ready_tracker::BlockProductionParent, *},
+        super::*,
         crate::tests::get_cluster_info,
         agave_bls_sigverify::sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         agave_votor_messages::{
@@ -656,7 +629,6 @@ mod tests {
                     cluster_info,
                     &root_bank,
                     generated_cert_types.clone(),
-                    Arc::new(MigrationStatus::post_migration_status()),
                     initial_parent_ready,
                 ),
                 bank_forks,
@@ -692,7 +664,6 @@ mod tests {
                     self.pool.highest_finalized_slot().unwrap().slot(),
                     vote.slot
                 ),
-                Vote::Genesis(_genesis_vote) => (),
             }
         }
 
@@ -871,10 +842,9 @@ mod tests {
         // No notarization set, pool is default
         let parent_slot = 2;
         let my_leader_slot = 3;
-        let first_alpenglow_slot = 0;
-        let decision =
-            ctx.pool
-                .make_start_leader_decision(my_leader_slot, parent_slot, first_alpenglow_slot);
+        let decision = ctx
+            .pool
+            .make_start_leader_decision(my_leader_slot, parent_slot);
         assert!(
             !decision,
             "Leader should not be allowed to start without notarization"
@@ -882,89 +852,21 @@ mod tests {
     }
 
     #[test]
-    fn test_make_decision_first_alpenglow_slot_edge_case_1() {
+    fn test_make_decision_accepts_child_of_root() {
         let ctx = TestContext::new();
 
         // If parent_slot == 0, you don't need a notarization certificate
         // Because leader_slot == parent_slot + 1, you don't need a skip certificate
         let parent_slot = 0;
         let my_leader_slot = 1;
-        let first_alpenglow_slot = 0;
-        assert!(ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot
-        ));
+        assert!(
+            ctx.pool
+                .make_start_leader_decision(my_leader_slot, parent_slot)
+        );
     }
 
     #[test]
-    fn test_make_decision_first_alpenglow_slot_edge_case_2() {
-        let mut ctx = TestContext::new();
-
-        // If parent_slot < first_alpenglow_slot, and parent_slot > 0
-        // no notarization certificate is required, but a skip
-        // certificate will be
-        let parent_slot = 1;
-        let my_leader_slot = 3;
-        let first_alpenglow_slot = 2;
-
-        assert!(!ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot,
-        ));
-
-        ctx.add_certificate(Vote::new_skip_vote(first_alpenglow_slot));
-
-        assert!(ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot
-        ));
-    }
-
-    #[test]
-    fn test_make_decision_first_alpenglow_slot_edge_case_3() {
-        let ctx = TestContext::new();
-        // If parent_slot == first_alpenglow_slot, and
-        // first_alpenglow_slot > 0, you need a notarization certificate
-        let parent_slot = 2;
-        let my_leader_slot = 3;
-        let first_alpenglow_slot = 2;
-        assert!(!ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot,
-        ));
-    }
-
-    #[test]
-    fn test_make_decision_first_alpenglow_slot_edge_case_4() {
-        let mut ctx = TestContext::new();
-
-        // If parent_slot < first_alpenglow_slot, and parent_slot == 0,
-        // no notarization certificate is required, but a skip certificate will
-        // be
-        let parent_slot = 0;
-        let my_leader_slot = 2;
-        let first_alpenglow_slot = 1;
-
-        assert!(!ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot,
-        ));
-
-        ctx.add_certificate(Vote::new_skip_vote(first_alpenglow_slot));
-        assert!(ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot
-        ));
-    }
-
-    #[test]
-    fn test_make_decision_first_alpenglow_slot_edge_case_5() {
+    fn test_make_decision_accepts_skips_after_root() {
         let mut ctx = TestContext::new();
 
         // Valid skip certificate for 1-9 exists
@@ -975,31 +877,10 @@ mod tests {
         // Parent slot is equal to 0, so no notarization certificate required
         let my_leader_slot = 10;
         let parent_slot = 0;
-        let first_alpenglow_slot = 0;
-        assert!(ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot
-        ));
-    }
-
-    #[test]
-    fn test_make_decision_first_alpenglow_slot_edge_case_6() {
-        let mut ctx = TestContext::new();
-
-        // Valid skip certificate for 1-9 exists
-        for slot in 1..=9 {
-            ctx.add_certificate(Vote::new_skip_vote(slot));
-        }
-        // Parent slot is less than first_alpenglow_slot, so no notarization certificate required
-        let my_leader_slot = 10;
-        let parent_slot = 4;
-        let first_alpenglow_slot = 5;
-        assert!(ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot
-        ));
+        assert!(
+            ctx.pool
+                .make_start_leader_decision(my_leader_slot, parent_slot)
+        );
     }
 
     #[test]
@@ -1021,10 +902,9 @@ mod tests {
         // No skip certificate for 6-10
         let my_leader_slot = 10;
         let parent_slot = 5;
-        let first_alpenglow_slot = 0;
-        let decision =
-            ctx.pool
-                .make_start_leader_decision(my_leader_slot, parent_slot, first_alpenglow_slot);
+        let decision = ctx
+            .pool
+            .make_start_leader_decision(my_leader_slot, parent_slot);
         assert!(
             !decision,
             "Leader should not be allowed to start if a skip certificate is missing"
@@ -1042,12 +922,10 @@ mod tests {
         // Leader slot is just +1 from notarized slot (no skip needed)
         let my_leader_slot = 6;
         let parent_slot = 5;
-        let first_alpenglow_slot = 0;
-        assert!(ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot
-        ));
+        assert!(
+            ctx.pool
+                .make_start_leader_decision(my_leader_slot, parent_slot)
+        );
     }
 
     #[test]
@@ -1065,12 +943,10 @@ mod tests {
 
         let my_leader_slot = 10;
         let parent_slot = 5;
-        let first_alpenglow_slot = 0;
-        assert!(ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot
-        ));
+        assert!(
+            ctx.pool
+                .make_start_leader_decision(my_leader_slot, parent_slot)
+        );
     }
 
     #[test]
@@ -1090,12 +966,10 @@ mod tests {
 
         let my_leader_slot = 10;
         let parent_slot = 5;
-        let first_alpenglow_slot = 0;
-        assert!(ctx.pool.make_start_leader_decision(
-            my_leader_slot,
-            parent_slot,
-            first_alpenglow_slot
-        ));
+        assert!(
+            ctx.pool
+                .make_start_leader_decision(my_leader_slot, parent_slot)
+        );
     }
 
     #[test]
@@ -1148,7 +1022,6 @@ mod tests {
             Vote::NotarizeFallback(_) => |pool: &ConsensusPool| pool.highest_notarized_slot(),
             Vote::Skip(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
             Vote::SkipFallback(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
-            Vote::Genesis(_genesis_vote) => |_pool: &ConsensusPool| 0,
         };
         let bank = ctx.bank_forks.read().unwrap().root_bank();
         let aggregate = new_vote_aggregate(
@@ -2001,46 +1874,6 @@ mod tests {
             slot: 12,
             parent_block
         } if parent_block == &Block { slot: 11, block_id }))
-        );
-    }
-
-    #[test]
-    fn test_genesis_certificate_at_root_seeds_parent_ready() {
-        let mut ctx = TestContext::new();
-        let parent_bank = ctx.bank_forks.read().unwrap().root_bank();
-        let root_bank = create_bank(63, parent_bank, SlotLeader::new_unique());
-        let root_block_id = BlockId::new_unique();
-        root_bank.set_block_id(Some(root_block_id));
-        root_bank.freeze();
-        let root_block = Block {
-            slot: root_bank.slot(),
-            block_id: root_block_id,
-        };
-        let mut events = vec![];
-
-        ctx.pool.maybe_prune(root_block.slot);
-        assert_eq!(
-            ctx.pool
-                .parent_ready_tracker
-                .block_production_parent(root_block.slot + 1),
-            BlockProductionParent::ParentNotReady
-        );
-
-        ctx.pool.add_pool_msg(
-            &root_bank,
-            PoolMessage::Certificates(vec![Certificate {
-                cert_type: CertificateType::Genesis(root_block),
-                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                bitmap: dummy_bitmap(),
-            }]),
-            &mut events,
-        );
-
-        assert_eq!(
-            ctx.pool
-                .parent_ready_tracker
-                .block_production_parent(root_block.slot + 1),
-            BlockProductionParent::Parent(root_block)
         );
     }
 

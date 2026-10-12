@@ -10,7 +10,6 @@ use {
         event::VotorEvent,
         votor::ExitOnDrop,
     },
-    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
@@ -40,7 +39,6 @@ impl TimerManager {
         event_sender: Sender<VotorEvent>,
         exit: Arc<AtomicBool>,
         validator_exit: Arc<RwLock<Exit>>,
-        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         let timers = Arc::new(PlRwLock::new(Timers::new(DELTA_TIMEOUT)));
         let handle = {
@@ -49,7 +47,6 @@ impl TimerManager {
                 // Dropped before `event_sender`, so the shutdown runs while the
                 // event channel is still open.
                 let _exit_on_drop = ExitOnDrop::new(validator_exit);
-                let _ = migration_status.wait_for_migration_or_exit(exit.as_ref());
                 while !exit.load(Ordering::Relaxed) {
                     let (duration, events) = timers.write().progress(Instant::now());
                     let my_pubkey = &cluster_info.id();
@@ -125,13 +122,8 @@ mod tests {
         let cluster_info = get_cluster_info(Keypair::new());
         let (event_sender, event_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
-        let timer_manager = TimerManager::new(
-            cluster_info,
-            event_sender,
-            exit.clone(),
-            Arc::default(),
-            Arc::new(MigrationStatus::post_migration_status()),
-        );
+        let timer_manager =
+            TimerManager::new(cluster_info, event_sender, exit.clone(), Arc::default());
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
         let delta_first_fec_set = delta_block;
         let slot = 52;
@@ -177,13 +169,8 @@ mod tests {
         let cluster_info = get_cluster_info(Keypair::new());
         let (event_sender, event_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
-        let timer_manager = TimerManager::new(
-            cluster_info,
-            event_sender,
-            exit.clone(),
-            Arc::default(),
-            Arc::new(MigrationStatus::post_migration_status()),
-        );
+        let timer_manager =
+            TimerManager::new(cluster_info, event_sender, exit.clone(), Arc::default());
 
         let old_slot = 52;
         let old_delta = Duration::from_secs(5);

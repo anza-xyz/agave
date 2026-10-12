@@ -18,8 +18,6 @@ pub enum Vote {
     NotarizeFallback(NotarizationFallbackVote),
     /// A skip fallback vote
     SkipFallback(SkipFallbackVote),
-    /// A genesis vote, only used during the TowerBFT -> Alpenglow Migration
-    Genesis(GenesisVote),
 }
 
 impl Vote {
@@ -48,11 +46,6 @@ impl Vote {
         Self::SkipFallback(SkipFallbackVote { slot })
     }
 
-    /// Create a new genesis vote
-    pub fn new_genesis_vote(block: Block) -> Self {
-        Self::Genesis(GenesisVote { block })
-    }
-
     /// The slot which was voted for
     pub fn slot(&self) -> Slot {
         match self {
@@ -61,7 +54,6 @@ impl Vote {
             Self::Skip(vote) => vote.slot,
             Self::NotarizeFallback(vote) => vote.block.slot,
             Self::SkipFallback(vote) => vote.slot,
-            Self::Genesis(vote) => vote.block.slot,
         }
     }
 
@@ -70,7 +62,6 @@ impl Vote {
         match self {
             Self::Notarize(vote) => Some(&vote.block.block_id),
             Self::NotarizeFallback(vote) => Some(&vote.block.block_id),
-            Self::Genesis(vote) => Some(&vote.block.block_id),
             Self::Finalize(_) | Self::Skip(_) | Self::SkipFallback(_) => None,
         }
     }
@@ -98,11 +89,6 @@ impl Vote {
     /// Whether the vote is a skip fallback vote
     pub fn is_skip_fallback(&self) -> bool {
         matches!(self, Self::SkipFallback(_))
-    }
-
-    /// Whether the vote is a genesis vote
-    pub fn is_genesis_vote(&self) -> bool {
-        matches!(self, Self::Genesis(_))
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -157,11 +143,4 @@ pub struct NotarizationFallbackVote {
 pub struct SkipFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
-}
-
-/// A genesis vote. Only used during the migration from TowerBFT
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct GenesisVote {
-    /// The block this vote is cast for
-    pub block: Block,
 }

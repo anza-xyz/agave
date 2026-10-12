@@ -134,13 +134,6 @@ impl VotePool {
                     acc,
                 )?)
             }
-            Vote::Genesis(genesis) => {
-                let cert_type = CertificateType::Genesis(genesis.block);
-                if completed_certs.contains_key(&cert_type) {
-                    return Ok(None);
-                }
-                Ok(acc.try_build_base2_cert(cert_type, total_stake)?)
-            }
         }
     }
 
@@ -180,7 +173,6 @@ pub(crate) enum VotePoolError {
     FutureVoteReceived { root_slot: Slot, vote_slot: Slot },
 }
 
-/// Adding 1 as we also store genesis vote for the root slot.
 const VOTE_POOLS_CAPACITY: usize = MAX_VOTE_SLOT_DISTANCE_FROM_ROOT as usize + 1;
 
 /// To avoid allocations, stores enough `VotePool`s for the "worst case" future slot for which we

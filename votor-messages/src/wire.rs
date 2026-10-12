@@ -48,7 +48,6 @@ use {
         consensus_message::{Block, ConsensusMessage, VoteMessage},
         vote::Vote,
     },
-    serde::{Deserialize, Serialize},
     solana_bls_signatures::{HashedMessage, Signature as BLSSignature},
     solana_clock::Slot,
     std::mem::MaybeUninit,
@@ -107,19 +106,17 @@ pub(crate) struct WireSlotVoteMessage {
 }
 
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-/// Signature on a wire cert message
-pub struct WireCertSignature {
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub(crate) struct WireCertSignature {
     #[cfg_attr(
         feature = "stable-abi",
         stable_abi_sample(with = "sample_bls_signature(rng)")
     )]
     #[wincode(with = "PodBLSSignature")]
     /// the aggregate signature
-    pub signature: BLSSignature,
+    pub(crate) signature: BLSSignature,
     /// bitmap of ranks of validators included in the aggregate.
-    pub bitmap: Vec<u8>,
+    pub(crate) bitmap: Vec<u8>,
 }
 
 impl From<Certificate> for WireCertSignature {
@@ -139,14 +136,10 @@ pub(crate) struct WireSlotCertMessage {
 }
 
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-/// A wire cert message that holds a block.
-pub struct WireBlockCertMessage {
-    /// the block the cert is certifying.
-    pub block: Block,
-    /// the signature of the cert message.
-    pub signature: WireCertSignature,
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub(crate) struct WireBlockCertMessage {
+    pub(crate) block: Block,
+    pub(crate) signature: WireCertSignature,
 }
 
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
@@ -163,9 +156,6 @@ pub(crate) enum WireConsensusMessageKind {
     NotarFallbackVote(WireBlockVoteMessage),
     #[wincode(tag = 5)]
     SkipFallbackVote(WireSlotVoteMessage),
-    #[wincode(tag = 6)]
-    GenesisVote(WireBlockVoteMessage),
-
     #[wincode(tag = 7)]
     FinalizeCert(WireSlotCertMessage),
     #[wincode(tag = 8)]
@@ -176,8 +166,6 @@ pub(crate) enum WireConsensusMessageKind {
     NotarFallbackCert(WireBlockCertMessage),
     #[wincode(tag = 11)]
     SkipCert(WireSlotCertMessage),
-    #[wincode(tag = 12)]
-    GenesisCert(WireBlockCertMessage),
 }
 
 impl WireConsensusMessageKind {
@@ -212,10 +200,6 @@ impl WireConsensusMessageKind {
                 slot: v.slot,
                 signature,
             }),
-            Vote::Genesis(v) => Self::GenesisVote(WireBlockVoteMessage {
-                block: v.block,
-                signature,
-            }),
         }
     }
 
@@ -236,21 +220,17 @@ impl WireConsensusMessageKind {
                 Self::NotarFallbackCert(WireBlockCertMessage { block, signature })
             }
             CertificateType::Skip(slot) => Self::SkipCert(WireSlotCertMessage { slot, signature }),
-            CertificateType::Genesis(block) => {
-                Self::GenesisCert(WireBlockCertMessage { block, signature })
-            }
         }
     }
 
     /// Returns the slot on the message
     fn slot(&self) -> Slot {
         match self {
-            Self::NotarVote(v) | Self::NotarFallbackVote(v) | Self::GenesisVote(v) => v.block.slot,
+            Self::NotarVote(v) | Self::NotarFallbackVote(v) => v.block.slot,
             Self::FinalizeVote(v) | Self::SkipVote(v) | Self::SkipFallbackVote(v) => v.slot,
-            Self::NotarCert(c)
-            | Self::GenesisCert(c)
-            | Self::FastFinalizeCert(c)
-            | Self::NotarFallbackCert(c) => c.block.slot,
+            Self::NotarCert(c) | Self::FastFinalizeCert(c) | Self::NotarFallbackCert(c) => {
+                c.block.slot
+            }
             Self::FinalizeCert(c) | Self::SkipCert(c) => c.slot,
         }
     }
@@ -327,7 +307,7 @@ impl WireConsensusMessageV1 {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample, SchemaRead),
     frozen_abi(
-        abi_digest = "ErGjoTr18hn3dvPVA7jFgK5WLwb4jgx7a39Yn8dSzB2K",
+        abi_digest = "8Bqh53k9K8tt2receccaK58t1jYgjxzN9pUt2c1jteZp",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
     )
@@ -415,7 +395,7 @@ impl VersionedWireConsensusMessage {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "2aBMTuPyDgGSYeYX1aBbXURgA4qqr92Eh9yiTeHX6qZq",
+        abi_digest = "GPVhn9xXXP2i2SdoeokYfigHbbNtUCCjFSrhDUtFPhwE",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
     )
@@ -464,14 +444,6 @@ pub enum VotePayloadToSign {
         /// shred version
         shred_version: u16,
     },
-    #[wincode(tag = 6)]
-    /// genesis vote
-    Genesis {
-        /// block
-        block: Block,
-        /// shred version
-        shred_version: u16,
-    },
 }
 
 impl VotePayloadToSign {
@@ -483,10 +455,6 @@ impl VotePayloadToSign {
                 shred_version,
             },
             Vote::NotarizeFallback(v) => Self::NotarFallback {
-                block: v.block,
-                shred_version,
-            },
-            Vote::Genesis(v) => Self::Genesis {
                 block: v.block,
                 shred_version,
             },
@@ -508,9 +476,7 @@ impl VotePayloadToSign {
     /// Returns the slot the vote is for.
     pub fn slot(&self) -> Slot {
         match self {
-            Self::Notar { block, .. }
-            | Self::NotarFallback { block, .. }
-            | Self::Genesis { block, .. } => block.slot,
+            Self::Notar { block, .. } | Self::NotarFallback { block, .. } => block.slot,
             Self::Finalize { slot, .. }
             | Self::Skip { slot, .. }
             | Self::SkipFallback { slot, .. } => *slot,
@@ -546,7 +512,6 @@ impl From<VotePayloadToSign> for Vote {
                 Self::new_notarization_fallback_vote(block)
             }
             VotePayloadToSign::SkipFallback { slot, .. } => Self::new_skip_fallback_vote(slot),
-            VotePayloadToSign::Genesis { block, .. } => Self::new_genesis_vote(block),
         }
     }
 }
@@ -561,7 +526,7 @@ pub fn get_vote_payload_to_sign(vote: Vote, shred_version: u16) -> Vec<u8> {
 mod tests {
     use {super::*, crate::consensus_message::BlockId};
 
-    fn vote_payloads() -> [VotePayloadToSign; 6] {
+    fn vote_payloads() -> [VotePayloadToSign; 5] {
         let block = Block {
             slot: 42,
             block_id: BlockId::new_unique(),
@@ -588,10 +553,6 @@ mod tests {
                 slot: block.slot,
                 shred_version,
             },
-            VotePayloadToSign::Genesis {
-                block,
-                shred_version,
-            },
         ]
     }
 
@@ -606,10 +567,6 @@ mod tests {
                     shred_version,
                 }
                 | VotePayloadToSign::NotarFallback {
-                    block,
-                    shred_version,
-                }
-                | VotePayloadToSign::Genesis {
                     block,
                     shred_version,
                 } => {

@@ -1,3 +1,4 @@
+#[cfg(feature = "dev-context-only-utils")]
 use {
     crate::{
         bank::Bank,

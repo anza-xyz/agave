@@ -213,7 +213,6 @@ impl Votor {
             footer_certs_receiver,
         } = config;
 
-        let migration_status = bank_forks.read().unwrap().migration_status();
         let identity_keypair = cluster_info.keypair();
         let vote_history_highest_parent_ready = vote_history.highest_parent_ready();
 
@@ -260,13 +259,11 @@ impl Votor {
             event_sender.clone(),
             exit.clone(),
             validator_exit.clone(),
-            migration_status.clone(),
         )));
 
         let event_handler_context = EventHandlerContext {
             exit: exit.clone(),
             validator_exit: validator_exit.clone(),
-            migration_status: migration_status.clone(),
             event_receiver,
             timer_manager: Arc::clone(&timer_manager),
             shared_context,
@@ -279,7 +276,6 @@ impl Votor {
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
             validator_exit,
-            migration_status,
             generated_cert_types,
             cluster_info: cluster_info.clone(),
             blockstore,

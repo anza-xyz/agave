@@ -23,7 +23,7 @@ struct PrioritizationFeeMetrics {
     // Count of attempted update on finalized PrioritizationFee
     attempted_update_on_finalized_fee_count: Saturating<u64>,
 
-    // Total transaction fees of non-vote transactions included in this slot.
+    // Total transaction fees included in this slot.
     total_prioritization_fee: Saturating<u64>,
 
     // The minimum compute unit price of prioritized transactions in this slot.

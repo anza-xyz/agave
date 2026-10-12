@@ -21,7 +21,6 @@ use {
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
         },
-        vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
     agave_votor_transport::endpoint::{BanSender, Datagram},
@@ -296,9 +295,6 @@ impl SigVerifier {
         cert: UnverifiedCertificate,
         sender_identity_pubkey: Pubkey,
     ) {
-        if let CertificateType::Genesis(_) = cert.cert_type {
-            return;
-        }
         if self.verified_certs.contains(&cert.cert_type) {
             self.stats.num_verified_certs_received += 1;
             return;
@@ -373,9 +369,6 @@ impl SigVerifier {
             }
         }
         for (carrier_slot, certificate) in certificates {
-            if let CertificateType::Genesis(_) = certificate.cert_type {
-                continue;
-            }
             if carrier_slot < root_slot || certificate.shred_version != my_shred_version {
                 continue;
             }
@@ -410,9 +403,6 @@ impl SigVerifier {
         votes: &mut HashMap<VotePayloadToSign, Batch>,
         unverified_vote: UnverifiedVoteMessage,
     ) {
-        if let Vote::Genesis(_) = unverified_vote.vote {
-            return;
-        }
         // votes from self take a different pathway.
         if &sender_identity_pubkey == my_pubkey {
             self.stats.num_keep_vote_failed += 1;
