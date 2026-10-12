@@ -98,8 +98,6 @@ struct TransactionFrame {
 #[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
 impl TransactionFrame {
     fn configure_cpi(&mut self) {
-        self.total_number_of_instructions_in_trace =
-            self.total_number_of_instructions_in_trace.saturating_add(1);
         let next_data_ptr = self
             .cpi_data_scratchpad
             .ptr()
@@ -546,11 +544,15 @@ impl<'ix_data> TransactionContext<'ix_data> {
         }
 
         if detect_overflow_early
-            && ((self.transaction_frame.total_number_of_instructions_in_trace as usize
+            && (((self.transaction_frame.total_number_of_instructions_in_trace as usize)
+                .saturating_add(usize::from(!self.instruction_stack.is_empty()))
                 > self.instruction_trace_capacity)
                 || (self.number_of_called_instructions_in_trace()
                     >= self.instruction_trace_capacity))
         {
+            // `total_number_of_instructions_in_trace` excludes the CPI that is about to
+            // be pushed.
+            //
             // The condition after the OR is necessary if in any case we execute more top
             // level instructions than expected, since `total_number_of_instructions_in_trace` is
             // with the number of top level instructions when TransactionContext is created
@@ -572,6 +574,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
             self.transaction_frame.number_of_cpis_in_trace = self
                 .transaction_frame
                 .number_of_cpis_in_trace
+                .saturating_add(1);
+            self.transaction_frame.total_number_of_instructions_in_trace = self
+                .transaction_frame
+                .total_number_of_instructions_in_trace
                 .saturating_add(1);
             self.instruction_trace.push(InstructionFrame::default());
             (
@@ -1864,7 +1870,7 @@ mod tests {
                                 .transaction_frame
                                 .total_number_of_instructions_in_trace
                                 as usize,
-                            IX_TRACE_CAPACITY.saturating_add(1)
+                            IX_TRACE_CAPACITY
                         );
                         assert_eq!(
                             result,
@@ -1929,5 +1935,40 @@ mod tests {
         } else {
             assert!(result.is_ok());
         }
+    }
+
+    /// Failed CPI attempts must not consume the instruction trace budget.
+    #[test_case(false; "simd_582_disabled")]
+    #[test_case(true; "simd_582_enabled")]
+    fn test_failed_cpi_attempts_do_not_consume_trace_budget(fail_early: bool) {
+        const IX_TRACE_CAPACITY: usize = 8;
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+        let mut transaction_context = TransactionContext::new(
+            transaction_accounts,
+            Rent::default(),
+            6,
+            IX_TRACE_CAPACITY,
+            1,
+        );
+        transaction_context
+            .configure_top_level_instruction_for_tests(1, vec![], vec![])
+            .unwrap();
+        transaction_context.push(fail_early).unwrap();
+
+        // The instruction frame is built, then the attempt fails before the push.
+        for _ in 0..IX_TRACE_CAPACITY {
+            transaction_context
+                .configure_next_cpi_for_tests(1, vec![], vec![])
+                .unwrap();
+        }
+
+        transaction_context
+            .configure_next_cpi_for_tests(1, vec![], vec![])
+            .unwrap();
+        let result = transaction_context.push(fail_early);
+        assert!(
+            result.is_ok(),
+            "failed CPI attempts must not consume the trace budget: {result:?}"
+        );
     }
 }
