@@ -160,7 +160,8 @@ pub mod tests {
                     block: Block::new_unique(30),
                     signature: CertSignature {
                         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                        bitmap: vec![],
+                        // Base2 encoding of an empty validator bitmap.
+                        bitmap: vec![0, 0, 0],
                     },
                 },
                 &bank0,
