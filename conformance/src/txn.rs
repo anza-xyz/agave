@@ -55,10 +55,45 @@ use {
     solana_transaction::TransactionVerificationMode,
     solana_transaction_error::TransactionError,
     solana_vote::vote_account::VoteAccounts,
+    solana_vote_interface::{instruction::VoteInstruction, program as vote_program},
     std::{collections::HashMap, num::NonZeroUsize, sync::Arc},
 };
 #[cfg(not(test))]
 use {prost::Message, std::ffi::c_int};
+
+/// Returns true when a pre-Alpenglow fixture invokes one of the Tower-era vote
+/// instructions that no longer executes after Alpenglow activation.
+pub fn is_legacy_vote_fixture(context: &ProtoTxnContext) -> bool {
+    if context
+        .bank
+        .as_ref()
+        .and_then(|bank| bank.features.as_ref())
+        .map(feature_set_from_proto)
+        .is_some_and(|features| features.is_active(&agave_feature_set::alpenglow::id()))
+    {
+        return false;
+    }
+    let Some(message) = context
+        .tx
+        .as_ref()
+        .and_then(|transaction| transaction.message.as_ref())
+    else {
+        return false;
+    };
+    let vote_program_id = vote_program::id();
+
+    message.instructions.iter().any(|instruction| {
+        let Some(program_id) = usize::try_from(instruction.program_id_index)
+            .ok()
+            .and_then(|index| message.account_keys.get(index))
+        else {
+            return false;
+        };
+        program_id.as_slice() == vote_program_id.as_ref()
+            && bincode::deserialize::<VoteInstruction>(&instruction.data)
+                .is_ok_and(|instruction| instruction.is_simple_vote())
+    })
+}
 
 /// Decode a `TxnContext` proto, execute it against a [`Bank`], and encode the
 /// effects as a `TxnResult` proto.
@@ -411,7 +446,7 @@ pub unsafe extern "C" fn sol_compat_txn_execute_v1(
 #[cfg(test)]
 mod tests {
     use {
-        super::{ProtoTxnResult, execute_txn_proto},
+        super::{ProtoTxnResult, execute_txn_proto, is_legacy_vote_fixture},
         agave_feature_set::{FEATURE_NAMES, disable_sbpf_v0_execution},
         protosol::protos::{
             BlockhashQueueEntry as ProtoBlockhashQueueEntry,
@@ -443,6 +478,7 @@ mod tests {
             transaction_processing_result::ProcessedTransaction,
         },
         solana_transaction::versioned::VersionedTransaction,
+        solana_vote_interface::{instruction::VoteInstruction, state::TowerSync},
         std::{borrow::Cow, collections::HashSet, env, fs, sync::Arc},
     };
 
@@ -585,6 +621,56 @@ mod tests {
                 features: Some(proto_feature_set()),
             }),
         }
+    }
+
+    fn fixture_context_with_instruction(program_id: Pubkey, data: Vec<u8>) -> ProtoTxnContext {
+        ProtoTxnContext {
+            tx: Some(ProtoSanitizedTransaction {
+                message: Some(ProtoTransactionMessage {
+                    account_keys: vec![program_id.to_bytes().to_vec()],
+                    instructions: vec![ProtoCompiledInstruction {
+                        program_id_index: 0,
+                        data,
+                        ..ProtoCompiledInstruction::default()
+                    }],
+                    ..ProtoTransactionMessage::default()
+                }),
+                ..ProtoSanitizedTransaction::default()
+            }),
+            ..ProtoTxnContext::default()
+        }
+    }
+
+    #[test]
+    fn test_is_legacy_vote_fixture() {
+        let legacy_vote = fixture_context_with_instruction(
+            solana_vote_interface::program::id(),
+            bincode::serialize(&VoteInstruction::TowerSync(TowerSync::default())).unwrap(),
+        );
+        assert!(is_legacy_vote_fixture(&legacy_vote));
+
+        let alpenglow_vote = ProtoTxnContext {
+            bank: Some(ProtoTxnBank {
+                features: Some(ProtoFeatureSet {
+                    features: vec![feature_id(&agave_feature_set::alpenglow::id())],
+                }),
+                ..ProtoTxnBank::default()
+            }),
+            ..legacy_vote.clone()
+        };
+        assert!(!is_legacy_vote_fixture(&alpenglow_vote));
+
+        let vote_account_management = fixture_context_with_instruction(
+            solana_vote_interface::program::id(),
+            bincode::serialize(&VoteInstruction::Withdraw(1)).unwrap(),
+        );
+        assert!(!is_legacy_vote_fixture(&vote_account_management));
+
+        let other_program = fixture_context_with_instruction(
+            solana_sdk_ids::system_program::id(),
+            bincode::serialize(&VoteInstruction::TowerSync(TowerSync::default())).unwrap(),
+        );
+        assert!(!is_legacy_vote_fixture(&other_program));
     }
 
     fn account(lamports: u64, data: Vec<u8>, owner: Pubkey, executable: bool) -> AccountSharedData {

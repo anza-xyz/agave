@@ -442,9 +442,7 @@ impl PohRecorder {
             self.start_bank = reset_bank;
         }
 
-        let tick_height = (self.start_slot() + 1) * self.ticks_per_slot;
-
-        tick_height
+        (self.start_slot() + 1) * self.ticks_per_slot
     }
 
     /// Waits for the bank to freeze and sends the block footer with the bank hash.

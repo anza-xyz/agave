@@ -48,13 +48,13 @@ pub enum AllocateAccountsError {
 #[derive(Debug, Error)]
 pub enum RewardStateError {
     #[error("missing epoch stakes for reward_slot {reward_slot} in bank_slot {bank_slot}")]
-    MissingEpochStakes { reward_slot: Slot, bank_slot: Slot },
+    EpochStakes { reward_slot: Slot, bank_slot: Slot },
     #[error("missing EpochInflationAccountState for bank_slot {bank_slot}")]
-    MissingEpochInflationAccountState { bank_slot: Slot },
+    EpochInflationAccountState { bank_slot: Slot },
     #[error("missing epoch inflation state for in bank_slot {bank_slot}")]
-    MissingEpochInflationState { bank_slot: Slot },
+    EpochInflationState { bank_slot: Slot },
     #[error("validator {pubkey} missing in bank_slot {bank_slot} for reward slot {reward_slot}")]
-    MissingRewardSlotValidator {
+    RewardSlotValidator {
         pubkey: Pubkey,
         reward_slot: Slot,
         bank_slot: Slot,
@@ -184,12 +184,12 @@ impl<'a> RewardState<'a> {
         block_producer_time_nanos: i64,
     ) -> Result<Self, RewardStateError> {
         let bank_slot = bank.slot();
-        let epoch_stakes = bank.epoch_stakes_from_slot(reward_slot).ok_or(
-            RewardStateError::MissingEpochStakes {
-                reward_slot,
-                bank_slot,
-            },
-        )?;
+        let epoch_stakes =
+            bank.epoch_stakes_from_slot(reward_slot)
+                .ok_or(RewardStateError::EpochStakes {
+                    reward_slot,
+                    bank_slot,
+                })?;
         let accounts = epoch_stakes.stakes().vote_accounts().as_ref();
         let total_stake = epoch_stakes.total_stake();
         let current_epoch = bank.epoch();
@@ -201,9 +201,9 @@ impl<'a> RewardState<'a> {
             // that activated Alpenglow should have created the account.
             debug_assert!(epoch_inflation_account_state.is_some());
             epoch_inflation_account_state
-                .ok_or(RewardStateError::MissingEpochInflationAccountState { bank_slot })?
+                .ok_or(RewardStateError::EpochInflationAccountState { bank_slot })?
                 .get_epoch_state(current_epoch)
-                .ok_or(RewardStateError::MissingEpochInflationState { bank_slot })?
+                .ok_or(RewardStateError::EpochInflationState { bank_slot })?
         };
         let reward_slot_timestamp_ns =
             calc_slot_timestamp(bank, reward_slot, block_producer_time_nanos);
@@ -231,7 +231,7 @@ impl<'a> RewardState<'a> {
         let (reward_slot_validator_stake, _) =
             self.accounts
                 .get(&validator)
-                .ok_or(RewardStateError::MissingRewardSlotValidator {
+                .ok_or(RewardStateError::RewardSlotValidator {
                     pubkey: validator,
                     reward_slot: self.reward_slot,
                     bank_slot: self.bank_slot,

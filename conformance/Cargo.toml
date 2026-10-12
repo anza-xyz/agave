@@ -92,7 +92,7 @@ solana-svm-timings = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote = { workspace = true }
-solana-vote-interface = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["bincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]

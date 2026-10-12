@@ -103,6 +103,7 @@ pub enum GossipRoute<'a> {
 
 type CrdsCountsArray = [usize; 14];
 
+#[derive(Default)]
 pub(crate) struct CrdsDataStats {
     pub(crate) counts: CrdsCountsArray,
     pub(crate) fails: CrdsCountsArray,
@@ -342,16 +343,13 @@ impl Crds {
                 stats.record_insert(&value, route);
                 let entry_index = entry.index();
                 self.shards.insert(entry_index, &value);
-                match value.value.data() {
-                    CrdsData::ContactInfo(node) => {
-                        self.nodes.insert(entry_index);
-                        emit_contact_info_event(
-                            self.contact_info_sender.as_ref(),
-                            ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
-                        );
-                    }
-                    _ => (),
-                };
+                if let CrdsData::ContactInfo(node) = value.value.data() {
+                    self.nodes.insert(entry_index);
+                    emit_contact_info_event(
+                        self.contact_info_sender.as_ref(),
+                        ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
+                    );
+                }
                 self.entries.insert(value.ordinal, entry_index);
                 self.records.entry(pubkey).or_default().insert(entry_index);
                 self.cursor.consume(value.ordinal);
@@ -363,17 +361,14 @@ impl Crds {
                 let entry_index = entry.index();
                 self.shards.remove(entry_index, entry.get());
                 self.shards.insert(entry_index, &value);
-                match value.value.data() {
-                    CrdsData::ContactInfo(node) => {
-                        // self.nodes does not need to be updated since the
-                        // entry at this index was and stays contact-info.
-                        debug_assert_matches!(entry.get().value.data(), CrdsData::ContactInfo(_));
-                        emit_contact_info_event(
-                            self.contact_info_sender.as_ref(),
-                            ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
-                        );
-                    }
-                    _ => (),
+                if let CrdsData::ContactInfo(node) = value.value.data() {
+                    // self.nodes does not need to be updated since the
+                    // entry at this index was and stays contact-info.
+                    debug_assert_matches!(entry.get().value.data(), CrdsData::ContactInfo(_));
+                    emit_contact_info_event(
+                        self.contact_info_sender.as_ref(),
+                        ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
+                    );
                 }
                 self.entries.remove(&entry.get().ordinal);
                 self.entries.insert(value.ordinal, entry_index);
@@ -605,22 +600,19 @@ impl Crds {
         };
         self.purged.push_back((*value.value.hash(), now));
         self.shards.remove(index, &value);
-        match value.value.data() {
-            CrdsData::ContactInfo(node) => {
-                self.nodes.swap_remove(&index);
-                self.num_nodes_removed += 1;
-                // Tell any attached Geyser-side listener that this
-                // validator is no longer in CRDS (timeout-based purge
-                // via `purge_active`, or size-based trim via
-                // `trim_crds_table`), so consumers can invalidate any
-                // cached endpoint they hold instead of relying on a
-                // wallclock-staleness heuristic.
-                emit_contact_info_event(
-                    self.contact_info_sender.as_ref(),
-                    ContactInfoEvent::Removed(*node.pubkey()),
-                );
-            }
-            _ => (),
+        if let CrdsData::ContactInfo(node) = value.value.data() {
+            self.nodes.swap_remove(&index);
+            self.num_nodes_removed += 1;
+            // Tell any attached Geyser-side listener that this
+            // validator is no longer in CRDS (timeout-based purge
+            // via `purge_active`, or size-based trim via
+            // `trim_crds_table`), so consumers can invalidate any
+            // cached endpoint they hold instead of relying on a
+            // wallclock-staleness heuristic.
+            emit_contact_info_event(
+                self.contact_info_sender.as_ref(),
+                ContactInfoEvent::Removed(*node.pubkey()),
+            );
         }
         self.entries.remove(&value.ordinal);
         // Remove the index from records associated with the value's pubkey.
@@ -642,19 +634,16 @@ impl Crds {
             let value = self.table.index(index);
             self.shards.remove(size, value);
             self.shards.insert(index, value);
-            match value.value.data() {
-                CrdsData::ContactInfo(_) => {
-                    // Keep the node's position for NodesCursor.
-                    let k = self
-                        .nodes
-                        .get_index_of(&size)
-                        .expect("the moved ContactInfo is in nodes");
-                    self.nodes
-                        .replace_index(k, index)
-                        .expect("the freed index is not in nodes");
-                }
-                _ => (),
-            };
+            if let CrdsData::ContactInfo(_) = value.value.data() {
+                // Keep the node's position for NodesCursor.
+                let k = self
+                    .nodes
+                    .get_index_of(&size)
+                    .expect("the moved ContactInfo is in nodes");
+                self.nodes
+                    .replace_index(k, index)
+                    .expect("the freed index is not in nodes");
+            }
             self.entries.insert(value.ordinal, index);
             let pubkey = value.value.pubkey();
             let records = self.records.get_mut(&pubkey).unwrap();
@@ -745,15 +734,6 @@ impl Crds {
 
     pub(crate) fn take_stats(&self) -> CrdsStats {
         std::mem::take(&mut self.stats.lock().unwrap())
-    }
-}
-
-impl Default for CrdsDataStats {
-    fn default() -> Self {
-        Self {
-            counts: CrdsCountsArray::default(),
-            fails: CrdsCountsArray::default(),
-        }
     }
 }
 

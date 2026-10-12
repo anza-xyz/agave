@@ -85,7 +85,8 @@ impl SharedAlpenglowSlotClock {
         let elapsed_slots = now
             .saturating_duration_since(slot_info.started_at)
             .as_nanos()
-            .saturating_div(slot_info.slot_duration.as_nanos());
+            .checked_div(slot_info.slot_duration.as_nanos())
+            .expect("slot duration was checked as non-zero");
         let elapsed_slots = Slot::try_from(elapsed_slots).unwrap_or(Slot::MAX);
         Some(slot_info.slot.saturating_add(elapsed_slots).min(last_slot))
     }

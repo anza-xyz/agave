@@ -574,7 +574,6 @@ mod tests {
             stage: BlockComponentStage::AcceptingEntriesOrFooter {
                 parent_marker: EntryParentMarker::BlockHeader,
             },
-            ..BlockComponentProcessor::default()
         }
     }
 
