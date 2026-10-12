@@ -3208,7 +3208,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         .collect();
     let my_id = cluster_info.id();
 
-    for (activated_stake, vote_account) in bank.vote_accounts().values() {
+    for (activated_stake, vote_account) in bank.get_current_epoch_vote_accounts().values() {
         let activated_stake = *activated_stake;
         total_activated_stake += activated_stake;
 
