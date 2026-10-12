@@ -476,7 +476,6 @@ fn compute_slot_cost(
                 RuntimeTransaction::try_create(
                     transaction,
                     MessageHash::Compute,
-                    None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
                 )
@@ -814,14 +813,12 @@ fn record_transactions(
                         })
                         .collect();
 
-                    let is_simple_vote_tx = tx.is_simple_vote_transaction();
                     let commit_details = commit_result.ok().map(|committed_tx| committed_tx.into());
 
                     TransactionDetails {
                         signature: tx.signature().to_string(),
                         accounts,
                         instructions,
-                        is_simple_vote_tx,
                         commit_details,
                         index,
                     }

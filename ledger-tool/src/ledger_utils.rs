@@ -67,8 +67,7 @@ pub struct LoadAndProcessLedgerOutput {
     pub accounts_background_service: AccountsBackgroundService,
 }
 
-const PROCESS_SLOTS_HELP_STRING: &str =
-    "The starting slot is either the latest found snapshot slot, or genesis (slot 0) if the \
+const PROCESS_SLOTS_HELP_STRING: &str = "The starting slot is either the latest found snapshot slot, or genesis (slot 0) if the \
      --no-snapshot flag was specified or if no snapshots were found. The ending slot is the \
      snapshot creation slot for create-snapshot, the value for --halt-at-slot if specified, or \
      the highest slot in the blockstore.";
@@ -404,14 +403,12 @@ pub fn load_and_process_ledger(
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
     match block_verification_method {
         BlockVerificationMethod::UnifiedScheduler => {
-            let no_replay_vote_sender = None;
             let no_prioritization_fee_cache = None;
 
             let scheduler_pool = DefaultSchedulerPool::new(
                 unified_scheduler_handler_threads,
                 process_options.runtime_config.log_messages_bytes_limit,
                 transaction_status_sender.clone(),
-                no_replay_vote_sender,
                 no_prioritization_fee_cache,
                 None,
             );

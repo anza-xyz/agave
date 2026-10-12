@@ -26,8 +26,6 @@ use {
         blockstore_options::AccessType,
         shred::Shred,
     },
-    solana_svm_transaction::svm_message::SVMStaticMessage,
-    solana_transaction::versioned::sanitized::SanitizedVersionedTransaction,
     std::{
         borrow::Cow,
         collections::{BTreeMap, BTreeSet},
@@ -163,37 +161,7 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
     }
 }
 
-/// Returns true if the supplied slot contains any nonvote transactions
-fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
-    let Some(slot_meta) = blockstore.meta(slot).expect("Failed to get slot meta") else {
-        return false;
-    };
-
-    let (entries, _, _) = blockstore
-        .get_slot_entries_with_shred_info(slot, u64::from(slot_meta.replay_fec_set_index), false)
-        .expect("Failed to get slot entries");
-
-    entries
-        .into_iter()
-        .flat_map(|entry| entry.transactions.into_iter())
-        .enumerate()
-        .any(
-            |(transaction_index, tx)| match SanitizedVersionedTransaction::try_new(tx) {
-                Ok(transaction) => transaction
-                    .program_instructions_iter()
-                    .any(|(program_id, _)| *program_id != solana_vote_program::id()),
-                Err(err) => {
-                    error!(
-                        "Failed to sanitize transaction {transaction_index} in slot {slot}: \
-                         {err:?}"
-                    );
-                    true
-                }
-            },
-        )
-}
-
-type OptimisticSlotInfo = (Slot, Option<(Hash, UnixTimestamp)>, bool);
+type OptimisticSlotInfo = (Slot, Option<(Hash, UnixTimestamp)>);
 
 /// Return the latest `num_slots` optimistically confirmed slots, including
 /// ancestors of optimistically confirmed slots that may not have been marked
@@ -201,7 +169,6 @@ type OptimisticSlotInfo = (Slot, Option<(Hash, UnixTimestamp)>, bool);
 fn get_latest_optimistic_slots(
     blockstore: &Blockstore,
     num_slots: usize,
-    exclude_vote_only_slots: bool,
 ) -> Vec<OptimisticSlotInfo> {
     // Consider a chain X -> Y -> Z where X and Z have been optimistically
     // confirmed. Given that Y is an ancestor of Z, Y can implicitly be
@@ -224,7 +191,6 @@ fn get_latest_optimistic_slots(
     let latest_slot = latest_slot.0;
 
     let slot_iter = AncestorIterator::new_inclusive(latest_slot, blockstore).map(|slot| {
-        let contains_nonvote_tx = slot_contains_nonvote_tx(blockstore, slot);
         let hash_and_timestamp_opt = blockstore
             .get_optimistic_slot(slot)
             .expect("get_optimistic_slot() failed");
@@ -234,17 +200,9 @@ fn get_latest_optimistic_slots(
                  {latest_slot}, but was not marked as optimistically confirmed in blockstore."
             );
         }
-        (slot, hash_and_timestamp_opt, contains_nonvote_tx)
+        (slot, hash_and_timestamp_opt)
     });
-
-    if exclude_vote_only_slots {
-        slot_iter
-            .filter(|(_, _, contains_nonvote)| *contains_nonvote)
-            .take(num_slots)
-            .collect()
-    } else {
-        slot_iter.take(num_slots).collect()
-    }
+    slot_iter.take(num_slots).collect()
 }
 
 fn print_blockstore_file_metadata(blockstore: &Blockstore, file_name: &Option<&str>) -> Result<()> {
@@ -371,12 +329,6 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .default_value("1")
                     .required(false)
                     .help("Number of slots in the output"),
-            )
-            .arg(
-                Arg::with_name("exclude_vote_only_slots")
-                    .long("exclude-vote-only-slots")
-                    .required(false)
-                    .help("Exclude slots that contain only votes from output"),
             ),
         SubCommand::with_name("list-roots")
             .about(
@@ -688,11 +640,9 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let blockstore =
                 crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let num_slots = value_t_or_exit!(arg_matches, "num_slots", usize);
-            let exclude_vote_only_slots = arg_matches.is_present("exclude_vote_only_slots");
-            let slots =
-                get_latest_optimistic_slots(&blockstore, num_slots, exclude_vote_only_slots);
+            let slots = get_latest_optimistic_slots(&blockstore, num_slots);
 
-            for (slot, hash_and_timestamp_opt, contains_nonvote) in slots.iter() {
+            for (slot, hash_and_timestamp_opt) in slots.iter() {
                 let (time_str, hash_str) = if let Some((hash, timestamp)) = hash_and_timestamp_opt {
                     let secs: u64 = (timestamp / 1_000) as u64;
                     let nanos: u32 = ((timestamp % 1_000) * 1_000_000) as u32;
@@ -704,11 +654,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     let unknown = "Unknown";
                     (String::from(unknown), String::from(unknown))
                 };
-                let vote_only = !contains_nonvote;
-                println!(
-                    "Slot {slot}\n  Bank Hash: {hash_str:>44}, Timestamp: {time_str}, Vote Only: \
-                     {vote_only}",
-                );
+                println!("Slot {slot}\n  Bank Hash: {hash_str:>44}, Timestamp: {time_str}",);
             }
         }
         ("list-roots", Some(arg_matches)) => {
@@ -994,98 +940,8 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
 pub mod tests {
     use {
         super::*,
-        solana_entry::entry::next_versioned_entry,
-        solana_instruction::Instruction,
-        solana_ledger::{
-            blockstore::{entries_to_test_shreds, make_many_slot_entries},
-            get_tmp_ledger_path_auto_delete,
-        },
-        solana_message::{Message, VersionedMessage, v0},
-        solana_pubkey::Pubkey,
-        solana_signature::Signature,
-        solana_transaction::versioned::VersionedTransaction,
-        test_case::{test_case, test_matrix},
+        solana_ledger::{blockstore::make_many_slot_entries, get_tmp_ledger_path_auto_delete},
     };
-
-    fn new_legacy_transaction(program_id: Pubkey) -> VersionedTransaction {
-        let payer = Pubkey::new_unique();
-        let instructions = [Instruction::new_with_bytes(program_id, &[], vec![])];
-        VersionedTransaction {
-            signatures: vec![Signature::default()],
-            message: VersionedMessage::Legacy(Message::new(&instructions, Some(&payer))),
-        }
-    }
-
-    fn new_v0_transaction(program_id: Pubkey) -> VersionedTransaction {
-        let payer = Pubkey::new_unique();
-        let instructions = [Instruction::new_with_bytes(program_id, &[], vec![])];
-        VersionedTransaction {
-            signatures: vec![Signature::default()],
-            message: VersionedMessage::V0(
-                v0::Message::try_compile(&payer, &instructions, &[], Hash::default()).unwrap(),
-            ),
-        }
-    }
-
-    #[test_case(new_legacy_transaction(solana_vote_program::id()), false)]
-    #[test_case(new_legacy_transaction(Pubkey::new_unique()), true)]
-    #[test_case(new_v0_transaction(solana_vote_program::id()), false)]
-    #[test_case(new_v0_transaction(Pubkey::new_unique()), true)]
-    fn test_slot_contains_nonvote_tx(transaction: VersionedTransaction, is_nonvote: bool) {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let entry = next_versioned_entry(&Hash::default(), 1, vec![transaction]);
-        let shreds = entries_to_test_shreds(&[entry], 1, 0, true, 0);
-
-        blockstore.insert_shreds(shreds, false).unwrap();
-
-        assert_eq!(slot_contains_nonvote_tx(&blockstore, 1), is_nonvote);
-    }
-
-    enum SanitizationFailure {
-        MissingSignatures,
-        InvalidProgramIdIndex,
-    }
-
-    #[test_matrix(
-        [
-            new_legacy_transaction(Pubkey::new_unique()),
-            new_v0_transaction(Pubkey::new_unique()),
-        ],
-        [SanitizationFailure::MissingSignatures, SanitizationFailure::InvalidProgramIdIndex]
-    )]
-    fn test_slot_contains_nonvote_tx_includes_unsanitized_transaction(
-        mut transaction: VersionedTransaction,
-        failure: SanitizationFailure,
-    ) {
-        match failure {
-            SanitizationFailure::MissingSignatures => transaction.signatures.clear(),
-            SanitizationFailure::InvalidProgramIdIndex => {
-                let instructions = match &mut transaction.message {
-                    VersionedMessage::Legacy(message) => &mut message.instructions,
-                    VersionedMessage::V0(message) => &mut message.instructions,
-                    VersionedMessage::V1(message) => &mut message.instructions,
-                };
-                instructions[0].program_id_index = u8::MAX;
-            }
-        }
-
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let entry = next_versioned_entry(
-            &Hash::default(),
-            1,
-            vec![
-                new_legacy_transaction(solana_vote_program::id()),
-                transaction,
-            ],
-        );
-        let shreds = entries_to_test_shreds(&[entry], 1, 0, true, 0);
-
-        blockstore.insert_shreds(shreds, false).unwrap();
-
-        assert!(slot_contains_nonvote_tx(&blockstore, 1));
-    }
 
     #[test]
     fn test_latest_optimistic_ancestors() {
@@ -1106,12 +962,10 @@ pub mod tests {
                 .unwrap();
         });
 
-        let exclude_vote_only_slots = false;
-        let optimistic_slots: Vec<_> =
-            get_latest_optimistic_slots(&blockstore, num_slots as usize, exclude_vote_only_slots)
-                .iter()
-                .map(|(slot, _, _)| *slot)
-                .collect();
+        let optimistic_slots: Vec<_> = get_latest_optimistic_slots(&blockstore, num_slots as usize)
+            .iter()
+            .map(|(slot, _)| *slot)
+            .collect();
 
         // Should see all slots here since they're all chained, despite only evens getting marked
         // get_latest_optimistic_slots() returns slots in descending order so use .rev()
