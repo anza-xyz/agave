@@ -478,7 +478,6 @@ pub enum CliCommand {
         signature: Signature,
         message: OffchainMessage,
     },
-    GetAgGenesisInfo,
 }
 
 #[derive(Debug, PartialEq)]
@@ -520,8 +519,6 @@ pub enum CliError {
     KeypairFileNotFound(String),
     #[error("Invalid signature")]
     InvalidSignature,
-    #[error("Invalid alpenglow genesis cert")]
-    InvalidAgGenesisCert,
 }
 
 impl From<Box<dyn error::Error>> for CliError {
@@ -649,7 +646,6 @@ pub fn parse_command(
         }
         ("epoch", Some(matches)) => parse_get_epoch(matches),
         ("epoch-info", Some(matches)) => parse_get_epoch_info(matches),
-        ("alpenglow-genesis-info", Some(matches)) => parse_get_ag_genesis_info(matches),
         ("feature", Some(matches)) => {
             parse_feature_subcommand(matches, default_signer, wallet_manager)
         }
@@ -1830,7 +1826,6 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             signature,
             message,
         } => process_verify_offchain_signature(config, signer_pubkey, signature, message),
-        CliCommand::GetAgGenesisInfo => process_get_ag_genesis_info(&rpc_client, config).await,
     }
 }
 

@@ -28,7 +28,7 @@ use {
     solana_rpc_client_api::response::{
         ProcessedSignatureResult, ReceivedSignatureResult, Response as RpcResponse, RpcBlockUpdate,
         RpcBlockUpdateError, RpcKeyedAccount, RpcLogsResponse, RpcResponseContext,
-        RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
+        RpcSignatureResult, SlotInfo, SlotUpdate,
     },
     solana_runtime::{
         bank::{Bank, TransactionLogInfo},
@@ -40,7 +40,6 @@ use {
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, EncodeError, VersionedConfirmedBlock,
     },
-    solana_vote::vote_transaction::VoteTransaction,
     std::{
         cell::RefCell,
         collections::{HashMap, VecDeque},
@@ -67,17 +66,10 @@ fn get_transaction_logs(
     params: &LogsSubscriptionParams,
 ) -> Option<Vec<TransactionLogInfo>> {
     let pubkey = match &params.kind {
-        LogsSubscriptionKind::All | LogsSubscriptionKind::AllWithVotes => None,
+        LogsSubscriptionKind::All => None,
         LogsSubscriptionKind::Single(pubkey) => Some(pubkey),
     };
-    let mut logs = bank.get_transaction_logs(pubkey);
-    if matches!(params.kind, LogsSubscriptionKind::All) {
-        // Filter out votes if the subscriber doesn't want them
-        if let Some(logs) = &mut logs {
-            logs.retain(|log| !log.is_vote);
-        }
-    }
-    logs
+    bank.get_transaction_logs(pubkey)
 }
 #[derive(Debug)]
 pub struct TimestampedNotificationEntry {
@@ -97,7 +89,6 @@ impl From<NotificationEntry> for TimestampedNotificationEntry {
 pub enum NotificationEntry {
     Slot(SlotInfo),
     SlotUpdate(SlotUpdate),
-    Vote((Pubkey, VoteTransaction, Signature)),
     Root(Slot),
     Bank(CommitmentSlots),
     Gossip(Slot),
@@ -110,7 +101,6 @@ impl std::fmt::Debug for NotificationEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             NotificationEntry::Root(root) => write!(f, "Root({root})"),
-            NotificationEntry::Vote(vote) => write!(f, "Vote({vote:?})"),
             NotificationEntry::Slot(slot_info) => write!(f, "Slot({slot_info:?})"),
             NotificationEntry::SlotUpdate(slot_update) => {
                 write!(f, "SlotUpdate({slot_update:?})")
@@ -489,7 +479,6 @@ struct PubsubNotificationStats {
     since: Option<Instant>,
     notify_slot_count: u64,
     notify_slot_update_count: u64,
-    notify_vote_count: u64,
     notify_root_count: u64,
     notify_signature_count: u64,
     notification_entry_processing_count: u64,
@@ -511,7 +500,6 @@ impl PubsubNotificationStats {
                 self.notify_slot_update_count,
                 i64
             ),
-            ("notify_vote_count", self.notify_vote_count, i64),
             ("notify_root_count", self.notify_root_count, i64),
             ("notify_signature_count", self.notify_signature_count, i64),
             (
@@ -727,10 +715,6 @@ impl RpcSubscriptions {
         self.enqueue_notification(NotificationEntry::SignaturesReceived(slot_signatures));
     }
 
-    pub fn notify_vote(&self, vote_pubkey: Pubkey, vote: VoteTransaction, signature: Signature) {
-        self.enqueue_notification(NotificationEntry::Vote((vote_pubkey, vote, signature)));
-    }
-
     pub fn notify_roots(&self, mut rooted_slots: Vec<Slot>) {
         rooted_slots.sort_unstable();
         rooted_slots.into_iter().for_each(|root| {
@@ -807,26 +791,6 @@ impl RpcSubscriptions {
                                 debug!("slot update notify: {slot_update:?}");
                                 stats.notify_slot_update_count += 1;
                                 notifier.notify(slot_update, sub, false);
-                            }
-                        }
-                        // These notifications are only triggered by votes observed on gossip,
-                        // unlike `NotificationEntry::Gossip`, which also accounts for slots seen
-                        // in VoteState's from bank states built in ReplayStage.
-                        NotificationEntry::Vote((vote_pubkey, ref vote_info, signature)) => {
-                            if let Some(sub) = subscriptions
-                                .node_progress_watchers()
-                                .get(&SubscriptionParams::Vote)
-                            {
-                                let rpc_vote = RpcVote {
-                                    vote_pubkey: vote_pubkey.to_string(),
-                                    slots: vote_info.slots(),
-                                    hash: bs58::encode(vote_info.hash()).into_string(),
-                                    timestamp: vote_info.timestamp(),
-                                    signature: signature.to_string(),
-                                };
-                                debug!("vote notify: {vote_info:?}");
-                                stats.notify_vote_count += 1;
-                                notifier.notify(&rpc_vote, sub, false);
                             }
                         }
                         NotificationEntry::Root(root) => {
@@ -3102,8 +3066,12 @@ pub(crate) mod tests {
         };
 
         let (rpc_all, mut receiver_all) = rpc_pubsub_service::test_connection(&subscriptions);
+        #[allow(deprecated)]
         let sub_id_for_all = rpc_all
-            .logs_subscribe(RpcTransactionLogsFilter::All, Some(sub_config.clone()))
+            .logs_subscribe(
+                RpcTransactionLogsFilter::AllWithVotes,
+                Some(sub_config.clone()),
+            )
             .unwrap();
         assert!(subscriptions.control.logs_subscribed(None));
 
@@ -3203,44 +3171,36 @@ pub(crate) mod tests {
         assert_eq!(subscriptions.total(), 5);
 
         let (rpc6, _receiver6) = rpc_pubsub_service::test_connection(&subscriptions);
-        let sub_id6 = rpc6.vote_subscribe().unwrap();
+        let sub_id6 = rpc6.root_subscribe().unwrap();
 
         assert_eq!(subscriptions.total(), 6);
-
-        let (rpc7, _receiver7) = rpc_pubsub_service::test_connection(&subscriptions);
-        let sub_id7 = rpc7.root_subscribe().unwrap();
-
-        assert_eq!(subscriptions.total(), 7);
 
         // Add duplicate account subscription, but it shouldn't increment the count.
-        let (rpc8, _receiver8) = rpc_pubsub_service::test_connection(&subscriptions);
-        let sub_id8 = rpc8
+        let (rpc7, _receiver7) = rpc_pubsub_service::test_connection(&subscriptions);
+        let sub_id7 = rpc7
             .account_subscribe(Pubkey::default().to_string(), None)
             .unwrap();
-        assert_eq!(subscriptions.total(), 7);
-
-        rpc1.account_unsubscribe(sub_id1).unwrap();
-        assert_eq!(subscriptions.total(), 7);
-
-        rpc8.account_unsubscribe(sub_id8).unwrap();
         assert_eq!(subscriptions.total(), 6);
 
-        rpc2.program_unsubscribe(sub_id2).unwrap();
+        rpc1.account_unsubscribe(sub_id1).unwrap();
+        assert_eq!(subscriptions.total(), 6);
+
+        rpc7.account_unsubscribe(sub_id7).unwrap();
         assert_eq!(subscriptions.total(), 5);
 
-        rpc3.logs_unsubscribe(sub_id3).unwrap();
+        rpc2.program_unsubscribe(sub_id2).unwrap();
         assert_eq!(subscriptions.total(), 4);
 
-        rpc4.signature_unsubscribe(sub_id4).unwrap();
+        rpc3.logs_unsubscribe(sub_id3).unwrap();
         assert_eq!(subscriptions.total(), 3);
 
-        rpc5.slot_unsubscribe(sub_id5).unwrap();
+        rpc4.signature_unsubscribe(sub_id4).unwrap();
         assert_eq!(subscriptions.total(), 2);
 
-        rpc6.vote_unsubscribe(sub_id6).unwrap();
+        rpc5.slot_unsubscribe(sub_id5).unwrap();
         assert_eq!(subscriptions.total(), 1);
 
-        rpc7.root_unsubscribe(sub_id7).unwrap();
+        rpc6.root_unsubscribe(sub_id6).unwrap();
         assert_eq!(subscriptions.total(), 0);
     }
 }

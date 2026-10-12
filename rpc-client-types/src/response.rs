@@ -307,8 +307,6 @@ pub struct RpcContactInfo {
     pub tpu_forwards: Option<SocketAddr>,
     /// Tpu QUIC forwards port
     pub tpu_forwards_quic: Option<SocketAddr>,
-    /// Tpu UDP vote port
-    pub tpu_vote: Option<SocketAddr>,
     /// Server repair UDP port
     pub serve_repair: Option<SocketAddr>,
     /// JSON RPC port
@@ -374,17 +372,6 @@ impl fmt::Display for RpcVersionInfo {
 pub struct RpcIdentity {
     /// The current node identity pubkey
     pub identity: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RpcVote {
-    /// Vote account address, as base-58 encoded string
-    pub vote_pubkey: String,
-    pub slots: Vec<Slot>,
-    pub hash: String,
-    pub timestamp: Option<UnixTimestamp>,
-    pub signature: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

@@ -30,7 +30,7 @@ use {
         },
         response::{
             Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVersionInfo, RpcVote, SlotInfo, SlotUpdate,
+            RpcSignatureResult, RpcVersionInfo, SlotInfo, SlotUpdate,
         },
     },
     solana_signature::Signature,
@@ -219,22 +219,6 @@ pub trait RpcSolPubSub {
         id: PubSubSubscriptionId,
     ) -> Result<bool>;
 
-    // Get notification when vote is encountered
-    #[pubsub(subscription = "voteNotification", subscribe, name = "voteSubscribe")]
-    fn vote_subscribe(&self, meta: Self::Metadata, subscriber: Subscriber<RpcVote>);
-
-    // Unsubscribe from vote notification subscription.
-    #[pubsub(
-        subscription = "voteNotification",
-        unsubscribe,
-        name = "voteUnsubscribe"
-    )]
-    fn vote_unsubscribe(
-        &self,
-        meta: Option<Self::Metadata>,
-        id: PubSubSubscriptionId,
-    ) -> Result<bool>;
-
     // Get notification when a new root is set
     #[pubsub(subscription = "rootNotification", subscribe, name = "rootSubscribe")]
     fn root_subscribe(&self, meta: Self::Metadata, subscriber: Subscriber<Slot>);
@@ -338,14 +322,6 @@ mod internal {
         // Unsubscribe from block notification subscription.
         #[rpc(name = "blockUnsubscribe")]
         fn block_unsubscribe(&self, id: SubscriptionId) -> Result<bool>;
-
-        // Get notification when vote is encountered
-        #[rpc(name = "voteSubscribe")]
-        fn vote_subscribe(&self) -> Result<SubscriptionId>;
-
-        // Unsubscribe from vote notification subscription.
-        #[rpc(name = "voteUnsubscribe")]
-        fn vote_unsubscribe(&self, id: SubscriptionId) -> Result<bool>;
 
         // Get notification when a new root is set
         #[rpc(name = "rootSubscribe")]
@@ -499,21 +475,24 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         filter: RpcTransactionLogsFilter,
         config: Option<RpcTransactionLogsConfig>,
     ) -> Result<SubscriptionId> {
-        let params = LogsSubscriptionParams {
-            kind: match filter {
-                RpcTransactionLogsFilter::All => LogsSubscriptionKind::All,
-                RpcTransactionLogsFilter::AllWithVotes => LogsSubscriptionKind::AllWithVotes,
-                RpcTransactionLogsFilter::Mentions(keys) => {
-                    if keys.len() != 1 {
-                        return Err(Error {
-                            code: ErrorCode::InvalidParams,
-                            message: "Invalid Request: Only 1 address supported".into(),
-                            data: None,
-                        });
-                    }
-                    LogsSubscriptionKind::Single(param::<Pubkey>(&keys[0], "mentions")?)
+        #[allow(deprecated)]
+        let kind = match filter {
+            RpcTransactionLogsFilter::All | RpcTransactionLogsFilter::AllWithVotes => {
+                LogsSubscriptionKind::All
+            }
+            RpcTransactionLogsFilter::Mentions(keys) => {
+                if keys.len() != 1 {
+                    return Err(Error {
+                        code: ErrorCode::InvalidParams,
+                        message: "Invalid Request: Only 1 address supported".into(),
+                        data: None,
+                    });
                 }
-            },
+                LogsSubscriptionKind::Single(param::<Pubkey>(&keys[0], "mentions")?)
+            }
+        };
+        let params = LogsSubscriptionParams {
+            kind,
             commitment: config.and_then(|c| c.commitment).unwrap_or_default(),
         };
         self.subscribe(SubscriptionParams::Logs(params))
@@ -599,20 +578,6 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         self.unsubscribe(id)
     }
 
-    fn vote_subscribe(&self) -> Result<SubscriptionId> {
-        if !self.config.enable_vote_subscription {
-            return Err(Error::new(jsonrpc_core::ErrorCode::MethodNotFound));
-        }
-        self.subscribe(SubscriptionParams::Vote)
-    }
-
-    fn vote_unsubscribe(&self, id: SubscriptionId) -> Result<bool> {
-        if !self.config.enable_vote_subscription {
-            return Err(Error::new(jsonrpc_core::ErrorCode::MethodNotFound));
-        }
-        self.unsubscribe(id)
-    }
-
     fn root_subscribe(&self) -> Result<SubscriptionId> {
         self.subscribe(SubscriptionParams::Root)
     }
@@ -645,7 +610,6 @@ mod tests {
         solana_account_decoder::{UiAccountEncoding, parse_account_data::parse_account_data_v3},
         solana_clock::Slot,
         solana_commitment_config::CommitmentConfig,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::Message,
         solana_pubkey::Pubkey,
@@ -657,20 +621,16 @@ mod tests {
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             commitment::{BlockCommitmentCache, CommitmentSlots},
-            genesis_utils::{
-                GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
-                create_genesis_config, create_genesis_config_with_vote_accounts,
-            },
+            genesis_utils::{GenesisConfigInfo, activate_all_features, create_genesis_config},
         },
         solana_signer::Signer,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
-        solana_vote::vote_transaction::VoteTransaction,
         solana_vote_interface::{
             instruction::{self as vote_instruction, CreateVoteAccountConfig},
             program as vote_program,
-            state::{Vote, VoteInit, VoteStateV4},
+            state::{VoteInit, VoteStateV4},
         },
         std::{
             sync::{
@@ -1423,73 +1383,6 @@ mod tests {
 
         assert!(rpc.slot_unsubscribe(42.into()).is_err());
         assert!(rpc.slot_unsubscribe(sub_id).is_ok());
-    }
-
-    #[test]
-    #[serial]
-    fn test_vote_subscribe() {
-        let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests()));
-
-        let validator_voting_keypairs: Vec<_> =
-            (0..10).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
-            10_000,
-            &validator_voting_keypairs,
-            vec![100; validator_voting_keypairs.len()],
-        );
-        let exit = Arc::new(AtomicBool::new(false));
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
-
-        // Setup Subscriptions
-        let optimistically_confirmed_bank =
-            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-            exit,
-            max_complete_transaction_status_slot,
-            bank_forks,
-            block_commitment_cache,
-            optimistically_confirmed_bank,
-        ));
-        // Setup RPC
-        let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&subscriptions);
-        rpc.vote_subscribe().unwrap();
-
-        let vote = Vote {
-            slots: vec![1, 2],
-            hash: Hash::default(),
-            timestamp: None,
-        };
-        subscriptions.notify_vote(
-            Pubkey::default(),
-            VoteTransaction::from(vote),
-            Signature::default(),
-        );
-
-        let response = receiver.recv();
-        assert_eq!(
-            response,
-            r#"{"jsonrpc":"2.0","method":"voteNotification","params":{"result":{"votePubkey":"11111111111111111111111111111111","slots":[1,2],"hash":"11111111111111111111111111111111","timestamp":null,"signature":"1111111111111111111111111111111111111111111111111111111111111111"},"subscription":0}}"#
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn test_vote_unsubscribe() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let rpc_subscriptions = Arc::new(RpcSubscriptions::default_with_bank_forks(
-            max_complete_transaction_status_slot,
-            bank_forks,
-        ));
-        let (rpc, _receiver) = rpc_pubsub_service::test_connection(&rpc_subscriptions);
-        let sub_id = rpc.vote_subscribe().unwrap();
-
-        assert!(rpc.vote_unsubscribe(42.into()).is_err());
-        assert!(rpc.vote_unsubscribe(sub_id).is_ok());
     }
 
     #[test]

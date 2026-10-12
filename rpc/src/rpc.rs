@@ -13,7 +13,6 @@ use {
         rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
-    agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
@@ -507,7 +506,6 @@ impl JsonRpcRequestProcessor {
         let slot = bank.slot();
         let optimistically_confirmed_bank =
             Arc::new(RwLock::new(OptimisticallyConfirmedBank { bank }));
-        let migration_status = bank_forks.read().unwrap().migration_status();
         Self {
             config,
             snapshot_config: None,
@@ -521,9 +519,7 @@ impl JsonRpcRequestProcessor {
             validator_exit: create_validator_exit(exit.clone()),
             health: Arc::new(RpcHealth::new(
                 Arc::clone(&optimistically_confirmed_bank),
-                blockstore,
                 Arc::default(),
-                migration_status,
                 0,
                 exit,
             )),
@@ -934,18 +930,6 @@ impl JsonRpcRequestProcessor {
         // fine
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.epoch_schedule().clone()
-    }
-
-    pub fn get_ag_genesis_cert(&self) -> Option<WireBlockCertMessage> {
-        let bank = self.bank(Some(CommitmentConfig::finalized()));
-        bank.get_alpenglow_genesis_certificate()
-            .map(|c| WireBlockCertMessage {
-                block: c.block,
-                signature: WireCertSignature {
-                    signature: c.signature.signature,
-                    bitmap: c.signature.bitmap,
-                },
-            })
     }
 
     pub async fn get_rank_map(
@@ -3139,7 +3123,7 @@ pub mod rpc_minimal {
 // RPC interface that only depends on immediate Bank data
 // Expected to be provided by API nodes
 pub mod rpc_bank {
-    use {super::*, agave_votor_messages::wire::WireBlockCertMessage};
+    use super::*;
     #[rpc]
     pub trait BankData {
         type Metadata;
@@ -3179,10 +3163,6 @@ pub mod rpc_bank {
             start_slot: Slot,
             limit: u64,
         ) -> Result<Vec<String>>;
-
-        #[rpc(meta, name = "getAgGenesisCert")]
-        fn get_ag_genesis_cert(&self, meta: Self::Metadata)
-        -> Result<Option<WireBlockCertMessage>>;
 
         #[rpc(meta, name = "getRankMap")]
         fn get_rank_map(
@@ -3265,14 +3245,6 @@ pub mod rpc_bank {
                 .into_iter()
                 .map(|identity| identity.to_string())
                 .collect())
-        }
-
-        fn get_ag_genesis_cert(
-            &self,
-            meta: Self::Metadata,
-        ) -> Result<Option<WireBlockCertMessage>> {
-            debug!("get_ag_genesis_cert rpc request received");
-            Ok(meta.get_ag_genesis_cert())
         }
 
         fn get_rank_map(
@@ -3889,9 +3861,6 @@ pub mod rpc_full {
                             tpu_forwards: None,
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_vote: contact_info
-                                .tpu_vote(Protocol::UDP)
                                 .filter(|addr| socket_addr_space.check(addr)),
                             serve_repair: contact_info
                                 .serve_repair(Protocol::UDP)
@@ -4625,7 +4594,6 @@ fn sanitize_transaction(
     RuntimeTransaction::try_create(
         transaction,
         MessageHash::Compute,
-        None,
         address_loader,
         reserved_account_keys,
     )
@@ -4711,7 +4679,6 @@ pub fn populate_blockstore_for_tests(
         None,
         None,
         Some(transaction_status_sender),
-        None,
         None,
     );
 
@@ -5055,7 +5022,7 @@ pub mod tests {
                 block_commitment_cache.clone(),
                 blockstore.clone(),
                 validator_exit,
-                RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone()),
+                RpcHealth::stub(optimistically_confirmed_bank.clone()),
                 cluster_info,
                 Hash::default(),
                 None,
@@ -5383,43 +5350,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_get_ag_genesis_cert() {
-        use {
-            agave_votor_messages::{
-                certificate::{CertSignature, GenesisCert},
-                consensus_message::Block,
-            },
-            solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        };
-
-        let rpc = RpcHandler::start();
-        // Seed the bank with a genesis certificate for the RPC to return.
-        let block = Block::new_unique(0);
-        rpc.working_bank()
-            .set_alpenglow_genesis_certificate(&GenesisCert {
-                block,
-                signature: CertSignature {
-                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    bitmap: vec![1, 2, 3],
-                },
-            });
-
-        let request = create_test_request("getAgGenesisCert", None);
-        let result: Value = parse_success_result(rpc.handle_request_sync(request));
-        let expected = json!({
-            "block": {
-                "slot": 0,
-                "blockId": &block.block_id,
-            },
-            "signature": {
-                "signature": vec![0u8; BLS_SIGNATURE_AFFINE_SIZE],
-                "bitmap": [1, 2, 3],
-            },
-        });
-        assert_eq!(result, expected);
-    }
-
-    #[test]
     fn test_rpc_get_rank_map() {
         let rpc = RpcHandler::start();
         let request = create_test_request("getRankMap", Some(json!([0])));
@@ -5628,7 +5558,6 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:8009",
             "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:8010",
-            "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
             "rpc": "127.0.0.1:8899",
             "pubsub": "127.0.0.1:8900",
@@ -5644,7 +5573,6 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:1240",
             "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:1245",
-            "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
             "rpc": "127.0.0.1:8899",
             "pubsub": "127.0.0.1:8900",
@@ -7427,7 +7355,7 @@ pub mod tests {
         let (bank_forks, mint_keypair, ..) = new_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone());
+        let health = RpcHealth::stub(optimistically_confirmed_bank.clone());
         // Mark the node as healthy to start
         health.stub_set_health_status(Some(RpcHealthStatus::Ok));
 
@@ -7783,7 +7711,7 @@ pub mod tests {
             block_commitment_cache,
             blockstore.clone(),
             validator_exit,
-            RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore),
+            RpcHealth::stub(optimistically_confirmed_bank.clone()),
             cluster_info,
             Hash::default(),
             None,
@@ -9438,7 +9366,7 @@ pub mod tests {
             block_commitment_cache,
             blockstore.clone(),
             validator_exit,
-            RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone()),
+            RpcHealth::stub(optimistically_confirmed_bank.clone()),
             cluster_info,
             Hash::default(),
             None,

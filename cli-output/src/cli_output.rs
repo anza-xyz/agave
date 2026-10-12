@@ -10,9 +10,7 @@ use {
             writeln_transaction,
         },
     },
-    agave_votor_messages::{migration::AG_MIGRATION_EPOCH_CREDIT, wire::WireBlockCertMessage},
     base64::{Engine, prelude::BASE64_STANDARD},
-    bitvec::vec::BitVec,
     chrono::{Local, TimeZone, Utc},
     clap::ArgMatches,
     console::{Emoji, style},
@@ -24,7 +22,6 @@ use {
         UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
         parse_account_data::AccountAdditionalDataV3, parse_token::UiTokenAccount,
     },
-    solana_bls_signatures::Signature as BLSSignature,
     solana_clap_utils::keypair::SignOnly,
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
@@ -47,13 +44,9 @@ use {
     solana_transaction_status_client_types::{Rewards, UiTransactionError},
     solana_vote_program::{
         authorized_voters::AuthorizedVoters,
-        vote_state::{
-            BlockTimestamp, LandedVote, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
-            VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteStateV4,
-        },
+        vote_state::{BlockTimestamp, LandedVote, MAX_EPOCH_CREDITS_HISTORY, VoteStateV4},
     },
     std::{
-        cmp::Ordering,
         collections::{BTreeMap, HashMap},
         fmt,
         str::FromStr,
@@ -1204,57 +1197,9 @@ impl fmt::Display for CliKeyedEpochRewards {
     }
 }
 
-fn show_tower_votes(
-    f: &mut fmt::Formatter,
-    votes: &[CliLandedVote],
-    epoch_voting_history: &[CliEpochVotingHistory],
-) -> fmt::Result {
-    if votes.is_empty() {
-        return Ok(());
-    }
-
-    // Existence of this should guarantee the occurrence of vote truncation
-    let newest_history_entry = epoch_voting_history.iter().next_back();
-
-    writeln!(
-        f,
-        "{} Tower votes (using {}/{} entries):",
-        (if newest_history_entry.is_none() {
-            "All"
-        } else {
-            "Recent"
-        }),
-        votes.len(),
-        MAX_LOCKOUT_HISTORY
-    )?;
-
-    for vote in votes.iter().rev() {
-        write!(
-            f,
-            "- slot: {} (confirmation count: {})",
-            vote.slot, vote.confirmation_count
-        )?;
-        if vote.latency == 0 {
-            writeln!(f)?;
-        } else {
-            writeln!(f, " (latency {})", vote.latency)?;
-        }
-    }
-    if let Some(newest) = newest_history_entry
-        && let CliEpochVotingHistory::Tower(newest) = newest
-    {
-        writeln!(
-            f,
-            "- ... (truncated {} rooted votes, which have been credited)",
-            newest.credits
-        )?;
-    }
-    Ok(())
-}
-
 fn show_epoch_credits(
     f: &mut fmt::Formatter,
-    epoch_voting_history: &[CliEpochVotingHistory],
+    epoch_voting_history: &[AgEpochHistory],
 ) -> fmt::Result {
     if !epoch_voting_history.is_empty() {
         writeln!(
@@ -1275,49 +1220,27 @@ fn show_epoch_credits(
     }
 
     for entry in epoch_voting_history.iter().rev() {
-        match entry {
-            CliEpochVotingHistory::Tower(tower) => {
-                writeln!(
-                    f, // tame fmt so that this will be folded like following
-                    "- Tower epoch: {}",
-                    tower.epoch
-                )?;
-                writeln!(
-                    f,
-                    "  credits range: ({}..{}]",
-                    tower.prev_credits, tower.credits
-                )?;
-                writeln!(
-                    f,
-                    "  credits/max credits: {}/{}",
-                    tower.credits_earned,
-                    tower.slots_in_epoch * u64::from(tower.max_credits_per_slot)
-                )?;
-            }
-            CliEpochVotingHistory::Alpenglow(ag) => {
-                writeln!(f, "- Alpenglow epoch: {}", ag.epoch)?;
-                writeln!(
-                    f,
-                    "  lamports range: ({}..{}]",
-                    ag.prev_lamports, ag.lamports
-                )?;
-                writeln!(
-                    f,
-                    "  lamports earned: {} ({:.4} SOL)",
-                    ag.lamports_earned,
-                    ag.lamports_earned as f64 / LAMPORTS_PER_SOL as f64
-                )?;
-            }
-        }
+        writeln!(f, "- Alpenglow epoch: {}", entry.epoch)?;
+        writeln!(
+            f,
+            "  lamports range: ({}..{}]",
+            entry.prev_lamports, entry.lamports
+        )?;
+        writeln!(
+            f,
+            "  lamports earned: {} ({:.4} SOL)",
+            entry.lamports_earned,
+            entry.lamports_earned as f64 / LAMPORTS_PER_SOL as f64
+        )?;
     }
     if let Some(oldest) = epoch_voting_history.iter().next()
-        && oldest.prev() > 0
+        && oldest.prev_lamports > 0
     {
         // Oldest entry doesn't start with 0. so history must be truncated...
 
         // count of this combined pseudo credits range: (0..=oldest.prev_credits] like the above
         // (or this is just [1..=oldest.prev_credits] for human's simpler minds)
-        let count = oldest.prev();
+        let count = oldest.prev_lamports;
 
         writeln!(
             f,
@@ -1330,21 +1253,13 @@ fn show_epoch_credits(
 
 fn show_votes_and_credits(
     f: &mut fmt::Formatter,
-    votes: &VotesObserved,
-    epoch_voting_history: &[CliEpochVotingHistory],
+    vote: &Option<CliLandedVote>,
+    epoch_voting_history: &[AgEpochHistory],
 ) -> fmt::Result {
-    match votes {
-        VotesObserved::Tower(votes) => {
-            show_tower_votes(f, votes, epoch_voting_history)?;
-            show_epoch_credits(f, epoch_voting_history)
-        }
-        VotesObserved::Alpenglow(vote) => {
-            if let Some(vote) = vote {
-                writeln!(f, "Latest Alpenglow vote for slot: {}", vote.slot)?;
-            }
-            show_epoch_credits(f, epoch_voting_history)
-        }
+    if let Some(vote) = vote {
+        writeln!(f, "Latest Alpenglow vote for slot: {}", vote.slot)?;
     }
+    show_epoch_credits(f, epoch_voting_history)
 }
 
 enum Format {
@@ -1799,36 +1714,6 @@ impl fmt::Display for CliValidatorInfo {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum VotesObserved {
-    Alpenglow(Option<CliLandedVote>),
-    Tower(Vec<CliLandedVote>),
-}
-
-impl VotesObserved {
-    pub fn new(vote_state: &VoteStateV4, ag_genesis_cert: &Option<WireBlockCertMessage>) -> Self {
-        match ag_genesis_cert {
-            None => Self::Tower(vote_state.votes.iter().map(CliLandedVote::from).collect()),
-            Some(cert) => match vote_state.votes.iter().last() {
-                None => Self::Alpenglow(None),
-                Some(vote) => {
-                    if vote.lockout.slot() <= cert.block.slot {
-                        Self::Tower(vote_state.votes.iter().map(CliLandedVote::from).collect())
-                    } else {
-                        Self::Alpenglow(Some(CliLandedVote::from(vote)))
-                    }
-                }
-            },
-        }
-    }
-}
-
-impl Default for VotesObserved {
-    fn default() -> Self {
-        Self::Tower(vec![])
-    }
-}
-
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliVoteAccount {
@@ -1841,8 +1726,8 @@ pub struct CliVoteAccount {
     pub commission: u8,
     pub root_slot: Option<Slot>,
     pub recent_timestamp: BlockTimestamp,
-    pub votes_observed: VotesObserved,
-    pub epoch_voting_history: Vec<CliEpochVotingHistory>,
+    pub votes_observed: Option<CliLandedVote>,
+    pub epoch_voting_history: Vec<AgEpochHistory>,
     #[serde(skip_serializing)]
     pub use_lamports_unit: bool,
     #[serde(skip_serializing)]
@@ -1966,33 +1851,6 @@ impl From<&AuthorizedVoters> for CliAuthorizedVoters {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum CliEpochVotingHistory {
-    Alpenglow(AgEpochHistory),
-    Tower(TowerEpochHistory),
-}
-
-impl CliEpochVotingHistory {
-    fn prev(&self) -> u64 {
-        match self {
-            Self::Tower(t) => t.prev_credits,
-            Self::Alpenglow(a) => a.prev_lamports,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TowerEpochHistory {
-    pub epoch: Epoch,
-    pub slots_in_epoch: u64,
-    pub credits_earned: u64,
-    pub credits: u64,
-    pub prev_credits: u64,
-    pub max_credits_per_slot: u8,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AgEpochHistory {
     pub epoch: Epoch,
     pub slots_in_epoch: u64,
@@ -2004,78 +1862,18 @@ pub struct AgEpochHistory {
 pub fn get_epoch_history(
     epoch_schedule: &EpochSchedule,
     vote_state: &VoteStateV4,
-    ag_genesis_cert: &Option<WireBlockCertMessage>,
-    tvc_activation_epoch: Option<Epoch>,
-) -> Vec<CliEpochVotingHistory> {
-    let mut ret = vec![];
-    let mut marker_seen = false;
-    for entry in vote_state.epoch_credits.iter().copied() {
-        if entry == AG_MIGRATION_EPOCH_CREDIT {
-            marker_seen = true;
-            continue;
-        }
-        let (epoch, credits, prev_credits) = entry;
-        let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-
-        enum TowerOrAg {
-            Tower(Slot),
-            Ag(Slot),
-        }
-
-        let tower_or_ag = match ag_genesis_cert {
-            None => TowerOrAg::Tower(slots_in_epoch),
-            Some(cert) => {
-                let migration_slot = cert.block.slot;
-                let migration_epoch = epoch_schedule.get_epoch(migration_slot);
-                match epoch.cmp(&migration_epoch) {
-                    Ordering::Less => TowerOrAg::Tower(slots_in_epoch),
-                    Ordering::Greater => TowerOrAg::Ag(slots_in_epoch),
-                    Ordering::Equal => {
-                        // +1 because migration slot is still tower
-                        let migration_offset =
-                            migration_slot - epoch_schedule.get_first_slot_in_epoch(epoch) + 1;
-                        if marker_seen {
-                            TowerOrAg::Ag(slots_in_epoch - migration_offset)
-                        } else {
-                            TowerOrAg::Tower(migration_offset)
-                        }
-                    }
-                }
-            }
-        };
-
-        let entry = match tower_or_ag {
-            TowerOrAg::Tower(slots_in_epoch) => {
-                let credits_earned = credits.saturating_sub(prev_credits);
-                let is_tvc_active = tvc_activation_epoch.map(|e| epoch >= e).unwrap_or_default();
-                let max_credits_per_slot = if is_tvc_active {
-                    VOTE_CREDITS_MAXIMUM_PER_SLOT
-                } else {
-                    1
-                };
-                CliEpochVotingHistory::Tower(TowerEpochHistory {
-                    epoch,
-                    slots_in_epoch,
-                    credits_earned,
-                    credits,
-                    prev_credits,
-                    max_credits_per_slot,
-                })
-            }
-            TowerOrAg::Ag(slots_in_epoch) => {
-                let lamports_earned = credits.saturating_sub(prev_credits);
-                CliEpochVotingHistory::Alpenglow(AgEpochHistory {
-                    epoch,
-                    slots_in_epoch,
-                    lamports_earned,
-                    lamports: credits,
-                    prev_lamports: prev_credits,
-                })
-            }
-        };
-        ret.push(entry);
-    }
-    ret
+) -> Vec<AgEpochHistory> {
+    vote_state
+        .epoch_credits
+        .iter()
+        .map(|&(epoch, lamports, prev_lamports)| AgEpochHistory {
+            epoch,
+            slots_in_epoch: epoch_schedule.get_slots_in_epoch(epoch),
+            lamports_earned: lamports.saturating_sub(prev_lamports),
+            lamports,
+            prev_lamports,
+        })
+        .collect()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2092,57 +1890,6 @@ impl From<&LandedVote> for CliLandedVote {
             latency: landed_vote.latency,
             slot: landed_vote.slot(),
             confirmation_count: landed_vote.confirmation_count(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CliAgGenesisInfoPayload {
-    /// Epoch in which the alpenglow feature was activated.
-    pub epoch: Epoch,
-    /// Slot in which migration to alpenglow happened.
-    pub slot: Slot,
-    /// Hash of the block in which migration to alpenglow happened.
-    pub block_id: Hash,
-    /// Bitvec of validators that signed the block.
-    pub bitvec: BitVec<u8>,
-    /// The aggregate signature of the validators.
-    pub signature: BLSSignature,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(clippy::large_enum_variant)]
-pub enum CliAgGenesisInfo {
-    Tower,
-    Ag(CliAgGenesisInfoPayload),
-}
-
-impl QuietDisplay for CliAgGenesisInfo {}
-impl VerboseDisplay for CliAgGenesisInfo {}
-
-impl fmt::Display for CliAgGenesisInfo {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Tower => writeln!(f, "still running tower"),
-            Self::Ag(payload) => {
-                let CliAgGenesisInfoPayload {
-                    epoch,
-                    slot,
-                    block_id,
-                    bitvec,
-                    signature,
-                } = payload;
-                writeln!(f, "Alpenglow genesis information:")?;
-                writeln!(f, "  Feature flag activation: Epoch {epoch}")?;
-                writeln!(f, "  Genesis Block - Slot {slot}, Block ID {block_id}")?;
-                writeln!(
-                    f,
-                    "  Genesis Vote - {} validators participated, Signature {signature}",
-                    bitvec.count_ones(),
-                )
-            }
         }
     }
 }

@@ -2,17 +2,12 @@
 
 use {
     crate::rpc_sender::*,
-    agave_votor_messages::{
-        consensus_message::{Block, BlockId},
-        wire::{WireBlockCertMessage, WireCertSignature},
-    },
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
     serde_json::{Number, Value, json},
     solana_account_decoder_client_types::{
         UiAccount, UiAccountData, UiAccountEncoding, token::UiTokenAmount,
     },
-    solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
@@ -177,16 +172,6 @@ impl RpcSender for MockSender {
                 block_height: 34,
                 transaction_count: Some(123),
             })?,
-            "getAgGenesisCert" => {
-                let cert = WireBlockCertMessage {
-                    block: Block { slot: 0, block_id: BlockId::default() },
-                    signature: WireCertSignature {
-                        signature:  BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                        bitmap: vec![],
-                     }
-                };
-                serde_json::to_value(Some(cert))?
-            }
             "getRankMap" => serde_json::to_value(Response::<
                 Option<RpcRankMap>,
             > {
@@ -426,7 +411,6 @@ impl RpcSender for MockSender {
                 tpu_quic: Some(SocketAddr::from(([10, 239, 6, 48], 8862))),
                 tpu_forwards: Some(SocketAddr::from(([10, 239, 6, 48], 8857))),
                 tpu_forwards_quic: Some(SocketAddr::from(([10, 239, 6, 48], 8863))),
-                tpu_vote: Some(SocketAddr::from(([10, 239, 6, 48], 8870))),
                 serve_repair: Some(SocketAddr::from(([10, 239, 6, 48], 8880))),
                 rpc: Some(SocketAddr::from(([10, 239, 6, 48], 8899))),
                 pubsub: Some(SocketAddr::from(([10, 239, 6, 48], 8900))),

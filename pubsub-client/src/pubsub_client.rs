@@ -29,15 +29,12 @@
 //! reliably. For a non-blocking, cancelable API, use the asynchronous client
 //! in [`crate::nonblocking::pubsub_client`].
 //!
-//! By default the [`block_subscribe`] and [`vote_subscribe`] events are
-//! disabled on RPC nodes. They can be enabled by passing
-//! `--rpc-pubsub-enable-block-subscription` and
-//! `--rpc-pubsub-enable-vote-subscription` to `agave-validator`. When these
-//! methods are disabled, the RPC server will return a "Method not found" error
-//! message.
+//! By default the [`block_subscribe`] event is disabled on RPC nodes. It can be
+//! enabled by passing `--rpc-pubsub-enable-block-subscription` to
+//! `agave-validator`. When this method is disabled, the RPC server will return
+//! a "Method not found" error message.
 //!
 //! [`block_subscribe`]: https://docs.rs/solana-rpc/latest/solana_rpc/rpc_pubsub/trait.RpcSolPubSub.html#tymethod.block_subscribe
-//! [`vote_subscribe`]: https://docs.rs/solana-rpc/latest/solana_rpc/rpc_pubsub/trait.RpcSolPubSub.html#tymethod.vote_subscribe
 //!
 //! # Examples
 //!
@@ -106,7 +103,7 @@ use {
         },
         response::{
             Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
+            RpcSignatureResult, SlotInfo, SlotUpdate,
         },
     },
     solana_signature::Signature,
@@ -293,9 +290,6 @@ pub type AccountSubscription = (
     PubsubAccountClientSubscription,
     Receiver<RpcResponse<UiAccount>>,
 );
-
-pub type PubsubVoteClientSubscription = PubsubClientSubscription<RpcVote>;
-pub type VoteSubscription = (PubsubVoteClientSubscription, Receiver<RpcVote>);
 
 pub type PubsubRootClientSubscription = PubsubClientSubscription<Slot>;
 pub type RootSubscription = (PubsubRootClientSubscription, Receiver<Slot>);
@@ -531,54 +525,6 @@ impl PubsubClient {
         let result = PubsubClientSubscription {
             message_type: PhantomData,
             operation: "program",
-            socket,
-            subscription_id,
-            t_cleanup: Some(t_cleanup),
-            exit,
-        };
-
-        Ok((result, receiver))
-    }
-
-    /// Subscribe to vote events.
-    ///
-    /// Receives messages of type [`RpcVote`] when a new vote is observed. These
-    /// votes are observed prior to confirmation and may never be confirmed.
-    ///
-    /// This method is disabled by default. It can be enabled by passing
-    /// `--rpc-pubsub-enable-vote-subscription` to `agave-validator`.
-    ///
-    /// # RPC Reference
-    ///
-    /// This method corresponds directly to the [`voteSubscribe`] RPC method.
-    ///
-    /// [`voteSubscribe`]: https://solana.com/docs/rpc/websocket/votesubscribe
-    pub fn vote_subscribe<R: IntoClientRequest>(
-        request: R,
-    ) -> Result<VoteSubscription, PubsubClientError> {
-        let client_request = request.into_client_request().map_err(Box::new)?;
-        let socket = connect_with_retry(client_request)?;
-        let (sender, receiver) = unbounded();
-
-        let socket = Arc::new(RwLock::new(socket));
-        let socket_clone = socket.clone();
-        let exit = Arc::new(AtomicBool::new(false));
-        let exit_clone = exit.clone();
-        let body = json!({
-            "jsonrpc":"2.0",
-            "id":1,
-            "method":"voteSubscribe",
-        })
-        .to_string();
-        let subscription_id = PubsubVoteClientSubscription::send_subscribe(&socket_clone, body)?;
-
-        let t_cleanup = std::thread::spawn(move || {
-            Self::cleanup_with_sender(exit_clone, &socket_clone, sender)
-        });
-
-        let result = PubsubClientSubscription {
-            message_type: PhantomData,
-            operation: "vote",
             socket,
             subscription_id,
             t_cleanup: Some(t_cleanup),
