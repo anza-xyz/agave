@@ -540,17 +540,26 @@ impl ClusterInfo {
     }
 
     /// Resolve `query` on ContactInfo for `peers`.
-    /// Yields one entry per pubkey in `peers`, or `None` when peer is absent.
+    /// Returns one entry per input pubkey in the same order, including duplicates,
+    /// or `None` when the peer is absent. `peers` is collected before locking, and
+    /// reads use bounded batches, which may observe different versions of the table.
+    /// `query` runs under the read lock and should only extract the fields needed
+    /// by the caller.
     pub fn query_contact_infos<'a, R>(
         &self,
-        peers: impl IntoIterator<Item = &'a Pubkey>,
+        peers: impl IntoIterator<Item = &'a Pubkey, IntoIter: ExactSizeIterator>,
         query: impl ContactInfoQuery<R>,
     ) -> Vec<(Pubkey, Option<R>)> {
-        let read_guard = self.gossip.crds.read();
-        peers
-            .into_iter()
-            .map(|id| (*id, read_guard.get(*id).map(|ci: &ContactInfo| query(ci))))
-            .collect()
+        let peers = peers.into_iter();
+        let mut values = Vec::with_capacity(peers.len());
+        values.extend(peers.map(|pubkey| (*pubkey, None)));
+        for chunk in values.chunks_mut(LOCK_CHUNK_SIZE) {
+            let gossip_crds = self.gossip.crds.read();
+            for (pubkey, value) in chunk {
+                *value = gossip_crds.get::<&ContactInfo>(*pubkey).map(&query);
+            }
+        }
+        values
     }
 
     pub fn lookup_contact_info_by_gossip_addr(
@@ -3657,6 +3666,48 @@ mod tests {
             pulls
                 .into_iter()
                 .all(|(addr, _)| addr == other_node.gossip().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_query_contact_infos() {
+        let keypair = Arc::new(Keypair::new());
+        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+        let cluster_info = ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
+        let present = Pubkey::new_unique();
+        cluster_info.insert_info(ContactInfo::new_localhost(&present, timestamp()));
+        let absent = Pubkey::new_unique();
+        let non_contact = Pubkey::new_unique();
+        cluster_info
+            .gossip
+            .crds
+            .write()
+            .insert(
+                CrdsValue::new_unsigned(CrdsData::EpochSlots(0, EpochSlots::new(non_contact, 0))),
+                0,
+                GossipRoute::LocalMessage,
+            )
+            .expect("the first EpochSlots value for this pubkey should be accepted");
+        let peers = [absent, present, cluster_info.id(), present, non_contact];
+        let results = cluster_info.query_contact_infos(&peers, |node| *node.pubkey());
+        assert_eq!(
+            results,
+            vec![
+                (absent, None),
+                (present, Some(present)),
+                (cluster_info.id(), Some(cluster_info.id())),
+                (present, Some(present)),
+                (non_contact, None),
+            ],
+            "results must preserve input order, duplicates, and missing ContactInfo"
+        );
+        assert!(
+            cluster_info
+                .query_contact_infos([], |_| {
+                    unreachable!("an empty peer list must not invoke the query")
+                })
+                .is_empty(),
+            "an empty peer list must yield no results"
         );
     }
 
