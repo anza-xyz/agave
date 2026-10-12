@@ -7,28 +7,22 @@
 use {
     crate::{
         cluster_info_metrics::GossipStats,
-        crds::{Crds, GossipRoute, NodesCursor},
-        crds_data::CrdsData,
+        crds::{Crds, NodesCursor},
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
             CrdsFilter, CrdsGossipPull, CrdsTimeouts, ProcessPullStats, PullRequest,
         },
         crds_gossip_push::CrdsGossipPush,
         crds_value::CrdsValue,
-        duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         protocol::{Ping, PingCache},
     },
     parking_lot::RwLock,
     rand::{CryptoRng, Rng},
     rayon::ThreadPool,
-    solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::{Address, Keypair},
-    solana_ledger::shred::Shred,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
-    solana_signer::Signer,
-    solana_time_utils::timestamp,
     std::{
         cmp,
         collections::{HashMap, HashSet},
@@ -84,74 +78,6 @@ impl CrdsGossip {
     ) {
         self.push
             .new_push_messages(pubkey, &self.crds, now, stakes, should_retain_crds_value)
-    }
-
-    pub(crate) fn push_duplicate_shred<F>(
-        &self,
-        keypair: &Keypair,
-        shred: &Shred,
-        other_payload: &[u8],
-        leader_schedule: Option<F>,
-        // Maximum serialized size of each DuplicateShred chunk payload.
-        max_payload_size: usize,
-        shred_version: u16,
-    ) -> Result<(), duplicate_shred::Error>
-    where
-        F: FnOnce(Slot) -> Option<Pubkey>,
-    {
-        let pubkey = keypair.pubkey();
-        // Skip if there are already records of duplicate shreds for this slot.
-        let shred_slot = shred.slot();
-        let mut crds = self.crds.write();
-        if crds
-            .get_records(&pubkey)
-            .any(|value| match value.value.data() {
-                CrdsData::DuplicateShred(_, value) => value.slot == shred_slot,
-                _ => false,
-            })
-        {
-            return Ok(());
-        }
-        let chunks = duplicate_shred::from_shred(
-            shred.clone(),
-            pubkey,
-            Vec::from(other_payload),
-            leader_schedule,
-            timestamp(),
-            max_payload_size,
-            shred_version,
-        )?;
-        // Find the index of oldest duplicate shred.
-        let mut num_dup_shreds = 0;
-        let offset = crds
-            .get_records(&pubkey)
-            .filter_map(|value| match value.value.data() {
-                CrdsData::DuplicateShred(ix, value) => {
-                    num_dup_shreds += 1;
-                    Some((value.wallclock, *ix))
-                }
-                _ => None,
-            })
-            .min() // Override the oldest records.
-            .map(|(_ /*wallclock*/, ix)| ix)
-            .unwrap_or(0);
-        let offset = if num_dup_shreds < MAX_DUPLICATE_SHREDS {
-            num_dup_shreds
-        } else {
-            offset
-        };
-        let entries = chunks.enumerate().map(|(k, chunk)| {
-            let index = (offset + k as DuplicateShredIndex) % MAX_DUPLICATE_SHREDS;
-            let data = CrdsData::DuplicateShred(index, chunk);
-            CrdsValue::new(data, keypair)
-        });
-        let now = timestamp();
-        for entry in entries {
-            if let Err(err) = crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_duplicate_shred failed: {err:?}");
-            }
-        }
-        Ok(())
     }
 
     /// Add the `from` to the peer's filter of nodes.
@@ -401,9 +327,11 @@ mod test {
         crate::{
             cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
             contact_info::ContactInfo,
-            crds::LOCK_CHUNK_SIZE,
+            crds::{GossipRoute, LOCK_CHUNK_SIZE},
+            crds_data::CrdsData,
         },
         solana_sha256_hasher::hash,
+        solana_signer::Signer,
         solana_time_utils::timestamp,
         std::iter::repeat_with,
     };
