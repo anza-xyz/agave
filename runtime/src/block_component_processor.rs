@@ -2,7 +2,7 @@ use {
     crate::{
         bank::Bank,
         block_component_processor::vote_reward::{
-            CalcVoteRewardUpdateVoteStatesError, calc_vote_rewards_update_vote_states,
+            CalcVoteRewardUpdateVoteStatesError, VoteAccountsUpdateStats, update_vote_accounts,
         },
         leader_schedule_utils::leader_slot_index,
         validated_block_finalization::{
@@ -34,7 +34,7 @@ use {
     thiserror::Error,
 };
 
-pub(crate) mod vote_reward;
+pub mod vote_reward;
 
 #[derive(Debug, Error)]
 pub enum BankFooterError {
@@ -635,7 +635,7 @@ impl BlockComponentProcessor {
             }
         };
 
-        Self::update_bank_with_footer_fields(
+        let _ = Self::update_bank_with_footer_fields(
             &bank,
             block_producer_time_nanos,
             Some(bank_hash),
@@ -773,9 +773,9 @@ impl BlockComponentProcessor {
         bank_hash: Option<Hash>,
         reward_cert: Option<ValidatedRewardCert>,
         final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
-    ) -> Result<(), BankFooterError> {
+    ) -> Result<Option<VoteAccountsUpdateStats>, BankFooterError> {
         bank.update_clock_from_footer(block_producer_time_nanos);
-        calc_vote_rewards_update_vote_states(
+        let vote_account_update_stats = update_vote_accounts(
             bank,
             reward_cert,
             final_cert_input,
@@ -786,7 +786,7 @@ impl BlockComponentProcessor {
             // Record expected bank hash from footer for later verification when the bank is frozen.
             bank.set_expected_bank_hash(hash);
         }
-        Ok(())
+        Ok(vote_account_update_stats)
     }
 }
 

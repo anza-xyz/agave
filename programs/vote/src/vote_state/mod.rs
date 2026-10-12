@@ -1684,7 +1684,7 @@ mod tests {
         // Set commission to start.
         vote_state.set_commission(10);
 
-        let serialized = vote_state.serialize();
+        let serialized = vote_state.test_serialize();
         let serialized_len = serialized.len();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized_len);
@@ -1841,7 +1841,7 @@ mod tests {
         // Set initial commission.
         vote_state.set_commission(10); // 10%
 
-        let serialized = vote_state.serialize();
+        let serialized = vote_state.test_serialize();
         let serialized_len = serialized.len();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized_len);
@@ -4132,7 +4132,7 @@ mod tests {
         let node_pubkey = *vote_state.node_pubkey();
         let withdrawer_pubkey = *vote_state.authorized_withdrawer();
 
-        let serialized = vote_state.serialize();
+        let serialized = vote_state.test_serialize();
         let serialized_len = serialized.len();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized_len);
@@ -4219,7 +4219,7 @@ mod tests {
         let custom_collector = solana_pubkey::new_rand();
         vote_state.set_block_revenue_collector(custom_collector);
 
-        let serialized = vote_state.serialize();
+        let serialized = vote_state.test_serialize();
         let serialized_len = serialized.len();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized_len);
@@ -4597,7 +4597,7 @@ mod tests {
 
         let signers: HashSet<Pubkey> = vec![withdrawer_pubkey].into_iter().collect();
 
-        let serialized = vote_state.serialize();
+        let serialized = vote_state.test_serialize();
         let serialized_len = serialized.len();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized_len);
@@ -5392,7 +5392,7 @@ mod tests {
         {
             let preexisting_handler = vote_state_new_for_test(&vote_pubkey, target_version);
             let preexisting_state = preexisting_handler.as_ref_v4().clone();
-            let serialized = preexisting_handler.serialize();
+            let serialized = preexisting_handler.test_serialize();
             let serialized_len = serialized.len();
             let mut initialized_vote_account =
                 AccountSharedData::new(rent.minimum_balance(serialized_len), serialized_len, &id());
@@ -5653,7 +5653,7 @@ mod tests {
         let withdrawer = *vote_state.authorized_withdrawer();
         let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
         let rent = Rent::default();
-        let serialized = vote_state.clone().serialize();
+        let serialized = vote_state.clone().test_serialize();
         let serialized_len = serialized.len();
         let min_balance = rent.minimum_balance(serialized_len);
         let clock = Clock {
@@ -5725,7 +5725,7 @@ mod tests {
         let mut v4 = vote_state.as_ref_v4().clone();
         v4.pending_delegator_rewards = pending;
         let handler = VoteStateHandler::new_v4(v4);
-        let serialized = handler.clone().serialize();
+        let serialized = handler.clone().test_serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len()) + extra_lamports;
         let mut account = AccountSharedData::new(lamports, serialized.len(), &id());
@@ -6236,7 +6236,7 @@ mod tests {
         let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
         let withdrawer = *vote_state.authorized_withdrawer();
         let node_pubkey = *vote_state.node_pubkey();
-        let serialized = vote_state.serialize();
+        let serialized = vote_state.test_serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
         let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
@@ -6302,7 +6302,7 @@ mod tests {
         let vote_pubkey = Pubkey::new_unique();
         let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
         let withdrawer = *vote_state.authorized_withdrawer();
-        let serialized = vote_state.serialize();
+        let serialized = vote_state.test_serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
         let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
@@ -6385,7 +6385,7 @@ mod tests {
         let original_inflation_collector = vote_state.as_ref_v4().inflation_rewards_collector;
         let original_block_revenue_collector = vote_state.as_ref_v4().block_revenue_collector;
 
-        let serialized = vote_state.clone().serialize();
+        let serialized = vote_state.clone().test_serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
         let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
@@ -6448,7 +6448,7 @@ mod tests {
         let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
         let withdrawer = *vote_state.authorized_withdrawer();
 
-        let serialized = vote_state.clone().serialize();
+        let serialized = vote_state.clone().test_serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
         let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());

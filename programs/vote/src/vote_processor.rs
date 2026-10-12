@@ -855,7 +855,7 @@ mod tests {
         }
 
         let mut account = AccountSharedData::new(lamports, space, &id());
-        account.set_data_from_slice(&vote_state.serialize());
+        account.set_data_from_slice(&vote_state.test_serialize());
 
         (vote_pubkey, account)
     }
@@ -5141,7 +5141,7 @@ mod tests {
                 VoteStateV4::deserialize(vote_account_near_max.data(), &vote_pubkey).unwrap();
             vote_state.pending_delegator_rewards = u64::MAX - deposit_amount + 1;
             vote_account_near_max
-                .set_data_from_slice(&VoteStateHandler::new_v4(vote_state).serialize());
+                .set_data_from_slice(&VoteStateHandler::new_v4(vote_state).test_serialize());
         }
 
         let instruction_data = serialize(&VoteInstruction::DepositDelegatorRewards {
@@ -5292,7 +5292,8 @@ mod tests {
             let mut vote_state =
                 VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
             vote_state.pending_delegator_rewards = pending_rewards;
-            vote_account.set_data_from_slice(&VoteStateHandler::new_v4(vote_state).serialize());
+            vote_account
+                .set_data_from_slice(&VoteStateHandler::new_v4(vote_state).test_serialize());
             vote_account.set_lamports(vote_account_lamports);
         };
 
@@ -5364,7 +5365,8 @@ mod tests {
             let mut vote_state =
                 VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
             vote_state.pending_delegator_rewards = 0;
-            vote_account.set_data_from_slice(&VoteStateHandler::new_v4(vote_state).serialize());
+            vote_account
+                .set_data_from_slice(&VoteStateHandler::new_v4(vote_state).test_serialize());
             vote_account.set_lamports(vote_account_lamports);
         };
 

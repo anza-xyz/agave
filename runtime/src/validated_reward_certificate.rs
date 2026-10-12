@@ -168,7 +168,7 @@ impl ValidatedRewardCert {
         self.reward_slot
     }
 
-    pub(crate) fn validators(&self) -> &HashSet<Pubkey> {
+    pub fn validators(&self) -> &HashSet<Pubkey> {
         &self.validators
     }
 
