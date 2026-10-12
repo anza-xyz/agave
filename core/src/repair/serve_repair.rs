@@ -1896,7 +1896,10 @@ mod tests {
             Packet, PacketFlags, deserialize_slice_from_packet, packet_from_data,
         },
         solana_pubkey::Pubkey,
-        solana_runtime::bank::Bank,
+        solana_runtime::{
+            bank::Bank,
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
+        },
         solana_time_utils::timestamp,
         std::{
             io::Cursor,
@@ -2515,7 +2518,14 @@ mod tests {
 
     #[test]
     fn window_index_request() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        // Full-Alpenglow repair peer selection is stake-weighted. Give both
+        // peers exercised below nonzero stake so either can be selected.
+        let validator_keypairs = [
+            ValidatorVoteKeypairs::new_rand(),
+            ValidatorVoteKeypairs::new_rand(),
+        ];
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_vote_accounts(10_000, &validator_keypairs, vec![1, 1]);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let cluster_info = Arc::new(new_test_cluster_info());
@@ -2537,7 +2547,7 @@ mod tests {
 
         let serve_repair_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1243);
         let mut nxt = ContactInfo::new(
-            solana_pubkey::new_rand(),
+            validator_keypairs[0].node_keypair.pubkey(),
             timestamp(), // wallclock
             0u16,        // shred_version
         );
@@ -2564,7 +2574,7 @@ mod tests {
 
         let serve_repair_addr2 = socketaddr!([127, 0, 0, 2], 1243);
         let mut nxt = ContactInfo::new(
-            solana_pubkey::new_rand(),
+            validator_keypairs[1].node_keypair.pubkey(),
             timestamp(), // wallclock
             0u16,        // shred_version
         );
@@ -2785,13 +2795,19 @@ mod tests {
 
     #[test]
     fn test_repair_with_repair_validators() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        // Full-Alpenglow repair peer selection is stake-weighted, so the known
+        // validator used below must have nonzero stake.
+        let GenesisConfigInfo {
+            genesis_config,
+            validator_pubkey,
+            ..
+        } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let cluster_info = Arc::new(new_test_cluster_info());
         let me = cluster_info.my_contact_info();
         // Insert two peers on the network
-        let contact_info2 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        let contact_info2 = ContactInfo::new_localhost(&validator_pubkey, timestamp());
         let contact_info3 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
         cluster_info.insert_info(contact_info2.clone());
         cluster_info.insert_info(contact_info3.clone());
