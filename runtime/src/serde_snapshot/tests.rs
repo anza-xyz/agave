@@ -147,7 +147,7 @@ mod serde_snapshot_tests {
 
             // Read new file into append-vec and build new entry
             let file_info = FileInfo::new_from_path(output_path)?;
-            let accounts_file = AccountsFile::new_for_startup(file_info)?;
+            let accounts_file = AccountsFile::open_append_vec(file_info)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),
