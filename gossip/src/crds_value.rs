@@ -7,7 +7,6 @@ use {
         contact_info::ContactInfo,
         crds_data::{CrdsData, EpochSlotsIndex},
         duplicate_shred::DuplicateShredIndex,
-        epoch_slots::EpochSlots,
         sigverify_cache::SigVerifyCache,
     },
     rand::Rng,
@@ -235,13 +234,6 @@ impl CrdsValue {
             return None;
         };
         Some(node)
-    }
-
-    pub(crate) fn epoch_slots(&self) -> Option<&EpochSlots> {
-        let CrdsData::EpochSlots(_, epoch_slots) = &self.data else {
-            return None;
-        };
-        Some(epoch_slots)
     }
 
     /// Returns the serialized size (in bytes) of the CrdsValue.

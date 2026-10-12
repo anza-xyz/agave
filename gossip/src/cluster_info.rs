@@ -13,12 +13,14 @@
 //!
 //! Bank needs to provide an interface for us to query the stake weight
 
+#[cfg(test)]
+use crate::epoch_slots::EpochSlots;
 use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{Crds, Cursor, GossipRoute, LOCK_CHUNK_SIZE, NodesCursor, VersionedCrdsValue},
-        crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, SnapshotHashes},
+        crds::{Crds, GossipRoute, LOCK_CHUNK_SIZE, NodesCursor, VersionedCrdsValue},
+        crds_data::{CrdsData, LowestSlot, SnapshotHashes},
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
@@ -27,21 +29,18 @@ use {
             CrdsTimeouts, ProcessPullStats, PullRequest, get_max_bloom_filter_bytes,
         },
         crds_value::{CrdsValue, CrdsValueLabel},
-        duplicate_shred::DuplicateShred,
-        epoch_slots::EpochSlots,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
         ping_pong::Pong,
         protocol::{
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, GossipProtocolWincodeConfig,
-            MAX_INCREMENTAL_SNAPSHOT_HASHES, MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
-            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
-            Protocol, PruneData, deserialize_protocol, split_gossip_messages,
+            GossipProtocolWincodeConfig, MAX_INCREMENTAL_SNAPSHOT_HASHES, MAX_PRUNE_DATA_NODES,
+            PULL_RESPONSE_MAX_PAYLOAD_SIZE, PULL_RESPONSE_MIN_SERIALIZED_SIZE,
+            PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache, Protocol, PruneData,
+            deserialize_protocol, split_gossip_messages,
         },
         sigverify_cache::SigVerifyCache,
         weighted_shuffle::WeightedShuffle,
     },
-    agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
     arrayvec::ArrayVec,
     crossbeam_channel::{Receiver, TrySendError},
@@ -50,10 +49,9 @@ use {
     rand::{CryptoRng, Rng, SeedableRng, prelude::IndexedMutRandom},
     rand_chacha::ChaCha8Rng,
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
-    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
-    solana_ledger::shred::Shred,
     solana_net_utils::{
         PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
         multihomed_sockets::BindIpAddrs,
@@ -212,8 +210,6 @@ pub struct ClusterInfo {
     socket_addr_space: SocketAddrSpace,
     bind_ip_addrs: Arc<BindIpAddrs>,
     sigverify_cache: SigVerifyCache,
-    /// Alpenglow migration status
-    migration_status: OnceLock<Arc<MigrationStatus>>,
 }
 
 impl ClusterInfo {
@@ -252,23 +248,9 @@ impl ClusterInfo {
             socket_addr_space,
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
-            migration_status: OnceLock::new(),
         };
         me.refresh_my_gossip_contact_info();
         me
-    }
-
-    /// Wires in the Alpenglow MigrationStatus.
-    pub fn set_migration_status(&self, migration_status: Arc<MigrationStatus>) {
-        let _ = self.migration_status.set(migration_status);
-    }
-
-    /// Returns `true` iff the migration status has been wired AND the cluster
-    /// has completed the full Alpenglow epoch transition.
-    fn is_full_alpenglow_epoch(&self) -> bool {
-        self.migration_status
-            .get()
-            .is_some_and(|m| m.is_full_alpenglow_epoch())
     }
 
     pub fn set_contact_debug_interval(&mut self, new: u64) {
@@ -521,18 +503,6 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn set_tpu_vote(
-        &self,
-        protocol: contact_info::Protocol,
-        tpu_vote_addr: SocketAddr,
-    ) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .set_tpu_vote(protocol, tpu_vote_addr)?;
-        self.refresh_my_gossip_contact_info();
-        Ok(())
-    }
-
     pub fn lookup_contact_info<R>(
         &self,
         id: &Pubkey,
@@ -582,17 +552,6 @@ impl ClusterInfo {
 
     pub fn my_shred_version(&self) -> u16 {
         self.my_contact_info.read().shred_version()
-    }
-
-    fn lookup_epoch_slots(&self, ix: EpochSlotsIndex) -> EpochSlots {
-        let self_pubkey = self.id();
-        let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
-        let gossip_crds = self.gossip.crds.read();
-        gossip_crds
-            .get::<&CrdsValue>(&label)
-            .and_then(|v| v.epoch_slots())
-            .cloned()
-            .unwrap_or_else(|| EpochSlots::new(self_pubkey, timestamp()))
     }
 
     fn addr_to_string(&self, default_ip: &Option<IpAddr>, addr: &Option<SocketAddr>) -> String {
@@ -690,10 +649,10 @@ impl ClusterInfo {
     pub fn contact_info_trace(&self) -> String {
         // This sets the format string for the table, defining the columns and their widths
         // For reference, this is the header of the table:
-        // IP Address        |Age(ms)|               Node identifier                |       Version       |Gossip|TPUvote| TPU |TPUfwd| TVU |ServeR|Alpeng|ShredVer
+        // IP Address        |Age(ms)|               Node identifier                |       Version       |Gossip| TPU |TPUfwd| TVU |ServeR|Alpeng|ShredVer
         macro_rules! format_string {
             () => {
-                "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^7}|{:^5}|{:^6}|{:^5}|{:^6}|{:^6}|{:^8}\n"
+                "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^5}|{:^6}|{:^5}|{:^6}|{:^6}|{:^8}\n"
             };
         }
         // Make sure format_string above has enough room for each column's title
@@ -705,7 +664,6 @@ impl ClusterInfo {
             "Node identifier",
             "Version",
             "Gossip",
-            "TPUvote",
             "TPU",
             "TPUfwd",
             "TVU",
@@ -723,7 +681,6 @@ impl ClusterInfo {
             shred_version: u16,
             is_spy_node: bool,
             gossip: Option<SocketAddr>,
-            tpu_vote: Option<SocketAddr>,
             tpu: Option<SocketAddr>,
             tpu_forwards: Option<SocketAddr>,
             tvu: Option<SocketAddr>,
@@ -737,7 +694,6 @@ impl ClusterInfo {
                 shred_version: node.shred_version(),
                 is_spy_node: Self::is_spy_node(node, &self.socket_addr_space),
                 gossip: node.gossip(),
-                tpu_vote: node.tpu_vote(contact_info::Protocol::UDP),
                 tpu: node.tpu(contact_info::Protocol::QUIC),
                 tpu_forwards: node.tpu_forwards(contact_info::Protocol::QUIC),
                 tvu: node.tvu(contact_info::Protocol::UDP),
@@ -767,7 +723,6 @@ impl ClusterInfo {
                 node.pubkey.to_string(),
                 node.version.to_string(),
                 self.addr_to_string(&ip_addr, &node.gossip),
-                self.addr_to_string(&ip_addr, &node.tpu_vote),
                 self.addr_to_string(&ip_addr, &node.tpu),
                 self.addr_to_string(&ip_addr, &node.tpu_forwards),
                 self.addr_to_string(&ip_addr, &node.tvu),
@@ -810,74 +765,6 @@ impl ClusterInfo {
         }
     }
 
-    // TODO: If two threads call into this function then epoch_slot_index has a
-    // race condition and the threads will overwrite each other in crds table.
-    pub fn push_epoch_slots(&self, mut update: &[Slot]) {
-        let self_keypair = self.keypair();
-        let self_pubkey = self_keypair.pubkey();
-        let current_slots: Vec<_> = {
-            let gossip_crds =
-                self.time_gossip_read_lock("lookup_epoch_slots", &self.stats.epoch_slots_lookup);
-            (0..crds_data::MAX_EPOCH_SLOTS)
-                .filter_map(|ix| {
-                    let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
-                    let crds_value = gossip_crds.get::<&CrdsValue>(&label)?;
-                    let epoch_slots = crds_value.epoch_slots()?;
-                    let first_slot = epoch_slots.first_slot()?;
-                    Some((epoch_slots.wallclock, first_slot, ix))
-                })
-                .collect()
-        };
-        let min_slot: Slot = current_slots
-            .iter()
-            .map(|(_wallclock, slot, _index)| *slot)
-            .min()
-            .unwrap_or_default();
-        let max_slot: Slot = update.iter().max().cloned().unwrap_or(0);
-        let total_slots = max_slot as isize - min_slot as isize;
-        // WARN if CRDS is not storing at least a full epoch worth of slots
-        if DEFAULT_SLOTS_PER_EPOCH as isize > total_slots
-            && crds_data::MAX_EPOCH_SLOTS as usize <= current_slots.len()
-        {
-            self.stats.epoch_slots_filled.add_relaxed(1);
-            warn!(
-                "EPOCH_SLOTS are filling up FAST {}/{}",
-                total_slots,
-                current_slots.len()
-            );
-        }
-        let mut reset = false;
-        let mut epoch_slot_index = match current_slots.iter().max() {
-            Some((_wallclock, _slot, index)) => *index,
-            None => 0,
-        };
-        let mut entries = Vec::default();
-        while !update.is_empty() {
-            let now = timestamp();
-            let mut slots = if !reset {
-                self.lookup_epoch_slots(epoch_slot_index)
-            } else {
-                EpochSlots::new(self_pubkey, now)
-            };
-            let n = slots.fill(update, now);
-            update = &update[n..];
-            if n > 0 {
-                let epoch_slots = CrdsData::EpochSlots(epoch_slot_index, slots);
-                let entry = CrdsValue::new(epoch_slots, &self_keypair);
-                entries.push(entry);
-            }
-            epoch_slot_index = (epoch_slot_index + 1) % crds_data::MAX_EPOCH_SLOTS;
-            reset = true;
-        }
-        let mut gossip_crds = self.gossip.crds.write();
-        let now = timestamp();
-        for entry in entries {
-            if let Err(err) = gossip_crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_epoch_slots failed: {err:?}");
-            }
-        }
-    }
-
     fn time_gossip_read_lock<'a>(
         &'a self,
         label: &'static str,
@@ -915,56 +802,12 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn push_duplicate_shred(
-        &self,
-        shred: &Shred,
-        other_payload: &[u8],
-    ) -> Result<(), GossipError> {
-        if self.is_full_alpenglow_epoch() {
-            // Alpenglow does not propagate duplicate-shred proofs via gossip.
-            return Ok(());
-        }
-        self.gossip.push_duplicate_shred(
-            &self.keypair(),
-            shred,
-            other_payload,
-            None::<fn(Slot) -> Option<Pubkey>>, // Leader schedule
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            self.my_shred_version(),
-        )?;
-        Ok(())
-    }
-
     pub fn get_snapshot_hashes_for_node(&self, pubkey: &Pubkey) -> Option<SnapshotHashes> {
         self.gossip
             .crds
             .read()
             .get::<&SnapshotHashes>(*pubkey)
             .cloned()
-    }
-
-    /// Returns epoch-slots inserted since the given cursor.
-    pub fn get_epoch_slots(&self, cursor: &mut Cursor) -> Vec<EpochSlots> {
-        let gossip_crds = self.gossip.crds.read();
-        gossip_crds
-            .get_epoch_slots(cursor)
-            .map(|entry| match entry.value.data() {
-                CrdsData::EpochSlots(_, slots) => slots.clone(),
-                _ => panic!("this should not happen!"),
-            })
-            .collect()
-    }
-
-    /// Returns duplicate-shreds inserted since the given cursor.
-    pub(crate) fn get_duplicate_shreds(&self, cursor: &mut Cursor) -> Vec<DuplicateShred> {
-        let gossip_crds = self.gossip.crds.read();
-        gossip_crds
-            .get_duplicate_shreds(cursor)
-            .map(|entry| match entry.value.data() {
-                CrdsData::DuplicateShred(_, dup) => dup.clone(),
-                _ => panic!("this should not happen!"),
-            })
-            .collect()
     }
 
     pub fn get_node_version(&self, pubkey: &Pubkey) -> Option<solana_version::Version> {
@@ -2323,7 +2166,6 @@ pub struct Sockets {
     pub gossip: Arc<[UdpSocket]>,     // udp read/write
     pub ip_echo: Option<TcpListener>, // read/write (tcp)
     pub tvu: Vec<UdpSocket>,          // udp read only
-    pub tpu_vote: Vec<UdpSocket>,     // udp read only
     pub broadcast: Vec<UdpSocket>,    // udp write only
     // Socket sending out local repair requests,
     // and receiving repair responses from the cluster.
@@ -2341,9 +2183,7 @@ pub struct Sockets {
     // and receiving BlockIdRepairResponse from the cluster.
     pub block_id_repair: UdpSocket,
 
-    /// Client-side socket for ForwardingStage vote transactions
-    pub tpu_vote_forwarding_client: UdpSocket, // udp write only
-    /// Client-side socket for ForwardingStage non-vote transactions
+    /// Client-side socket for ForwardingStage transactions.
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
     /// UDP sockets for the alpenglow votor QUIC server endpoints.
     pub votor_server: Vec<UdpSocket>, // quic read only
@@ -2514,15 +2354,12 @@ mod tests {
         crate::{
             crds_gossip_pull::tests::MIN_NUM_BLOOM_FILTERS,
             crds_value::{CrdsValue, CrdsValueLabel},
-            duplicate_shred::tests::new_rand_shred,
             node::Node,
             protocol::{MAX_CRDS_VALUES_PER_PACKET, tests::new_rand_remote_node},
             socketaddr,
         },
         itertools::{Itertools, izip},
-        rand::{SeedableRng, rngs::StdRng},
         solana_keypair::Keypair,
-        solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
         solana_signer::Signer,
         solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
@@ -3051,68 +2888,6 @@ mod tests {
     }
 
     #[test]
-    fn test_push_epoch_slots() {
-        let keypair = Arc::new(Keypair::new());
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
-        let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
-        assert!(slots.is_empty());
-        cluster_info.push_epoch_slots(&[0]);
-
-        let mut cursor = Cursor::default();
-        let slots = cluster_info.get_epoch_slots(&mut cursor);
-        assert_eq!(slots.len(), 1);
-
-        let slots = cluster_info.get_epoch_slots(&mut cursor);
-        assert!(slots.is_empty());
-    }
-
-    #[test]
-    fn test_push_epoch_slots_wraps() {
-        let keypair = Arc::new(Keypair::new());
-        let pubkey = keypair.pubkey();
-        let contact_info = ContactInfo::new_localhost(&pubkey, 0);
-        let cluster_info =
-            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
-        let mut rng = StdRng::seed_from_u64(0);
-        let slots: Vec<Slot> = repeat_with(|| rng.random_range(1..32))
-            .scan(0, |slot, step| {
-                *slot += step;
-                Some(*slot)
-            })
-            .take(32_000)
-            .collect();
-        let mut epoch_slots = EpochSlots::new(pubkey, timestamp());
-        let num_slots = epoch_slots.fill(&slots, timestamp());
-        assert!(num_slots < slots.len());
-        let next_slot = slots[num_slots];
-        assert_eq!(epoch_slots.clone().fill(&[next_slot], timestamp()), 0);
-
-        let value = CrdsValue::new(
-            CrdsData::EpochSlots(crds_data::MAX_EPOCH_SLOTS - 1, epoch_slots),
-            keypair.as_ref(),
-        );
-        cluster_info
-            .gossip
-            .crds
-            .write()
-            .insert(value, timestamp(), GossipRoute::LocalMessage)
-            .unwrap();
-        cluster_info.push_epoch_slots(&[next_slot]);
-
-        let crds = cluster_info.gossip.crds.read();
-        let label = CrdsValueLabel::EpochSlots(0, pubkey);
-        let value = crds.get::<&CrdsValue>(&label).unwrap();
-        assert!(value.sanitize().is_ok());
-        assert_eq!(
-            value.epoch_slots().unwrap().to_slots(next_slot).next(),
-            Some(next_slot)
-        );
-        let invalid_label = CrdsValueLabel::EpochSlots(crds_data::MAX_EPOCH_SLOTS, pubkey);
-        assert!(crds.get::<&CrdsValue>(&invalid_label).is_none());
-    }
-
-    #[test]
     fn test_append_entrypoint_to_pulls() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
         let node_keypair = Arc::new(Keypair::new());
@@ -3437,30 +3212,6 @@ mod tests {
     }
 
     #[test]
-    fn test_push_epoch_slots_large() {
-        let node_keypair = Arc::new(Keypair::new());
-        let cluster_info = ClusterInfo::new(
-            ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
-            node_keypair,
-            SocketAddrSpace::Unspecified,
-        );
-        //random should be hard to compress
-        let mut rng = rand::rng();
-        let range: Vec<Slot> = repeat_with(|| rng.random_range(1..32))
-            .scan(0, |slot, step| {
-                *slot += step;
-                Some(*slot)
-            })
-            .take(32000)
-            .collect();
-        cluster_info.push_epoch_slots(&range[..16000]);
-        cluster_info.push_epoch_slots(&range[16000..]);
-        let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
-        let slots: Vec<_> = slots.iter().flat_map(|x| x.to_slots(0)).collect();
-        assert_eq!(slots, range);
-    }
-
-    #[test]
     fn test_process_entrypoint_without_adopt_shred_version() {
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = Arc::new(ClusterInfo::new(
@@ -3498,61 +3249,6 @@ mod tests {
         assert_eq!(cluster_info.entrypoints.read()[0], gossiped_entrypoint_info,);
         assert!(entrypoints_processed);
         assert_eq!(cluster_info.my_shred_version(), 2); // <--- No change to shred version
-    }
-
-    #[test]
-    fn test_get_duplicate_shreds() {
-        let host1_key = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&host1_key.pubkey());
-        let cluster_info = Arc::new(ClusterInfo::new(
-            node.info,
-            host1_key.clone(),
-            SocketAddrSpace::Unspecified,
-        ));
-        let mut cursor = Cursor::default();
-        assert!(cluster_info.get_duplicate_shreds(&mut cursor).is_empty());
-
-        let mut rng = rand::rng();
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = 352;
-        let leader = Arc::new(Keypair::new());
-        let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let shred2 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        assert!(
-            cluster_info
-                .push_duplicate_shred(&shred1, shred2.payload())
-                .is_ok()
-        );
-        cluster_info.flush_push_queue();
-        let entries = cluster_info.get_duplicate_shreds(&mut cursor);
-        // One duplicate shred proof is split into 3 chunks.
-        assert_eq!(3, entries.len());
-        for (i, shred_data) in entries.iter().enumerate() {
-            assert_eq!(shred_data.from, host1_key.pubkey());
-            assert_eq!(shred_data.slot, 53084024);
-            assert_eq!(shred_data.chunk_index() as usize, i);
-        }
-
-        let slot = 53084025;
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = 384;
-        let shred3 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let shred4 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        assert!(
-            cluster_info
-                .push_duplicate_shred(&shred3, shred4.payload())
-                .is_ok()
-        );
-        cluster_info.flush_push_queue();
-        let entries1 = cluster_info.get_duplicate_shreds(&mut cursor);
-        // One duplicate shred proof is split into 3 chunks.
-        assert_eq!(3, entries1.len());
-        for (i, shred_data) in entries1.iter().enumerate() {
-            assert_eq!(shred_data.from, host1_key.pubkey());
-            assert_eq!(shred_data.slot, 53084025);
-            assert_eq!(shred_data.chunk_index() as usize, i);
-        }
     }
 
     #[test]

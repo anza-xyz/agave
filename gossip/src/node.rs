@@ -253,10 +253,6 @@ impl Node {
             .expect("Secondary bind broadcast"),
         );
 
-        let (_, ancestor_hashes_requests) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("ancestor_hashes_requests bind");
-
         let (votor_server_port, votor_server_primary) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
                 .expect("Votor server port bind should succeed");
@@ -273,11 +269,6 @@ impl Node {
 
         // These are "client" sockets, so they could use ephemeral ports, but we
         // force them into the provided port_range to simplify the operations.
-
-        // vote forwarding is only bound to primary interface for now
-        let (_, tpu_vote_forwarding_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_write_udp)
-                .unwrap();
 
         let (tpu_transaction_forwarding_client_port, tpu_transaction_forwarding_clients) =
             bind_in_range_with_config(
@@ -365,17 +356,14 @@ impl Node {
             votor_server,
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
-            tpu_vote: vec![],
             broadcast,
             repair,
             retransmit_sockets,
             serve_repair,
             ip_echo: ip_echo_sockets.into_iter().next(),
-            ancestor_hashes_requests,
             block_id_repair,
             tpu_quic,
             tpu_forwards_quic,
-            tpu_vote_forwarding_client,
             quic_votor_client,
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
