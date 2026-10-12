@@ -1476,16 +1476,9 @@ pub fn parse_logs(
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<CliCommandInfo, CliError> {
     let address = pubkey_of_signer(matches, "address", wallet_manager)?;
-    let include_votes = matches.is_present("include_votes");
 
     let filter = match address {
-        None => {
-            if include_votes {
-                RpcTransactionLogsFilter::AllWithVotes
-            } else {
-                RpcTransactionLogsFilter::All
-            }
-        }
+        None => RpcTransactionLogsFilter::All,
         Some(address) => RpcTransactionLogsFilter::Mentions(vec![address.to_string()]),
     };
 
@@ -1497,6 +1490,7 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
             RpcTransactionLogsFilter::All => "".into(),
+            #[allow(deprecated)]
             RpcTransactionLogsFilter::AllWithVotes => " (including votes)".into(),
             RpcTransactionLogsFilter::Mentions(addresses) =>
                 format!(" mentioning {}", addresses.join(",")),
