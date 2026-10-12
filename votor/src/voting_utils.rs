@@ -58,7 +58,7 @@ pub enum GenerateBlsVoteMessageResult {
     VoteAccountNotFound(Pubkey),
 
     // Generated a BLS vote message
-    VoteMessage(VoteMessage),
+    VoteMessage(Box<VoteMessage>),
 }
 
 impl GenerateBlsVoteMessageResult {
@@ -199,12 +199,12 @@ pub fn generate_bls_vote_message(
     };
 
     let vote_payload_to_sign = get_vote_payload_to_sign(vote, shred_version);
-    GenerateBlsVoteMessageResult::VoteMessage(VoteMessage {
+    GenerateBlsVoteMessageResult::VoteMessage(Box::new(VoteMessage {
         vote,
         signature: bls_keypair.sign(&vote_payload_to_sign).into(),
         rank: my_rank,
         stake: *stake,
-    })
+    }))
 }
 
 /// Creates a vote message from `vote`, respecting `context.wait_to_vote_slot` only if `respect_wait_to_vote` is true
@@ -229,7 +229,7 @@ fn create_vote_message(
         wait_to_vote_slot,
         &mut context.derived_bls_keypairs,
     ) {
-        GenerateBlsVoteMessageResult::VoteMessage(vote_msg) => Ok(vote_msg),
+        GenerateBlsVoteMessageResult::VoteMessage(vote_msg) => Ok(*vote_msg),
         e => {
             if e.is_transient_error() {
                 Err(VoteError::TransientError(Box::new(e)))

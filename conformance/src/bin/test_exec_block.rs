@@ -23,6 +23,11 @@ fn exec(input: &PathBuf) -> bool {
         return false;
     };
 
+    if agave_conformance::block::is_pre_alpenglow_fixture(&context) {
+        println!("SKIP: {input:?} (missing Alpenglow vote-reward state)");
+        return true;
+    }
+
     let effects = agave_conformance::block::execute_block_proto(&context);
 
     let ok = effects == expected;

@@ -7,12 +7,33 @@ use {
     solana_svm::conformance::{
         callback::ConformanceCallback,
         direct_mapping::direct_mapping_handle_cu_exhaustion,
+        feature_set::feature_set_from_proto,
         instr::{context::InstrContext, harness::execute_instr_with_callback},
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         setup::{compute_budget, program_runtime_environments, sysvar_cache_from_accounts},
     },
+    solana_vote_interface::{instruction::VoteInstruction, program as vote_program},
     std::ffi::c_int,
 };
+
+/// Returns true when a pre-Alpenglow fixture invokes one of the Tower-era vote
+/// instructions that no longer executes after Alpenglow activation.
+pub fn is_legacy_vote_fixture(input: &ProtoInstrContext) -> bool {
+    if input
+        .features
+        .as_ref()
+        .map(feature_set_from_proto)
+        .is_some_and(|features| features.is_active(&agave_feature_set::alpenglow::id()))
+    {
+        return false;
+    }
+    if input.program_id.as_slice() != vote_program::id().as_ref() {
+        return false;
+    }
+
+    bincode::deserialize::<VoteInstruction>(&input.data)
+        .is_ok_and(|instruction| instruction.is_simple_vote())
+}
 
 pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let instr_context = InstrContext::from(input);
@@ -106,9 +127,13 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, protosol::protos::acct_state::DataRepr, solana_account::Account,
-        solana_pubkey::Pubkey, solana_svm::conformance::programs::keyed_account_for_system_program,
+        super::*,
+        protosol::protos::acct_state::DataRepr,
+        solana_account::Account,
+        solana_pubkey::Pubkey,
+        solana_svm::conformance::programs::keyed_account_for_system_program,
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_TRANSFER_CUS,
+        solana_vote_interface::{instruction::VoteInstruction, state::TowerSync},
     };
 
     const FROM_BASE_LAMPORTS: u64 = 5_000;
@@ -145,6 +170,40 @@ mod tests {
             data_repr: Some(DataRepr::Data(wincode::serialize(sysvar).unwrap())),
             executable: false,
         }
+    }
+
+    #[test]
+    fn test_is_legacy_vote_fixture() {
+        let legacy_vote = ProtoInstrContext {
+            program_id: vote_program::id().to_bytes().to_vec(),
+            data: bincode::serialize(&VoteInstruction::TowerSync(TowerSync::default())).unwrap(),
+            ..ProtoInstrContext::default()
+        };
+        assert!(is_legacy_vote_fixture(&legacy_vote));
+
+        let alpenglow_vote = ProtoInstrContext {
+            features: Some(protosol::protos::FeatureSet {
+                features: vec![u64::from_le_bytes(
+                    agave_feature_set::alpenglow::id().to_bytes()[..8]
+                        .try_into()
+                        .unwrap(),
+                )],
+            }),
+            ..legacy_vote.clone()
+        };
+        assert!(!is_legacy_vote_fixture(&alpenglow_vote));
+
+        let vote_account_management = ProtoInstrContext {
+            data: bincode::serialize(&VoteInstruction::Withdraw(1)).unwrap(),
+            ..legacy_vote.clone()
+        };
+        assert!(!is_legacy_vote_fixture(&vote_account_management));
+
+        let other_program = ProtoInstrContext {
+            program_id: solana_sdk_ids::system_program::id().to_bytes().to_vec(),
+            ..legacy_vote
+        };
+        assert!(!is_legacy_vote_fixture(&other_program));
     }
 
     #[test]

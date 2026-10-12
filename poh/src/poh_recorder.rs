@@ -460,9 +460,7 @@ impl PohRecorder {
             self.set_start_bank(&reset_bank);
         }
 
-        let tick_height = (self.start_slot() + 1) * self.ticks_per_slot;
-
-        tick_height
+        (self.start_slot() + 1) * self.ticks_per_slot
     }
 
     fn set_start_bank(&mut self, bank: &Bank) {
