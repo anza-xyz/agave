@@ -1,11 +1,11 @@
 use {
     crate::bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_clock::{Epoch, Slot},
+    solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_sdk_ids::system_program,
     solana_vote::vote_account::VoteAccounts,
-    std::{cmp::Ordering, collections::HashMap, sync::LazyLock},
+    std::{collections::HashMap, sync::LazyLock},
     wincode::{SchemaRead, SchemaWrite},
 };
 
@@ -33,7 +33,7 @@ struct RewardEpochDelegatedStake {
 }
 
 /// The off-curve account where we store the bounded reward-epoch delegated stake
-/// denominators used for non-Tower reward recalculation after snapshot restore.
+/// denominators used for reward recalculation after snapshot restore.
 pub(crate) static REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
     let (pubkey, _) = Pubkey::find_program_address(
         &[b"reward_epoch_delegated_stakes"],
@@ -150,96 +150,6 @@ impl From<RewardEpochDelegatedStakesAccount> for RewardEpochDelegatedStakes {
                 .into_iter()
                 .map(|stake| (stake.vote_pubkey, stake.delegated_stake))
                 .collect(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum AlpenglowEpochType<'a> {
-    /// This is a full tower epoch.
-    Tower,
-    /// The epoch started in tower and then switched to alpenglow
-    MigrationEpoch {
-        num_tower_slots: Slot,
-        num_ag_slots: Slot,
-        migration_epoch: Epoch,
-        reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
-    },
-    /// This is a full alpenglow epoch
-    Alpenglow {
-        migration_epoch: Epoch,
-        reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
-    },
-}
-
-impl<'a> AlpenglowEpochType<'a> {
-    pub(crate) fn is_alpenglow_or_migration_epoch(bank: &Bank, epoch: Epoch) -> bool {
-        debug_assert!(epoch < bank.epoch());
-        bank.get_alpenglow_migration_slot()
-            .map(|migration_slot| bank.epoch_schedule().get_epoch(migration_slot) <= epoch)
-            .unwrap_or(false)
-    }
-
-    /// Returns `AlpenglowEpochType` for the given `epoch`.
-    ///
-    /// Calling this function with an epoch >= `Bank::epoch` can return false information as it is
-    /// possible that we have not observed the genesis cert yet but will in the upcoming slots.
-    pub(crate) fn get(
-        bank: &Bank,
-        epoch: Epoch,
-        reward_epoch_delegated_stakes: Option<&'a RewardEpochDelegatedStakes>,
-    ) -> Self {
-        debug_assert!(epoch < bank.epoch());
-        let Some(migration_slot) = bank.get_alpenglow_migration_slot() else {
-            return Self::Tower;
-        };
-        let migration_epoch = bank.epoch_schedule().get_epoch(migration_slot);
-        match migration_epoch.cmp(&epoch) {
-            Ordering::Less => {
-                let reward_epoch_delegated_stakes =
-                    reward_epoch_delegated_stakes.unwrap_or_else(|| {
-                        panic!(
-                            "Missing reward epoch delegated stakes for non-Tower reward epoch \
-                             {epoch}"
-                        )
-                    });
-                assert_eq!(
-                    reward_epoch_delegated_stakes.epoch, epoch,
-                    "reward epoch delegated stakes must match rewarded epoch"
-                );
-                Self::Alpenglow {
-                    migration_epoch,
-                    reward_epoch_delegated_stakes,
-                }
-            }
-            Ordering::Greater => Self::Tower,
-            Ordering::Equal => {
-                let first_slot_in_epoch = bank
-                    .epoch_schedule()
-                    .get_first_slot_in_epoch(migration_epoch);
-                // + 1 because the migration_slot is still tower.
-                let num_tower_slots = migration_slot - first_slot_in_epoch + 1;
-                let slots_in_epoch = bank.epoch_schedule().get_slots_in_epoch(migration_epoch);
-                let num_ag_slots = slots_in_epoch - num_tower_slots;
-                assert_eq!(slots_in_epoch, num_tower_slots + num_ag_slots);
-                let reward_epoch_delegated_stakes =
-                    reward_epoch_delegated_stakes.unwrap_or_else(|| {
-                        panic!(
-                            "Missing reward epoch delegated stakes for non-Tower reward epoch \
-                             {epoch}"
-                        )
-                    });
-                assert_eq!(
-                    reward_epoch_delegated_stakes.epoch, epoch,
-                    "reward epoch delegated stakes must match rewarded epoch"
-                );
-                Self::MigrationEpoch {
-                    num_tower_slots,
-                    num_ag_slots,
-                    migration_epoch,
-                    reward_epoch_delegated_stakes,
-                }
-            }
         }
     }
 }

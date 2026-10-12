@@ -59,9 +59,7 @@ fn extract_slot(
             s.slot
         }
     };
-    if slot.saturating_add(NUM_SLOTS_FOR_REWARD) != current_slot
-        || slot <= bank.get_alpenglow_migration_slot().unwrap_or(slot)
-    {
+    if slot.saturating_add(NUM_SLOTS_FOR_REWARD) != current_slot {
         return Err(Error::InvalidSlotNumbers {
             current_slot: bank.slot(),
             notar_slot: notar.as_ref().map(|c| c.slot),
@@ -187,16 +185,13 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
-        agave_votor_messages::{
-            certificate::{CertSignature, GenesisCert},
-            consensus_message::VoteMessage,
-        },
+        agave_votor_messages::consensus_message::VoteMessage,
         bitvec::vec::BitVec,
         rand::Rng,
         solana_bls_signatures::{
-            BLS_SIGNATURE_AFFINE_SIZE, BLS_SIGNATURE_COMPRESSED_SIZE, Keypair as BlsKeypair,
-            Signature as BLSSignature, SignatureCompressed as BlsSignatureCompressed,
-            SignatureProjective, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
+            Keypair as BlsKeypair, Signature as BLSSignature,
+            SignatureCompressed as BlsSignatureCompressed, SignatureProjective,
+            pubkey::PubkeyCompressed as BLSPubkeyCompressed,
         },
         solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
@@ -233,54 +228,6 @@ mod tests {
             BLSSignature::from(signature).try_into().unwrap(),
             encode_base2(&bitvec).unwrap(),
         )
-    }
-
-    #[test]
-    fn test_extract_slot_rejects_tower_slots() {
-        let migration_slot = 1;
-        let validator_keypairs = [ValidatorVoteKeypairs::new_rand()];
-        let genesis =
-            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, vec![100]);
-        let (root_bank, _bank_forks) =
-            Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
-        let genesis_cert = GenesisCert {
-            block: Block::new_unique(migration_slot),
-            signature: CertSignature {
-                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                bitmap: vec![],
-            },
-        };
-
-        for reward_slot in [migration_slot - 1, migration_slot, migration_slot + 1] {
-            let bank = Bank::new_from_parent(
-                root_bank.clone(),
-                SlotLeader::default(),
-                reward_slot + NUM_SLOTS_FOR_REWARD,
-            );
-            bank.set_alpenglow_genesis_certificate(&genesis_cert);
-            let skip = Some(
-                SkipRewardCertificate::try_new(
-                    reward_slot,
-                    BlsSignatureCompressed([0; BLS_SIGNATURE_COMPRESSED_SIZE]),
-                    vec![],
-                )
-                .unwrap(),
-            );
-
-            let result = extract_slot(&bank, &skip, &None);
-            if reward_slot <= migration_slot {
-                assert_eq!(
-                    result,
-                    Err(Error::InvalidSlotNumbers {
-                        current_slot: bank.slot(),
-                        notar_slot: None,
-                        skip_slot: Some(reward_slot),
-                    })
-                );
-            } else {
-                assert_eq!(result, Ok(Some(reward_slot)));
-            }
-        }
     }
 
     #[test]

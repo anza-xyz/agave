@@ -45,7 +45,6 @@ pub use {
 use {
     crate::{
         account_saver::collect_accounts_to_store,
-        alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
         bank::{
             entry_bytes_budget::EntryBytesBudget,
             metrics::*,
@@ -64,6 +63,7 @@ use {
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         leader_schedule_utils::leader_schedule_from_vote_accounts,
         rent_collector::RentCollector,
+        reward_epoch_delegated_stakes::RewardEpochDelegatedStakes,
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
         slot_params::{SlotParams, SlotParamsArchive},
@@ -94,11 +94,8 @@ use {
         transaction_view::{SanitizedTransactionView, UnsanitizedTransactionView},
     },
     agave_votor_messages::{
-        certificate::{CertSignature, Certificate, GenesisCert},
-        consensus_message::BlockId,
-        migration::GENESIS_CERTIFICATE_ACCOUNT,
+        certificate::Certificate, consensus_message::BlockId,
         unverified_vote_message::UnverifiedCertificate,
-        wire::{WireBlockCertMessage, WireCertSignature},
     },
     ahash::AHashSet,
     crossbeam_utils::CachePadded,
@@ -204,10 +201,7 @@ use {
         transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
     },
     solana_transaction_error::{AddressLoaderError, TransactionError, TransactionResult as Result},
-    solana_vote::{
-        vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
-        vote_parser,
-    },
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{HashMap, HashSet},
@@ -428,7 +422,6 @@ pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub enum TransactionLogCollectorFilter {
     All,
-    AllWithVotes,
     #[default]
     None,
     OnlyMentionedAddresses,
@@ -444,7 +437,6 @@ pub struct TransactionLogCollectorConfig {
 pub struct TransactionLogInfo {
     pub signature: Signature,
     pub result: Result<()>,
-    pub is_vote: bool,
     pub log_messages: TransactionLogMessages,
 }
 
@@ -663,7 +655,6 @@ impl PartialEq for Bank {
             parent_slot,
             hard_forks,
             transaction_count,
-            non_vote_transaction_count_since_restart: _,
             transaction_error_count: _,
             transaction_entries_count: _,
             transactions_per_entry_max: _,
@@ -693,7 +684,6 @@ impl PartialEq for Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides,
             accounts_lt_hash,
-            is_alpenglow,
             // TODO: Confirm if all these fields are intentionally ignored!
             rewards: _,
             cluster_type: _,
@@ -704,7 +694,6 @@ impl PartialEq for Bank {
             reserved_account_keys: _,
             drop_callback: _,
             freeze_started: _,
-            vote_only_bank: _,
             should_replay_from_blockstore: _,
             cost_tracker: _,
             accounts_data_size_initial: _,
@@ -764,7 +753,6 @@ impl PartialEq for Bank {
                 *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
             && *accounts_lt_hash.lock().unwrap() == *other.accounts_lt_hash.lock().unwrap()
             && *block_id.read().unwrap() == *other.block_id.read().unwrap()
-            && is_alpenglow.load(Relaxed) == other.is_alpenglow()
     }
 }
 
@@ -910,12 +898,6 @@ pub struct Bank {
     /// The number of committed transactions since genesis.
     transaction_count: AtomicU64,
 
-    /// The number of non-vote transactions committed since the most
-    /// recent boot from snapshot or genesis. This value is only stored in
-    /// blockstore for the RPC method "getPerformanceSamples". It is not
-    /// retained within snapshots, but is preserved in `Bank::new_from_parent`.
-    non_vote_transaction_count_since_restart: AtomicU64,
-
     /// The number of transaction errors in this slot
     transaction_error_count: AtomicU64,
 
@@ -1019,8 +1001,6 @@ pub struct Bank {
 
     pub freeze_started: AtomicBool,
 
-    vote_only_bank: bool,
-
     /// Whether ReplayStage should execute this bank from blockstore.
     /// This defaults to true. Banks created for local block production opt out because BankingStage
     /// executes them instead.
@@ -1086,9 +1066,6 @@ pub struct Bank {
     /// read from this once replay is complete.
     pub block_component_processor: RwLock<BlockComponentProcessor>,
 
-    /// Cached Alpenglow migration state, derived from the genesis certificate account.
-    is_alpenglow: AtomicBool,
-
     /// Coordinates transaction execution with retirement of an unfrozen Bank. Padding keeps the
     /// frequently mutated lock state from sharing a cache line with unrelated Bank fields.
     transaction_execution_gate: CachePadded<TransactionExecutionGate>,
@@ -1141,11 +1118,6 @@ impl TxExecutionGuard<'_> {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct NewBankOptions {
-    pub vote_only_bank: bool,
-}
-
 #[cfg(feature = "dev-context-only-utils")]
 #[derive(Debug)]
 pub struct BankTestConfig {
@@ -1164,7 +1136,6 @@ impl Default for BankTestConfig {
 #[derive(Debug, Default, PartialEq)]
 pub struct ProcessedTransactionCounts {
     pub processed_transactions_count: u64,
-    pub processed_non_vote_transactions_count: u64,
     pub processed_with_successful_result_count: u64,
     pub signature_count: u64,
 }
@@ -1293,7 +1264,6 @@ impl Bank {
             parent_slot: Slot::default(),
             hard_forks: Arc::<RwLock<HardForks>>::default(),
             transaction_count: AtomicU64::default(),
-            non_vote_transaction_count_since_restart: AtomicU64::default(),
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
@@ -1330,7 +1300,6 @@ impl Bank {
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
             freeze_started: AtomicBool::default(),
-            vote_only_bank: false,
             should_replay_from_blockstore: true,
             cost_tracker: RwLock::<CostTracker>::default(),
             accounts_data_size_initial: 0,
@@ -1351,7 +1320,6 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
-            is_alpenglow: AtomicBool::new(false),
             transaction_execution_gate: CachePadded::new(TransactionExecutionGate::default()),
         };
 
@@ -1430,30 +1398,12 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            bank.set_is_alpenglow();
-        }
         bank
     }
 
     /// Create a new bank that points to an immutable checkpoint of another bank.
     pub fn new_from_parent(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
-        Self::_new_from_parent(
-            parent,
-            leader,
-            slot,
-            null_tracer(),
-            NewBankOptions::default(),
-        )
-    }
-
-    pub fn new_from_parent_with_options(
-        parent: Arc<Bank>,
-        leader: SlotLeader,
-        slot: Slot,
-        new_bank_options: NewBankOptions,
-    ) -> Self {
-        Self::_new_from_parent(parent, leader, slot, null_tracer(), new_bank_options)
+        Self::_new_from_parent(parent, leader, slot, null_tracer())
     }
 
     pub fn new_from_parent_with_tracer(
@@ -1462,13 +1412,7 @@ impl Bank {
         slot: Slot,
         reward_calc_tracer: impl RewardCalcTracer,
     ) -> Self {
-        Self::_new_from_parent(
-            parent,
-            leader,
-            slot,
-            Some(reward_calc_tracer),
-            NewBankOptions::default(),
-        )
+        Self::_new_from_parent(parent, leader, slot, Some(reward_calc_tracer))
     }
 
     fn get_rent_collector_from(rent_collector: &RentCollector, epoch: Epoch) -> RentCollector {
@@ -1480,10 +1424,8 @@ impl Bank {
         leader: SlotLeader,
         slot: Slot,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
-        new_bank_options: NewBankOptions,
     ) -> Self {
         let mut time = Measure::start("bank::new_from_parent");
-        let NewBankOptions { vote_only_bank } = new_bank_options;
 
         parent.freeze();
         assert_ne!(slot, parent.slot());
@@ -1560,13 +1502,9 @@ impl Bank {
                 .expect("block height addition overflowed"),
             fee_rate_governor,
             capitalization: AtomicU64::new(parent.capitalization()),
-            vote_only_bank,
             should_replay_from_blockstore: true,
             inflation: parent.inflation.clone(),
             transaction_count: AtomicU64::new(parent.transaction_count()),
-            non_vote_transaction_count_since_restart: AtomicU64::new(
-                parent.non_vote_transaction_count_since_restart(),
-            ),
             transaction_error_count: AtomicU64::new(0),
             transaction_entries_count: AtomicU64::new(0),
             transactions_per_entry_max: AtomicU64::new(0),
@@ -1619,7 +1557,6 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
-            is_alpenglow: AtomicBool::new(parent.is_alpenglow()),
             transaction_execution_gate: CachePadded::new(TransactionExecutionGate::default()),
         };
 
@@ -1896,9 +1833,7 @@ impl Bank {
                 self.minimum_vote_account_balance_for_vat(),
                 self.feature_set.snapshot().block_revenue_sharing,
             );
-        if AlpenglowEpochType::is_alpenglow_or_migration_epoch(self, rewarded_epoch) {
-            reward_epoch_delegated_stakes.set(self, &filtered_distribution_vote_accounts);
-        }
+        reward_epoch_delegated_stakes.set(self, &filtered_distribution_vote_accounts);
         let cached_vote_accounts =
             self.get_cached_vote_accounts(rewarded_epoch, &filtered_distribution_vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
@@ -2031,10 +1966,6 @@ impl Bank {
         *self.drop_callback.write().unwrap() = OptionalDropCallback(callback);
     }
 
-    pub fn vote_only_bank(&self) -> bool {
-        self.vote_only_bank
-    }
-
     pub fn should_replay_from_blockstore(&self) -> bool {
         self.should_replay_from_blockstore
     }
@@ -2135,16 +2066,9 @@ impl Bank {
             self.update_slot_hashes();
             self.update_stake_history(Some(parent_epoch));
 
-            if self.is_alpenglow() {
-                // Alpenglow banks have the timestamp populated via the footer
-                // We only populate the slot here
-                self.update_clock_slot_for_alpenglow();
-            } else {
-                // PoH banks have the timestamp and slot populated at the beginning
-                // Note: The first alpenglow bank will have the timestamp populated
-                // here at the beginning as well as at the end via the footer - this is intentional.
-                self.update_clock(Some(parent_epoch));
-            }
+            // Alpenglow banks have the timestamp populated via the footer. We only populate the
+            // slot here.
+            self.update_clock_slot_for_alpenglow();
             self.update_last_restart_slot()
         });
 
@@ -2262,7 +2186,6 @@ impl Bank {
             parent_slot: fields.parent_slot,
             hard_forks: Arc::new(RwLock::new(fields.hard_forks)),
             transaction_count: AtomicU64::new(fields.transaction_count),
-            non_vote_transaction_count_since_restart: AtomicU64::default(),
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
@@ -2304,7 +2227,6 @@ impl Bank {
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
             freeze_started: AtomicBool::new(fields.hash != Hash::default()),
-            vote_only_bank: false,
             should_replay_from_blockstore: true,
             cost_tracker: RwLock::new(CostTracker::default()),
             accounts_data_size_initial,
@@ -2326,13 +2248,8 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             expected_bank_hash: RwLock::new(None),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
-            is_alpenglow: AtomicBool::new(false),
             transaction_execution_gate: CachePadded::new(TransactionExecutionGate::default()),
         };
-
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            bank.set_is_alpenglow();
-        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -3563,58 +3480,6 @@ impl Bank {
             .map(|age| self.block_height + self.max_processing_age() as u64 - age)
     }
 
-    /// Query the alpenglow genesis certificate account.
-    /// All frozen alpenglow banks will have this account populated and TowerBFT banks will not.
-    ///
-    /// The same is true for alpenglow banks yet to be frozen except for the first alpenglow bank:
-    /// - The first alpenglow bank will contain a special marker that populates this account
-    /// - If `get_alpenglow_genesis_certificate` is called before the marker is processed by replay
-    ///   this account will be empty.
-    /// - If `get_alpenglow_genesis_certificate` is called after the marker is processed, we return the certificate
-    pub fn get_alpenglow_genesis_certificate(&self) -> Option<GenesisCert> {
-        let acct = self.get_account(&GENESIS_CERTIFICATE_ACCOUNT)?;
-        (!acct.data().is_empty()).then(|| {
-            // The address is known in advance, so the account could already exist if it was prefunded.
-            // However this account cannot be written to except by us in `set_alpenglow_genesis_certificate`,
-            // so this deserialize is safe if the account is non-empty
-            let cert: WireBlockCertMessage = wincode::deserialize(acct.data())
-                .expect("Programmer error deserializing genesis certificate");
-            GenesisCert {
-                block: cert.block,
-                signature: CertSignature {
-                    signature: cert.signature.signature,
-                    bitmap: cert.signature.bitmap,
-                },
-            }
-        })
-    }
-
-    pub fn is_alpenglow(&self) -> bool {
-        self.is_alpenglow.load(Relaxed)
-    }
-
-    fn set_is_alpenglow(&self) {
-        self.is_alpenglow.store(true, Relaxed);
-    }
-
-    /// For use in the first Alpenglow block, set the genesis certificate.
-    pub fn set_alpenglow_genesis_certificate(&self, cert: &GenesisCert) {
-        let cert = WireBlockCertMessage {
-            block: cert.block,
-            signature: WireCertSignature {
-                signature: cert.signature.signature,
-                bitmap: cert.signature.bitmap.clone(),
-            },
-        };
-        let data = wincode::serialize(&cert).unwrap();
-        let lamports = Rent::default().minimum_balance(data.len());
-        let mut cert_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        cert_acct.set_data_from_slice(&data);
-
-        self.store_account_and_update_capitalization(&GENESIS_CERTIFICATE_ACCOUNT, &cert_acct);
-        self.set_is_alpenglow();
-    }
-
     /// Update the clock sysvar from a block footer's nanosecond timestamp.
     /// Also stores the nanosecond value for later retrieval via `get_nanosecond_clock`.
     pub fn update_clock_from_footer(&self, unix_timestamp_nanos: i64) {
@@ -3663,8 +3528,7 @@ impl Bank {
             .reset_and_fill_sysvar_cache_entries(self);
     }
 
-    /// Get the nanosecond clock value. Returns `None` if the nanosecond clock has not been
-    /// populated (i.e., before Alpenglow migration completes).
+    /// Get the nanosecond clock value. Returns `None` if a block footer has not populated it yet.
     pub fn get_nanosecond_clock(&self) -> Option<i64> {
         let acct = self.get_account(&NANOSECOND_CLOCK_ACCOUNT)?;
         (!acct.data().is_empty()).then(|| {
@@ -3863,7 +3727,6 @@ impl Bank {
                 RuntimeTransaction::try_create(
                     tx,
                     MessageHash::Compute,
-                    None,
                     self,
                     self.get_reserved_account_keys(),
                 )
@@ -3964,10 +3827,6 @@ impl Bank {
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
     ) -> Result<()> {
-        if self.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(transaction) {
-            return Err(TransactionError::SanitizeFailure);
-        }
-
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
         if self.epoch() != sanitized_epoch {
@@ -4276,7 +4135,6 @@ impl Bank {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
-            alpenglow_migration_succeeded: self.is_alpenglow(),
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
             program_runtime_environments: ProgramRuntimeEnvironments::new(
@@ -4331,10 +4189,6 @@ impl Bank {
                 processed_counts.signature_count +=
                     tx.signature_details().num_transaction_signatures();
                 processed_counts.processed_transactions_count += 1;
-
-                if !tx.is_simple_vote_transaction() {
-                    processed_counts.processed_non_vote_transactions_count += 1;
-                }
             }
 
             match processing_result.flattened_result() {
@@ -4423,12 +4277,8 @@ impl Bank {
             }
         }
 
-        let is_vote = transaction.is_simple_vote_transaction();
         let store = match transaction_log_collector_config.filter {
-            TransactionLogCollectorFilter::All => {
-                !is_vote || !filtered_mentioned_addresses.is_empty()
-            }
-            TransactionLogCollectorFilter::AllWithVotes => true,
+            TransactionLogCollectorFilter::All => true,
             TransactionLogCollectorFilter::None => false,
             TransactionLogCollectorFilter::OnlyMentionedAddresses => {
                 !filtered_mentioned_addresses.is_empty()
@@ -4440,7 +4290,6 @@ impl Bank {
                 TransactionLogInfo {
                     signature: *transaction.signature(),
                     result: execution_details.status.clone(),
-                    is_vote,
                     log_messages: log_messages.clone(),
                 },
                 filtered_mentioned_addresses,
@@ -4560,15 +4409,11 @@ impl Bank {
 
         let ProcessedTransactionCounts {
             processed_transactions_count,
-            processed_non_vote_transactions_count,
             processed_with_successful_result_count,
             signature_count,
         } = *processed_counts;
 
         self.increment_transaction_count(processed_transactions_count);
-        self.increment_non_vote_transaction_count_since_restart(
-            processed_non_vote_transactions_count,
-        );
         self.increment_signature_count(signature_count);
 
         let processed_with_failure_result_count =
@@ -5442,14 +5287,6 @@ impl Bank {
         self.transaction_count.load(Relaxed)
     }
 
-    /// Returns the number of non-vote transactions processed without error
-    /// since the most recent boot from snapshot or genesis.
-    /// This value is not shared though the network, nor retained
-    /// within snapshots, but is preserved in `Bank::new_from_parent`.
-    pub fn non_vote_transaction_count_since_restart(&self) -> u64 {
-        self.non_vote_transaction_count_since_restart.load(Relaxed)
-    }
-
     /// Return the transaction count executed only in this bank
     pub fn executed_transaction_count(&self) -> u64 {
         self.transaction_count()
@@ -5502,11 +5339,6 @@ impl Bank {
 
     fn increment_transaction_count(&self, tx_count: u64) {
         self.transaction_count.fetch_add(tx_count, Relaxed);
-    }
-
-    fn increment_non_vote_transaction_count_since_restart(&self, tx_count: u64) {
-        self.non_vote_transaction_count_since_restart
-            .fetch_add(tx_count, Relaxed);
     }
 
     pub fn signature_count(&self) -> u64 {
@@ -5763,7 +5595,6 @@ impl Bank {
             let sanitized_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 sanitized_tx,
                 MessageHash::Compute,
-                None,
             )?;
 
             let (loaded_addresses, _) = self.load_addresses_for_view(&sanitized_tx)?;
@@ -6843,11 +6674,6 @@ impl Bank {
         bank.set_block_id(Some(block_id));
     }
 
-    pub(crate) fn get_alpenglow_migration_slot(&self) -> Option<Slot> {
-        let genesis_cert = self.get_alpenglow_genesis_certificate()?;
-        Some(genesis_cert.block.slot)
-    }
-
     /// Signals to the accounts lt hash manager that this bank has reached the end
     /// of its slot and needs all of its account updates as soon as possible.
     pub fn set_accounts_lt_hash_async_progress_is_at_end(&self) {
@@ -7091,7 +6917,8 @@ impl Bank {
         bank
     }
 
-    pub fn wrap_with_bank_forks_for_tests(self) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
+    pub fn wrap_with_bank_forks_for_tests(mut self) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
+        self.ensure_alpenglow_active_for_tests();
         let bank_forks = BankForks::new_rw_arc(self);
         let bank = bank_forks.read().unwrap().root_bank();
         (bank, bank_forks)
@@ -7184,6 +7011,7 @@ impl Bank {
         {
             self.activate_feature(&agave_feature_set::alpenglow::id());
         }
+        EpochInflationAccountState::ensure_initialized_for_tests(self);
     }
 
     pub fn new_from_parent_with_bank_forks(

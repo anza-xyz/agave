@@ -57,7 +57,6 @@ impl NodeVoteMetrics {
             Vote::Skip(_) => self.skip.add_sample(elapsed),
             Vote::SkipFallback(_) => self.skip_fallback.add_sample(elapsed),
             Vote::Finalize(_) => self.final_.add_sample(elapsed),
-            Vote::Genesis(_) => (), // Only for migration, tracked elsewhere
         }
     }
 }

@@ -173,9 +173,6 @@ mod tests {
         activate_all_features(&mut genesis_config);
         let (bank0, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        assert!(bank0.get_alpenglow_genesis_certificate().is_some());
-        assert!(bank0.is_alpenglow());
-
         let parent_clock = bank0.clock();
         let bank1_slot = bank0.slot() + 1;
         let bank1 = Bank::new_from_parent_with_bank_forks(
@@ -184,8 +181,6 @@ mod tests {
             SlotLeader::default(),
             bank1_slot,
         );
-        assert!(bank1.is_alpenglow());
-
         let pre_footer_clock = bank1.clock();
         assert_eq!(pre_footer_clock.slot, bank1_slot);
         assert_eq!(pre_footer_clock.unix_timestamp, parent_clock.unix_timestamp);

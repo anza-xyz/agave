@@ -1,7 +1,9 @@
 use {
     arc_swap::ArcSwapOption,
     solana_clock::Slot,
-    solana_runtime::leader_schedule_utils::first_of_consecutive_leader_slots,
+    solana_runtime::leader_schedule_utils::{
+        first_of_consecutive_leader_slots, last_of_consecutive_leader_slots,
+    },
     std::{
         sync::Arc,
         time::{Duration, Instant},
@@ -66,6 +68,26 @@ impl SharedAlpenglowSlotClock {
     /// Loads the latest observed leader window.
     pub fn load(&self) -> Option<AlpenglowSlotInfo> {
         self.0.load().as_ref().map(|slot_info| **slot_info)
+    }
+
+    /// Estimates the slot currently in progress within the latest observed
+    /// Alpenglow leader window.
+    pub fn current_slot(&self) -> Option<Slot> {
+        self.current_slot_at(Instant::now())
+    }
+
+    fn current_slot_at(&self, now: Instant) -> Option<Slot> {
+        let slot_info = self.load()?;
+        let last_slot = last_of_consecutive_leader_slots(slot_info.slot);
+        if slot_info.slot_duration.is_zero() {
+            return Some(last_slot);
+        }
+        let elapsed_slots = now
+            .saturating_duration_since(slot_info.started_at)
+            .as_nanos()
+            .saturating_div(slot_info.slot_duration.as_nanos());
+        let elapsed_slots = Slot::try_from(elapsed_slots).unwrap_or(Slot::MAX);
+        Some(slot_info.slot.saturating_add(elapsed_slots).min(last_slot))
     }
 }
 
@@ -149,5 +171,24 @@ mod tests {
 
         clock.update(8, replacement_started_at + slot_duration, slot_duration);
         assert_eq!(clock.load().unwrap().slot, 8);
+    }
+
+    #[test]
+    fn test_current_slot() {
+        let clock = SharedAlpenglowSlotClock::default();
+        let started_at = Instant::now();
+        let slot_duration = Duration::from_millis(200);
+        assert_eq!(clock.current_slot_at(started_at), None);
+
+        clock.update(4, started_at, slot_duration);
+        assert_eq!(clock.current_slot_at(started_at), Some(4));
+        assert_eq!(
+            clock.current_slot_at(started_at + slot_duration * 2),
+            Some(6)
+        );
+        assert_eq!(
+            clock.current_slot_at(started_at + Duration::from_secs(10)),
+            Some(7)
+        );
     }
 }

@@ -42,10 +42,6 @@ impl UnverifiedCertificate {
                 let vote = Vote::new_notarization_vote(*block);
                 (get_vote_payload_to_sign(vote, self.shred_version), None)
             }
-            CertificateType::Genesis(block) => {
-                let vote = Vote::new_genesis_vote(*block);
-                (get_vote_payload_to_sign(vote, self.shred_version), None)
-            }
             CertificateType::Finalize(slot) => {
                 let vote = Vote::new_finalization_vote(*slot);
                 (get_vote_payload_to_sign(vote, self.shred_version), None)
@@ -114,12 +110,6 @@ impl DecodedWireConsensusMessage {
                 signature: v.signature.signature,
                 shred_version: msg.shred_version,
             }),
-            WireConsensusMessageKind::GenesisVote(v) => Self::Vote(UnverifiedVoteMessage {
-                vote: Vote::new_genesis_vote(v.block),
-                signature: v.signature.signature,
-                shred_version: msg.shred_version,
-            }),
-
             WireConsensusMessageKind::NotarCert(c) => {
                 let cert_type = CertificateType::Notarize(c.block);
                 Self::Certificate(UnverifiedCertificate {
@@ -158,15 +148,6 @@ impl DecodedWireConsensusMessage {
             }
             WireConsensusMessageKind::SkipCert(c) => {
                 let cert_type = CertificateType::Skip(c.slot);
-                Self::Certificate(UnverifiedCertificate {
-                    cert_type,
-                    signature: c.signature.signature,
-                    bitmap: c.signature.bitmap,
-                    shred_version: msg.shred_version,
-                })
-            }
-            WireConsensusMessageKind::GenesisCert(c) => {
-                let cert_type = CertificateType::Genesis(c.block);
                 Self::Certificate(UnverifiedCertificate {
                     cert_type,
                     signature: c.signature.signature,

@@ -75,7 +75,7 @@ impl VerifiedBatch {
                 send_votes_to_repair(my_pubkey, repair_msg, &channels.channel_to_repair, stats);
                 VoteAccountPubkeys::Shared(pubkeys)
             }
-            Vote::Skip(_) | Vote::SkipFallback(_) | Vote::Genesis(_) => {
+            Vote::Skip(_) | Vote::SkipFallback(_) => {
                 VoteAccountPubkeys::Owned(self.sender_vote_account_pubkeys)
             }
         };

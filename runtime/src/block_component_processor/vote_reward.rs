@@ -1,6 +1,5 @@
 use {
     crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
-    agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -20,7 +19,6 @@ use {
 };
 
 pub(crate) mod epoch_inflation_account_state;
-mod migration_test;
 
 /// Different types of errors that can happen when calculating and paying voting reward.
 ///
@@ -61,8 +59,6 @@ pub enum RewardStateError {
         reward_slot: Slot,
         bank_slot: Slot,
     },
-    #[error("genesis cert not found. reward_slot={reward_slot}; bank_slot={bank_slot}")]
-    GenesisCertNotFound { reward_slot: Slot, bank_slot: Slot },
 }
 
 /// Data needed to operate on `VoteStateHandler`.
@@ -178,7 +174,6 @@ struct RewardState<'a> {
     total_stake: u64,
     /// inflation state at the current bank's epoch.
     epoch_inflation_state: EpochInflationState,
-    migration_epoch: Epoch,
 }
 
 impl<'a> RewardState<'a> {
@@ -210,11 +205,6 @@ impl<'a> RewardState<'a> {
                 .get_epoch_state(current_epoch)
                 .ok_or(RewardStateError::MissingEpochInflationState { bank_slot })?
         };
-        let migration_epoch =
-            get_migration_epoch(bank).ok_or(RewardStateError::GenesisCertNotFound {
-                reward_slot,
-                bank_slot,
-            })?;
         let reward_slot_timestamp_ns =
             calc_slot_timestamp(bank, reward_slot, block_producer_time_nanos);
         Ok(Self {
@@ -227,7 +217,6 @@ impl<'a> RewardState<'a> {
             accounts,
             total_stake,
             epoch_inflation_state,
-            migration_epoch,
         })
     }
 
@@ -273,7 +262,6 @@ impl<'a> RewardState<'a> {
             if let Some(reward) = NonZero::new(reward) {
                 increment_credits(
                     vote_state.handler.epoch_credits_mut(),
-                    self.migration_epoch,
                     self.current_epoch,
                     reward,
                 );
@@ -290,7 +278,6 @@ impl<'a> RewardState<'a> {
         debug_assert_eq!(vote_state.vote_pubkey, self.leader_vote_pubkey);
         increment_credits(
             vote_state.handler.epoch_credits_mut(),
-            self.migration_epoch,
             self.current_epoch,
             leader_reward,
         );
@@ -514,57 +501,16 @@ fn calc_slot_timestamp(bank: &Bank, slot: Slot, block_producer_time_nanos: i64) 
     )
 }
 
-fn get_migration_epoch(bank: &Bank) -> Option<Epoch> {
-    let migration_slot = bank.get_alpenglow_migration_slot()?;
-    let migration_epoch = bank.epoch_schedule.get_epoch(migration_slot);
-    Some(migration_epoch)
-}
-
-fn ensure_marker(epoch_credits: &mut Vec<(Epoch, u64, u64)>) {
-    for elem in epoch_credits.iter().rev() {
-        if elem == &AG_MIGRATION_EPOCH_CREDIT {
-            return;
-        }
-    }
-    epoch_credits.push(AG_MIGRATION_EPOCH_CREDIT);
-}
-
 fn increment_credits(
     epoch_credits: &mut Vec<(Epoch, u64, u64)>,
-    migration_epoch: Epoch,
     epoch: Epoch,
     new_credits: NonZero<u64>,
 ) {
-    if epoch == migration_epoch {
-        ensure_marker(epoch_credits);
-    }
-
     let Some(entry) = epoch_credits.last_mut() else {
         // no entries, insert a new entry and we are done.
         epoch_credits.push((epoch, new_credits.get(), 0));
         return;
     };
-
-    // Latest element is the marker, start a new entry.
-    if *entry == AG_MIGRATION_EPOCH_CREDIT {
-        // If there was a tower entry before, its final credits forms this entry's initial credits.
-        let len = epoch_credits.len();
-        let final_tower_credits = if len >= 2 {
-            assert_ne!(epoch_credits[len - 2], AG_MIGRATION_EPOCH_CREDIT);
-            epoch_credits[len - 2].1
-        } else {
-            0
-        };
-        epoch_credits.push((
-            epoch,
-            new_credits.get().saturating_add(final_tower_credits),
-            final_tower_credits,
-        ));
-        while epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
-            epoch_credits.remove(0);
-        }
-        return;
-    }
 
     let (entry_epoch, final_credits, initial_credits) = entry;
 
@@ -1201,7 +1147,7 @@ mod tests {
             let (bank_epoch0, bank_forks) = new_bank_for_tests(leader, &genesis_config);
             assert_eq!(bank_epoch0.epoch(), 0);
 
-            // need to bump epoch by 1 as epoch 0 is migration epoch
+            // Start in epoch 1 so the prior-epoch reward metadata is available.
             let first_slot_in_epoch1 = bank_epoch0
                 .epoch_schedule
                 .get_first_slot_in_epoch(bank_epoch0.epoch() + 1);
@@ -1449,7 +1395,7 @@ mod tests {
         initial_bank: Arc<Bank>,
         num_reward_slots: u64,
     ) -> Arc<Bank> {
-        // bump slots a bit so that reward slots always land in the same epoch and after AG is activated if in migration epoch.
+        // Bump slots so the reward slots always land in the same epoch.
         let slot = initial_bank.slot() + 100_000;
         let initial_bank = new_bank_from_parent(initial_bank, slot);
         let initial_bank_epoch = initial_bank.epoch();

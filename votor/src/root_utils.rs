@@ -87,18 +87,9 @@ pub(crate) fn set_root(
     }
 }
 
-/// Sets the new root, additionally performs the callback after setting the bank forks root
-/// During this transition period where both replay stage and voting loop can root depending on the feature flag we
-/// have a callback that cleans up progress map and other tower bft structures. Then the callgraph is
-///
-/// ReplayStage::check_and_handle_new_root -> root_utils::check_and_handle_new_root(callback)
-///                                                             |
-///                                                             v
-/// ReplayStage::handle_new_root           -> root_utils::set_bank_forks_root(callback) -> callback()
-///
-/// Votor does not need the progress map or other tower bft structures, so it will not use the callback.
+/// Sets the new root and sends the corresponding ledger and RPC notifications.
 #[allow(clippy::too_many_arguments)]
-pub fn check_and_handle_new_root<CB>(
+pub fn check_and_handle_new_root(
     parent_slot: Slot,
     new_root: Slot,
     snapshot_controller: Option<&SnapshotController>,
@@ -110,10 +101,7 @@ pub fn check_and_handle_new_root<CB>(
     bank_forks: &RwLock<BankForks>,
     rpc_subscriptions: Option<&RpcSubscriptions>,
     my_pubkey: &Pubkey,
-    callback: CB,
-) where
-    CB: FnOnce(&BankForks),
-{
+) {
     // get the root bank before squash
     let root_bank = bank_forks
         .read()
@@ -150,7 +138,6 @@ pub fn check_and_handle_new_root<CB>(
         snapshot_controller,
         highest_super_majority_root,
         drop_bank_sender,
-        callback,
     );
     blockstore.slots_stats.mark_rooted(new_root);
     if let Some(rpc_subscriptions) = rpc_subscriptions {
@@ -194,18 +181,14 @@ pub fn check_and_handle_new_root<CB>(
 /// - Quiesce and synchronously purge banks orphaned by the new root
 /// - Prune the program cache
 /// - Prune bank forks and drop the removed banks
-/// - Calls the callback for use in replay stage and tests
-pub fn set_bank_forks_root<CB>(
+fn set_bank_forks_root(
     my_pubkey: &Pubkey,
     new_root: Slot,
     bank_forks: &RwLock<BankForks>,
     snapshot_controller: Option<&SnapshotController>,
     highest_super_majority_root: Option<Slot>,
     drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
-    callback: CB,
-) where
-    CB: FnOnce(&BankForks),
-{
+) {
     let banks_to_remove: Vec<_> = {
         let bank_forks = bank_forks.read().unwrap();
         let old_root = bank_forks.root();
@@ -264,6 +247,4 @@ pub fn set_bank_forks_root<CB>(
     ) {
         info!("{my_pubkey} channel {channel_name} disconnected");
     }
-    let r_bank_forks = bank_forks.read().unwrap();
-    callback(&r_bank_forks);
 }

@@ -18,11 +18,9 @@ use {
     agave_votor_messages::{
         certificate::CertificateType,
         consensus_message::Block,
-        migration::MigrationStatus,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
         },
-        vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
     agave_votor_transport::endpoint::{BanSender, Datagram},
@@ -81,7 +79,6 @@ fn max_admitted_vote_slot(root_slot: Slot, highest_parent_ready_slot: Slot) -> S
 pub(super) const BAN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct SigVerifierContext {
-    pub migration_status: Arc<MigrationStatus>,
     /// Sends peer ban commands to the transport endpoint.
     pub ban_sender: BanSender,
     pub sharable_banks: SharableBanks,
@@ -136,7 +133,6 @@ pub fn spawn_service(
 }
 
 struct SigVerifier {
-    migration_status: Arc<MigrationStatus>,
     ban_sender: BanSender,
     channels: SigVerifierChannels,
     /// Container to look up root banks from.
@@ -159,7 +155,6 @@ struct SigVerifier {
 impl SigVerifier {
     fn new(context: SigVerifierContext, channels: SigVerifierChannels) -> Self {
         let SigVerifierContext {
-            migration_status,
             ban_sender,
             sharable_banks,
             highest_parent_ready,
@@ -174,7 +169,6 @@ impl SigVerifier {
             .build()
             .unwrap();
         Self {
-            migration_status,
             ban_sender,
             channels,
             sharable_banks,
@@ -328,7 +322,6 @@ impl SigVerifier {
         let root_slot = root_bank.slot();
         let highest_parent_ready_slot = self.highest_parent_ready.read().unwrap().0;
         let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
-        let migration_slot = self.migration_status.migration_slot();
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
@@ -354,7 +347,6 @@ impl SigVerifier {
                     self.extract_and_filter_vote(
                         my_pubkey,
                         *sender_identity_pubkey,
-                        migration_slot,
                         max_vote_slot,
                         root_bank,
                         votes_buffer,
@@ -376,18 +368,7 @@ impl SigVerifier {
             }
         }
         for (carrier_slot, certificate) in certificates {
-            let is_genesis = matches!(&certificate.cert_type, CertificateType::Genesis(_));
-            let is_active = if is_genesis {
-                // Genesis certificates from blockstore are only allowed when we are in migration
-                self.migration_status.is_in_migration()
-            } else {
-                self.migration_status
-                    .should_allow_block_markers(carrier_slot)
-            };
-            if carrier_slot < root_slot
-                || certificate.shred_version != my_shred_version
-                || !is_active
-            {
+            if carrier_slot < root_slot || certificate.shred_version != my_shred_version {
                 continue;
             }
             let cert_slot = certificate.cert_type.slot();
@@ -416,7 +397,6 @@ impl SigVerifier {
         &mut self,
         my_pubkey: &Pubkey,
         sender_identity_pubkey: Pubkey,
-        migration_slot: Option<Slot>,
         max_vote_slot: Slot,
         root_bank: &Bank,
         votes: &mut HashMap<VotePayloadToSign, Batch>,
@@ -429,23 +409,13 @@ impl SigVerifier {
         }
         let root_slot = root_bank.slot();
         let vote_slot = unverified_vote.vote.slot();
-        let is_in_range = match unverified_vote.vote {
-            // Genesis votes bypass the normal range check, instead we require that they are only accepted during the
-            // migration epoch and less than the migration slot
-            Vote::Genesis(_) => {
-                migration_slot.is_some_and(|migration_slot| vote_slot < migration_slot)
-            }
-            _ => vote_slot <= max_vote_slot,
-        };
-        if !is_in_range {
+        if vote_slot > max_vote_slot {
             self.stats.vote_too_far_in_future += 1;
             self.stats.num_keep_vote_failed += 1;
             return;
         }
 
         match vote_slot.cmp(&root_slot) {
-            // Genesis votes are allowed on the root slot
-            cmp::Ordering::Equal if unverified_vote.vote.is_genesis_vote() => (),
             // Votes are allowed at or below the root if they are useful for rewards
             cmp::Ordering::Less | cmp::Ordering::Equal => {
                 if !rewards_wants_vote(

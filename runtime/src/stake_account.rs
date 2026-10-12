@@ -88,11 +88,6 @@ impl<T> StakeAccount<T> {
     }
 
     #[inline]
-    pub(crate) fn stake_state(&self) -> &StakeStateV2 {
-        &self.stake_state
-    }
-
-    #[inline]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn data_len(&self) -> usize {
         self.account.data().len()

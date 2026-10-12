@@ -285,7 +285,6 @@ fn base2_cert_vote(cert_type: &CertificateType) -> Vote {
             Vote::new_notarization_vote(*block)
         }
         CertificateType::Finalize(slot) => Vote::new_finalization_vote(*slot),
-        CertificateType::Genesis(block) => Vote::new_genesis_vote(*block),
         CertificateType::NotarizeFallback(_) | CertificateType::Skip(_) => unreachable!(),
     }
 }

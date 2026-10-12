@@ -24,7 +24,6 @@ struct SlotEntry {
     skip: BitVec<u8>,
     skip_fallback: BitVec<u8>,
     finalize: BitVec<u8>,
-    genesis: Vec<Option<BlockId>>,
     notar: Vec<Option<BlockId>>,
     notar_fallback: Vec<SmallVec<[BlockId; MAX_NOTAR_FALLBACK_ENTRIES]>>,
 }
@@ -35,7 +34,6 @@ impl SlotEntry {
             skip: default_bitvec(max_validators),
             skip_fallback: default_bitvec(max_validators),
             finalize: default_bitvec(max_validators),
-            genesis: vec![None; max_validators],
             notar: vec![None; max_validators],
             notar_fallback: vec![SmallVec::new(); max_validators],
         }
@@ -50,11 +48,7 @@ impl SlotEntry {
         debug_assert!(rank < max_validators);
         match &msg.vote {
             Vote::Skip(_) => {
-                if self.notar[rank].is_some()
-                    || self.finalize[rank]
-                    || self.skip_fallback[rank]
-                    || self.genesis[rank].is_some()
-                {
+                if self.notar[rank].is_some() || self.finalize[rank] || self.skip_fallback[rank] {
                     return Err(VotePoolError::Invalid);
                 }
                 if self.skip.replace(rank, true) {
@@ -64,7 +58,7 @@ impl SlotEntry {
                 }
             }
             Vote::SkipFallback(_) => {
-                if self.finalize[rank] || self.skip[rank] || self.genesis[rank].is_some() {
+                if self.finalize[rank] || self.skip[rank] {
                     return Err(VotePoolError::Invalid);
                 }
                 if self.skip_fallback.replace(rank, true) {
@@ -77,7 +71,6 @@ impl SlotEntry {
                 if self.skip[rank]
                     || self.skip_fallback[rank]
                     || !self.notar_fallback[rank].is_empty()
-                    || self.genesis[rank].is_some()
                 {
                     return Err(VotePoolError::Invalid);
                 }
@@ -87,34 +80,8 @@ impl SlotEntry {
                     Ok(())
                 }
             }
-            Vote::Genesis(genesis) => {
-                if self.skip[rank]
-                    || self.skip_fallback[rank]
-                    || self.finalize[rank]
-                    || self.notar[rank].is_some()
-                    || !self.notar_fallback[rank].is_empty()
-                {
-                    return Err(VotePoolError::Invalid);
-                }
-                match self.genesis[rank] {
-                    None => {
-                        self.genesis[rank] = Some(genesis.block.block_id);
-                        Ok(())
-                    }
-                    Some(block_id) => {
-                        if block_id == genesis.block.block_id {
-                            Err(VotePoolError::Duplicate)
-                        } else {
-                            Err(VotePoolError::Invalid)
-                        }
-                    }
-                }
-            }
             Vote::Notarize(notar) => {
-                if self.skip[rank]
-                    || self.genesis[rank].is_some()
-                    || self.notar_fallback[rank].contains(&notar.block.block_id)
-                {
+                if self.skip[rank] || self.notar_fallback[rank].contains(&notar.block.block_id) {
                     return Err(VotePoolError::Invalid);
                 }
                 match self.notar[rank] {
@@ -136,7 +103,6 @@ impl SlotEntry {
                     return Err(VotePoolError::Duplicate);
                 }
                 if self.finalize[rank]
-                    || self.genesis[rank].is_some()
                     || self.notar_fallback[rank].len() >= MAX_NOTAR_FALLBACK_ENTRIES
                 {
                     return Err(VotePoolError::Invalid);

@@ -9,20 +9,14 @@ use {
         stake_utils,
     },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
-    agave_votor_messages::{
-        self,
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Block, BlockId},
-        migration::GENESIS_CERTIFICATE_ACCOUNT,
-        wire::{WireBlockCertMessage, WireCertSignature},
-    },
-    bitvec::vec::BitVec,
+    agave_votor_messages::{self, consensus_message::BLS_KEYPAIR_DERIVE_SEED},
     log::*,
     solana_account::{
         Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
     },
     solana_bls_signatures::{
-        BLS_SIGNATURE_AFFINE_SIZE, Pubkey as BLSPubkey, Signature as BLSSignature,
-        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
+        Pubkey as BLSPubkey, keypair::Keypair as BLSKeypair,
+        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::Epoch,
     solana_cluster_type::ClusterType,
@@ -37,7 +31,6 @@ use {
     solana_sdk_ids::{stake as stake_program, sysvar},
     solana_seed_derivable::SeedDerivable,
     solana_signer::Signer,
-    solana_signer_store::encode_base2,
     solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
     solana_sysvar::epoch_rewards,
@@ -85,6 +78,7 @@ pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
     const EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE: u64 = 1_120_560;
     const RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE: u64 = 42_706_560;
     const LAST_RESTART_SLOT_SYSVAR_MIN_BALANCE: u64 = 946_560;
+    const VOTE_REWARD_ACCOUNT_MIN_BALANCE: u64 = 1_064_880;
 
     STAKE_HISTORY_MIN_BALANCE
         + CLOCK_SYSVAR_MIN_BALANCE
@@ -92,6 +86,7 @@ pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
         + EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE
         + RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE
         + LAST_RESTART_SLOT_SYSVAR_MIN_BALANCE
+        + VOTE_REWARD_ACCOUNT_MIN_BALANCE
         + NUM_BUILTIN_PROGRAMS
         + NUM_PRECOMPILES
 }
@@ -157,22 +152,6 @@ pub fn create_genesis_config_with_vote_accounts(
     )
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-pub fn create_genesis_config_for_alpenglow_migration_with_vote_accounts(
-    mint_lamports: u64,
-    voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
-    stakes: Vec<u64>,
-) -> GenesisConfigInfo {
-    create_genesis_config_with_vote_accounts_and_cluster_type_and_alpenglow_config(
-        mint_lamports,
-        voting_keypairs,
-        stakes,
-        ClusterType::Development,
-        FeatureSet::all_enabled(),
-        false,
-    )
-}
-
 pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     mint_lamports: u64,
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
@@ -180,23 +159,21 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     cluster_type: ClusterType,
     feature_set: FeatureSet,
 ) -> GenesisConfigInfo {
-    create_genesis_config_with_vote_accounts_and_cluster_type_and_alpenglow_config(
+    create_genesis_config_with_vote_accounts_impl(
         mint_lamports,
         voting_keypairs,
         stakes,
         cluster_type,
         feature_set,
-        true,
     )
 }
 
-fn create_genesis_config_with_vote_accounts_and_cluster_type_and_alpenglow_config(
+fn create_genesis_config_with_vote_accounts_impl(
     mint_lamports: u64,
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
     cluster_type: ClusterType,
     feature_set: FeatureSet,
-    configure_alpenglow: bool,
 ) -> GenesisConfigInfo {
     assert!(!voting_keypairs.is_empty());
     assert_eq!(voting_keypairs.len(), stakes.len());
@@ -214,7 +191,7 @@ fn create_genesis_config_with_vote_accounts_and_cluster_type_and_alpenglow_confi
             .to_bytes_compressed(),
     );
 
-    let genesis_config = create_genesis_config_with_leader_ex_and_alpenglow_config(
+    let genesis_config = create_genesis_config_with_leader_ex_impl(
         mint_lamports,
         &mint_keypair.pubkey(),
         &validator_pubkey,
@@ -228,7 +205,6 @@ fn create_genesis_config_with_vote_accounts_and_cluster_type_and_alpenglow_confi
         cluster_type,
         &feature_set,
         vec![],
-        configure_alpenglow,
     );
 
     let mut genesis_config_info = GenesisConfigInfo {
@@ -298,43 +274,25 @@ pub fn create_genesis_config_with_leader(
     )
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-pub fn create_genesis_config_for_alpenglow_migration_with_leader(
-    mint_lamports: u64,
-    validator_pubkey: &Pubkey,
-    validator_stake_lamports: u64,
-) -> GenesisConfigInfo {
-    let mint_keypair = Keypair::from_seed(&MINT_KEYPAIR_SEED).unwrap();
-    create_genesis_config_with_leader_with_mint_keypair_and_alpenglow_config(
-        mint_keypair,
-        mint_lamports,
-        validator_pubkey,
-        validator_stake_lamports,
-        false,
-    )
-}
-
 pub fn create_genesis_config_with_leader_with_mint_keypair(
     mint_keypair: Keypair,
     mint_lamports: u64,
     validator_pubkey: &Pubkey,
     validator_stake_lamports: u64,
 ) -> GenesisConfigInfo {
-    create_genesis_config_with_leader_with_mint_keypair_and_alpenglow_config(
+    create_genesis_config_with_leader_with_mint_keypair_impl(
         mint_keypair,
         mint_lamports,
         validator_pubkey,
         validator_stake_lamports,
-        true,
     )
 }
 
-fn create_genesis_config_with_leader_with_mint_keypair_and_alpenglow_config(
+fn create_genesis_config_with_leader_with_mint_keypair_impl(
     mint_keypair: Keypair,
     mint_lamports: u64,
     validator_pubkey: &Pubkey,
     validator_stake_lamports: u64,
-    configure_alpenglow: bool,
 ) -> GenesisConfigInfo {
     // Use deterministic keypair so we don't get confused by randomness in tests
     let voting_keypair = Keypair::from_seed(&[
@@ -350,7 +308,7 @@ fn create_genesis_config_with_leader_with_mint_keypair_and_alpenglow_config(
         .unwrap()
         .pubkey();
 
-    let genesis_config = create_genesis_config_with_leader_ex_and_alpenglow_config(
+    let genesis_config = create_genesis_config_with_leader_ex_impl(
         mint_lamports,
         &mint_keypair.pubkey(),
         validator_pubkey,
@@ -364,7 +322,6 @@ fn create_genesis_config_with_leader_with_mint_keypair_and_alpenglow_config(
         ClusterType::Development,
         &FeatureSet::all_enabled(),
         vec![],
-        configure_alpenglow,
     );
 
     GenesisConfigInfo {
@@ -383,26 +340,6 @@ pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
 fn configure_alpenglow_at_genesis(genesis_config: &mut GenesisConfig) {
     // PoH is in low power mode
     genesis_config.poh_config.hashes_per_tick = None;
-
-    // This is a dev cluster with alpenglow enabled at genesis. We don't want to test the migration pathway
-    // so we add a fake genesis certificate.
-    let cert = WireBlockCertMessage {
-        block: Block {
-            slot: 0,
-            block_id: BlockId::default(),
-        },
-        signature: WireCertSignature {
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: encode_base2(&BitVec::new()).unwrap(),
-        },
-    };
-    let cert_size = wincode::serialized_size(&cert).unwrap();
-    let lamports = Rent::default().minimum_balance(cert_size as usize);
-    let certificate_account = Account::new_data(lamports, &cert, &system_program::ID).unwrap();
-
-    genesis_config
-        .accounts
-        .insert(*GENESIS_CERTIFICATE_ACCOUNT, certificate_account);
     EpochInflationAccountState::insert_into_genesis_config(genesis_config);
 }
 
@@ -586,7 +523,7 @@ pub fn create_genesis_config_with_leader_ex(
     feature_set: &FeatureSet,
     initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    create_genesis_config_with_leader_ex_and_alpenglow_config(
+    create_genesis_config_with_leader_ex_impl(
         mint_lamports,
         mint_pubkey,
         validator_pubkey,
@@ -600,46 +537,11 @@ pub fn create_genesis_config_with_leader_ex(
         cluster_type,
         feature_set,
         initial_accounts,
-        true,
-    )
-}
-
-#[cfg(test)]
-#[expect(clippy::too_many_arguments)]
-pub(crate) fn create_genesis_config_with_leader_ex_for_alpenglow_migration(
-    mint_lamports: u64,
-    mint_pubkey: &Pubkey,
-    validator_pubkey: &Pubkey,
-    validator_vote_account_pubkey: &Pubkey,
-    validator_stake_account_pubkey: &Pubkey,
-    validator_bls_pubkey: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
-    validator_stake_lamports: u64,
-    validator_lamports: u64,
-    fee_rate_governor: FeeRateGovernor,
-    rent: Rent,
-    cluster_type: ClusterType,
-    initial_accounts: Vec<(Pubkey, AccountSharedData)>,
-) -> GenesisConfig {
-    create_genesis_config_with_leader_ex_and_alpenglow_config(
-        mint_lamports,
-        mint_pubkey,
-        validator_pubkey,
-        validator_vote_account_pubkey,
-        validator_stake_account_pubkey,
-        validator_bls_pubkey,
-        validator_stake_lamports,
-        validator_lamports,
-        fee_rate_governor,
-        rent,
-        cluster_type,
-        &FeatureSet::all_enabled(),
-        initial_accounts,
-        false,
     )
 }
 
 #[expect(clippy::too_many_arguments)]
-fn create_genesis_config_with_leader_ex_and_alpenglow_config(
+fn create_genesis_config_with_leader_ex_impl(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
     validator_pubkey: &Pubkey,
@@ -653,7 +555,6 @@ fn create_genesis_config_with_leader_ex_and_alpenglow_config(
     cluster_type: ClusterType,
     feature_set: &FeatureSet,
     initial_accounts: Vec<(Pubkey, AccountSharedData)>,
-    configure_alpenglow: bool,
 ) -> GenesisConfig {
     let mut genesis_config = create_genesis_config_with_leader_ex_without_feature_accounts(
         mint_lamports,
@@ -679,9 +580,7 @@ fn create_genesis_config_with_leader_ex_and_alpenglow_config(
     {
         activate_feature(&mut genesis_config, agave_feature_set::alpenglow::id());
     }
-    if configure_alpenglow {
-        configure_alpenglow_at_genesis(&mut genesis_config);
-    }
+    configure_alpenglow_at_genesis(&mut genesis_config);
 
     genesis_config
 }
@@ -834,30 +733,7 @@ mod tests {
                 .accounts
                 .contains_key(&agave_feature_set::alpenglow_fast_leader_handover::id())
         );
-        assert!(
-            genesis_config
-                .accounts
-                .contains_key(&GENESIS_CERTIFICATE_ACCOUNT)
-        );
         assert!(genesis_config.poh_config.hashes_per_tick.is_none());
-    }
-
-    fn assert_alpenglow_migration_genesis(genesis_config: &GenesisConfig) {
-        assert!(
-            genesis_config
-                .accounts
-                .contains_key(&agave_feature_set::alpenglow::id())
-        );
-        assert!(
-            genesis_config
-                .accounts
-                .contains_key(&agave_feature_set::alpenglow_fast_leader_handover::id())
-        );
-        assert!(
-            !genesis_config
-                .accounts
-                .contains_key(&GENESIS_CERTIFICATE_ACCOUNT)
-        );
     }
 
     #[test]
@@ -879,26 +755,5 @@ mod tests {
         let mut genesis_config = GenesisConfig::default();
         activate_all_features(&mut genesis_config);
         assert_alpenglow_genesis(&genesis_config);
-    }
-
-    #[test]
-    fn test_alpenglow_migration_genesis_helpers() {
-        let validator = ValidatorVoteKeypairs::new_rand();
-        let vote_account_genesis =
-            create_genesis_config_for_alpenglow_migration_with_vote_accounts(
-                1_000_000,
-                &[validator],
-                vec![1],
-            )
-            .genesis_config;
-        assert_alpenglow_migration_genesis(&vote_account_genesis);
-
-        let leader_genesis = create_genesis_config_for_alpenglow_migration_with_leader(
-            1_000_000,
-            &Pubkey::new_unique(),
-            1,
-        )
-        .genesis_config;
-        assert_alpenglow_migration_genesis(&leader_genesis);
     }
 }

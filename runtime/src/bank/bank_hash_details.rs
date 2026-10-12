@@ -71,7 +71,6 @@ pub struct TransactionDetails {
     pub index: usize,
     pub accounts: Vec<String>,
     pub instructions: Vec<UiInstruction>,
-    pub is_simple_vote_tx: bool,
     pub commit_details: Option<TransactionCommitDetails>,
 }
 

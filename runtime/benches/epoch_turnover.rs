@@ -22,8 +22,8 @@ use {
         state::{Delegation, Meta, Stake, StakeStateV2},
     },
     solana_sysvar::epoch_rewards::{self, EpochRewards},
-    solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-    solana_vote_program::vote_state::{handler::VoteStateHandler, process_slot_vote_unchecked},
+    solana_vote_interface::state::{VoteStateV4, VoteStateVersions},
+    solana_vote_program::vote_state::handler::VoteStateHandler,
     std::{
         hint::black_box,
         sync::{Arc, RwLock},
@@ -42,7 +42,7 @@ const MANY_INACTIVE_ACCOUNTS: usize = 250_000;
 const DELEGATED_STAKE_LAMPORTS: u64 = 1_000 * LAMPORTS_PER_SOL;
 const VALIDATOR_STAKE_LAMPORTS: u64 = 1_000 * LAMPORTS_PER_SOL;
 const GENESIS_MINT_LAMPORTS: u64 = 1_000_000 * LAMPORTS_PER_SOL;
-const SYNTHETIC_VOTE_SLOTS: u64 = (MAX_LOCKOUT_HISTORY as u64) + 42;
+const SYNTHETIC_REWARD_CREDITS: u64 = 42;
 const PENDING_DELEGATOR_REWARDS: u64 = 1_000;
 
 fn create_stake_account(
@@ -102,9 +102,7 @@ fn populate_vote_accounts(
 
         let mut vote_state = VoteStateHandler::new_v4(v4);
 
-        for i in 0..SYNTHETIC_VOTE_SLOTS {
-            process_slot_vote_unchecked(&mut vote_state, i);
-        }
+        vote_state.increment_credits(bank.epoch(), SYNTHETIC_REWARD_CREDITS);
 
         let versioned = VoteStateVersions::V4(Box::new(vote_state.unwrap_v4()));
         vote_account.set_state(&versioned).unwrap();
@@ -202,8 +200,9 @@ fn bench_epoch_turnover(c: &mut Criterion) {
         } else {
             "vote_account"
         };
-        let name =
-            format!("{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive_{collector_type}_collector");
+        let name = format!(
+            "{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive_{collector_type}_collector"
+        );
 
         let (initial_bank, bank_forks) = setup_bank(
             vote_accounts,

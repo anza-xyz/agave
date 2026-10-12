@@ -207,9 +207,9 @@ impl PrioritizationFeeCache {
         }
     }
 
-    /// Update with a list of non-vote transactions' compute_budget_details and account_locks; Only
-    /// transactions have both valid compute_budget_details and account_locks will be used to update
-    /// fee_cache asynchronously.
+    /// Update with a list of transactions' compute budget details and account locks. Only
+    /// transactions with both valid compute budget details and account locks are used to update
+    /// the fee cache asynchronously.
     pub fn update<'a, Tx: TransactionWithMeta + 'a>(
         &self,
         bank: &Bank,
@@ -217,12 +217,6 @@ impl PrioritizationFeeCache {
     ) {
         let (_, send_updates_us) = measure_us!({
             for sanitized_transaction in txs {
-                // Vote transactions are not prioritized, therefore they are excluded from
-                // updating fee_cache.
-                if sanitized_transaction.is_simple_vote_transaction() {
-                    continue;
-                }
-
                 let transaction_configuration =
                     sanitized_transaction.transaction_configuration(&bank.feature_set);
                 let lock_result = validate_account_locks(
