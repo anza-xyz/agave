@@ -192,7 +192,7 @@ pub struct PohRecorder {
 impl PohRecorder {
     /// A recorder to synchronize PoH with the following data structures
     /// * bank - the LastId's queue is updated on `tick` and `record` events
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg(feature = "dev-context-only-utils")]
     #[allow(clippy::too_many_arguments)]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new(
