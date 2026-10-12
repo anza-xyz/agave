@@ -38,7 +38,9 @@ use {
     solana_hash::Hash,
     solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
-    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS as NUM_CONSECUTIVE_LEADER_SLOTS_NZ,
+    solana_leader_schedule::{
+        NUM_CONSECUTIVE_LEADER_SLOTS as NUM_CONSECUTIVE_LEADER_SLOTS_NZ, SlotLeader,
+    },
     solana_ledger::{
         block_error::BlockError,
         blockstore::{

@@ -14,7 +14,8 @@ pub fn process_instruction(
     _accounts: &[AccountInfo],
     _instruction_data: &[u8],
 ) -> ProgramResult {
-    // `LeaderInfo` is four pubkeys, 128 bytes, little-endian field order.
+    // `LeaderInfo` is four pubkeys, 128 bytes: leader identity, leader vote,
+    // next leader identity, next leader vote.
     let mut leader_info = [0u8; 128];
     let result = unsafe { sol_get_leader(leader_info.as_mut_ptr()) };
     assert_eq!(result, 0);

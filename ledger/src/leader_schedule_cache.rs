@@ -4,7 +4,7 @@ use {
     log::*,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
+    solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader, SlotLeaders},
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, leader_schedule_utils},
     std::{
@@ -91,6 +91,19 @@ impl LeaderScheduleCache {
         } else {
             self.slot_leader_at_no_compute(slot)
         }
+    }
+
+    /// Returns the leader of `slot` together with the leader of `slot + 1`,
+    /// for creating the bank at `slot`. The next leader may belong to the
+    /// following epoch; it is `None` only if that epoch's schedule is not
+    /// available yet, in which case the bank derives it from its own stakes.
+    pub fn slot_leaders_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<SlotLeaders> {
+        let leader = self.slot_leader_at(slot, bank)?;
+        let next_leader = self.slot_leader_at(slot.saturating_add(1), bank);
+        Some(SlotLeaders {
+            leader,
+            next_leader,
+        })
     }
 
     /// Returns the (next slot, last slot) consecutive range of slots after
@@ -590,6 +603,38 @@ mod tests {
             res.1,
             expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot - 2
         );
+    }
+
+    #[test]
+    fn test_slot_leaders_at_epoch_boundary() {
+        let pubkey = solana_pubkey::new_rand();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports());
+        genesis_config.epoch_schedule.warmup = false;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let cache = LeaderScheduleCache::new_from_bank(&bank);
+
+        // The last slot of the epoch: the next leader comes from the next
+        // epoch's schedule, which the cache already holds.
+        let last_slot = bank.epoch_schedule().get_last_slot_in_epoch(0);
+        let leaders = cache.slot_leaders_at(last_slot, Some(&bank)).unwrap();
+        assert_eq!(
+            Some(leaders.leader),
+            cache.slot_leader_at(last_slot, Some(&bank))
+        );
+        assert_eq!(
+            leaders.next_leader,
+            cache.slot_leader_at(last_slot + 1, Some(&bank))
+        );
+        assert!(leaders.next_leader.is_some());
+
+        // A bank created with the pair reports it as-is; one created with
+        // only the leader derives the same next leader from its epoch stakes.
+        let seeded = Bank::new_from_parent(bank.clone(), leaders, last_slot);
+        let derived = Bank::new_from_parent(bank, leaders.leader, last_slot);
+        assert_eq!(Some(*seeded.next_leader()), leaders.next_leader);
+        assert_eq!(seeded.next_leader(), derived.next_leader());
     }
 
     #[test]

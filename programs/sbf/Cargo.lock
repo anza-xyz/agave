@@ -8250,7 +8250,6 @@ dependencies = [
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
  "solana-keypair",
- "solana-leader-schedule",
  "solana-loader-v3-interface",
  "solana-message",
  "solana-program-binaries",

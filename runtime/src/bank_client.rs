@@ -28,7 +28,7 @@ mod transaction {
 }
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::bank_forks::BankForks, solana_clock as clock, solana_leader_schedule::SlotLeader,
+    crate::bank_forks::BankForks, solana_clock as clock, solana_leader_schedule::SlotLeaders,
     std::sync::RwLock,
 };
 
@@ -283,7 +283,7 @@ impl BankClient {
         &mut self,
         by: u64,
         bank_forks: &RwLock<BankForks>,
-        leader: SlotLeader,
+        leader: impl Into<SlotLeaders>,
     ) -> Option<Arc<Bank>> {
         let new_bank =
             Bank::new_from_parent(self.bank.clone(), leader, self.bank.slot().checked_add(by)?);
