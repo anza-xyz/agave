@@ -799,7 +799,9 @@ mod tests {
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_runtime::sysvar_account::create_account,
+        solana_runtime::{
+            genesis_utils::create_genesis_config, sysvar_account::create_account,
+        },
         solana_sdk_ids::{native_loader, system_program, sysvar},
         solana_slot_hashes::SlotHashes,
         solana_slot_history::SlotHistory,
@@ -822,19 +824,26 @@ mod tests {
     const LEADER_NODE_T_2: [u8; 32] = [0xaa; 32];
     const LAMPORTS_PER_SIGNATURE: u32 = 5_000;
 
+    fn genesis_vote_reward_account() -> AcctState {
+        let (vote_reward_account, _) = Pubkey::find_program_address(
+            &[b"vote_reward_account"],
+            &agave_feature_set::alpenglow::id(),
+        );
+        let genesis_config = create_genesis_config(1).genesis_config;
+        let account = genesis_config
+            .accounts
+            .get(&vote_reward_account)
+            .expect("genesis must include Alpenglow vote-reward state")
+            .clone();
+        input_account(vote_reward_account, account)
+    }
+
     #[test]
     fn test_is_pre_alpenglow_fixture() {
         let mut context = ProtoBlockContext::default();
         assert!(is_pre_alpenglow_fixture(&context));
 
-        let (vote_reward_account, _) = Pubkey::find_program_address(
-            &[b"vote_reward_account"],
-            &agave_feature_set::alpenglow::id(),
-        );
-        context.acct_states.push(AcctState {
-            address: vote_reward_account.to_bytes().to_vec(),
-            ..AcctState::default()
-        });
+        context.acct_states.push(genesis_vote_reward_account());
         assert!(!is_pre_alpenglow_fixture(&context));
     }
 
@@ -990,6 +999,7 @@ mod tests {
         let epoch_schedule = EpochSchedule::default();
         let mut acct_states = block_sysvar_accounts(parent_slot, &epoch_schedule);
         acct_states.extend([
+            genesis_vote_reward_account(),
             account(
                 Pubkey::new_from_array(LEADER_NODE_T_1),
                 1_000_000,
