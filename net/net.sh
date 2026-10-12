@@ -321,7 +321,7 @@ startBootstrapLeader() {
          \"$internalNodesLamports\" \
          $nodeIndex \
          \"$genesisOptions\" \
-         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeLimitBlockstoreSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
+         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeLimitBlockstoreSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink\" \
          \"$maybeWarpSlot\" \
          \"$maybeFullRpc\" \
          \"$waitForNodeInit\" \
@@ -393,7 +393,7 @@ startNode() {
          \"$internalNodesLamports\" \
          $nodeIndex \
          \"$genesisOptions\" \
-         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeLimitBlockstoreSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
+         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeLimitBlockstoreSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink\" \
          \"$maybeWarpSlot\" \
          \"$maybeFullRpc\" \
          \"$waitForNodeInit\" \
@@ -822,7 +822,6 @@ maybeSkipLedgerVerify=""
 maybeDisableAirdrops=""
 maybeWaitForSupermajority=""
 maybeAccountsDbSkipShrink=""
-maybeSkipRequireTower=""
 debugBuild=false
 profileBuild=false
 doBuild=true
@@ -948,9 +947,6 @@ while [[ -n $1 ]]; do
       shift 1
     elif [[ $1 = --accounts-db-skip-shrink ]]; then
       maybeAccountsDbSkipShrink="$1"
-      shift 1
-    elif [[ $1 = --skip-require-tower ]]; then
-      maybeSkipRequireTower="$1"
       shift 1
     elif [[ $1 = --use-unstaked-connection ]]; then
       maybeUseUnstakedConnection="$1"

@@ -15,7 +15,6 @@ const COMMAND: &str = "set-identity";
 #[derive(Debug, PartialEq)]
 pub struct SetIdentityArgs {
     pub identity: Option<String>,
-    pub require_tower: bool,
     pub require_vote_history: bool,
 }
 
@@ -23,7 +22,6 @@ impl Default for SetIdentityArgs {
     fn default() -> Self {
         Self {
             identity: None,
-            require_tower: false,
             require_vote_history: true,
         }
     }
@@ -33,7 +31,6 @@ impl FromClapArgMatches for SetIdentityArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(SetIdentityArgs {
             identity: value_t!(matches, "identity", String).ok(),
-            require_tower: matches.is_present("require_tower"),
             require_vote_history: !matches.is_present("do_not_require_vote_history"),
         })
     }
@@ -51,12 +48,6 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .help("Path to validator identity keypair [default: read JSON keypair from stdin]"),
         )
         .arg(
-            clap::Arg::with_name("require_tower")
-                .long("require-tower")
-                .takes_value(false)
-                .help("Refuse to set the validator identity if saved tower state is not found"),
-        )
-        .arg(
             clap::Arg::with_name("do_not_require_vote_history")
                 .long("do-not-require-vote-history")
                 .takes_value(false)
@@ -70,7 +61,6 @@ pub fn command<'a>() -> App<'a, 'a> {
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let SetIdentityArgs {
         identity,
-        require_tower,
         require_vote_history,
     } = SetIdentityArgs::from_clap_arg_match(matches)?;
 
@@ -86,11 +76,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
         admin_rpc_service::runtime().block_on(async move {
             admin_client
                 .await?
-                .set_identity(
-                    identity_keypair.display().to_string(),
-                    require_tower,
-                    require_vote_history,
-                )
+                .set_identity(identity_keypair.display().to_string(), require_vote_history)
                 .await
         })?;
     } else {
@@ -105,7 +91,6 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
                 .await?
                 .set_identity_from_bytes(
                     Vec::from(identity_keypair.to_bytes()),
-                    require_tower,
                     require_vote_history,
                 )
                 .await
@@ -139,18 +124,6 @@ mod tests {
             vec![COMMAND, file.to_str().unwrap()],
             SetIdentityArgs {
                 identity: Some(file.to_str().unwrap().to_string()),
-                ..SetIdentityArgs::default()
-            },
-        );
-    }
-
-    #[test]
-    fn verify_args_struct_by_command_set_identity_with_require_tower() {
-        verify_args_struct_by_command(
-            command(),
-            vec![COMMAND, "--require-tower"],
-            SetIdentityArgs {
-                require_tower: true,
                 ..SetIdentityArgs::default()
             },
         );

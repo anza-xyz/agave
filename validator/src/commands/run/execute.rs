@@ -39,12 +39,10 @@ use {
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
-        consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
         resource_limits,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
-        tpu::MAX_VOTES_PER_SECOND,
         validator::{
             BlockProductionMethod, BlockVerificationMethod, SchedulerPacing, Validator,
             ValidatorConfig, ValidatorLogConfig, ValidatorStartProgress, ValidatorTpuConfig,
@@ -65,15 +63,13 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
-    solana_poh::poh_service,
     solana_pubkey::Pubkey,
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
     solana_signer::Signer,
     solana_streamer::{
-        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
-        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        nonblocking::swqos::SwQosConfig,
+        quic::{QuicStreamerConfig, SwQosQuicStreamerConfig},
     },
-    solana_turbine::broadcast_stage::BroadcastStageType,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -118,7 +114,6 @@ pub fn execute(
         tpu_sigverify_threads,
         tpu_transaction_forward_receive_threads,
         tpu_transaction_receive_threads,
-        tpu_vote_transaction_receive_threads,
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
@@ -377,14 +372,6 @@ pub fn execute(
     #[cfg(not(target_os = "linux"))]
     let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
 
-    #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
-        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
-        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-
-    #[cfg(not(target_os = "linux"))]
-    let poh_pinned_cpu_core = None;
-
     solana_core::validator::report_target_features();
 
     let authorized_voter_keypairs = keypairs_of(matches, "authorized_voter_keypairs")
@@ -519,12 +506,6 @@ pub fn execute(
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
         .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
-
-    let tower_path = value_t!(matches, "tower", PathBuf)
-        .ok()
-        .unwrap_or_else(|| ledger_path.clone());
-    let tower_storage: Arc<dyn tower_storage::TowerStorage> =
-        Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
     let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = Arc::new(
         vote_history_storage::FileVoteHistoryStorage::new(ledger_path.clone()),
@@ -739,9 +720,7 @@ pub fn execute(
 
     let mut validator_config = ValidatorConfig {
         log_config,
-        require_tower: matches.is_present("require_tower"),
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
-        tower_storage,
         vote_history_storage,
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
@@ -790,7 +769,6 @@ pub fn execute(
         contact_debug_interval,
         contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
         send_transaction_service_config: run_args.send_transaction_service_config,
-        no_poh_speed_test: matches.is_present("no_poh_speed_test"),
         no_os_memory_stats_reporting: matches.is_present("no_os_memory_stats_reporting"),
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
         xdp_network_config_report,
@@ -799,14 +777,10 @@ pub fn execute(
         // The validator needs to open many files, check that the process has
         // permission to do so in order to fail quickly and give a direct error
         enforce_ulimit_nofile: true,
-        poh_pinned_cpu_core,
-        poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
-            .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
         account_paths: account_run_paths,
         accounts_db_config,
         snapshot_config,
-        no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         wait_to_vote_slot: value_t!(matches, "wait_to_vote_slot", Slot).ok(),
         staked_nodes_overrides: staked_nodes_overrides.clone(),
         use_snapshot_archives_at_startup,
@@ -819,7 +793,6 @@ pub fn execute(
         delay_leader_block_for_pending_fork: !matches
             .is_present("no_delay_leader_block_for_pending_fork"),
         turbine_mode: TurbineMode::default(),
-        broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
             matches,
             "block_verification_method",
@@ -922,7 +895,6 @@ pub fn execute(
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),
-            tower_storage: validator_config.tower_storage.clone(),
             vote_history_storage: validator_config.vote_history_storage.clone(),
             staked_nodes_overrides,
             rpc_to_plugin_manager_sender,
@@ -1075,18 +1047,6 @@ pub fn execute(
         },
     };
 
-    let vote_quic_server_config = SimpleQosQuicStreamerConfig {
-        quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_vote_transaction_receive_threads,
-            ..Default::default()
-        },
-        qos_config: SimpleQosConfig {
-            max_streams_per_second: MAX_VOTES_PER_SECOND,
-            ..Default::default()
-        },
-    };
-
     let validator = Validator::new_with_exit(
         node,
         identity_keypair,
@@ -1099,10 +1059,8 @@ pub fn execute(
         start_progress,
         run_args.socket_addr_space,
         ValidatorTpuConfig {
-            vote_use_quic: false,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
-            vote_quic_server_config,
             sigverify_threads: tpu_sigverify_threads,
         },
         admin_service_post_init,

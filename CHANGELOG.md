@@ -19,6 +19,8 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Removed the obsolete `voteSubscribe` RPC PubSub method and its client APIs.
+
 #### Changes
 
 * `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns
@@ -34,15 +36,15 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Removed the TowerBFT-only `--tower`, `--require-tower`, `--vote-use-quic`, and
+  `--no-wait-for-vote-to-start-leader` validator arguments, along with the obsolete PoH service
+  tuning arguments.
+
 #### Changes
 
 * Added `agave-validator --no-xdp-zero-copy` to explicitly select XDP copy mode. It conflicts
   with `--xdp-zero-copy` and `--no-xdp`.
 * The default full snapshot interval is now 200,000 slots.
-
-#### Deprecations
-
-* `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
 
 ### CLI
 
@@ -50,6 +52,7 @@ Release channels have their own copy of this changelog:
 
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
+* `solana logs` no longer accepts the obsolete `--include-votes` option.
 
 #### Changes
 

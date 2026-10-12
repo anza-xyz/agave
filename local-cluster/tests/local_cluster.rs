@@ -276,8 +276,8 @@ fn test_forwarding() {
     );
 }
 
-/// Validates the basic `exit_restart_node()` flow without involving snapshots or tower
-/// surgery, so restart regressions are caught before the more specialized restart tests run.
+/// Validates the basic `exit_restart_node()` flow without involving snapshots, so restart
+/// regressions are caught before the more specialized restart tests run.
 #[test]
 #[serial]
 fn test_restart_node() {
@@ -1735,9 +1735,8 @@ fn test_leader_failure_4() {
     let num_nodes = 4;
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.wait_for_supermajority = Some(0);
-    // Embed vote and stake account in genesis to avoid waiting for stake
-    // activation and race conditions around accepting gossip votes, repairing
-    // blocks, etc. before we advance through too many epochs.
+    // Embed vote and stake accounts in genesis to avoid waiting for stake activation and race
+    // conditions while repairing blocks before we advance through too many epochs.
     let validator_keys: Option<Vec<(ValidatorKeys, bool)>> = Some(
         (0..num_nodes)
             .map(|_| (ValidatorKeys::new(), true))
@@ -1747,9 +1746,8 @@ fn test_leader_failure_4() {
     // bringing multiple fresh validators online that are pre-staked in genesis.
     // The problems arise because we skip their leader slots while they're still
     // starting up, experience partitioning, and can fail to generate leader
-    // schedules in time because the short epochs have the same slots per epoch
-    // as the total tower height, so any skipped slots can lead to not rooting,
-    // not generating leader schedule, and stalling the cluster.
+    // schedules in time. With so few slots in each epoch, skipped slots can prevent
+    // rooting and the next leader schedule from being generated, stalling the cluster.
     let skip_warmup_slots = true;
     let mut config = ClusterConfig {
         node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],

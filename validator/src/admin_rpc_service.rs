@@ -18,7 +18,6 @@ use {
             BankingControlMsg, BankingStage,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        consensus::{Tower, tower_storage::TowerStorage},
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
@@ -58,7 +57,6 @@ pub struct AdminRpcRequestMetadata {
     pub validator_exit: Arc<RwLock<Exit>>,
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
-    pub tower_storage: Arc<dyn TowerStorage>,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
@@ -100,7 +98,6 @@ pub struct AdminRpcContactInfo {
     pub tpu: SocketAddr,
     pub tpu_quic: Option<SocketAddr>,
     pub tpu_forwards: SocketAddr,
-    pub tpu_vote: SocketAddr,
     pub rpc: SocketAddr,
     pub rpc_pubsub: SocketAddr,
     pub serve_repair: SocketAddr,
@@ -143,7 +140,6 @@ impl From<ContactInfo> for AdminRpcContactInfo {
             tpu: unwrap_socket!(tpu, Protocol::UDP),
             tpu_quic: node.tpu(Protocol::QUIC),
             tpu_forwards: unwrap_socket!(tpu_forwards, Protocol::UDP),
-            tpu_vote: unwrap_socket!(tpu_vote, Protocol::UDP),
             rpc: unwrap_socket!(rpc),
             rpc_pubsub: unwrap_socket!(rpc_pubsub),
             serve_repair: unwrap_socket!(serve_repair, Protocol::UDP),
@@ -162,7 +158,6 @@ impl Display for AdminRpcContactInfo {
             writeln!(f, "TPU QUIC: {tpu_quic}")?;
         }
         writeln!(f, "TPU Forwards: {}", self.tpu_forwards)?;
-        writeln!(f, "TPU Votes: {}", self.tpu_vote)?;
         writeln!(f, "RPC: {}", self.rpc)?;
         writeln!(f, "RPC Pubsub: {}", self.rpc_pubsub)?;
         writeln!(f, "Serve Repair: {}", self.serve_repair)?;
@@ -238,7 +233,6 @@ pub trait AdminRpc {
         &self,
         meta: Self::Metadata,
         keypair_file: String,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()>;
 
@@ -247,7 +241,6 @@ pub trait AdminRpc {
         &self,
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()>;
 
@@ -583,7 +576,6 @@ impl AdminRpc for AdminRpcImpl {
         &self,
         meta: Self::Metadata,
         keypair_file: String,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity request received");
@@ -594,19 +586,13 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(
-            meta,
-            identity_keypair,
-            require_tower,
-            require_vote_history,
-        )
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_vote_history)
     }
 
     fn set_identity_from_bytes(
         &self,
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
@@ -617,12 +603,7 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(
-            meta,
-            identity_keypair,
-            require_tower,
-            require_vote_history,
-        )
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_vote_history)
     }
 
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()> {
@@ -706,7 +687,7 @@ impl AdminRpc for AdminRpcImpl {
         meta.with_post_init(|post_init| {
             repair_service::RepairService::request_repair_for_shred_from_peer(
                 post_init.cluster_info.clone(),
-                post_init.cluster_slots.clone(),
+                post_init.bank_forks.clone(),
                 pubkey,
                 slot,
                 shred_index,
@@ -945,7 +926,6 @@ impl AdminRpcImpl {
     fn set_identity_keypair(
         meta: AdminRpcRequestMetadata,
         identity_keypair: Keypair,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         meta.with_post_init(|post_init| {
@@ -966,17 +946,6 @@ impl AdminRpcImpl {
                          {new_identity} is not supported"
                     )));
                 }
-            }
-
-            if require_tower {
-                let _ = Tower::restore(meta.tower_storage.as_ref(), &identity_keypair.pubkey())
-                    .map_err(|err| {
-                        jsonrpc_core::error::Error::invalid_params(format!(
-                            "Unable to load tower file for identity {}: {}",
-                            identity_keypair.pubkey(),
-                            err
-                        ))
-                    })?;
             }
 
             if require_vote_history {
@@ -1193,7 +1162,6 @@ mod tests {
         },
         solana_core::{
             admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-            consensus::tower_storage::NullTowerStorage,
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -1276,7 +1244,6 @@ mod tests {
                 validator_exit,
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: Arc::new(RwLock::new(vec![vote_keypair])),
-                tower_storage: Arc::new(NullTowerStorage {}),
                 vote_history_storage: Arc::new(
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
@@ -1290,9 +1257,6 @@ mod tests {
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),
-                    cluster_slots: Arc::new(
-                        solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default_for_tests(),
-                    ),
                     node: None,
                     banking_control_sender: mpsc::channel(1).0,
                     snapshot_controller,
@@ -1338,7 +1302,7 @@ mod tests {
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
         let set_id_request = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false, false]}}"#,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false]}}"#,
         );
         let response = io.handle_request_sync(&set_id_request, meta.clone());
         let actual_parsed_response: Value =
@@ -1397,7 +1361,6 @@ mod tests {
             AdminRpcImpl::set_identity_keypair(
                 rpc.meta.clone(),
                 validators[1].node_keypair.insecure_clone(),
-                false,
                 false,
             ),
             Err(jsonrpc_core::Error {
@@ -1493,7 +1456,6 @@ mod tests {
                 validator_exit: validator_config.validator_exit.clone(),
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: authorized_voter_keypairs.clone(),
-                tower_storage: Arc::new(NullTowerStorage {}),
                 vote_history_storage: Arc::new(
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
@@ -1534,7 +1496,6 @@ mod tests {
                 HashSet::from_iter(vec![
                     KeyUpdaterType::Tpu,
                     KeyUpdaterType::TpuForwards,
-                    KeyUpdaterType::TpuVote,
                     KeyUpdaterType::Forward,
                     KeyUpdaterType::RpcService,
                     KeyUpdaterType::Votor,
@@ -1581,7 +1542,6 @@ mod tests {
             validator_exit,
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
-            tower_storage: Arc::new(NullTowerStorage {}),
             vote_history_storage: Arc::new(
                 agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
             ),
@@ -1602,7 +1562,7 @@ mod tests {
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
         let set_id_request = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false, false]}}"#,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false]}}"#,
         );
         let response = test_validator.handle_request(&set_id_request);
         let actual_parsed_response: Value =
@@ -1677,7 +1637,6 @@ mod tests {
             validator_exit,
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs,
-            tower_storage: Arc::new(NullTowerStorage {}),
             vote_history_storage: Arc::new(
                 agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
             ),
