@@ -100,6 +100,71 @@ pub enum TransactionConfirmationStatus {
     Finalized,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UiBlockMarker {
+    BlockFooter(UiBlockFooter),
+    BlockHeader(UiBlockHeader),
+    UpdateParent(UiUpdateParent),
+    GenesisCertificate(UiGenesisCertificate),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiFinalCert {
+    pub slot: u64,
+    pub final_validators: usize,
+    pub notar_validators: usize,
+    pub block_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiSkipRewards {
+    pub slot: u64,
+    pub validators: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiNotarRewards {
+    pub slot: u64,
+    pub validators: usize,
+    pub block_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiBlockFooter {
+    pub bank_hash: String,
+    pub block_producer_time_nanos: u64,
+    pub block_user_agent: String,
+    pub final_cert: Option<UiFinalCert>,
+    pub skip_reward: Option<UiSkipRewards>,
+    pub notar_reward: Option<UiNotarRewards>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiBlockHeader {
+    pub parent_slot: u64,
+    pub parent_block_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiUpdateParent {
+    pub new_parent_slot: u64,
+    pub new_parent_block_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiGenesisCertificate {
+    pub slot: u64,
+    pub block_id: String,
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UiConfirmedBlock {
@@ -114,6 +179,8 @@ pub struct UiConfirmedBlock {
     pub rewards: Option<Rewards>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub num_reward_partitions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_markers: Option<Vec<UiBlockMarker>>,
     pub block_time: Option<i64>,
     pub block_height: Option<u64>,
 }
@@ -883,6 +950,109 @@ mod test {
         serde_json::{from_value, json, to_value},
         test_case::test_case,
     };
+
+    #[test]
+    fn test_ui_block_marker_serialization() {
+        let markers = vec![
+            UiBlockMarker::BlockFooter(UiBlockFooter {
+                bank_hash: "bank hash".to_string(),
+                block_producer_time_nanos: 42,
+                block_user_agent: "agave".to_string(),
+                final_cert: Some(UiFinalCert {
+                    slot: 1,
+                    final_validators: 2,
+                    notar_validators: 3,
+                    block_id: "final block".to_string(),
+                }),
+                skip_reward: Some(UiSkipRewards {
+                    slot: 4,
+                    validators: 5,
+                }),
+                notar_reward: Some(UiNotarRewards {
+                    slot: 6,
+                    validators: 7,
+                    block_id: "notar block".to_string(),
+                }),
+            }),
+            UiBlockMarker::BlockHeader(UiBlockHeader {
+                parent_slot: 8,
+                parent_block_id: "parent block".to_string(),
+            }),
+            UiBlockMarker::UpdateParent(UiUpdateParent {
+                new_parent_slot: 9,
+                new_parent_block_id: "new parent block".to_string(),
+            }),
+            UiBlockMarker::GenesisCertificate(UiGenesisCertificate {
+                slot: 10,
+                block_id: "genesis block".to_string(),
+            }),
+        ];
+
+        assert_eq!(
+            to_value(&markers).unwrap(),
+            json!([
+                {
+                    "blockFooter": {
+                        "bankHash": "bank hash",
+                        "blockProducerTimeNanos": 42,
+                        "blockUserAgent": "agave",
+                        "finalCert": {
+                            "slot": 1,
+                            "finalValidators": 2,
+                            "notarValidators": 3,
+                            "blockId": "final block",
+                        },
+                        "skipReward": { "slot": 4, "validators": 5 },
+                        "notarReward": {
+                            "slot": 6,
+                            "validators": 7,
+                            "blockId": "notar block",
+                        },
+                    },
+                },
+                {
+                    "blockHeader": {
+                        "parentSlot": 8,
+                        "parentBlockId": "parent block",
+                    },
+                },
+                {
+                    "updateParent": {
+                        "newParentSlot": 9,
+                        "newParentBlockId": "new parent block",
+                    },
+                },
+                {
+                    "genesisCertificate": {
+                        "slot": 10,
+                        "blockId": "genesis block",
+                    },
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn test_ui_confirmed_block_omits_unrequested_block_markers() {
+        let mut block = UiConfirmedBlock {
+            previous_blockhash: String::new(),
+            blockhash: String::new(),
+            parent_slot: 0,
+            transactions: None,
+            signatures: None,
+            rewards: None,
+            num_reward_partitions: None,
+            block_markers: None,
+            block_time: None,
+            block_height: None,
+        };
+
+        let serialized = to_value(&block).unwrap();
+        assert!(serialized.get("blockMarkers").is_none());
+
+        block.block_markers = Some(Vec::new());
+        assert_eq!(to_value(block).unwrap()["blockMarkers"], json!([]));
+    }
 
     #[test]
     fn test_decode_invalid_transaction() {

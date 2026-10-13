@@ -270,6 +270,7 @@ pub struct RpcBlockConfig {
     pub encoding: Option<UiTransactionEncoding>,
     pub transaction_details: Option<TransactionDetails>,
     pub rewards: Option<bool>,
+    pub show_block_markers: Option<bool>,
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
     pub max_supported_transaction_version: Option<u8>,

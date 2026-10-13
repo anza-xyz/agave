@@ -2303,6 +2303,7 @@ impl RpcClient {
     ///     encoding: Some(UiTransactionEncoding::Base58),
     ///     transaction_details: Some(TransactionDetails::None),
     ///     rewards: Some(true),
+    ///     show_block_markers: None,
     ///     commitment: None,
     ///     max_supported_transaction_version: Some(0),
     /// };

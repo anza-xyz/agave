@@ -4245,7 +4245,6 @@ impl Blockstore {
         Err(BlockstoreError::SlotNotRooted)
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
     pub fn get_complete_block_with_components(
         &self,
         slot: Slot,
