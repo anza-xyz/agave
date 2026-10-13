@@ -4476,7 +4476,7 @@ mod tests {
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
         solana_message::{MessageHeader, compiled_instruction::CompiledInstruction},
-        solana_rpc_client_api::client_error::ErrorKind,
+        solana_rpc_client_api::{client_error::ErrorKind, request::RpcError},
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,
@@ -4801,6 +4801,16 @@ mod tests {
             .unwrap();
         assert_eq!(unavailable.context.slot, 42);
         assert!(unavailable.value.is_none());
+
+        let error = rpc_client
+            .get_vat_active_set_rank_map(300, RpcVatActiveSetRankMapConfig::default())
+            .unwrap_err();
+        assert_eq!(error.request(), Some(&RpcRequest::GetVatActiveSetRankMap));
+        assert_matches!(
+            error.kind(),
+            ErrorKind::RpcError(RpcError::RpcResponseError { code, message, .. })
+                if *code == -32602 && message == "unexpected slot"
+        );
         server.close();
     }
 
