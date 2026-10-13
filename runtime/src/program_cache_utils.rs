@@ -33,7 +33,10 @@ fn get_entry_env(entry: &ProgramCacheEntry) -> &ProgramRuntimeEnvironment {
         .expect("entry carries an environment")
 }
 
-fn find_all_cached_entries(bank: &Bank, program_id: &Pubkey) -> Vec<Arc<ProgramCacheEntry>> {
+fn find_all_cached_entries_for_key(
+    bank: &Bank,
+    program_id: &Pubkey,
+) -> Vec<Arc<ProgramCacheEntry>> {
     let processor = bank.get_transaction_processor();
     let cache = processor.global_program_cache.read().unwrap();
     cache
@@ -44,7 +47,7 @@ fn find_all_cached_entries(bank: &Bank, program_id: &Pubkey) -> Vec<Arc<ProgramC
 }
 
 pub fn assert_cache_contents(bank: &Bank, program_id: &Pubkey, expected_entries: &[ExpectedEntry]) {
-    let entries = find_all_cached_entries(bank, program_id);
+    let entries = find_all_cached_entries_for_key(bank, program_id);
 
     let len = entries.len();
     let expected_len = expected_entries.len();
