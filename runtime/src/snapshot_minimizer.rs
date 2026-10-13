@@ -337,6 +337,11 @@ impl<'a> SnapshotMinimizer<'a> {
             self.accounts_db()
                 .store_accounts_for_shrink(&storable_accounts, new_storage);
 
+            // The shrunken storage replaces the old one and must outlive the minimizer.
+            // By default, storage files are deleted when their owning AccountStorageEntry
+            // is dropped, so we must disable that.
+            // And it must be done *before* calling flush().
+            new_storage.disable_remove_on_drop();
             new_storage.flush().unwrap();
         }
 
@@ -365,9 +370,12 @@ impl<'a> SnapshotMinimizer<'a> {
 mod tests {
     use {
         crate::{
-            bank::Bank, genesis_utils::create_genesis_config_with_leader,
-            runtime_config::RuntimeConfig, snapshot_bank_utils,
-            snapshot_minimizer::SnapshotMinimizer, snapshot_utils,
+            bank::{Bank, BankTestConfig},
+            genesis_utils::create_genesis_config_with_leader,
+            runtime_config::RuntimeConfig,
+            snapshot_bank_utils,
+            snapshot_minimizer::SnapshotMinimizer,
+            snapshot_utils,
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         agave_votor_messages::consensus_message::BlockId,
@@ -375,7 +383,10 @@ mod tests {
         solana_account::{
             AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
         },
-        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+        solana_accounts_db::{
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+            accounts_file::AccountsFileProvider,
+        },
         solana_genesis_config::create_genesis_config,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -592,6 +603,62 @@ mod tests {
             account_count,
             minimizer.minimized_account_set.len() + num_accounts_per_slot
         ); // snapshot slot is untouched, so still has all 300 accounts
+    }
+
+    #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
+    fn test_minimize_accounts_db_storage_formats(accounts_file_provider: AccountsFileProvider) {
+        agave_logger::setup();
+
+        let (genesis_config, _) = create_genesis_config(1_000_000);
+        let accounts_db_config = AccountsDbConfig {
+            accounts_file_provider,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let bank = Arc::new(Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Some(BankTestConfig {
+                accounts_db_config: accounts_db_config.clone(),
+            }),
+            vec![],
+            None,
+        ));
+        let accounts = &bank.accounts().accounts_db;
+
+        let num_slots = 5;
+        let num_accounts_per_slot = 300;
+
+        let mut current_slot = 0;
+        let minimized_account_set = DashSet::new();
+        for _ in 0..num_slots {
+            let pubkeys: Vec<_> = (0..num_accounts_per_slot)
+                .map(|_| solana_pubkey::new_rand())
+                .collect();
+
+            let some_lamport = 223;
+            let no_data = 0;
+            let owner = *AccountSharedData::default().owner();
+            let account = AccountSharedData::new(some_lamport, no_data, &owner);
+
+            current_slot += 1;
+
+            for (index, pubkey) in pubkeys.iter().enumerate() {
+                accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
+
+                if current_slot % 2 == 0 && index % 100 == 0 {
+                    minimized_account_set.insert(*pubkey);
+                }
+            }
+            accounts.add_root_and_flush_write_cache(current_slot);
+        }
+
+        assert_eq!(minimized_account_set.len(), 6);
+        let minimizer = SnapshotMinimizer {
+            bank: &bank,
+            starting_slot: current_slot,
+            minimized_account_set,
+        };
+        minimizer.minimize_accounts_db();
     }
 
     /// Purging an account from a filtered storage must remove its slot list entry when the
