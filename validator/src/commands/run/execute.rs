@@ -5,7 +5,10 @@ use {
         admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
         bootstrap,
         cli::{self},
-        commands::{FromClapArgMatches, run::args::RunArgs},
+        commands::{
+            FromClapArgMatches,
+            run::{args::RunArgs, storage},
+        },
         ledger_lockfile, lock_ledger,
     },
     agave_snapshots::{
@@ -30,10 +33,7 @@ use {
             MINIMAL_THRESHOLD_NUM_BYTES, ScanFilter,
         },
         partitioned_rewards::PartitionedEpochRewardsConfig,
-        utils::{
-            create_all_accounts_run_dirs, create_and_canonicalize_directories,
-            create_and_canonicalize_directory,
-        },
+        utils::create_and_canonicalize_directory,
     },
     solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
@@ -67,7 +67,7 @@ use {
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
+    solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
@@ -78,7 +78,7 @@ use {
     std::{
         collections::HashSet,
         env,
-        fs::{self, File},
+        fs::File,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
@@ -714,17 +714,10 @@ pub fn execute(
         } else {
             vec![ledger_path.join("accounts")]
         };
-    let account_paths = create_and_canonicalize_directories(account_paths)
-        .map_err(|err| format!("unable to access account path: {err}"))?;
-
-    // From now on, use run/ paths in the same way as the previous account_paths.
-    let account_run_paths = create_all_accounts_run_dirs(&account_paths)
-        .map_err(|err| format!("unable to create account directories: {err}"))?;
 
     let snapshot_config = new_snapshot_config(
         matches,
         &ledger_path,
-        &account_paths,
         run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
     )?;
 
@@ -809,7 +802,7 @@ pub fn execute(
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
-        account_paths: account_run_paths,
+        account_paths,
         accounts_db_config,
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
@@ -870,6 +863,12 @@ pub fn execute(
             i8
         ),
     };
+
+    storage::prepare(
+        &mut validator_config.account_paths,
+        &mut validator_config.snapshot_config,
+    )?;
+
     validator_config
         .block_production_method
         .warn_if_deprecated_value();
@@ -993,15 +992,6 @@ pub fn execute(
             set_socket!(set_rpc_pubsub, (addr, rpc_pubsub_addr.port()), "RPC-pubsub");
         }
     }
-
-    snapshot_utils::remove_tmp_snapshot_archives(
-        &validator_config.snapshot_config.full_snapshot_archives_dir,
-    );
-    snapshot_utils::remove_tmp_snapshot_archives(
-        &validator_config
-            .snapshot_config
-            .incremental_snapshot_archives_dir,
-    );
 
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
@@ -1177,7 +1167,6 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
 fn new_snapshot_config(
     matches: &ArgMatches,
     ledger_path: &Path,
-    account_paths: &[PathBuf],
     incremental_snapshot_fetch: bool,
 ) -> Result<SnapshotConfig, Box<dyn std::error::Error>> {
     let (full_snapshot_archive_interval, incremental_snapshot_archive_interval) =
@@ -1247,52 +1236,15 @@ fn new_snapshot_config(
         .value_of("snapshots")
         .map(Path::new)
         .unwrap_or(ledger_path);
-    let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).map_err(|err| {
-        format!(
-            "failed to create snapshots directory '{}': {err}",
-            snapshots_dir.display(),
-        )
-    })?;
-    if account_paths
-        .iter()
-        .any(|account_path| account_path == &snapshots_dir)
-    {
-        Err(
-            "the --accounts and --snapshots paths must be unique since they both create \
-             'snapshots' subdirectories, otherwise there may be collisions"
-                .to_string(),
-        )?;
-    }
-
     let bank_snapshots_dir = snapshots_dir.join(BANK_SNAPSHOTS_DIR);
-    fs::create_dir_all(&bank_snapshots_dir).map_err(|err| {
-        format!(
-            "failed to create bank snapshots directory '{}': {err}",
-            bank_snapshots_dir.display(),
-        )
-    })?;
-
     let full_snapshot_archives_dir = matches
         .value_of("full_snapshot_archive_path")
         .map(PathBuf::from)
-        .unwrap_or_else(|| snapshots_dir.clone());
-    fs::create_dir_all(&full_snapshot_archives_dir).map_err(|err| {
-        format!(
-            "failed to create full snapshot archives directory '{}': {err}",
-            full_snapshot_archives_dir.display(),
-        )
-    })?;
-
+        .unwrap_or_else(|| snapshots_dir.to_path_buf());
     let incremental_snapshot_archives_dir = matches
         .value_of("incremental_snapshot_archive_path")
         .map(PathBuf::from)
-        .unwrap_or_else(|| snapshots_dir.clone());
-    fs::create_dir_all(&incremental_snapshot_archives_dir).map_err(|err| {
-        format!(
-            "failed to create incremental snapshot archives directory '{}': {err}",
-            incremental_snapshot_archives_dir.display(),
-        )
-    })?;
+        .unwrap_or_else(|| snapshots_dir.to_path_buf());
 
     let archive_format = {
         let archive_format_str = value_t_or_exit!(matches, "snapshot_archive_format", String);
