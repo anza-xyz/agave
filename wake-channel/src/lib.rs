@@ -236,32 +236,51 @@ pub struct SingleChannelEvent;
 pub struct MultiChannelEvent;
 
 /// Receiver for a channel with its own wake event, created by [`bounded`].
-pub type Receiver<T> = ReceiverImpl<T, SingleChannelEvent>;
+pub type Receiver<T> = common::Receiver<T, SingleChannelEvent>;
 
 /// Receiver for a channel sharing a wake event, created by [`bounded_with_wake_event`].
-pub type SharedEventReceiver<T> = ReceiverImpl<T, MultiChannelEvent>;
+pub type SharedEventReceiver<T> = common::Receiver<T, MultiChannelEvent>;
 
-pub struct ReceiverImpl<T, Mode> {
-    inner: crossbeam_channel::Receiver<T>,
-    shared: Arc<Shared>,
-    _mode: PhantomData<Mode>,
-}
+/// Receiver implementation shared by standalone and shared-event channels.
+pub mod common {
+    use {
+        super::Shared,
+        crossbeam_channel::TryRecvError,
+        std::{marker::PhantomData, sync::Arc},
+    };
 
-impl<T, Mode> ReceiverImpl<T, Mode> {
-    pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        self.inner.try_recv()
+    pub struct Receiver<T, Mode> {
+        pub(super) inner: crossbeam_channel::Receiver<T>,
+        pub(super) shared: Arc<Shared>,
+        pub(super) _mode: PhantomData<Mode>,
     }
 
-    pub fn len(&self) -> usize {
-        self.inner.len()
+    impl<T, Mode> Receiver<T, Mode> {
+        pub fn try_recv(&self) -> Result<T, TryRecvError> {
+            self.inner.try_recv()
+        }
+
+        pub fn len(&self) -> usize {
+            self.inner.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.inner.is_empty()
+        }
+
+        pub fn capacity(&self) -> Option<usize> {
+            self.inner.capacity()
+        }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    pub fn capacity(&self) -> Option<usize> {
-        self.inner.capacity()
+    impl<T, Mode> Clone for Receiver<T, Mode> {
+        fn clone(&self) -> Self {
+            Self {
+                inner: self.inner.clone(),
+                shared: Arc::clone(&self.shared),
+                _mode: PhantomData,
+            }
+        }
     }
 }
 
@@ -276,16 +295,6 @@ impl<T> SharedEventReceiver<T> {
     /// Returns the event shared by this channel and its peers.
     pub fn wake_event(&self) -> &Arc<WakeEvent> {
         &self.shared.wake_event
-    }
-}
-
-impl<T, Mode> Clone for ReceiverImpl<T, Mode> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            shared: Arc::clone(&self.shared),
-            _mode: PhantomData,
-        }
     }
 }
 
@@ -313,7 +322,7 @@ pub fn bounded_with_wake_event<T>(
 fn bounded_inner<T, Mode>(
     capacity: usize,
     event: Arc<WakeEvent>,
-) -> (Sender<T>, ReceiverImpl<T, Mode>) {
+) -> (Sender<T>, common::Receiver<T, Mode>) {
     assert_ne!(capacity, 0, "channel capacity must be nonzero");
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
     let shared = Arc::new(Shared {
@@ -325,7 +334,7 @@ fn bounded_inner<T, Mode>(
             inner: sender,
             shared: Arc::clone(&shared),
         },
-        ReceiverImpl {
+        common::Receiver {
             inner: receiver,
             shared,
             _mode: PhantomData,
