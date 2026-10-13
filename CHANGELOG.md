@@ -70,6 +70,8 @@ Release channels have their own copy of this changelog:
   panicking.
 * Banking trace has been removed. The validator no longer writes the `banking_trace` directory in
   the ledger, and an existing one can be deleted.
+* Scheduler bindings are always enabled, allowing external schedulers to connect
+  without `--enable-scheduler-bindings`. The flag is deprecated and has no effect.
 
 #### Deprecations
 

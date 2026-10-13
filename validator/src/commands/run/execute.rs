@@ -591,7 +591,6 @@ pub fn execute(
             ),
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
-        enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: [(
             SnapshotPackagerService::NAME.to_string(),

@@ -800,12 +800,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("enable_scheduler_bindings")
-            .long("enable-scheduler-bindings")
-            .takes_value(false)
-            .help("Enables external processes to connect and manage block production"),
-    )
-    .arg(
         Arg::with_name("unified_scheduler_handler_threads")
             .long("unified-scheduler-handler-threads")
             .value_name("COUNT")

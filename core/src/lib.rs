@@ -29,7 +29,6 @@ pub mod replay_stage;
 pub mod resource_limits;
 mod result;
 pub mod sample_performance_service;
-#[cfg(unix)]
 mod scheduler_bindings_server;
 mod shred_fetch_stage;
 pub mod sigverify;

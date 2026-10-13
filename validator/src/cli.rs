@@ -199,6 +199,11 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "accounts-index-limit",
     );
     add_arg!(
+        // deprecated in v4.5.0
+        scheduler_bindings_arg(),
+        usage_warning: "Scheduler bindings are always enabled. Remove this flag.",
+    );
+    add_arg!(
         // deprecated in v4.2.0
         Arg::with_name("experimental_poh_pinned_cpu_core")
             .long("experimental-poh-pinned-cpu-core")
@@ -261,6 +266,13 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         usage_warning: "TowerBFT-only argument.",
     );
     res
+}
+
+fn scheduler_bindings_arg() -> Arg<'static, 'static> {
+    Arg::with_name("enable_scheduler_bindings")
+        .long("enable-scheduler-bindings")
+        .takes_value(false)
+        .help("No-op; scheduler bindings are always enabled.")
 }
 
 // Helper to add arguments that are no longer used but are being kept around to avoid breaking
@@ -898,12 +910,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .multiple(true)
                 .help("Specify the configuration file for the Geyser plugin."),
         )
-        .arg(
-            Arg::with_name("enable_scheduler_bindings")
-                .long("enable-scheduler-bindings")
-                .takes_value(false)
-                .help("Enables external processes to connect and manage block production"),
-        )
+        .arg(scheduler_bindings_arg().hidden(hidden_unless_forced()))
         .arg(
             Arg::with_name("alpenglow")
                 .long("alpenglow")

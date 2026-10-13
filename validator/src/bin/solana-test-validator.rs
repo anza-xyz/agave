@@ -133,6 +133,7 @@ fn main() {
         None
     };
     agave_logger::initialize_logging(logfile);
+    cli::warn_for_deprecated_arguments(&matches);
     // NB: Align with agave to exit if any thread panics.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -434,7 +435,6 @@ fn main() {
     genesis.log_messages_bytes_limit = value_t!(matches, "log_messages_bytes_limit", usize).ok();
     genesis.transaction_account_lock_limit =
         value_t!(matches, "transaction_account_lock_limit", usize).ok();
-    genesis.enable_scheduler_bindings = matches.is_present("enable_scheduler_bindings");
 
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
     let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(ledger_path.clone()));
