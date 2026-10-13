@@ -24,6 +24,8 @@ pub mod loader_utils;
 pub mod non_circulating_supply;
 pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod program_cache_utils;
 mod read_optimized_dashmap;
 pub mod rent_collector;
 mod reward_info;
