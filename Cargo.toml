@@ -222,7 +222,7 @@ agave-precompiles = { path = "precompiles", version = "=4.5.0-alpha.2", features
 agave-random = { path = "random", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-scheduler-bindings = "6.0.0"
-agave-scheduler-handshake = "7.0.0"
+agave-scheduler-handshake = "8.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-transaction-view = "7.0.0"
@@ -364,7 +364,7 @@ serde_bytes = "0.11.19"
 serde_json = "1.0.151"
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
-shaq = { version = "4.4.0" }
+shaq = { version = "5.0.0" }
 shuttle = "0.9.3"
 signal-hook = "0.4.4"
 slab = "0.4.12"
