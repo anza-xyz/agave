@@ -2486,7 +2486,7 @@ mod tests {
     }
 
     #[test]
-    fn test_replenish_program_cache_records_rooted_access_slot() {
+    fn test_program_loads_record_rooted_access_slot() {
         const ROOT_SLOT: Slot = 100;
         const BANK_SLOT: Slot = 200;
         const DEPLOYMENT_SLOT: Slot = 50;
@@ -2513,24 +2513,26 @@ mod tests {
             .unwrap()
             .latest_root_slot = ROOT_SLOT;
 
-        let program_id = Pubkey::new_unique();
-        let programdata_id = Pubkey::new_unique();
         let callbacks = MockBankCallback::default();
-        callbacks
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(program_id, loader_v3_program_account(programdata_id));
-        // Invalid ELF bytes, so the load produces a failed-verification tombstone.
-        callbacks.account_shared_data.write().unwrap().insert(
-            programdata_id,
-            loader_v3_programdata_account(DEPLOYMENT_SLOT, &[1, 2, 3, 4]),
-        );
+        let program_ids = [Pubkey::new_unique(), Pubkey::new_unique()];
+        for program_id in program_ids {
+            let programdata_id = Pubkey::new_unique();
+            callbacks
+                .account_shared_data
+                .write()
+                .unwrap()
+                .insert(program_id, loader_v3_program_account(programdata_id));
+            // Invalid ELF bytes, so the load produces a failed-verification tombstone.
+            callbacks.account_shared_data.write().unwrap().insert(
+                programdata_id,
+                loader_v3_programdata_account(DEPLOYMENT_SLOT, &[1, 2, 3, 4]),
+            );
+        }
 
         let account_loader = AccountLoader::from(&callbacks);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(BANK_SLOT);
         let missing_programs = vec![ProgramToLoad {
-            program_id: &program_id,
+            program_id: &program_ids[0],
             loader: ProgramCacheEntryOwner::LoaderV3,
             deployment_slot: DEPLOYMENT_SLOT,
         }];
@@ -2543,71 +2545,21 @@ mod tests {
             false,
             true,
         );
-
-        let global_program_cache = processor.global_program_cache.read().unwrap();
-        let entry = global_program_cache
-            .get_slot_versions_for_tests(&program_id)
-            .first()
-            .unwrap();
-        assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), ROOT_SLOT);
-    }
-
-    #[test]
-    fn test_prepare_one_program_for_upcoming_feature_set_records_rooted_access_slot() {
-        const ROOT_SLOT: Slot = 100;
-        const BANK_SLOT: Slot = 200;
-        const DEPLOYMENT_SLOT: Slot = 50;
-
-        struct SingleChainForkGraph;
-        impl ForkGraph for SingleChainForkGraph {
-            fn relationship(&self, a: Slot, b: Slot) -> BlockRelation {
-                if a == b {
-                    BlockRelation::Equal
-                } else if a < b {
-                    BlockRelation::Ancestor
-                } else {
-                    BlockRelation::Descendant
-                }
-            }
-        }
-
-        let fork_graph = Arc::new(RwLock::new(SingleChainForkGraph));
-        let processor =
-            TransactionBatchProcessor::new(BANK_SLOT, 0, Arc::downgrade(&fork_graph), None);
-        processor
-            .global_program_cache
-            .write()
-            .unwrap()
-            .latest_root_slot = ROOT_SLOT;
-
-        let program_id = Pubkey::new_unique();
-        let programdata_id = Pubkey::new_unique();
-        let callbacks = MockBankCallback::default();
-        callbacks
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(program_id, loader_v3_program_account(programdata_id));
-        // Invalid ELF bytes, so the load produces a failed-verification tombstone.
-        callbacks.account_shared_data.write().unwrap().insert(
-            programdata_id,
-            loader_v3_programdata_account(DEPLOYMENT_SLOT, &[1, 2, 3, 4]),
-        );
-
-        let account_loader = AccountLoader::from(&callbacks);
         processor.prepare_one_program_for_upcoming_feature_set(
             &account_loader,
             &processor.program_runtime_environment_for_epoch(0),
-            &program_id,
+            &program_ids[1],
             &ProgramStatistics::default(),
         );
 
         let global_program_cache = processor.global_program_cache.read().unwrap();
-        let entry = global_program_cache
-            .get_slot_versions_for_tests(&program_id)
-            .first()
-            .unwrap();
-        assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), ROOT_SLOT);
+        for program_id in &program_ids {
+            let entry = global_program_cache
+                .get_slot_versions_for_tests(program_id)
+                .first()
+                .unwrap();
+            assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), ROOT_SLOT);
+        }
     }
 
     #[test]
