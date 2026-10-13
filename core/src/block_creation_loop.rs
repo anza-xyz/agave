@@ -16,6 +16,7 @@ use {
     agave_bls_sigverify::rewards::RewardInput,
     agave_votor::{event::LeaderWindowInfo, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::{
+        AtomicSlot,
         consensus_message::{Block, BlockId},
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
     },
@@ -149,7 +150,7 @@ pub struct BlockCreationLoopConfig {
 
     // Receivers / notifications from banking stage / replay / votor
     pub leader_window_info_receiver: Receiver<LeaderWindowInfo>,
-    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    pub highest_parent_ready: Arc<AtomicSlot>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
@@ -169,7 +170,7 @@ struct LeaderContext {
     /// ParentReady for a future window observed while producing the current one.
     pending_parent_ready: Option<LeaderWindowInfo>,
     /// Highest ParentReady event observed by Votor, used to abandon stale windows.
-    highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    highest_parent_ready: Arc<AtomicSlot>,
     highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
     blockstore: Arc<Blockstore>,
@@ -765,7 +766,7 @@ fn record_and_complete_block(
         }
 
         // If our window is skipped return
-        if ctx.highest_parent_ready.read().unwrap().0 > bank_slot {
+        if ctx.highest_parent_ready.load(Ordering::Relaxed) > bank_slot {
             break true;
         }
 
@@ -1197,7 +1198,7 @@ fn start_leader_wait_for_parent_replay(
         slot_metrics.attempt_start_leader_count += 1;
 
         // Check if the entire window is skipped.
-        let highest_parent_ready_slot = ctx.highest_parent_ready.read().unwrap().0;
+        let highest_parent_ready_slot = ctx.highest_parent_ready.load(Ordering::Relaxed);
         if highest_parent_ready_slot > end_slot {
             trace!(
                 "{my_pubkey}: Skipping production of {slot} because highest parent ready slot is \
@@ -1704,7 +1705,7 @@ mod tests {
             my_pubkey: old_identity,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
+            highest_parent_ready: Arc::new(AtomicSlot::new(0)),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -1820,7 +1821,7 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
+            highest_parent_ready: Arc::new(AtomicSlot::new(0)),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -1935,7 +1936,7 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
+            highest_parent_ready: Arc::new(AtomicSlot::new(0)),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -2006,7 +2007,7 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((2, Block::new_unique(0)))),
+            highest_parent_ready: Arc::new(AtomicSlot::new(2)),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,
@@ -2120,13 +2121,7 @@ mod tests {
             my_pubkey,
             leader_window_info_receiver,
             pending_parent_ready: None,
-            highest_parent_ready: Arc::new(RwLock::new((
-                4,
-                Block {
-                    slot: new_parent_slot,
-                    block_id: new_parent_block_id,
-                },
-            ))),
+            highest_parent_ready: Arc::new(AtomicSlot::new(4)),
             highest_finalized: Arc::new(RwLock::new(None)),
             blockstore,
             record_receiver,

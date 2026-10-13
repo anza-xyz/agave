@@ -41,6 +41,7 @@ use {
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
     },
+    agave_votor_messages::AtomicSlot,
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
     arc_swap::ArcSwap,
@@ -1617,7 +1618,7 @@ impl Validator {
 
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let alpenglow_slot_clock = SharedAlpenglowSlotClock::default();
-        let highest_parent_ready = Arc::new(RwLock::default());
+        let highest_parent_ready = Arc::new(AtomicSlot::default());
         // This channel growing > ~1 indicates problems, so bound channel at a
         // small (but highly overprovisioned) number for performance and easier
         // debug if things go off the rails.

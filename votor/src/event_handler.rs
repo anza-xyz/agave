@@ -265,12 +265,8 @@ impl EventHandler {
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 
-        let mut highest_parent_ready = ctx.highest_parent_ready.write().unwrap();
-        let (current_slot, _) = *highest_parent_ready;
-
-        if slot > current_slot {
-            *highest_parent_ready = (slot, parent_block);
-        }
+        // Update the shared view of the slot with highest parent ready
+        ctx.highest_parent_ready.fetch_max(slot, Ordering::Relaxed);
         Ok(())
     }
 
@@ -1056,6 +1052,7 @@ mod tests {
         },
         agave_bls_sigverify::{metric_types::ConsensusMetricsEventReceiver, rewards::RewardInput},
         agave_votor_messages::{
+            AtomicSlot,
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             wire::get_vote_payload_to_sign,
         },
@@ -1098,7 +1095,7 @@ mod tests {
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
         leader_window_info_receiver: Receiver<LeaderWindowInfo>,
-        highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+        highest_parent_ready: Arc<AtomicSlot>,
         drop_bank_receiver: Receiver<Vec<BankWithScheduler>>,
         cluster_info: Arc<ClusterInfo>,
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
@@ -1224,7 +1221,7 @@ mod tests {
             leader_schedule_cache: leader_schedule_cache.clone(),
             drop_bank_sender: drop_bank_sender.clone(),
         });
-        let highest_parent_ready = Arc::new(RwLock::default());
+        let highest_parent_ready = Arc::new(AtomicSlot::default());
         let alpenglow_slot_clock = SharedAlpenglowSlotClock::default();
 
         let vote_history_storage =
@@ -1594,9 +1591,13 @@ mod tests {
             );
         }
 
-        fn check_parent_ready_slot(&self, expected: (Slot, Block)) {
-            assert_eq!(*self.highest_parent_ready.read().unwrap(), expected);
-            let slot = expected.0;
+        fn check_parent_ready_slot(&self, (slot, parent): (Slot, Block)) {
+            assert_eq!(self.highest_parent_ready.load(Ordering::Relaxed), slot);
+            assert!(
+                self.voting_context
+                    .vote_history
+                    .is_parent_ready(slot, &parent)
+            );
             self.check_timeout_set(slot);
         }
 

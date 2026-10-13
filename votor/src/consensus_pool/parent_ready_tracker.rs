@@ -38,10 +38,7 @@ pub(crate) struct ParentReadyTracker {
     slot_statuses: HashMap<Slot, ParentReadyStatus>,
     /// Root
     root: Slot,
-    /// Highest slot with parent ready status
-    // TODO: While the voting loop is sequential we track every slot (not just the first in window)
-    // However once we handle all slots concurrently we will update this to only count first leader
-    // slot in window
+    /// Highest slot with parent ready status, including intra-window slots
     highest_with_parent_ready: Slot,
 }
 
@@ -290,7 +287,9 @@ impl ParentReadyTracker {
             .is_some_and(|ss| ss.notar_fallbacks.contains(&block))
     }
 
-    fn highest_parent_ready(&self) -> Slot {
+    /// Returns the highest slot (first-in-window or intra-window) that has a
+    /// parent ready.
+    pub(crate) fn highest_parent_ready(&self) -> Slot {
         self.highest_with_parent_ready
     }
 
@@ -504,6 +503,35 @@ mod tests {
         assert_eq!(tracker.highest_parent_ready(), 65);
         assert_eq!(
             tracker.block_production_parent(8),
+            BlockProductionParent::MissedWindow
+        );
+    }
+
+    #[test]
+    fn skip_then_notar_fallback_parent_misses_window() {
+        let cluster_info = get_cluster_info(Keypair::new());
+        let genesis = Block::default();
+        let mut tracker = new_tracker(cluster_info, genesis);
+        let mut events = vec![];
+        let window_start = 2 * NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot;
+        let parent = Block::new_unique(window_start - 1);
+
+        tracker.add_new_skip(window_start, &mut events);
+        assert!(events.is_empty());
+        assert_eq!(tracker.highest_parent_ready(), 1);
+
+        // The parent of our window gets certified after our first slot was
+        // skipped: our first slot becomes parent ready, but so does the next
+        // (intra-window) slot.
+        tracker.add_new_notar_fallback_or_stronger(parent, &mut events);
+        assert!(matches!(
+            events.as_slice(),
+            [VotorEvent::ParentReady { slot, parent_block }]
+                if *slot == window_start && *parent_block == parent
+        ));
+        assert_eq!(tracker.highest_parent_ready(), window_start + 1);
+        assert_eq!(
+            tracker.block_production_parent(window_start),
             BlockProductionParent::MissedWindow
         );
     }

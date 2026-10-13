@@ -43,7 +43,7 @@ use {
         voting_service::{VotingService as BLSVotingService, votor_rate_limit_pps},
         votor::{Votor, VotorConfig},
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::AtomicSlot,
     agave_votor_transport::{PeerList, endpoint::QuicDatagramEndpoint},
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
@@ -191,7 +191,7 @@ pub struct AlpenglowInitializationState {
     pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
-    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    pub highest_parent_ready: Arc<AtomicSlot>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     pub bank_forks_controller: Arc<dyn BankForksController>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
@@ -846,7 +846,7 @@ pub mod tests {
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = bounded(1024);
         let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(1024);
-        let highest_parent_ready = Arc::new(RwLock::new((0, Block::new_unique(0))));
+        let highest_parent_ready = Arc::new(AtomicSlot::default());
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =
             bounded(1024);
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));

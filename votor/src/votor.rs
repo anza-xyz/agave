@@ -69,10 +69,7 @@ use {
         rewards::RewardInput,
         sig_verified_messages::SigVerifiedBatch,
     },
-    agave_votor_messages::{
-        certificate::Certificate,
-        consensus_message::{Block, VoteMessage},
-    },
+    agave_votor_messages::{AtomicSlot, certificate::Certificate, consensus_message::VoteMessage},
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     smallvec::SmallVec,
@@ -142,7 +139,8 @@ pub struct VotorConfig {
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
-    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    /// Highest slot (first-in-window or intra-window) with a parent ready.
+    pub highest_parent_ready: Arc<AtomicSlot>,
     pub event_sender: VotorEventSender,
     pub own_vote_sender: EvictingSender<VoteMessage>,
     pub own_reward_aggregates_sender: Sender<RewardInput>,
@@ -164,7 +162,10 @@ pub(crate) struct SharedContext {
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) alpenglow_slot_clock: SharedAlpenglowSlotClock,
     pub(crate) leader_window_info_sender: Sender<LeaderWindowInfo>,
-    pub(crate) highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    /// Shared view of the slot with highest parent ready (including
+    /// intra-window slots). This gets updated both by ParentReady events and by
+    /// the ParentReadyTracker.
+    pub(crate) highest_parent_ready: Arc<AtomicSlot>,
     pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub(crate) repair_event_sender: RepairEventSender,
     pub(crate) latest_switch_request: LatestSwitchRequest,
@@ -225,7 +226,7 @@ impl Votor {
             bank_forks,
             cluster_info: cluster_info.clone(),
             alpenglow_slot_clock,
-            highest_parent_ready,
+            highest_parent_ready: highest_parent_ready.clone(),
             leader_window_info_sender,
             vote_history_storage: vote_history_storage.clone(),
             repair_event_sender: repair_event_sender.clone(),
@@ -293,6 +294,7 @@ impl Votor {
             event_sender,
             repair_event_sender,
             highest_finalized,
+            highest_parent_ready,
             staked_status: StakedStatus::new(&root_bank, &cluster_info),
         };
 

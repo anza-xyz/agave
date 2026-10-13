@@ -16,6 +16,7 @@ use {
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
     agave_votor_messages::{
+        AtomicSlot,
         certificate::{Certificate, CertificateType},
         consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
@@ -77,7 +78,7 @@ struct TestContext {
     exit: Arc<AtomicBool>,
     sharable_banks: SharableBanks,
     cluster_info: Arc<ClusterInfo>,
-    highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    highest_parent_ready: Arc<AtomicSlot>,
     migration_status: Arc<MigrationStatus>,
     validator_keypairs: Vec<ValidatorVoteKeypairs>,
     ban_receiver: mpsc::Receiver<BanCommand>,
@@ -131,10 +132,7 @@ impl TestContext {
 
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
         let (ban_sender, ban_receiver) = stub_ban_channel_for_tests(1024);
-        let highest_parent_ready = Arc::new(RwLock::new((
-            NUM_SLOTS_FOR_VERIFY,
-            Block::new_unique(NUM_SLOTS_FOR_VERIFY.saturating_sub(1)),
-        )));
+        let highest_parent_ready = Arc::new(AtomicSlot::new(NUM_SLOTS_FOR_VERIFY));
         let migration_status = Arc::new(migration_status);
         let context = SigVerifierContext {
             migration_status: migration_status.clone(),
@@ -1456,11 +1454,8 @@ fn generated_certs_are_filtered() {
 fn votes_are_bounded_by_highest_parent_ready() {
     let ctx = TestContext::new();
     let highest_parent_ready_slot = 100;
-    *ctx.highest_parent_ready.write().unwrap() = (
-        highest_parent_ready_slot,
-        // The ParentReady target slot, rather than the parent block's slot, sets the bound.
-        Block::new_unique(7),
-    );
+    ctx.highest_parent_ready
+        .store(highest_parent_ready_slot, Ordering::Relaxed);
     let max_vote_slot = highest_parent_ready_slot + 40;
     let first_rejected_vote_slot = max_vote_slot + 1;
 
@@ -1529,7 +1524,7 @@ fn votes_are_bounded_by_root() {
     let ctx = TestContext::new();
     let root_bank = ctx.sharable_banks.root();
     let root_slot = root_bank.slot();
-    *ctx.highest_parent_ready.write().unwrap() = (Slot::MAX, Block::new_unique(Slot::MAX));
+    ctx.highest_parent_ready.store(Slot::MAX, Ordering::Relaxed);
     let max_vote_slot = root_slot + MAX_VOTE_SLOT_DISTANCE_FROM_ROOT;
 
     let messages = [max_vote_slot, max_vote_slot + 1]
@@ -1562,13 +1557,8 @@ fn votes_are_bounded_by_root() {
 fn genesis_votes_bypass_future_bound_during_migration() {
     let ctx = TestContext::new_with_config(1024, MigrationStatus::default());
     let highest_parent_ready_slot = 100;
-    *ctx.highest_parent_ready.write().unwrap() = (
-        highest_parent_ready_slot,
-        Block {
-            slot: highest_parent_ready_slot,
-            block_id: BlockId::new_unique(),
-        },
-    );
+    ctx.highest_parent_ready
+        .store(highest_parent_ready_slot, Ordering::Relaxed);
     let max_vote_slot = highest_parent_ready_slot + 40;
     let migration_slot = ctx.migration_status.record_feature_activation(200);
     let genesis_slot = migration_slot.saturating_sub(1);
@@ -1679,7 +1669,7 @@ fn votes_are_bounded_by_root_before_parent_ready() {
         bank_forks.insert(bank);
         bank_forks.set_root(500, None, None);
     }
-    *ctx.highest_parent_ready.write().unwrap() = (0, Block::new_unique(0));
+    ctx.highest_parent_ready.store(0, Ordering::Relaxed);
     let messages = [540, 541]
         .into_iter()
         .enumerate()

@@ -11,3 +11,6 @@ pub mod reward_certificate;
 pub mod unverified_vote_message;
 pub mod vote;
 pub mod wire;
+
+/// An atomic [`solana_clock::Slot`].
+pub type AtomicSlot = std::sync::atomic::AtomicU64;

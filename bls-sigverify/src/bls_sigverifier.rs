@@ -16,8 +16,8 @@ use {
         vote_pool::{VotePool, VotePoolError},
     },
     agave_votor_messages::{
+        AtomicSlot,
         certificate::CertificateType,
-        consensus_message::Block,
         migration::MigrationStatus,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
@@ -41,7 +41,7 @@ use {
         cmp,
         collections::{HashMap, HashSet, hash_map::Entry},
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder},
@@ -85,7 +85,7 @@ pub struct SigVerifierContext {
     /// Sends peer ban commands to the transport endpoint.
     pub ban_sender: BanSender,
     pub sharable_banks: SharableBanks,
-    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    pub highest_parent_ready: Arc<AtomicSlot>,
     pub cluster_info: Arc<ClusterInfo>,
     pub leader_schedule: Arc<LeaderScheduleCache>,
     pub num_threads: usize,
@@ -141,7 +141,7 @@ struct SigVerifier {
     channels: SigVerifierChannels,
     /// Container to look up root banks from.
     sharable_banks: SharableBanks,
-    highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    highest_parent_ready: Arc<AtomicSlot>,
     stats: SigVerifierStats,
     /// Set of recently verified certs to avoid duplicate work.
     verified_certs: HashSet<CertificateType>,
@@ -329,7 +329,7 @@ impl SigVerifier {
         root_bank: &Bank,
     ) -> HashMap<CertificateType, Vec<CertPayload>> {
         let root_slot = root_bank.slot();
-        let highest_parent_ready_slot = self.highest_parent_ready.read().unwrap().0;
+        let highest_parent_ready_slot = self.highest_parent_ready.load(Ordering::Relaxed);
         let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
         let migration_slot = self.migration_status.migration_slot();
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();

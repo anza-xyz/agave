@@ -44,6 +44,7 @@ use {
         voting_utils::{self, GenerateVoteTxResult},
     },
     agave_votor_messages::{
+        AtomicSlot,
         certificate::Certificate,
         consensus_message::{Block, BlockId, VoteMessage},
         migration::{GENESIS_VOTE_REFRESH, MigrationStatus},
@@ -444,7 +445,7 @@ pub struct ReplayStageConfig {
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
-    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    pub highest_parent_ready: Arc<AtomicSlot>,
     pub(crate) replay_arena: Option<Arena>,
 }
 
@@ -1644,7 +1645,7 @@ impl ReplayStage {
         leader_schedule_cache: &LeaderScheduleCache,
         optimistic_parent_sender: &Sender<LeaderWindowInfo>,
         optimistic_parent_receiver: &Receiver<LeaderWindowInfo>,
-        highest_parent_ready: &RwLock<(Slot, Block)>,
+        highest_parent_ready: &AtomicSlot,
         replay_highest_frozen: &ReplayHighestFrozen,
     ) {
         let flh_candidate_banks = {
@@ -1658,7 +1659,7 @@ impl ReplayStage {
                 })
                 .collect_vec()
         };
-        let highest_parent_ready_slot = highest_parent_ready.read().unwrap().0;
+        let highest_parent_ready_slot = highest_parent_ready.load(Ordering::Relaxed);
         for bank in flh_candidate_banks {
             Self::maybe_notify_of_optimistic_parent(
                 &bank,
