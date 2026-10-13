@@ -1684,8 +1684,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .map({
                 |thx| {
                     let assigned_arena = handler_thread_arenas.map(|arenas| {
+                        let first_handler_arena = usize::from(arenas.len() > 1);
                         #[allow(clippy::arithmetic_side_effects)]
-                        let arena_index = thx % arenas.len();
+                        let arena_index =
+                            first_handler_arena + thx % (arenas.len() - first_handler_arena);
                         arenas[arena_index]
                     });
                     thread::Builder::new()
@@ -2028,6 +2030,7 @@ mod tests {
             sync::{Arc, RwLock},
             thread::JoinHandle,
         },
+        test_case::test_case,
     };
 
     impl<S, TH> SchedulerPool<S, TH>
@@ -2155,8 +2158,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_handler_threads_use_assigned_arenas() {
+    #[test_case(1, [0, 0]; "single_arena_shared")]
+    #[test_case(2, [1, 1]; "two_arenas")]
+    #[test_case(3, [1, 2]; "three_arenas")]
+    fn test_handler_threads_use_assigned_arenas(arena_count: usize, handler_arenas: [usize; 2]) {
         const SECOND_ARENA_SHIFT: u32 = 32;
         const TASK_SEQUENCE_SHIFT: u32 = 64;
 
@@ -2196,10 +2201,10 @@ mod tests {
             }
         }
 
-        let arenas = ArenaGroup::new(2, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        let arenas = ArenaGroup::new(arena_count, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
         // Encode both arena IDs so either handler can verify its assigned arena from any task.
-        let encoded_arena_ids = u128::from(arenas[0].id().as_raw())
-            | (u128::from(arenas[1].id().as_raw()) << SECOND_ARENA_SHIFT);
+        let encoded_arena_ids = u128::from(arenas[handler_arenas[0]].id().as_raw())
+            | (u128::from(arenas[handler_arenas[1]].id().as_raw()) << SECOND_ARENA_SHIFT);
         let task_ids = [
             encoded_arena_ids,
             encoded_arena_ids | (1 << TASK_SEQUENCE_SHIFT),
