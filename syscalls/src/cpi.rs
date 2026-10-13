@@ -100,6 +100,11 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallInvokeSignedV2 
         _arg4: u64,
         _arg5: u64,
     ) -> Result<u64, Error> {
+        // Block `invoke_signed_v2` if the SIMD-0670 feature is not enabled.
+        if !invoke_context.get_feature_set().invoke_signed_v2 {
+            return Err(SyscallError::InvalidAttribute.into());
+        }
+
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let ix_c =
