@@ -4027,3 +4027,16 @@ pub mod test {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {super::*, agave_votor_messages::migration::MIGRATION_MALICIOUS_THRESHOLD};
+
+    #[test]
+    fn migration_adversarial_bound_matches_switch_threshold() {
+        // The migration's rollback safety bound, as documented in agave-votor-messages:
+        // SWITCH_FORK_THRESHOLD - (1 - GENESIS_VOTE_THRESHOLD) == MIGRATION_MALICIOUS_THRESHOLD
+        let adversarial_bound = SWITCH_FORK_THRESHOLD - (1.0 - GENESIS_VOTE_THRESHOLD.approx_f64());
+        assert!((adversarial_bound - MIGRATION_MALICIOUS_THRESHOLD).abs() < 1e-9);
+    }
+}
