@@ -496,6 +496,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            loaded_accounts_data_size,
         } = value;
         let err = match status {
             Ok(()) => None,
@@ -557,6 +558,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             return_data_none,
             compute_units_consumed,
             cost_units,
+            loaded_accounts_data_size,
         }
     }
 }
@@ -590,6 +592,7 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             return_data_none,
             compute_units_consumed,
             cost_units,
+            loaded_accounts_data_size,
         } = value;
         let status = match err {
             None => Ok(()),
@@ -667,6 +670,7 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            loaded_accounts_data_size,
         })
     }
 }

@@ -75,6 +75,8 @@ message TransactionStatusMeta {
     optional uint64 compute_units_consumed = 16;
     // Total transaction cost
     optional uint64 cost_units = 17;
+    // Loaded accounts data size measured by the runtime during execution, per SIMD-0186
+    optional uint32 loaded_accounts_data_size = 18;
 }
 
 message TransactionError {

@@ -236,6 +236,7 @@ impl TransactionStatusService {
                         return_data,
                         executed_units,
                         fee_details,
+                        loaded_account_stats,
                         ..
                     } = committed_tx;
 
@@ -262,6 +263,9 @@ impl TransactionStatusService {
                         return_data,
                         compute_units_consumed: Some(executed_units),
                         cost_units: cost,
+                        loaded_accounts_data_size: Some(
+                            loaded_account_stats.loaded_accounts_data_size,
+                        ),
                     };
 
                     if let Some(transaction_notifier) = transaction_notifier.as_ref() {
@@ -498,7 +502,7 @@ pub(crate) mod tests {
     }
 
     struct TestNotification {
-        _meta: TransactionStatusMeta,
+        meta: TransactionStatusMeta,
         transaction: VersionedTransaction,
     }
 
@@ -534,7 +538,7 @@ pub(crate) mod tests {
                     message_hash: *message_hash,
                 },
                 TestNotification {
-                    _meta: transaction_status_meta.clone(),
+                    meta: transaction_status_meta.clone(),
                     transaction: transaction.clone(),
                 },
             );
@@ -588,7 +592,10 @@ pub(crate) mod tests {
             return_data: None,
             executed_units: 0,
             fee_details: FeeDetails::default(),
-            loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            loaded_account_stats: TransactionLoadedAccountsStats {
+                loaded_accounts_data_size: 4096,
+                loaded_accounts_count: 1,
+            },
             fee_payer_post_balance: Some(0),
         });
 
@@ -677,6 +684,7 @@ pub(crate) mod tests {
             expected_transaction.signature(),
             result.transaction.signatures.first().unwrap()
         );
+        assert_eq!(result.meta.loaded_accounts_data_size, Some(4096));
     }
 
     #[test]
