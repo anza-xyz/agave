@@ -27,7 +27,7 @@ impl<T, S: Clone, R: Clone> Clone for EvictingSender<T, S, R> {
 impl<T, S, R> EvictingSender<T, S, R>
 where
     S: ChannelSend<T>,
-    R: ChannelTryRecv<T> + Send + 'static,
+    R: ChannelTryRecv<T>,
 {
     /// Create a new evicting sender with provided sender, receiver.
     #[inline]
@@ -53,7 +53,7 @@ impl<T, S, R> ChannelSend<T> for EvictingSender<T, S, R>
 where
     T: Send + 'static,
     S: ChannelSend<T>,
-    R: ChannelTryRecv<T> + Send + 'static,
+    R: ChannelTryRecv<T>,
 {
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
         let Err(e) = self.sender.try_send(msg) else {

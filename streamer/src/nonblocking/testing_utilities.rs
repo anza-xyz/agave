@@ -44,7 +44,7 @@ pub fn spawn_stake_weighted_qos_server(
     name: &'static str,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: impl ChannelSend<PacketBatch> + Clone,
+    packet_sender: impl ChannelSend<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,

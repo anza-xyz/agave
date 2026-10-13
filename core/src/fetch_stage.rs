@@ -100,8 +100,8 @@ impl FetchStage {
     pub fn new_with_sender(
         tpu_vote_sockets: Vec<UdpSocket>,
         exit: Arc<AtomicBool>,
-        sender: &(impl ChannelSend<PacketBatch> + Clone),
-        vote_sender: &(impl ChannelSend<PacketBatch> + Clone),
+        sender: &impl ChannelSend<PacketBatch>,
+        vote_sender: &impl ChannelSend<PacketBatch>,
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
@@ -169,8 +169,8 @@ impl FetchStage {
     fn new_multi_socket(
         tpu_vote_sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
-        sender: &(impl ChannelSend<PacketBatch> + Clone),
-        vote_sender: &(impl ChannelSend<PacketBatch> + Clone),
+        sender: &impl ChannelSend<PacketBatch>,
+        vote_sender: &impl ChannelSend<PacketBatch>,
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,

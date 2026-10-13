@@ -38,7 +38,7 @@ use {
     std::os::fd::AsFd,
 };
 
-pub trait ChannelSend<T>: Send + 'static {
+pub trait ChannelSend<T>: Clone + Send + 'static {
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>>;
 
     fn is_empty(&self) -> bool;
@@ -68,11 +68,14 @@ where
 
 /// The receiving-side counterpart of [`ChannelSend`], for code that needs to pop from a channel it
 /// also sends to, such as [`crate::evicting_sender::EvictingSender`].
-pub trait ChannelTryRecv<T> {
+pub trait ChannelTryRecv<T>: Clone + Send + 'static {
     fn try_recv(&self) -> std::result::Result<T, TryRecvError>;
 }
 
-impl<T> ChannelTryRecv<T> for Receiver<T> {
+impl<T> ChannelTryRecv<T> for Receiver<T>
+where
+    T: Send + 'static,
+{
     #[inline]
     fn try_recv(&self) -> std::result::Result<T, TryRecvError> {
         self.try_recv()
