@@ -656,7 +656,11 @@ mod tests {
     }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
+<<<<<<< HEAD
         let versions = bincode::deserialize(account.data()).unwrap();
+=======
+        let versions = wincode::deserialize(account.data()).unwrap();
+>>>>>>> aa24a04 (Improves performance of [de]serializing `VoteStateVersions` (#15986))
         VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
     }
 
