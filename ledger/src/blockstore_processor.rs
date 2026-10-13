@@ -17,10 +17,11 @@ use {
     agave_votor_messages::{
         certificate::Certificate, consensus_message::BlockId, migration::MigrationStatus,
     },
-    agave_worker_pool::{WorkerPool, WorkerPoolConfig},
+    agave_worker_pool::{TrySendError, WorkerPool, WorkerPoolConfig},
     bytes::Bytes,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
+    indexmap::IndexSet,
     itertools::Itertools,
     log::*,
     rayon::ThreadPool,
@@ -61,20 +62,20 @@ use {
     solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_shred_version::compute_shred_version,
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_transaction::TransactionVerificationMode,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
     std::{
         cmp,
         collections::{HashMap, HashSet},
-        mem,
+        fmt, mem,
         num::{NonZeroUsize, Saturating},
         ops::{Index, Range},
         path::PathBuf,
         result,
         sync::{
-            Arc, OnceLock, RwLock,
+            Arc, OnceLock, RwLock, Weak,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         thread,
@@ -108,6 +109,110 @@ fn transaction_hash_verify_thread_pool() -> &'static ThreadPool {
             .thread_name(|i| format!("solReplayHash{i:02}"))
             .build()
             .expect("new transaction hash verify rayon threadpool")
+    })
+}
+
+pub struct SpeculativeJitJob {
+    bank: Weak<Bank>,
+    /// Top-level instruction program IDs.
+    top_level_programs: IndexSet<Pubkey>,
+    /// Remaining read-only, non-signer account keys. These are best-effort
+    /// guesses at CPI program IDs.
+    guess_program_candidates: IndexSet<Pubkey>,
+}
+
+pub struct UnscheduledSpeculativeJitJob {
+    bank: Option<BankId>,
+    top_level_programs: IndexSet<Pubkey>,
+    guess_program_candidates: IndexSet<Pubkey>,
+}
+
+impl From<SpeculativeJitJob> for UnscheduledSpeculativeJitJob {
+    fn from(value: SpeculativeJitJob) -> Self {
+        let SpeculativeJitJob {
+            bank,
+            top_level_programs,
+            guess_program_candidates,
+        } = value;
+        let bank = bank.upgrade().map(|bank| bank.bank_id());
+        Self {
+            bank,
+            top_level_programs,
+            guess_program_candidates,
+        }
+    }
+}
+
+impl fmt::Debug for UnscheduledSpeculativeJitJob {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let UnscheduledSpeculativeJitJob {
+            bank,
+            top_level_programs,
+            guess_program_candidates,
+        } = self;
+        let mut dbg = f.debug_struct("SpeculativeJitJob");
+        if let Some(bank) = bank {
+            dbg.field("bank", &bank);
+        } else {
+            dbg.field("bank", &"<dropped>");
+        }
+        dbg.field("top_level_programs", top_level_programs)
+            .field("guess_program_candidates", guess_program_candidates)
+            .finish()
+    }
+}
+
+impl SpeculativeJitJob {
+    fn run(self) {
+        let Self {
+            bank,
+            top_level_programs,
+            guess_program_candidates,
+        } = self;
+        // The bank can be dropped before the job runs. In that case, skip the
+        // job.
+        let Some(bank) = bank.upgrade() else { return };
+        let Some(execution_guard) = bank.try_enter_transaction_execution() else {
+            return;
+        };
+        let program_loader = execution_guard.transaction_processor();
+        // Holding the execution guard blocks retirement of the bank, so stop as
+        // soon as retirement is requested.
+        let should_stop = || execution_guard.quiesce_requested();
+        // Top-level programs are the critical ones: compiling them first gives
+        // them the best chance of being ready in the global cache before
+        // execution reaches them. The remaining candidates are best-effort; the
+        // second call skips programs the first call already compiled.
+        program_loader.precompile_programs(bank.as_ref(), top_level_programs.iter(), should_stop);
+        program_loader.precompile_programs(
+            bank.as_ref(),
+            guess_program_candidates.iter(),
+            should_stop,
+        );
+    }
+}
+
+/// Number of threads compiling programs speculatively.
+const SPECULATIVE_JIT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
+
+/// Maximum number of speculative JIT jobs (one per `confirm_slot_entries()`
+/// call) waiting for a worker.
+///
+/// A job is ~1.2 ms at p90, a job that waits more than ~5m loses the race
+/// against on-demand compilation. 16 * 1.2 ms / 4 = 5ms
+const SPECULATIVE_JIT_JOB_QUEUE_CAPACITY: NonZeroUsize = NonZeroUsize::new(16).unwrap();
+
+fn speculative_jit_worker_pool() -> &'static WorkerPool<SpeculativeJitJob> {
+    // Programs are queued in first-use order, maximizing the chance that the next cold program
+    // is ready before execution reaches it.
+    static SPECULATIVE_JIT_WORKER_POOL: OnceLock<WorkerPool<SpeculativeJitJob>> = OnceLock::new();
+    SPECULATIVE_JIT_WORKER_POOL.get_or_init(|| {
+        let config = WorkerPoolConfig {
+            job_queue_capacity: SPECULATIVE_JIT_JOB_QUEUE_CAPACITY,
+            ..WorkerPoolConfig::new("solSpecJit", SPECULATIVE_JIT_NUM_WORKERS)
+        };
+        WorkerPool::spawn(config, |_worker_id| SpeculativeJitJob::run)
+            .expect("failed to spawn speculative JIT workers")
     })
 }
 
@@ -265,7 +370,7 @@ fn validate_entry_transactions(
     for transaction in transactions {
         validate_account_locks(
             transaction.account_keys(),
-            tx_account_lock_limits.for_version(transaction.version().into())?,
+            tx_account_lock_limits.for_version(transaction.version())?,
         )?;
     }
 
@@ -315,6 +420,11 @@ pub enum BlockstoreProcessorError {
 
     #[error("failed to purge transaction history for slot {0}: {1}")]
     FailedToPurgeTransactionHistory(Slot, #[source] BlockstoreError),
+
+    #[error(
+        "work queue of speculative JIT worker pool is disconnected, could not schedule job: {0:?}"
+    )]
+    SpecJitWorkQueueDisconnected(Box<UnscheduledSpeculativeJitJob>),
 }
 
 impl From<BlockComponentProcessorError> for BlockstoreProcessorError {
@@ -678,6 +788,13 @@ pub struct ConfirmationTiming {
 
     /// Number of times this slot was switched from an alternate location.
     pub num_bank_switches: u64,
+
+    /// Number of speculative JIT jobs queued for this slot.
+    pub num_speculative_jit_jobs_scheduled: u64,
+
+    /// Number of speculative JIT jobs for this slot that could not be queued, because the job
+    /// queue was full. Programs of such jobs are compiled on demand during execution.
+    pub num_speculative_jit_jobs_dropped: u64,
 }
 
 impl Default for ConfirmationTiming {
@@ -692,6 +809,8 @@ impl Default for ConfirmationTiming {
             fetch_fail_elapsed: 0,
             batch_execute: BatchExecutionTiming::default(),
             num_bank_switches: 0,
+            num_speculative_jit_jobs_scheduled: 0,
+            num_speculative_jit_jobs_dropped: 0,
         }
     }
 }
@@ -855,6 +974,16 @@ impl ReplaySlotStats {
                 (replay_elapsed, self.replay_elapsed as i64, i64),
                 ("execute_batches_us", execute_batches_us, Option<i64>),
                 ("num_bank_switches", self.num_bank_switches as i64, i64),
+                (
+                    "num_speculative_jit_jobs_scheduled",
+                    self.num_speculative_jit_jobs_scheduled as i64,
+                    i64
+                ),
+                (
+                    "num_speculative_jit_jobs_dropped",
+                    self.num_speculative_jit_jobs_dropped as i64,
+                    i64
+                ),
                 (
                     "replay_total_elapsed",
                     self.started.elapsed().as_micros() as i64,
@@ -1549,6 +1678,8 @@ fn confirm_slot_entries(
         replay_elapsed,
         poh_verify_elapsed,
         transaction_verify_elapsed,
+        num_speculative_jit_jobs_scheduled,
+        num_speculative_jit_jobs_dropped,
         ..
     } = timing;
 
@@ -1652,6 +1783,80 @@ fn confirm_slot_entries(
     };
     let mut replay_timer = Measure::start("replay_elapsed");
     let is_vote_only_bank = bank.vote_only_bank();
+
+    let mut top_level_programs = IndexSet::new();
+    let mut guess_program_candidates = IndexSet::new();
+    {
+        let builtins = bank
+            .get_transaction_processor()
+            .builtin_program_ids
+            .read()
+            .unwrap();
+        for entry in &entries {
+            if let EntryType::Transactions(transactions) = entry {
+                for tx in transactions {
+                    // Top-level instruction program IDs are known directly from the message,
+                    // so collect them for the first (critical) speculative pass.
+                    top_level_programs.extend(
+                        tx.program_instructions_iter()
+                            .filter(|(program_id, _)| !builtins.contains(program_id))
+                            .map(|(program_id, _)| *program_id),
+                    );
+                    // `tx.program_instructions_iter()` only gives top-level instruction
+                    // program IDs. We want CPI program IDs as well, and the only reliable way
+                    // to retrieve them is to retrieve all account keys. Everything that is not
+                    // a top-level program is a best-effort guess, collected for the second
+                    // (best-effort) speculative pass.
+                    //
+                    // A program passed to a transaction for CPI is not modified by it, so it
+                    // is a read-only, non-signer account. Skip signers and writable accounts,
+                    // which are the vast majority of account keys, to avoid loading them in
+                    // the best-effort pass. A program passed as writable or as a signer is
+                    // just not compiled speculatively, and gets compiled on demand.
+                    guess_program_candidates.extend(
+                        tx.account_keys()
+                            .iter()
+                            .enumerate()
+                            .filter(|(index, key)| {
+                                !builtins.contains(key)
+                                    && !tx.is_signer(*index)
+                                    && !tx.is_writable(*index)
+                            })
+                            .map(|(_, key)| *key),
+                    );
+                }
+            }
+        }
+    }
+    // The job compiles the top-level programs first, so drop them from the guess
+    // set to avoid redundant account loads in the best-effort pass.
+    guess_program_candidates.retain(|key| !top_level_programs.contains(key));
+    if !top_level_programs.is_empty() || !guess_program_candidates.is_empty() {
+        let bank = Arc::downgrade(bank);
+        if let Err(err) = speculative_jit_worker_pool().try_send(SpeculativeJitJob {
+            bank,
+            top_level_programs,
+            guess_program_candidates,
+        }) {
+            match err {
+                TrySendError::Full(_) => {
+                    *num_speculative_jit_jobs_dropped += 1;
+                    debug!(
+                        "Failed to schedule a speculative JIT job at slot {slot}, programs are \
+                         not going to be precompiled: {err}"
+                    );
+                }
+                TrySendError::Disconnected(job) => {
+                    return Err(BlockstoreProcessorError::SpecJitWorkQueueDisconnected(
+                        Box::new(job.into()),
+                    ));
+                }
+            }
+        } else {
+            *num_speculative_jit_jobs_scheduled += 1;
+        }
+    }
+
     let replay_entries =
         entries
             .into_iter()
