@@ -2189,12 +2189,12 @@ mod tests {
         let anchor = test_context.shared_context.alpenglow_slot_clock.load();
         let block4 = Block {
             slot: 4,
-            block_id: BlockId::from(bank4.block_id().unwrap()),
+            block_id: bank4.block_id().unwrap(),
         };
         let bank5 = test_context.create_block_and_send_block_event(5, bank4);
         let block5 = Block {
             slot: 5,
-            block_id: BlockId::from(bank5.block_id().unwrap()),
+            block_id: bank5.block_id().unwrap(),
         };
 
         // Root advancement prunes readiness for slot 4 before asynchronous bank
