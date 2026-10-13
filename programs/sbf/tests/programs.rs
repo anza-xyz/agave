@@ -196,6 +196,7 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
             },
             &mut ExecuteTimings::default(),
             None,
+            None,
         )
         .0;
     commit_results.pop().unwrap()
@@ -5273,6 +5274,7 @@ fn test_function_call_args() {
                 enable_transaction_balance_recording: false,
             },
             &mut ExecuteTimings::default(),
+            None,
             None,
         )
         .0;

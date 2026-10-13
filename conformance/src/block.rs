@@ -104,6 +104,7 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         (parent_slot, &accounts_to_store[..]),
         bank_id,
         None,
+        None,
         &Ancestors::default(),
     );
     bank_rc.accounts.accounts_db.add_root(parent_slot);
@@ -243,6 +244,7 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
             &batch,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
+            None,
             None,
         );
 
