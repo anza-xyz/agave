@@ -10,10 +10,7 @@ use {
     solana_clock::{BankId, Slot},
     solana_cost_model::cost_tracker::{SharedAllocatedAccountsDataSize, SharedBlockCost},
     solana_poh::poh_recorder::SharedLeaderState,
-<<<<<<< HEAD
-=======
-    solana_runtime::{bank::BankId, leader_schedule_utils::last_of_consecutive_leader_slots},
->>>>>>> 363cbef (fix: preserve Alpenglow progress anchors and stop reporting expired estimates (#15885))
+    solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
     std::{
         sync::{
             Arc,
