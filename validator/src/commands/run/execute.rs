@@ -44,7 +44,6 @@ use {
         resource_limits,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
-        tpu::MAX_VOTES_PER_SECOND,
         validator::{
             BlockProductionMethod, BlockVerificationMethod, SchedulerPacing, Validator,
             ValidatorConfig, ValidatorLogConfig, ValidatorStartProgress, ValidatorTpuConfig,
@@ -70,8 +69,8 @@ use {
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
     solana_signer::Signer,
     solana_streamer::{
-        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
-        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        nonblocking::swqos::SwQosConfig,
+        quic::{QuicStreamerConfig, SwQosQuicStreamerConfig},
     },
     solana_turbine::broadcast_stage::BroadcastStageType,
     solana_validator_exit::Exit,
@@ -118,7 +117,6 @@ pub fn execute(
         tpu_sigverify_threads,
         tpu_transaction_forward_receive_threads,
         tpu_transaction_receive_threads,
-        tpu_vote_transaction_receive_threads,
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
@@ -1075,18 +1073,6 @@ pub fn execute(
         },
     };
 
-    let vote_quic_server_config = SimpleQosQuicStreamerConfig {
-        quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_vote_transaction_receive_threads,
-            ..Default::default()
-        },
-        qos_config: SimpleQosConfig {
-            max_streams_per_second: MAX_VOTES_PER_SECOND,
-            ..Default::default()
-        },
-    };
-
     let validator = Validator::new_with_exit(
         node,
         identity_keypair,
@@ -1102,7 +1088,6 @@ pub fn execute(
             vote_use_quic: false,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
-            vote_quic_server_config,
             sigverify_threads: tpu_sigverify_threads,
         },
         admin_service_post_init,

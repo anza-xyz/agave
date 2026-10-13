@@ -39,10 +39,13 @@ Release channels have their own copy of this changelog:
 * Added `agave-validator --no-xdp-zero-copy` to explicitly select XDP copy mode. It conflicts
   with `--xdp-zero-copy` and `--no-xdp`.
 * The default full snapshot interval is now 200,000 slots.
+* The TPU vote QUIC server has been removed; the node no longer advertises a `tpu_vote` QUIC
+  address in gossip. Votes are received over UDP `tpu_vote` and gossip.
 
 #### Deprecations
 
 * `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+* `--tpu-vote-transaction-receive-threads` is deprecated - it only applied to TowerBFT and is a no-op.
 
 ### CLI
 

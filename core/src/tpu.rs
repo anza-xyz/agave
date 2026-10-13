@@ -32,7 +32,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
-    solana_net_utils::quic_socket::{QuicSocket, into_quic_sockets},
+    solana_net_utils::quic_socket::into_quic_sockets,
     solana_poh::{
         poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankMessage},
         transaction_recorder::TransactionRecorder,
@@ -50,10 +50,7 @@ use {
     },
     solana_streamer::{
         evicting_sender::EvictingSender,
-        quic::{
-            SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
-            spawn_simple_qos_server, spawn_stake_weighted_qos_server,
-        },
+        quic::{SpawnServerResult, SwQosQuicStreamerConfig, spawn_stake_weighted_qos_server},
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -77,13 +74,9 @@ pub struct TpuSockets {
     pub broadcast: Vec<UdpSocket>,
     pub transactions_quic: Vec<UdpSocket>,
     pub transactions_forwards_quic: Vec<UdpSocket>,
-    pub vote_quic: Vec<UdpSocket>,
     /// Client-side socket for the forwarding votes.
     pub vote_forwarding_client: UdpSocket,
 }
-
-// Conservatively allow 20 TPS per validator.
-pub const MAX_VOTES_PER_SECOND: u64 = 20;
 
 /// Size of the channel between streamer and TPU sigverify stage. The values have been selected to
 /// be conservative max of obsersed on mnb during high-load events.
@@ -110,7 +103,6 @@ pub struct Tpu {
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
     tracer_thread_hdl: TracerThread,
-    tpu_vote_quic_t: thread::JoinHandle<()>,
 }
 
 impl Tpu {
@@ -150,7 +142,6 @@ impl Tpu {
         tracer_thread_hdl: TracerThread,
         tpu_quic_server_config: SwQosQuicStreamerConfig,
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
-        vote_quic_server_config: SimpleQosQuicStreamerConfig,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         tpu_sigverify_threads: NonZeroUsize,
         block_production_method: BlockProductionMethod,
@@ -170,14 +161,13 @@ impl Tpu {
             broadcast: broadcast_sockets,
             transactions_quic: transactions_quic_sockets,
             transactions_forwards_quic: transactions_forwards_quic_sockets,
-            vote_quic: tpu_vote_quic_sockets,
             vote_forwarding_client: vote_forwarding_client_socket,
         } = sockets;
 
         let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
         let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
         let evicting_vote_sender =
-            EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
+            EvictingSender::new(vote_packet_sender, vote_packet_receiver.clone());
         let (forwarded_packet_sender, forwarded_packet_receiver) =
             bounded(TPU_FORWARD_CHANNEL_SIZE);
         let fetch_stage = FetchStage::new_with_sender(
@@ -205,29 +195,6 @@ impl Tpu {
             gossip_vote_sender,
             gossip_vote_receiver,
         } = banking_tracer_channels;
-
-        // Streamer for Votes:
-        let quic_vote_sockets: Vec<QuicSocket> =
-            tpu_vote_quic_sockets.into_iter().map(Into::into).collect();
-        let (
-            SpawnServerResult {
-                endpoints: _,
-                thread: tpu_vote_quic_t,
-                key_updater: vote_streamer_key_updater,
-            },
-            _banlist,
-        ) = spawn_simple_qos_server(
-            "solQuicTVo",
-            "quic_streamer_tpu_vote",
-            quic_vote_sockets,
-            keypair,
-            vote_packet_sender,
-            staked_nodes.clone(),
-            vote_quic_server_config.quic_streamer_config,
-            vote_quic_server_config.qos_config,
-            cancel.clone(),
-        )
-        .unwrap();
 
         // We check on validator startup that XDP is not mixed with multihoming, so by construction
         // at this moment all the transactions_quic_sockets and transactions_forwards_quic_sockets
@@ -380,7 +347,6 @@ impl Tpu {
         let mut key_notifiers = key_notifiers.write().unwrap();
         key_notifiers.add(KeyUpdaterType::Tpu, key_updater);
         key_notifiers.add(KeyUpdaterType::TpuForwards, forwards_key_updater);
-        key_notifiers.add(KeyUpdaterType::TpuVote, vote_streamer_key_updater);
         key_notifiers.add(KeyUpdaterType::Forward, client_updater);
 
         Self {
@@ -395,7 +361,6 @@ impl Tpu {
             tpu_entry_notifier,
             staked_nodes_updater_service,
             tracer_thread_hdl,
-            tpu_vote_quic_t,
         }
     }
 
@@ -409,7 +374,6 @@ impl Tpu {
             self.staked_nodes_updater_service.join(),
             self.tpu_quic_t.join(),
             self.tpu_forwards_quic_t.join(),
-            self.tpu_vote_quic_t.join(),
         ];
         let broadcast_result = self.broadcast_stage.join();
         for result in results {
