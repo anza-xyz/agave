@@ -4,7 +4,9 @@
 use {
     crate::msghdr::create_msghdr,
     itertools::izip,
-    libc::{AF_INET, AF_INET6, MSG_WAITFORONE, iovec, mmsghdr, sockaddr_storage, socklen_t},
+    libc::{
+        AF_INET, AF_INET6, MSG_TRUNC, MSG_WAITFORONE, iovec, mmsghdr, sockaddr_storage, socklen_t,
+    },
     std::{
         mem::{self, MaybeUninit},
         net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -194,6 +196,7 @@ pub(crate) fn recv_mmsg(
     } else {
         usize::try_from(nrecv).unwrap()
     };
+    let mut num_packets = 0;
     // Consume the buffers from the pool matching number of received packets.
     for (addr, hdr, mut buffer) in izip!(addrs, hdrs, pool.0.drain(..nrecv)) {
         // SAFETY: We initialized `count` elements of `hdrs` above. `count` is
@@ -205,6 +208,11 @@ pub(crate) fn recv_mmsg(
         // will have populated it
         let addr_ref = unsafe { addr.assume_init_ref() };
         let msg_len = hdr_ref.msg_len as usize;
+        // Drop empty datagrams, and ones larger than the buffer, which the kernel
+        // truncated to fit.
+        if msg_len == 0 || hdr_ref.msg_hdr.msg_flags & MSG_TRUNC != 0 {
+            continue;
+        }
         // SAFETY: `recvmmsg` wrote `msg_len` initialized bytes into the buffer.
         unsafe { buffer.set_len(msg_len) };
         let mut meta = Meta::default();
@@ -213,6 +221,7 @@ pub(crate) fn recv_mmsg(
             meta.set_socket_addr(&addr);
         }
         packets.push(BytesPacket::new(buffer.freeze(), meta));
+        num_packets += 1;
     }
 
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
@@ -230,7 +239,7 @@ pub(crate) fn recv_mmsg(
         }
     }
 
-    Ok(nrecv)
+    Ok(num_packets)
 }
 
 #[cfg(test)]
@@ -272,6 +281,38 @@ mod tests {
     }
 
     const TEST_NUM_MSGS: usize = 32;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_recv_mmsg_drops_empty_and_truncated_datagrams() {
+        let (reader, addr, sender, saddr) =
+            test_setup_reader_sender(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap();
+        sender.send_to(&[1; PACKET_DATA_SIZE + 1], addr).unwrap();
+        sender.send_to(&[], addr).unwrap();
+        sender.send_to(&[2; 100], addr).unwrap();
+
+        let mut packets = BytesPacketBatch::with_capacity(TEST_NUM_MSGS);
+        let recv = recv_mmsg(&reader, &mut packets, &mut PacketBufferPool::new()).unwrap();
+        assert_eq!(recv, 1, "only the datagram that fits must be returned");
+        assert_eq!(
+            packets.len(),
+            1,
+            "only the datagram that fits must be appended"
+        );
+        let packet = packets.iter().next().unwrap();
+        assert_eq!(
+            packet.meta().size,
+            100,
+            "packet size must match the datagram"
+        );
+        assert_eq!(
+            packet.data(..),
+            Some(&[2; 100][..]),
+            "payload must be intact"
+        );
+        assert_eq!(packet.meta().socket_addr(), saddr);
+    }
+
     #[test]
     pub fn test_recv_mmsg_one_iter() {
         let test_one_iter = |(reader, addr, sender, saddr): TestConfig| {
