@@ -36,7 +36,6 @@ stable-abi = [
     "solana-gossip/stable-abi",
     "solana-hash/stable-abi",
     "solana-ledger/stable-abi",
-    "solana-packet/stable-abi",
     "solana-perf/stable-abi",
     "solana-pubkey/stable-abi",
     "solana-runtime/stable-abi",

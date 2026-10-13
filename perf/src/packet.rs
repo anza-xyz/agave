@@ -5,7 +5,8 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use wincode::{ReadError, ReadResult, SchemaRead, config::DefaultConfig};
 pub use {
     bytes,
-    solana_packet::{self, Meta, PACKET_DATA_SIZE, PacketFlags},
+    meta::{Meta, PacketFlags},
+    solana_packet::{self, PACKET_DATA_SIZE},
 };
 use {
     bytes::Bytes,
@@ -22,6 +23,8 @@ use {
         config::{Config, Configuration},
     },
 };
+
+mod meta;
 
 pub const NUM_PACKETS: usize = 1024 * 8;
 
