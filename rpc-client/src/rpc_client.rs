@@ -1874,26 +1874,32 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
     }
 
-    /// Returns the Alpenglow validator rank map for the epoch containing `slot`.
+    /// Returns the Validator Admission Ticket (VAT) active-set rank map for the epoch
+    /// containing `slot`, with an optional identity filter.
     ///
     /// Always queries finalized state, regardless of the client's default commitment.
-    ///
     /// Returns `None` if the epoch is unavailable.
+    ///
+    /// The filter preserves the validator's rank and the full map's total stake.
+    /// An unknown identity returns an empty validator list when the map is available.
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    /// This method corresponds directly to the [`getVATActiveSetRankMap`] RPC method.
     ///
-    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    /// [`getVATActiveSetRankMap`]: https://solana.com/docs/rpc/http/getvatactivesetrankmap
     ///
     /// # Examples
     ///
     /// ```
-    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcVatActiveSetRankMapConfig};
     /// # use solana_rpc_client::rpc_client::RpcClient;
     /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// let certificate_slot = 100;
-    /// let response = rpc_client.get_rank_map(certificate_slot)?;
+    /// let response = rpc_client.get_vat_active_set_rank_map(
+    ///     certificate_slot,
+    ///     RpcVatActiveSetRankMapConfig::default(),
+    /// )?;
     /// if let Some(rank_map) = response.value {
     ///     for validator in rank_map.validators {
     ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
@@ -1901,36 +1907,18 @@ impl RpcClient {
     /// }
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn get_rank_map(&self, slot: Slot) -> RpcResult<Option<RpcRankMap>> {
-        self.invoke((self.rpc_client.as_ref()).get_rank_map(slot))
-    }
-
-    /// Returns the Alpenglow validator rank map with an optional identity filter.
-    ///
-    /// Always queries finalized state. There is no commitment parameter.
-    ///
-    /// The filter preserves the validator's rank and the full map's total stake.
-    /// An unknown identity returns an empty validator list when the map is available.
-    ///
-    /// # RPC Reference
-    ///
-    /// This method corresponds directly to the [`getRankMap`] RPC method.
-    ///
-    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
-    ///
-    /// # Examples
     ///
     /// ```
-    /// # use solana_rpc_client_api::{client_error::Error, config::RpcRankMapConfig};
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcVatActiveSetRankMapConfig};
     /// # use solana_rpc_client::rpc_client::RpcClient;
     /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// let certificate_slot = 100;
     /// let identity = "67omRD8GkXTi8daWceprtQABkDeEm3SZYHUCrthQGB9D";
-    /// let response = rpc_client.get_rank_map_with_config(
+    /// let response = rpc_client.get_vat_active_set_rank_map(
     ///     certificate_slot,
-    ///     RpcRankMapConfig {
+    ///     RpcVatActiveSetRankMapConfig {
     ///         identity: Some(identity.to_string()),
-    ///         ..RpcRankMapConfig::default()
+    ///         ..RpcVatActiveSetRankMapConfig::default()
     ///     },
     /// )?;
     /// if let Some(rank_map) = response.value {
@@ -1940,12 +1928,12 @@ impl RpcClient {
     /// }
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn get_rank_map_with_config(
+    pub fn get_vat_active_set_rank_map(
         &self,
         slot: Slot,
-        config: RpcRankMapConfig,
-    ) -> RpcResult<Option<RpcRankMap>> {
-        self.invoke((self.rpc_client.as_ref()).get_rank_map_with_config(slot, config))
+        config: RpcVatActiveSetRankMapConfig,
+    ) -> RpcResult<Option<RpcVatActiveSetRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_vat_active_set_rank_map(slot, config))
     }
 
     /// Get block production for the current epoch.
@@ -4735,17 +4723,19 @@ mod tests {
     }
 
     #[test]
-    fn test_get_rank_map_variants() {
+    fn test_get_vat_active_set_rank_map() {
         let rpc_client = RpcClient::new_mock("succeeds".to_string());
 
-        let response = rpc_client.get_rank_map(0).unwrap();
+        let response = rpc_client
+            .get_vat_active_set_rank_map(0, RpcVatActiveSetRankMapConfig::default())
+            .unwrap();
         assert_eq!(response.context.slot, 1);
         assert!(response.value.is_none());
 
         let response = rpc_client
-            .get_rank_map_with_config(
+            .get_vat_active_set_rank_map(
                 0,
-                RpcRankMapConfig {
+                RpcVatActiveSetRankMapConfig {
                     identity: None,
                     min_context_slot: Some(1),
                 },
@@ -4753,6 +4743,65 @@ mod tests {
             .unwrap();
         assert_eq!(response.context.slot, 1);
         assert!(response.value.is_none());
+    }
+
+    #[test]
+    fn test_get_vat_active_set_rank_map_http() {
+        let identity = Pubkey::new_unique().to_string();
+        let config = RpcVatActiveSetRankMapConfig {
+            identity: Some(identity.clone()),
+            min_context_slot: Some(42),
+        };
+        let expected = Response {
+            context: RpcResponseContext::new(42),
+            value: Some(RpcVatActiveSetRankMap {
+                epoch: 3,
+                total_stake: 100.try_into().unwrap(),
+                validators: vec![RpcVatActiveSetRankMapEntry {
+                    rank: 7,
+                    vote_pubkey: Pubkey::new_unique().to_string(),
+                    node_pubkey: identity,
+                    bls_pubkey_compressed: "bls".to_string(),
+                    stake: 10.try_into().unwrap(),
+                }],
+            }),
+        };
+        let expected_json = serde_json::to_value(&expected).unwrap();
+        let expected_config = serde_json::to_value(&config).unwrap();
+        let mut io = IoHandler::default();
+        io.add_sync_method("getVATActiveSetRankMap", move |params: Params| {
+            let params: Vec<Value> = params.parse()?;
+            assert_eq!(params.len(), 2);
+            match params[0].as_u64().unwrap() {
+                100 => {
+                    assert_eq!(params[1], expected_config);
+                    Ok(expected_json.clone())
+                }
+                200 => {
+                    assert_eq!(params[1], json!({"identity": null, "minContextSlot": null}));
+                    Ok(json!({"context": {"slot": 42}, "value": null}))
+                }
+                _ => Err(Error::invalid_params("unexpected slot")),
+            }
+        });
+        let server = ServerBuilder::new(io)
+            .start_http(&"127.0.0.1:0".parse().unwrap())
+            .unwrap();
+        // A processed default commitment must not be added to this finalized-only request.
+        let rpc_client = RpcClient::new_with_commitment(
+            format!("http://{}", server.address()),
+            CommitmentConfig::processed(),
+        );
+        assert_eq!(
+            rpc_client.get_vat_active_set_rank_map(100, config).unwrap(),
+            expected,
+        );
+        let unavailable = rpc_client
+            .get_vat_active_set_rank_map(200, RpcVatActiveSetRankMapConfig::default())
+            .unwrap();
+        assert_eq!(unavailable.context.slot, 42);
+        assert!(unavailable.value.is_none());
+        server.close();
     }
 
     #[test]
