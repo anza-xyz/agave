@@ -241,6 +241,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(accounts)
     }
 
+    pub(crate) fn add_lamports_delta(&self, balance: i128) -> Result<(), InstructionError> {
+        let delta = self.lamports_delta.get();
+        self.lamports_delta.set(
+            delta
+                .checked_add(balance)
+                .ok_or(InstructionError::ArithmeticOverflow)?,
+        );
+        Ok(())
+    }
+
     pub fn accounts(&self) -> &Rc<TransactionAccounts> {
         &self.accounts
     }
