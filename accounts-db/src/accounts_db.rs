@@ -4863,19 +4863,18 @@ impl AccountsDb {
     fn generate_index_for_storages<'a>(
         &self,
         storages: impl Iterator<Item = NextItem<'a>>,
+        files_per_batch: usize,
         accum: &mut IndexGenerationAccumulator,
         num_processed: &AtomicU64,
     ) {
-        // Bound the extra fds opened with direct I/O (per index generation thread).
-        const MAX_OPEN_FILES: usize = 64;
         // Skipping the page cache reduces kernel memory reclaim during heavy index allocations.
         let use_direct_io = self.use_direct_io;
         let io_setup = IoSetupState::default().with_direct_io(use_direct_io);
         let mut buf_reader =
             storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, false, &io_setup)
                 .expect("create storage reader");
-        let mut open_files = Vec::with_capacity(MAX_OPEN_FILES);
-        for batch in &storages.chunks(MAX_OPEN_FILES) {
+        let mut open_files = Vec::with_capacity(files_per_batch);
+        for batch in &storages.chunks(files_per_batch) {
             open_files.clear();
             open_files.extend(batch.map(|item| {
                 let file = item.storage.accounts.open_file_for_bulk_read(use_direct_io);
@@ -5074,6 +5073,10 @@ impl AccountsDb {
         let exit_logger = AtomicBool::new(false);
         let num_processed = AtomicU64::new(0);
         let num_threads = num_cpus::get();
+        // Bound the extra fds opened with direct I/O, but use smaller batches when there are few
+        // storages per thread, so the work still spreads across all threads.
+        const MAX_FILES_PER_BATCH: usize = 64;
+        let files_per_batch = (num_storages / (num_threads * 4)).clamp(1, MAX_FILES_PER_BATCH);
         let mut index_time = Measure::start("index");
         thread::scope(|s| {
             let thread_handles = (0..num_threads)
@@ -5084,6 +5087,7 @@ impl AccountsDb {
                             let mut thread_accum = IndexGenerationAccumulator::new();
                             self.generate_index_for_storages(
                                 storages_orderer.iter(),
+                                files_per_batch,
                                 &mut thread_accum,
                                 &num_processed,
                             );
