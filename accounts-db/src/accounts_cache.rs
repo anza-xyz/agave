@@ -38,6 +38,8 @@ impl MaxFlushedRoot {
 
 #[derive(Debug)]
 pub struct SlotCache {
+    /// The bank that stored the accounts in this slot
+    bank_id: BankId,
     cache: DashMap<Pubkey, Arc<CachedAccount>, ahash::RandomState>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
@@ -249,8 +251,9 @@ pub struct AccountsCache {
 }
 
 impl AccountsCache {
-    pub fn new_inner(&self) -> Arc<SlotCache> {
+    pub fn new_inner(&self, bank_id: BankId) -> Arc<SlotCache> {
         Arc::new(SlotCache {
+            bank_id,
             cache: DashMap::default(),
             same_account_writes: AtomicU64::default(),
             same_account_writes_size: AtomicU64::default(),
@@ -287,7 +290,7 @@ impl AccountsCache {
     pub fn store(
         &self,
         slot: Slot,
-        _bank_id: BankId,
+        bank_id: BankId,
         pubkey: &Pubkey,
         account: AccountSharedData,
     ) -> Arc<CachedAccount> {
@@ -299,8 +302,12 @@ impl AccountsCache {
             self
                 .cache
                 .entry(slot)
-                .or_insert_with(|| self.new_inner())
+                .or_insert_with(|| self.new_inner(bank_id))
                 .clone());
+        debug_assert_eq!(
+            slot_cache.bank_id, bank_id,
+            "slot {slot} already holds accounts stored by another bank"
+        );
 
         let (item, is_new_key) = slot_cache.insert(pubkey, account);
         if is_new_key {

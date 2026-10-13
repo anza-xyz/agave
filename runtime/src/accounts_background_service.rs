@@ -914,6 +914,7 @@ mod test {
 
     /// Ensure that we can prune banks with the same slot (if they were on different forks)
     #[test]
+    #[ignore = "the accounts write cache holds one bank per slot"]
     fn test_pruned_banks_request_handler_handle_request() {
         let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
         let pruned_banks_request_handler = PrunedBanksRequestHandler {

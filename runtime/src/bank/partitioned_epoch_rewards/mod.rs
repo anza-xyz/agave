@@ -1713,8 +1713,6 @@ mod tests {
             SlotLeader::default(),
             first_normal_slot,
         );
-        drop(bank_forks); // so that `Arc::into_inner` succeeds
-        let mut bank = Arc::into_inner(bank).unwrap();
 
         let (
             (unstaked_vat_vote_address, mut unstaked_vat_vote_account),
@@ -1745,9 +1743,11 @@ mod tests {
             assert_eq!(stakes.stake_delegations().len(), 3);
         }
 
-        // Mimic some of the early work in `Bank::new_from_parent`
-        bank.slot = bank.slot() + slots_per_epoch;
-        bank.epoch += 1;
+        // Mimic some of the early work in `Bank::new_from_parent`, on a fork that is dropped below
+        let mut simulated_bank =
+            Bank::new_from_parent(bank.clone(), SlotLeader::default(), bank.slot() + 1);
+        simulated_bank.slot = bank.slot() + slots_per_epoch;
+        simulated_bank.epoch += 1;
 
         // Simulate the steps in `compute_new_epoch_caches_and_rewards`
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -1762,9 +1762,9 @@ mod tests {
             rewards_calculation: _,
             calculate_activated_stake_time_us: _,
             update_rewards_with_thread_pool_time_us: _,
-        } = bank.compute_new_epoch_caches_and_rewards(
+        } = simulated_bank.compute_new_epoch_caches_and_rewards(
             &thread_pool,
-            bank.epoch() - 1,
+            simulated_bank.epoch() - 1,
             null_tracer(),
             &mut rewards_metrics,
         );
@@ -1814,9 +1814,7 @@ mod tests {
         );
 
         // actually advance to the next epoch, see that everything lines up
-        bank.slot = bank.slot() - slots_per_epoch;
-        bank.epoch -= 1;
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        drop(simulated_bank);
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
