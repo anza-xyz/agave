@@ -192,6 +192,10 @@ impl CrdsValue {
         &self.data
     }
 
+    pub(crate) fn into_data(self) -> CrdsData {
+        self.data
+    }
+
     #[inline]
     pub(crate) fn hash(&self) -> &Hash {
         &self.hash

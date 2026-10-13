@@ -14,8 +14,8 @@ use {
             CrdsFilter, CrdsGossipPull, CrdsTimeouts, ProcessPullStats, PullRequest,
         },
         crds_gossip_push::CrdsGossipPush,
-        crds_value::CrdsValue,
-        duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
+        crds_value::{CrdsValue, CrdsValueLabel},
+        duplicate_shred::{self, DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         protocol::{Ping, PingCache},
     },
     parking_lot::RwLock,
@@ -100,18 +100,10 @@ impl CrdsGossip {
         F: FnOnce(Slot) -> Option<Pubkey>,
     {
         let pubkey = keypair.pubkey();
-        // Skip if there are already records of duplicate shreds for this slot.
-        let shred_slot = shred.slot();
-        let mut crds = self.crds.write();
-        if crds
-            .get_records(&pubkey)
-            .any(|value| match value.value.data() {
-                CrdsData::DuplicateShred(_, value) => value.slot == shred_slot,
-                _ => false,
-            })
-        {
+        let slot = shred.slot();
+        let Some(mut offset) = get_duplicate_shred_offset(&self.crds.read(), &pubkey, slot) else {
             return Ok(());
-        }
+        };
         let chunks = duplicate_shred::from_shred(
             shred.clone(),
             pubkey,
@@ -121,35 +113,44 @@ impl CrdsGossip {
             max_payload_size,
             shred_version,
         )?;
-        // Find the index of oldest duplicate shred.
-        let mut num_dup_shreds = 0;
-        let offset = crds
-            .get_records(&pubkey)
-            .filter_map(|value| match value.value.data() {
-                CrdsData::DuplicateShred(ix, value) => {
-                    num_dup_shreds += 1;
-                    Some((value.wallclock, *ix))
-                }
-                _ => None,
-            })
-            .min() // Override the oldest records.
-            .map(|(_ /*wallclock*/, ix)| ix)
-            .unwrap_or(0);
-        let offset = if num_dup_shreds < MAX_DUPLICATE_SHREDS {
-            num_dup_shreds
-        } else {
-            offset
-        };
-        let entries = chunks.enumerate().map(|(k, chunk)| {
-            let index = (offset + k as DuplicateShredIndex) % MAX_DUPLICATE_SHREDS;
-            let data = CrdsData::DuplicateShred(index, chunk);
-            CrdsValue::new(data, keypair)
-        });
-        let now = timestamp();
-        for entry in entries {
-            if let Err(err) = crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_duplicate_shred failed: {err:?}");
+        let mut entries = sign_duplicate_shreds(chunks, offset, keypair);
+        let mut target_hashes = vec![None; entries.len()];
+        let mut crds = loop {
+            let crds = self.crds.write();
+            let Some(current_offset) = get_duplicate_shred_offset(&crds, &pubkey, slot) else {
+                return Ok(());
+            };
+            let get_hash = |label| crds.get::<&CrdsValue>(&label).map(|value| *value.hash());
+            // Re-sign if the indices moved or a rejecting target changed since signing.
+            if current_offset == offset
+                && entries
+                    .iter()
+                    .zip(&target_hashes)
+                    .all(|(entry, target_hash)| {
+                        crds.upserts(entry) || get_hash(entry.label()) == *target_hash
+                    })
+            {
+                break crds;
             }
+            target_hashes = (0..entries.len())
+                .map(|k| {
+                    let index = duplicate_shred_index(current_offset, k);
+                    get_hash(CrdsValueLabel::DuplicateShred(index, pubkey))
+                })
+                .collect();
+            drop(crds);
+            offset = current_offset;
+            entries = resign_duplicate_shreds(entries, offset, keypair);
+        };
+        let now = timestamp();
+        // Drain so that the buffer is freed after releasing the lock.
+        let errors: Vec<_> = entries
+            .drain(..)
+            .filter_map(|entry| crds.insert(entry, now, GossipRoute::LocalMessage).err())
+            .collect();
+        drop(crds);
+        for err in errors {
+            error!("push_duplicate_shred failed: {err:?}");
         }
         Ok(())
     }
@@ -318,6 +319,68 @@ pub(crate) type GossipStakePubkey = (
 );
 
 // Returns active and valid cluster nodes to gossip with.
+/// Returns the first index for a new proof of the slot, or None if one exists.
+/// New proofs are appended until all indices are used, then overwrite the oldest.
+fn get_duplicate_shred_offset(
+    crds: &Crds,
+    pubkey: &Pubkey,
+    slot: Slot,
+) -> Option<DuplicateShredIndex> {
+    let mut num_dup_shreds = 0;
+    let mut oldest = None;
+    for value in crds.get_records(pubkey) {
+        if let CrdsData::DuplicateShred(ix, value) = value.value.data() {
+            if value.slot == slot {
+                return None;
+            }
+            num_dup_shreds += 1;
+            let record = (value.wallclock, *ix);
+            oldest = Some(oldest.map_or(record, |oldest| cmp::min(oldest, record)));
+        }
+    }
+    if num_dup_shreds < MAX_DUPLICATE_SHREDS {
+        Some(num_dup_shreds)
+    } else {
+        oldest.map(|(_, ix)| ix)
+    }
+}
+
+fn duplicate_shred_index(offset: DuplicateShredIndex, k: usize) -> DuplicateShredIndex {
+    (offset + k as DuplicateShredIndex) % MAX_DUPLICATE_SHREDS
+}
+
+fn sign_duplicate_shreds(
+    chunks: impl IntoIterator<Item = DuplicateShred>,
+    offset: DuplicateShredIndex,
+    keypair: &Keypair,
+) -> Vec<CrdsValue> {
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(k, chunk)| {
+            let index = duplicate_shred_index(offset, k);
+            CrdsValue::new(CrdsData::DuplicateShred(index, chunk), keypair)
+        })
+        .collect()
+}
+
+/// Signs the chunks again at the offset with a wallclock newer than before.
+fn resign_duplicate_shreds(
+    entries: Vec<CrdsValue>,
+    offset: DuplicateShredIndex,
+    keypair: &Keypair,
+) -> Vec<CrdsValue> {
+    let wallclock = timestamp();
+    let chunks = entries.into_iter().map(|entry| {
+        let CrdsData::DuplicateShred(_, mut chunk) = entry.into_data() else {
+            unreachable!("entries are constructed from duplicate-shred chunks");
+        };
+        chunk.wallclock = wallclock.max(chunk.wallclock + 1);
+        chunk
+    });
+    sign_duplicate_shreds(chunks, offset, keypair)
+}
+
 pub(crate) fn get_gossip_nodes<R: Rng>(
     rng: &mut R,
     now: u64,
@@ -402,11 +465,285 @@ mod test {
             cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
             contact_info::ContactInfo,
             crds::LOCK_CHUNK_SIZE,
+            duplicate_shred::tests::new_rand_shred,
+            protocol::DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
         },
+        solana_keypair::signable::Signable,
+        solana_ledger::shred::Shredder,
         solana_sha256_hasher::hash,
         solana_time_utils::timestamp,
         std::iter::repeat_with,
+        test_case::test_case,
     };
+
+    fn new_duplicate_shreds(slot: Slot, leader: &Keypair) -> (Shred, Shred) {
+        let shredder = Shredder::new(slot, slot - 1, 0, 0).unwrap();
+        let mut rng = rand::rng();
+        (
+            new_rand_shred(&mut rng, 353, &shredder, leader),
+            new_rand_shred(&mut rng, 353, &shredder, leader),
+        )
+    }
+
+    fn new_first_chunk(shred: &Shred, other: &Shred, from: Pubkey) -> DuplicateShred {
+        duplicate_shred::from_shred(
+            shred.clone(),
+            from,
+            other.payload().to_vec(),
+            None::<fn(Slot) -> Option<Pubkey>>,
+            0,
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            0,
+        )
+        .expect("valid duplicate proof")
+        .next()
+        .expect("nonempty duplicate proof")
+    }
+
+    fn get_chunk(
+        crds: &Crds,
+        pubkey: Pubkey,
+        ix: DuplicateShredIndex,
+    ) -> (&CrdsValue, &DuplicateShred) {
+        let label = CrdsValueLabel::DuplicateShred(ix, pubkey);
+        let entry = crds.get::<&CrdsValue>(&label).expect("missing proof chunk");
+        let CrdsData::DuplicateShred(_, chunk) = entry.data() else {
+            panic!("expected duplicate-shred chunk");
+        };
+        (entry, chunk)
+    }
+
+    #[test_case(false; "same_slot")]
+    #[test_case(true; "different_slot")]
+    fn test_push_duplicate_shred_rechecks_selection(different_slot: bool) {
+        let gossip = CrdsGossip::default();
+        let keypair = Keypair::new();
+        let leader = Keypair::new();
+        let slot = 53084024;
+        let (shred, other) = new_duplicate_shreds(slot, &leader);
+        let racing_slot = slot + u64::from(different_slot);
+        let (racing_shred, racing_other) = new_duplicate_shreds(racing_slot, &leader);
+        // Publish a racing proof during validation, which must not hold CRDS.
+        let leader_schedule = |requested_slot| {
+            assert_eq!(requested_slot, slot, "wrong leader lookup slot");
+            drop(
+                gossip
+                    .crds
+                    .try_write()
+                    .expect("CRDS locked during validation"),
+            );
+            gossip
+                .push_duplicate_shred(
+                    &keypair,
+                    &racing_shred,
+                    racing_other.payload(),
+                    None::<fn(Slot) -> Option<Pubkey>>,
+                    DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+                    0,
+                )
+                .expect("publish concurrent proof");
+            Some(leader.pubkey())
+        };
+        gossip
+            .push_duplicate_shred(
+                &keypair,
+                &shred,
+                other.payload(),
+                Some(leader_schedule),
+                DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+                0,
+            )
+            .expect("publish after concurrent proof");
+        let num_chunks = |shred, other| {
+            DuplicateShredIndex::from(new_first_chunk(shred, other, keypair.pubkey()).num_chunks())
+        };
+        let racing_chunks = num_chunks(&racing_shred, &racing_other);
+        let total_chunks = if different_slot {
+            racing_chunks + num_chunks(&shred, &other)
+        } else {
+            racing_chunks
+        };
+        let crds = gossip.crds.read();
+        assert_eq!(
+            crds.get_records(&keypair.pubkey()).count(),
+            usize::from(total_chunks),
+            "one complete proof per distinct slot",
+        );
+        assert_eq!(
+            crds.num_purged(),
+            0,
+            "concurrent records must not be replaced or rejected",
+        );
+        for ix in 0..total_chunks {
+            let (entry, chunk) = get_chunk(&crds, keypair.pubkey(), ix);
+            assert!(entry.verify(), "invalid signature at index {ix}");
+            assert_eq!(
+                chunk.slot,
+                if ix < racing_chunks {
+                    racing_slot
+                } else {
+                    slot
+                },
+                "wrong slot at index {ix}",
+            );
+        }
+        drop(crds);
+        // An already-published slot still returns before validating its input.
+        gossip
+            .push_duplicate_shred(
+                &keypair,
+                &shred,
+                shred.payload(),
+                Some(|_| panic!("validated an existing proof")),
+                DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+                0,
+            )
+            .expect("existing slot must skip validation");
+    }
+
+    #[test]
+    fn test_push_duplicate_shred_rechecks_offset_after_removal() {
+        let gossip = CrdsGossip::default();
+        let keypair = Keypair::new();
+        let leader = Keypair::new();
+        let (shred, other) = new_duplicate_shreds(53084024, &leader);
+        let mut seed = new_first_chunk(&shred, &other, keypair.pubkey());
+        let num_chunks = DuplicateShredIndex::from(seed.num_chunks());
+        seed.slot += 1;
+        gossip
+            .crds
+            .write()
+            .insert(
+                CrdsValue::new_unsigned(CrdsData::DuplicateShred(0, seed)),
+                0,
+                GossipRoute::LocalMessage,
+            )
+            .expect("seed index is vacant");
+        let leader_schedule = |_| {
+            let mut crds = gossip
+                .crds
+                .try_write()
+                .expect("CRDS locked during validation");
+            crds.remove(&CrdsValueLabel::DuplicateShred(0, keypair.pubkey()), 0);
+            // The targets stay vacant, so only the offset recheck catches this.
+            Some(leader.pubkey())
+        };
+        gossip
+            .push_duplicate_shred(
+                &keypair,
+                &shred,
+                other.payload(),
+                Some(leader_schedule),
+                DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+                0,
+            )
+            .expect("publish after offset change");
+        let crds = gossip.crds.read();
+        assert_eq!(
+            crds.get_records(&keypair.pubkey()).count(),
+            usize::from(num_chunks),
+            "the new proof must start at the removed index",
+        );
+        for ix in 0..num_chunks {
+            let (entry, chunk) = get_chunk(&crds, keypair.pubkey(), ix);
+            assert_eq!(chunk.slot, shred.slot(), "wrong slot at index {ix}");
+            assert_eq!(
+                u16::from(chunk.chunk_index()),
+                ix,
+                "wrong chunk index at {ix}"
+            );
+            assert!(entry.verify(), "invalid signature at index {ix}");
+        }
+    }
+
+    #[test_case(None, 0; "unchanged")]
+    #[test_case(Some(0), 0; "newer_target")]
+    #[test_case(Some(MAX_DUPLICATE_SHREDS - 1), 0; "newer_oldest")]
+    #[test_case(Some(0), 60_000; "future_target")]
+    fn test_push_duplicate_shred_wraps_oldest_indices(
+        newer_record: Option<DuplicateShredIndex>,
+        clock_offset: u64,
+    ) {
+        let gossip = CrdsGossip::default();
+        let keypair = Keypair::new();
+        let leader = Keypair::new();
+        let (shred, other) = new_duplicate_shreds(53084024, &leader);
+        let mut seed = new_first_chunk(&shred, &other, keypair.pubkey());
+        let num_chunks = DuplicateShredIndex::from(seed.num_chunks());
+        assert!(num_chunks > 1, "the proof must wrap around to index 0");
+        seed.slot += 1;
+        {
+            let mut crds = gossip.crds.write();
+            for ix in 0..MAX_DUPLICATE_SHREDS {
+                let mut chunk = seed.clone();
+                // The last index is oldest, so the new proof wraps around to 0.
+                chunk.wallclock = u64::from((ix + 1) % MAX_DUPLICATE_SHREDS);
+                crds.insert(
+                    CrdsValue::new_unsigned(CrdsData::DuplicateShred(ix, chunk)),
+                    0,
+                    GossipRoute::LocalMessage,
+                )
+                .expect("seed index is vacant");
+            }
+        }
+        // Replace a record during validation with one newer than the signed chunks.
+        let leader_schedule = |_| {
+            if let Some(ix) = newer_record {
+                let mut chunk = seed.clone();
+                std::thread::sleep(Duration::from_millis(1));
+                chunk.wallclock = timestamp() + clock_offset;
+                gossip
+                    .crds
+                    .write()
+                    .insert(
+                        CrdsValue::new_unsigned(CrdsData::DuplicateShred(ix, chunk)),
+                        0,
+                        GossipRoute::LocalMessage,
+                    )
+                    .expect("newer record replaces seed");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Some(leader.pubkey())
+        };
+        gossip
+            .push_duplicate_shred(
+                &keypair,
+                &shred,
+                other.payload(),
+                Some(leader_schedule),
+                DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+                0,
+            )
+            .expect("publish despite possible clock skew");
+        let offset = if newer_record == Some(MAX_DUPLICATE_SHREDS - 1) {
+            0
+        } else {
+            MAX_DUPLICATE_SHREDS - 1
+        };
+        let crds = gossip.crds.read();
+        assert_eq!(
+            crds.len(),
+            usize::from(MAX_DUPLICATE_SHREDS),
+            "overwriting must preserve table size",
+        );
+        for ix in 0..MAX_DUPLICATE_SHREDS {
+            let (entry, chunk) = get_chunk(&crds, keypair.pubkey(), ix);
+            let chunk_index = (ix + MAX_DUPLICATE_SHREDS - offset) % MAX_DUPLICATE_SHREDS;
+            if clock_offset > 0 && Some(ix) == newer_record {
+                assert_eq!(chunk.slot, seed.slot, "future record must remain unchanged");
+            } else if chunk_index < num_chunks {
+                assert_eq!(chunk.slot, shred.slot(), "wrong slot at index {ix}");
+                assert_eq!(
+                    u16::from(chunk.chunk_index()),
+                    chunk_index,
+                    "wrong wrapped chunk index at {ix}",
+                );
+                assert!(entry.verify(), "invalid signature at index {ix}");
+            } else {
+                assert_eq!(chunk.slot, seed.slot, "unselected record {ix} changed slot");
+            }
+        }
+    }
 
     #[test]
     fn test_get_gossip_nodes() {
