@@ -113,7 +113,6 @@ name = "agave-conformance"
 version = "5.0.0-alpha.1"
 dependencies = [
  "agave-feature-set",
- "agave-shred-wire-format",
  "agave-transaction-view",
  "agave-votor-messages",
  "ahash 0.8.12",
@@ -184,7 +183,7 @@ dependencies = [
  "agave-event-system-derive",
  "getrandom 0.4.3",
  "libc",
- "nix 0.31.4",
+ "nix",
  "shaq",
  "thiserror 2.0.21",
  "wincode",
@@ -444,7 +443,7 @@ checksum = "f33728ce84847c70d8d3b765ccb4ac1080692c15ada2c49305b1442e047825a3"
 dependencies = [
  "agave-scheduler-bindings",
  "libc",
- "nix 0.31.4",
+ "nix",
  "rts-alloc",
  "shaq",
  "thiserror 2.0.21",
@@ -479,7 +478,6 @@ name = "agave-snapshots"
 version = "5.0.0-alpha.1"
 dependencies = [
  "agave-fs",
- "agave-worker-pool",
  "bzip2",
  "crossbeam-channel",
  "log",
@@ -1557,9 +1555,9 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.2.2"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "cfg_eval"
@@ -3408,6 +3406,15 @@ dependencies = [
 
 [[package]]
 name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
@@ -3689,9 +3696,9 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libloading"
-version = "0.9.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
 dependencies = [
  "cfg-if 1.0.5",
  "windows-link",
@@ -4085,22 +4092,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.4"
+version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bc81ce8148d3b4f3274da811f11cdd824ae661ee4ef732cdb229825cf5be7f7"
-dependencies = [
- "bitflags 2.13.2",
- "cfg-if 1.0.5",
- "cfg_aliases",
- "libc",
- "memoffset",
-]
-
-[[package]]
-name = "nix"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77730ed34f01f4990cb2ea67fec715ecebc6fab9a6396cf83c5529b13f581bdc"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if 1.0.5",
@@ -4658,7 +4652,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6e4d69d0fa3e7f6f9cf6b53a0e83e4fc99ba3586f65ce166cff30bd13bb4ad2"
 dependencies = [
  "heck",
- "itertools 0.15.0",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "petgraph",
@@ -4677,7 +4671,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad9c5423459fa2f729b8d9235fab810aa29628b171467744fc86d21460ad70d"
 dependencies = [
  "anyhow",
- "itertools 0.15.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -7179,6 +7173,8 @@ dependencies = [
  "agave-transaction-view",
  "agave-votor-messages",
  "agave-worker-pool",
+ "ahash 0.8.12",
+ "anyhow",
  "bitflags 2.13.2",
  "bytes",
  "bzip2",
@@ -7188,6 +7184,7 @@ dependencies = [
  "dashmap",
  "eager",
  "futures 0.3.34",
+ "indexmap",
  "itertools 0.15.0",
  "lazy-lru",
  "log",
@@ -7370,7 +7367,7 @@ dependencies = [
  "dashmap",
  "itertools 0.15.0",
  "log",
- "nix 0.32.0",
+ "nix",
  "rand 0.9.4",
  "socket2 0.6.5",
  "solana-svm-type-overrides",
@@ -7461,7 +7458,7 @@ dependencies = [
  "caps",
  "libc",
  "log",
- "nix 0.32.0",
+ "nix",
  "num_cpus",
  "rand 0.9.4",
  "rayon",
@@ -7796,6 +7793,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction",
+ "solana-transaction-context",
  "solana-transaction-error",
  "solana-transaction-status",
  "solana-unified-scheduler-pool",
@@ -8456,7 +8454,7 @@ dependencies = [
  "itertools 0.15.0",
  "libc",
  "log",
- "nix 0.32.0",
+ "nix",
  "num_cpus",
  "rand 0.9.4",
  "rustls",
@@ -10783,9 +10781,9 @@ dependencies = [
 
 [[package]]
 name = "xxhash-rust"
-version = "0.8.21"
+version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40de123dbb523ebcc00d61ec01840ad192578afc378d859f3429caa38308fad5"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yoke"

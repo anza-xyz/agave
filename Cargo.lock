@@ -8992,6 +8992,8 @@ dependencies = [
  "agave-transaction-view",
  "agave-votor-messages",
  "agave-worker-pool",
+ "ahash 0.8.12",
+ "anyhow",
  "bitflags 2.13.2",
  "bs58",
  "bytes",
@@ -9003,6 +9005,7 @@ dependencies = [
  "dashmap",
  "eager",
  "futures 0.3.34",
+ "indexmap 2.14.2",
  "itertools 0.15.0",
  "lazy-lru",
  "log",
@@ -13543,9 +13546,9 @@ dependencies = [
 
 [[package]]
 name = "xxhash-rust"
-version = "0.8.21"
+version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40de123dbb523ebcc00d61ec01840ad192578afc378d859f3429caa38308fad5"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yansi"
