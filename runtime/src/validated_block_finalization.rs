@@ -5,16 +5,19 @@
 //! through validation, ensuring type-safe guarantees about certificate validity.
 
 use {
-    crate::bank::Bank,
+    crate::{bank::Bank, block_component_processor::get_validators_and_stake},
     agave_votor_messages::{
         certificate::{
             CertSignature, Certificate, CertificateType, FastFinalizeCert, FinalizeCert, NotarCert,
         },
         consensus_message::Block,
         finalized_slot::FinalizedSlot,
+        fraction::Fraction,
         unverified_vote_message::UnverifiedCertificate,
     },
-    solana_bls_signatures::BlsError,
+    solana_bls_signatures::{
+        BlsError, Signature as BLSSignature, SignatureCompressed, signature::AsSignatureAffine,
+    },
     solana_clock::Slot,
     solana_entry::block_component::{BlockFinalizationCert, VotesAggregate},
     solana_pubkey::Pubkey,
@@ -74,7 +77,106 @@ pub struct ValidatedBlockFinalizationCert {
     signers: HashSet<Pubkey>,
 }
 
+fn check(
+    bank: &Bank,
+    slot: Slot,
+    signature: SignatureCompressed,
+    bitmap: Vec<u8>,
+    cert_type: CertificateType,
+    signers: &mut HashSet<Pubkey>,
+) -> Result<CertSignature, BlockFinalizationCertError> {
+    let rank_map = bank
+        .epoch_stakes_from_slot(slot)
+        .ok_or(BlockFinalizationCertError::MissingEpochStakes(cert_type))?
+        .bls_pubkey_to_rank_map();
+    let signature = CertSignature {
+        signature: BLSSignature::from(
+            signature
+                .try_as_affine()
+                .map_err(|e| BlockFinalizationCertError::BlsError(cert_type, e))?,
+        ),
+        bitmap,
+    };
+    let cert_stake = get_validators_and_stake(rank_map, &signature.bitmap, signers)
+        .map_err(|()| BlockFinalizationCertError::CertificateVerificationFailed(cert_type))?;
+    if Fraction::new(cert_stake, rank_map.total_stake()) < cert_type.threshold() {
+        return Err(BlockFinalizationCertError::CertificateVerificationFailed(
+            cert_type,
+        ));
+    }
+    Ok(signature)
+}
+
 impl ValidatedBlockFinalizationCert {
+    pub(crate) fn try_validated(
+        block_final_cert: BlockFinalizationCert,
+        bank: &Bank,
+    ) -> Result<Self, BlockFinalizationCertError> {
+        let block = Block {
+            slot: block_final_cert.slot,
+            block_id: block_final_cert.block_id,
+        };
+        match block_final_cert.notar_aggregate {
+            Some(notar_aggregate) => {
+                let cert_type = CertificateType::Finalize(block_final_cert.slot);
+                let signature = *block_final_cert.final_aggregate.signature();
+                let bitmap = block_final_cert.final_aggregate.into_bitmap();
+                let mut signers = HashSet::new();
+                let signature = check(
+                    bank,
+                    block_final_cert.slot,
+                    signature,
+                    bitmap,
+                    cert_type,
+                    &mut signers,
+                )?;
+                let finalize_cert = FinalizeCert {
+                    slot: block_final_cert.slot,
+                    signature,
+                };
+
+                let cert_type = CertificateType::Notarize(block);
+                let signature = *notar_aggregate.signature();
+                let bitmap = notar_aggregate.into_bitmap();
+                let signature = check(
+                    bank,
+                    block_final_cert.slot,
+                    signature,
+                    bitmap,
+                    cert_type,
+                    &mut signers,
+                )?;
+                let notarize_cert = NotarCert { block, signature };
+                Ok(Self {
+                    kind: ValidatedBlockFinalizationCertKind::Finalize {
+                        finalize_cert,
+                        notarize_cert,
+                    },
+                    signers,
+                })
+            }
+            None => {
+                let cert_type = CertificateType::FinalizeFast(block);
+                let signature = *block_final_cert.final_aggregate.signature();
+                let bitmap = block_final_cert.final_aggregate.into_bitmap();
+                let mut signers = HashSet::new();
+                let signature = check(
+                    bank,
+                    block_final_cert.slot,
+                    signature,
+                    bitmap,
+                    cert_type,
+                    &mut signers,
+                )?;
+                let cert = FastFinalizeCert { block, signature };
+                Ok(Self {
+                    kind: ValidatedBlockFinalizationCertKind::FastFinalize(cert),
+                    signers,
+                })
+            }
+        }
+    }
+
     /// Creates a validated block finalization certificate from a footer's final certificate.
     ///
     /// This method performs both BLS signature conversion and stake threshold verification

@@ -4,6 +4,7 @@ use {
         block_component_processor::vote_reward::{
             CalcVoteRewardUpdateVoteStatesError, calc_vote_rewards_update_vote_states,
         },
+        epoch_stakes::BLSPubkeyToRankMap,
         leader_schedule_utils::leader_slot_index,
         validated_block_finalization::{
             BlockFinalizationCertError, ValidatedBlockFinalizationCert,
@@ -13,24 +14,34 @@ use {
     agave_transaction_view::transaction_data::TransactionData,
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         migration::MigrationStatus,
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
         unverified_vote_message::UnverifiedCertificate,
+        vote::Vote,
+        wire::get_vote_payload_to_sign,
     },
     crossbeam_channel::{Sender, TrySendError},
     log::*,
+    rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     smallvec::{SmallVec, smallvec},
+    solana_bls_signatures::{
+        PubkeyProjective, SignatureCompressed, VerifySignature,
+        pubkey::{PopVerified, PubkeyAffine},
+    },
     solana_clock::Slot,
     solana_entry::{
         block_component::{
-            BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker, VersionedBlockFooter,
-            VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
+            BlockFinalizationCert, BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker,
+            VersionedBlockFooter, VersionedBlockHeader, VersionedBlockMarker,
+            VersionedUpdateParent,
         },
         entry::EntryView,
     },
     solana_hash::Hash,
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
+    solana_signer_store::{Decoded, decode},
     std::{collections::HashSet, sync::Arc},
     thiserror::Error,
 };
@@ -100,6 +111,8 @@ pub enum BlockComponentProcessorError {
     InvalidRewardCerts(#[from] ValidatedRewardCertError),
     #[error("updating bank footer failed with \"{0}\"")]
     UpdateBankFooter(#[from] BankFooterError),
+    #[error("footer verification failed")]
+    FooterVerificationFailed,
 }
 
 impl BlockComponentProcessorError {
@@ -127,6 +140,7 @@ impl BlockComponentProcessorError {
             | BlockComponentProcessorError::AbandonedBank(_)
             | BlockComponentProcessorError::InvalidRewardCerts(_)
             | BlockComponentProcessorError::UpdateBankFooter(_)
+            | BlockComponentProcessorError::FooterVerificationFailed
             | BlockComponentProcessorError::InvalidFinalizationCertificate(_) => true,
             BlockComponentProcessorError::BlockComponentPreMigration
             | BlockComponentProcessorError::MissingBlockFooter
@@ -606,17 +620,21 @@ impl BlockComponentProcessor {
             notar_reward_cert,
         } = footer;
 
-        let reward_cert = ValidatedRewardCert::try_new(
-            &bank,
-            shred_version,
-            &skip_reward_cert,
-            &notar_reward_cert,
-        )?;
         let block_producer_time_nanos =
             Self::block_producer_time_nanos_as_i64(block_producer_time_nanos)?;
+        verify_certs(
+            &bank,
+            shred_version,
+            &block_final_cert,
+            &skip_reward_cert,
+            &notar_reward_cert,
+        )
+        .map_err(|()| BlockComponentProcessorError::FooterVerificationFailed)?;
+        let reward_cert =
+            ValidatedRewardCert::try_new_validated(&bank, &skip_reward_cert, &notar_reward_cert)?;
         let final_cert = block_final_cert
             .map(|final_cert| {
-                ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank, shred_version)
+                ValidatedBlockFinalizationCert::try_validated(final_cert, &bank)
                     .map_err(BlockComponentProcessorError::InvalidFinalizationCertificate)
             })
             .transpose()?;
@@ -794,6 +812,151 @@ impl BlockComponentProcessor {
 pub struct VoteAccountUpdateStats {
     pub update_us: u64,
     pub vote_accounts_updated: usize,
+}
+
+fn verify_certs(
+    bank: &Bank,
+    shred_version: u16,
+    block_final_cert: &Option<BlockFinalizationCert>,
+    skip_reward_cert: &Option<SkipRewardCertificate>,
+    notar_reward_cert: &Option<NotarRewardCertificate>,
+) -> Result<(), ()> {
+    let mut payloads = Vec::with_capacity(4);
+    struct Payload {
+        message: Vec<u8>,
+        pubkeys: Vec<PopVerified<PubkeyAffine>>,
+        signature: SignatureCompressed,
+    }
+    if let Some(skip) = skip_reward_cert {
+        let rank_map = bank
+            .epoch_stakes_from_slot(skip.slot)
+            .ok_or(())?
+            .bls_pubkey_to_rank_map();
+        let vote = Vote::new_skip_vote(skip.slot);
+        let message = get_vote_payload_to_sign(vote, shred_version);
+        let pubkeys = get_pubkeys(rank_map, skip.to_bitmap())?;
+        let payload = Payload {
+            message,
+            pubkeys,
+            signature: skip.signature,
+        };
+        payloads.push(payload);
+    }
+    if let Some(notar) = notar_reward_cert {
+        let rank_map = bank
+            .epoch_stakes_from_slot(notar.slot)
+            .ok_or(())?
+            .bls_pubkey_to_rank_map();
+        let vote = Vote::new_notarization_vote(Block {
+            slot: notar.slot,
+            block_id: BlockId::from(notar.block_id),
+        });
+        let message = get_vote_payload_to_sign(vote, shred_version);
+        let pubkeys = get_pubkeys(rank_map, notar.bitmap())?;
+        let payload = Payload {
+            message,
+            pubkeys,
+            signature: notar.signature,
+        };
+        payloads.push(payload);
+    }
+    if let Some(block_cert) = block_final_cert {
+        let rank_map = bank
+            .epoch_stakes_from_slot(block_cert.slot)
+            .ok_or(())?
+            .bls_pubkey_to_rank_map();
+        let block = Block {
+            slot: block_cert.slot,
+            block_id: block_cert.block_id,
+        };
+        let notar_vote = Vote::new_notarization_vote(block);
+        match &block_cert.notar_aggregate {
+            None => {
+                let message = get_vote_payload_to_sign(notar_vote, shred_version);
+                let (signature, bitmap) = block_cert.final_aggregate.as_parts();
+                let pubkeys = get_pubkeys(rank_map, bitmap)?;
+                let payload = Payload {
+                    signature: *signature,
+                    pubkeys,
+                    message,
+                };
+                payloads.push(payload);
+            }
+            Some(notar_aggregate) => {
+                let vote = Vote::new_finalization_vote(block_cert.slot);
+                let message = get_vote_payload_to_sign(vote, shred_version);
+                let (signature, bitmap) = block_cert.final_aggregate.as_parts();
+                let pubkeys = get_pubkeys(rank_map, bitmap)?;
+                let payload = Payload {
+                    signature: *signature,
+                    pubkeys,
+                    message,
+                };
+                payloads.push(payload);
+
+                let message = get_vote_payload_to_sign(notar_vote, shred_version);
+                let (signature, bitmap) = notar_aggregate.as_parts();
+                let pubkeys = get_pubkeys(rank_map, bitmap)?;
+                let payload = Payload {
+                    signature: *signature,
+                    pubkeys,
+                    message,
+                };
+                payloads.push(payload);
+            }
+        }
+    }
+
+    if let Err(()) = payloads.into_par_iter().try_for_each(|payload| {
+        let pubkeys = payload.pubkeys;
+        let agg_pubkey = PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(|_| ())?;
+        agg_pubkey
+            .verify_signature(&payload.signature, &payload.message)
+            .map_err(|_| ())
+    }) {
+        return Err(());
+    }
+    Ok(())
+}
+
+pub(super) fn get_validators_and_stake(
+    rank_map: &BLSPubkeyToRankMap,
+    bitmap: &[u8],
+    validators: &mut HashSet<Pubkey>,
+) -> Result<u64, ()> {
+    let max_validators = rank_map.len();
+    let ranks = decode(bitmap, max_validators).map_err(|_| ())?;
+    let ranks = match ranks {
+        Decoded::Base2(ranks) => ranks,
+        Decoded::Base3(_, _) => return Err(()),
+    };
+    let mut pubkeys = Vec::with_capacity(ranks.count_ones());
+    let mut stake = 0;
+    for rank in ranks.iter_ones() {
+        let rank_map_entry = rank_map.get_pubkey_stake_entry(rank).ok_or(())?;
+        pubkeys.push(rank_map_entry.bls_pubkey);
+        validators.insert(rank_map_entry.vote_account_pubkey);
+        stake += rank_map_entry.stake.get();
+    }
+    Ok(stake)
+}
+
+fn get_pubkeys(
+    rank_map: &BLSPubkeyToRankMap,
+    bitmap: &[u8],
+) -> Result<Vec<PopVerified<PubkeyAffine>>, ()> {
+    let max_validators = rank_map.len();
+    let ranks = decode(bitmap, max_validators).map_err(|_| ())?;
+    let ranks = match ranks {
+        Decoded::Base2(ranks) => ranks,
+        Decoded::Base3(_, _) => return Err(()),
+    };
+    let mut pubkeys = Vec::with_capacity(ranks.count_ones());
+    for rank in ranks.iter_ones() {
+        let rank_map_entry = rank_map.get_pubkey_stake_entry(rank).ok_or(())?;
+        pubkeys.push(rank_map_entry.bls_pubkey);
+    }
+    Ok(pubkeys)
 }
 
 #[cfg(test)]

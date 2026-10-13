@@ -1,5 +1,5 @@
 use {
-    crate::bank::Bank,
+    crate::{bank::Bank, block_component_processor::get_validators_and_stake},
     agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2},
     agave_votor_messages::{
         consensus_message::{Block, BlockId},
@@ -81,6 +81,37 @@ pub struct ValidatedRewardCert {
 }
 
 impl ValidatedRewardCert {
+    pub(crate) fn try_new_validated(
+        bank: &Bank,
+        skip: &Option<SkipRewardCertificate>,
+        notar: &Option<NotarRewardCertificate>,
+    ) -> Result<Option<Self>, Error> {
+        let Some(reward_slot) = extract_slot(bank, skip, notar)? else {
+            return Ok(None);
+        };
+        let rank_map = bank
+            .epoch_stakes_from_slot(reward_slot)
+            .ok_or(Error::NoRankMap)?
+            .bls_pubkey_to_rank_map();
+        let max_validators = rank_map.len();
+        let mut validators = HashSet::with_capacity(max_validators);
+        if let Some(skip) = skip {
+            get_validators_and_stake(rank_map, skip.to_bitmap(), &mut validators)
+                .map_err(|()| Error::NoRankMap)?;
+        }
+        if let Some(notar) = notar {
+            get_validators_and_stake(rank_map, notar.bitmap(), &mut validators)
+                .map_err(|()| Error::NoRankMap)?;
+        }
+        if validators.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            validators,
+            reward_slot,
+        }))
+    }
+
     /// If validation of the provided reward certs succeeds, returns an instance of [`ValidatedRewardCert`].
     pub fn try_new(
         bank: &Bank,
