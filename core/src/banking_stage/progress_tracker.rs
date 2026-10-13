@@ -10,10 +10,7 @@ use {
     solana_clock::{BankId, Slot},
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_poh::poh_recorder::SharedLeaderState,
-<<<<<<< HEAD
-=======
-    solana_runtime::{bank::BankId, leader_schedule_utils::last_of_consecutive_leader_slots},
->>>>>>> 363cbef (fix: preserve Alpenglow progress anchors and stop reporting expired estimates (#15885))
+    solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
     std::{
         sync::{
             Arc,
@@ -205,12 +202,7 @@ impl ProgressTracker {
         } else {
             self.last_observed_bank_id = None;
             self.limit_and_shared_block_cost = None;
-<<<<<<< HEAD
-            let (current_slot, current_slot_progress) =
-=======
-            self.limit_and_shared_allocated_accounts_data_size = None;
             let (current_slot, current_slot_progress, window_expired) =
->>>>>>> 363cbef (fix: preserve Alpenglow progress anchors and stop reporting expired estimates (#15885))
                 if self.migration_status.is_alpenglow_enabled() {
                     let slot_info = self.alpenglow_slot_clock.load()?;
                     let elapsed = slot_info.started_at.elapsed();
