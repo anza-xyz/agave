@@ -6,7 +6,7 @@ use {
     agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     itertools::{Either, Itertools},
-    rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
+    rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -18,7 +18,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{LruCache, SlotPubkeys, par_verify_shreds},
+        sigverify_shreds::{par_verify_shreds, LruCache, SlotPubkeys},
     },
     solana_perf::{
         self,
@@ -32,8 +32,8 @@ use {
     std::{
         num::NonZeroUsize,
         sync::{
-            Arc, RwLock,
             atomic::{AtomicUsize, Ordering},
+            Arc, RwLock,
         },
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -596,7 +596,7 @@ mod tests {
     use {
         super::*,
         rand::Rng,
-        solana_entry::entry::{Entry, create_ticks},
+        solana_entry::entry::{create_ticks, Entry},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,

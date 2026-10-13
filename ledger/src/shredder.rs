@@ -1,6 +1,5 @@
 use {
     crate::shred::{self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags},
-    reed_solomon_erasure::Error::TooFewDataShards,
     solana_clock::Slot,
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
@@ -225,7 +224,7 @@ impl Shredder {
                 if let Some(prev) = prev
                     && prev.checked_add(1) != index
                 {
-                    return Err(Error::from(TooFewDataShards));
+                    return Err(Error::TooFewDataShards);
                 }
                 data.extend_from_slice(shred::layout::get_data(shred)?);
                 let flags = shred::layout::get_flags(shred)?;
@@ -235,7 +234,7 @@ impl Shredder {
         )?;
         // The last shred should be DATA_COMPLETE_SHRED.
         if !data_complete {
-            return Err(Error::from(TooFewDataShards));
+            return Err(Error::TooFewDataShards);
         }
         if data.is_empty() {
             // For backward compatibility. This is needed when the data shred

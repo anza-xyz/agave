@@ -3,8 +3,8 @@
 
 use {
     super::{
-        DATA_SHREDS_PER_FEC_BLOCK, Error, Payload, Shred, ShredFetchStats, ShredFlags, ShredType,
-        ShredVariant, layout, merkle,
+        layout, merkle, Error, Payload, Shred, ShredFetchStats, ShredFlags, ShredType,
+        ShredVariant, DATA_SHREDS_PER_FEC_BLOCK,
     },
     crate::blockstore,
     agave_feature_set as feature_set,
@@ -16,8 +16,8 @@ use {
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         sync::{
-            Arc,
             atomic::{AtomicU8, Ordering},
+            Arc,
         },
         time::{Duration, Instant},
     },
@@ -590,14 +590,14 @@ mod tests {
     use {
         super::{
             super::{
-                OFFSET_OF_SHRED_VARIANT, PROOF_ENTRIES_FOR_32_32_BATCH, Shred,
-                make_merkle_shreds_for_tests, override_proof_size,
+                make_merkle_shreds_for_tests, override_proof_size, Shred, OFFSET_OF_SHRED_VARIANT,
+                PROOF_ENTRIES_FOR_32_32_BATCH,
             },
             *,
         },
         crate::{
             genesis_utils::create_genesis_config,
-            shred::{MAX_CODE_SHREDS_PER_SLOT, tests::*},
+            shred::{tests::*, MAX_CODE_SHREDS_PER_SLOT},
         },
         assert_matches::assert_matches,
         itertools::Itertools,
@@ -866,9 +866,7 @@ mod tests {
                 &mut recovered_shreds,
                 &mut recovered_data_shreds,
             ),
-            Err(Error::Erasure(
-                reed_solomon_erasure::Error::TooFewParityShards
-            ))
+            Err(Error::TooFewParityShards)
         );
         assert!(recovered_shreds.is_empty());
         assert!(recovered_data_shreds.is_empty());
