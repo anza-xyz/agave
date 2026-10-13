@@ -5,6 +5,7 @@ pub mod handler;
 
 pub use solana_vote_interface::state::{vote_state_versions::*, *};
 use {
+    crate::vote_state::handler::VoteStateVersionsInline,
     handler::{VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
@@ -40,7 +41,7 @@ fn get_vote_state_handler_checked(
             // 1. Deserialize as `VoteStateVersions`
             // 2. Check for uninitialized
             // 3. Convert
-            let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
+            let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
             if versioned.is_uninitialized() {
                 return Err(InstructionError::UninitializedAccount);
             }
@@ -973,9 +974,9 @@ pub fn deposit_delegator_rewards<S: std::hash::BuildHasher>(
         // Can't use `get_vote_state_handler_checked`, since it will convert
         // the underlying vote state to v4.
         // SIMD-0123 requires an *initialized v4*.
-        let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
-        if let VoteStateVersions::V4(vote_state_v4) = versioned {
-            Ok(VoteStateHandler::new_v4(*vote_state_v4))
+        let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
+        if let VoteStateVersionsInline::V4(vote_state_v4) = versioned {
+            Ok(VoteStateHandler::new_v4(vote_state_v4))
         } else {
             Err(InstructionError::InvalidAccountData)
         }
