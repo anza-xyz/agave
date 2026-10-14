@@ -498,17 +498,22 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
     invoke_context.push().unwrap();
-    let (_parameter_bytes, regions, account_lengths, instruction_data_offset) =
-        serialize_parameters(
-            &invoke_context
-                .transaction_context
-                .get_current_instruction_context()
-                .unwrap(),
-            false, // virtual_address_space_adjustments
-            false, // account_data_direct_mapping
-            false, // direct_account_pointers_in_program_input
-        )
-        .unwrap();
+    let (
+        _parameter_bytes,
+        regions,
+        account_lengths,
+        instruction_data_offset,
+        _account_pointers_offset,
+    ) = serialize_parameters(
+        &invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap(),
+        false, // virtual_address_space_adjustments
+        false, // account_data_direct_mapping
+        false, // direct_account_pointers_in_program_input
+    )
+    .unwrap();
 
     let regions = [
         MemoryRegion::new_empty(MM_RODATA_START),

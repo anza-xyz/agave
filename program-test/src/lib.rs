@@ -139,13 +139,18 @@ pub fn invoke_builtin_function(
         .direct_account_pointers_in_program_input;
 
     // Serialize entrypoint parameters with SBF ABI
-    let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
-        serialize_parameters(
-            &instruction_context,
-            false, // There is no VM so virtual_address_space_adjustments can not be implemented here
-            false, // There is no VM so account_data_direct_mapping can not be implemented here
-            direct_account_pointers_in_program_input,
-        )?;
+    let (
+        mut parameter_bytes,
+        _regions,
+        _account_lengths,
+        _instruction_data_offset,
+        _account_pointers_offset,
+    ) = serialize_parameters(
+        &instruction_context,
+        false, // There is no VM so virtual_address_space_adjustments can not be implemented here
+        false, // There is no VM so account_data_direct_mapping can not be implemented here
+        direct_account_pointers_in_program_input,
+    )?;
 
     // Deserialize data back into instruction params
     let (program_id, account_infos, input) =

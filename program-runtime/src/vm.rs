@@ -207,16 +207,27 @@ pub fn execute<'a, 'b: 'a>(
     let direct_account_pointers_in_program_input = invoke_context
         .get_feature_set()
         .direct_account_pointers_in_program_input;
+    let pass_input_metadata_in_vm_r3_r5 = invoke_context
+        .get_feature_set()
+        .pass_input_metadata_in_vm_r3_r5;
 
     let mut serialize_time = Measure::start("serialize");
-    let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
-        serialization::serialize_parameters(
-            &instruction_context,
-            virtual_address_space_adjustments,
-            account_data_direct_mapping,
-            direct_account_pointers_in_program_input,
-        )?;
+    let (
+        parameter_bytes,
+        regions,
+        accounts_metadata,
+        instruction_data_offset,
+        account_pointers_offset,
+    ) = serialization::serialize_parameters(
+        &instruction_context,
+        virtual_address_space_adjustments,
+        account_data_direct_mapping,
+        direct_account_pointers_in_program_input,
+    )?;
     serialize_time.stop();
+
+    let instruction_data_len = instruction_context.get_instruction_data().len();
+    let number_of_instruction_accounts = instruction_context.get_number_of_instruction_accounts();
 
     // save the account addresses so in case we hit an AccessViolation error we
     // can map to a more specific error
@@ -310,6 +321,22 @@ pub fn execute<'a, 'b: 'a>(
 
         vm.registers[1] = ebpf::MM_INPUT_START;
         vm.registers[2] = instruction_data_offset as u64;
+
+        // SIMD-0683: Pass ABIv1 input metadata via registers r3–r5.
+        if pass_input_metadata_in_vm_r3_r5 {
+            vm.registers[3] = instruction_data_len as u64;
+            vm.registers[4] = if let Some(account_pointers_offset) = account_pointers_offset {
+                account_pointers_offset as u64
+            } else {
+                ic_logger_msg!(
+                    log_collector,
+                    "Failed to create SBF VM: cannot determine account pointers offset"
+                );
+                return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
+            };
+            vm.registers[5] = number_of_instruction_accounts as u64;
+        }
+
         let mut call_frames =
             MEMORY_POOL.with_borrow_mut(|memory_pool| memory_pool.get_call_frames());
         let (compute_units_consumed, result) =

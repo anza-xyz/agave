@@ -47,7 +47,13 @@ pub fn push_and_serialize_parameters<'ix_data>(
         feature_set.direct_account_pointers_in_program_input,
     )
     .map(
-        |(aligned_memory, input_memory_regions, account_metadata, _instruction_data_offset)| {
+        |(
+            aligned_memory,
+            input_memory_regions,
+            account_metadata,
+            _instruction_data_offset,
+            _account_pointers_offset,
+        )| {
             SerializedParameters {
                 aligned_memory,
                 input_memory_regions,
