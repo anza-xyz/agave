@@ -323,7 +323,7 @@ pub fn execute<'a, 'b: 'a>(
         vm.registers[2] = instruction_data_offset as u64;
 
         // SIMD-0683: Pass ABIv1 input metadata via registers r3–r5.
-        if pass_input_metadata_in_vm_r3_r5 {
+        if !is_loader_deprecated && pass_input_metadata_in_vm_r3_r5 {
             vm.registers[3] = instruction_data_len as u64;
             vm.registers[4] = if let Some(account_pointers_offset) = account_pointers_offset {
                 account_pointers_offset as u64
