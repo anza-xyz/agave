@@ -1317,9 +1317,9 @@ mod test {
                 resigned,
             },
             slot: 145_865_705,
-            index: 1835,
+            index: 1824,
             version: rng.random(),
-            fec_set_index: 1835,
+            fec_set_index: 1824,
         };
         let data_header = {
             let reference_tick = rng.random_range(0..0x40);
@@ -1368,7 +1368,7 @@ mod test {
                     proof_size,
                     resigned,
                 },
-                index: common_header.index + i as u32 + 7,
+                index: common_header.index + i as u32,
                 ..common_header
             };
             let coding_header = CodingShredHeader {
@@ -1570,8 +1570,8 @@ mod test {
         let parent_slot = slot - rng.random_range(1..65536);
         let shred_version = rng.random();
         let reference_tick = rng.random_range(1..64);
-        let next_shred_index = rng.random_range(0..671);
-        let next_code_index = rng.random_range(0..781);
+        let next_shred_index = rng.random_range(0..21) * DATA_SHREDS_PER_FEC_BLOCK as u32;
+        let next_code_index = next_shred_index;
         let mut data = vec![0u8; data_size];
         rng.fill(&mut data[..]);
         let make_shreds_from_data = if resigning {
