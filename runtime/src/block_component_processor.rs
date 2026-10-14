@@ -571,13 +571,14 @@ impl BlockComponentProcessor {
             bitmap: cert.signature.bitmap.clone(),
             shred_version,
         };
-        bank.verify_certificate(unverified_cert).map_err(|_| {
-            warn!(
-                "Failed to verify genesis certificate for slot {cert_slot} in bank slot {}",
-                bank.slot()
-            );
-            BlockComponentProcessorError::GenesisCertificateFailedVerification
-        })?;
+        bank.verify_certificate(unverified_cert, None)
+            .map_err(|_| {
+                warn!(
+                    "Failed to verify genesis certificate for slot {cert_slot} in bank slot {}",
+                    bank.slot()
+                );
+                BlockComponentProcessorError::GenesisCertificateFailedVerification
+            })?;
 
         Ok(())
     }
