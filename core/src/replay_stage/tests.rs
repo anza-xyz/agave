@@ -44,6 +44,7 @@ use {
         blockstore::{
             BlockstoreError, UpdateParentSignal, entries_to_test_shreds, make_slot_entries,
         },
+        blockstore_meta::BlockLocation,
         create_new_tmp_ledger,
         entry_notifier_service::EntryNotification,
         genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
@@ -62,7 +63,17 @@ use {
         bank::BankTestConfig,
         block_component_processor::BlockComponentProcessorError,
         commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
+<<<<<<< HEAD
         genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
+=======
+        genesis_utils::{
+            GenesisConfigInfo, ValidatorVoteKeypairs, bootstrap_validator_stake_lamports,
+            create_genesis_config_with_tower_leader,
+        },
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusMessage,
+        },
+>>>>>>> 94b68ff (blockstore: hide pre-UpdateParent transaction history (#14432))
     },
     solana_sha256_hasher::hash,
     solana_shred_version::compute_shred_version,
@@ -188,6 +199,40 @@ fn post_migration_status_for_tests() -> MigrationStatus {
     migration_status.set_genesis_certificate(genesis_certificate);
     migration_status.enable_alpenglow_during_startup();
     migration_status
+}
+
+fn transaction_history_purge_responder() -> (
+    TransactionStatusSender,
+    std::thread::JoinHandle<(Slot, TransactionHistoryPurgeSource)>,
+) {
+    let (sender, receiver) = bounded(1);
+    let response_thread = std::thread::spawn(move || {
+        let TransactionStatusMessage::PurgeTransactionHistory {
+            slot,
+            source,
+            purge_input,
+            done_sender,
+            ..
+        } = receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap()
+        else {
+            panic!("expected transaction-history purge request");
+        };
+        assert!(matches!(
+            purge_input,
+            TransactionHistoryPurgeInput::ReplayStage
+        ));
+        assert!(done_sender.is_none());
+        (slot, source)
+    });
+    (
+        TransactionStatusSender {
+            sender,
+            dependency_tracker: None,
+        },
+        response_thread,
+    )
 }
 
 fn cluster_info_for_tests() -> ClusterInfo {
@@ -1188,7 +1233,8 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
         None,
         &[replay_result],
         &my_pubkey,
-    );
+    )
+    .unwrap();
 
     if let Some((_, handle)) = replay_vote_message_thread {
         // drop the context so replay_vote_sender is dropped and the thread can exit
@@ -1343,7 +1389,8 @@ fn test_cmr_mismatch_hard_dead() {
         None,
         &[replay_result],
         &Pubkey::new_unique(),
-    );
+    )
+    .unwrap();
 
     assert!(blockstore.is_dead(slot));
     assert_eq!(progress.dead_reason(slot), Some(&DeadSlotReason::Hard));
@@ -1422,7 +1469,8 @@ fn test_alpenglow_migration_transition_does_not_mark_bank_dead() {
         None,
         &[replay_result],
         &Pubkey::new_unique(),
-    );
+    )
+    .unwrap();
 
     assert!(!blockstore.is_dead(slot));
     assert!(progress.get(&slot).unwrap().dead_reason.is_none());
@@ -1463,6 +1511,8 @@ fn test_abandon_invalidates() {
     );
     let (entry_notification_sender, entry_notification_receiver) = bounded(1);
     process_active_banks_context.entry_notification_sender = Some(entry_notification_sender);
+    let (transaction_status_sender, purge_response_thread) = transaction_history_purge_responder();
+    process_active_banks_context.transaction_status_sender = Some(transaction_status_sender);
     let update_parent = VersionedUpdateParent::V1(solana_entry::block_component::UpdateParentV1 {
         new_parent_slot: 0,
         new_parent_block_id: parent_block_id,
@@ -1485,8 +1535,13 @@ fn test_abandon_invalidates() {
         None,
         &[replay_result],
         &Pubkey::new_unique(),
-    );
+    )
+    .unwrap();
 
+    assert_eq!(
+        purge_response_thread.join().unwrap(),
+        (slot, TransactionHistoryPurgeSource::AbandonedBank)
+    );
     assert!(progress.get(&slot).is_none());
     assert!(bank_forks.read().unwrap().get(slot).is_none());
     assert_eq!(
@@ -2820,9 +2875,148 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
     assert!(bank_forks.read().unwrap().get(1).is_none());
     assert!(bank1.get_signature_status(&transfer_signature).is_some());
 
-    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new());
+    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new(), None).unwrap();
 
     assert!(bank1.get_signature_status(&transfer_signature).is_none());
+}
+
+#[test]
+fn test_clear_slots_propagates_transaction_status_disconnect() {
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = VoteSimulator::new(1);
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+    bank_forks.write().unwrap().insert(bank1);
+
+    let (sender, receiver) = bounded(1);
+    drop(receiver);
+    let transaction_status_sender = TransactionStatusSender {
+        sender,
+        dependency_tracker: None,
+    };
+
+    for (source, purge_input) in [
+        (
+            TransactionHistoryPurgeSource::UpdateParentSignal,
+            TransactionHistoryPurgeInput::ReplayStage,
+        ),
+        (
+            TransactionHistoryPurgeSource::SwitchBank,
+            TransactionHistoryPurgeInput::SwitchBank,
+        ),
+    ] {
+        assert_matches!(
+            ReplayStage::clear_slots(
+                [1],
+                &bank_forks,
+                &mut progress,
+                &mut Vec::new(),
+                Some((&transaction_status_sender, source, purge_input)),
+            ),
+            Err(ReplayStageError::PurgeTransactionHistory { slot: 1, .. })
+        );
+    }
+}
+
+#[test]
+fn test_switch_bank_purges_cleared_descendants() {
+    let (vote_simulator, blockstore) =
+        setup_forks_from_tree(tr(0) / tr(1), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+    let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+    let leader_bank = Bank::new_from_parent(bank1, SlotLeader::default(), 2).mark_leader_bank();
+    leader_bank.freeze();
+    let leader_bank = bank_forks.write().unwrap().insert(leader_bank);
+    let block_id = Hash::new_unique();
+    blockstore
+        .set_double_merkle_root(1, BlockLocation::Original, block_id)
+        .unwrap();
+    blockstore.set_dead_slot(1).unwrap();
+
+    let latest_switch_request = LatestSwitchRequest::default();
+    assert!(
+        latest_switch_request
+            .try_advance(SwitchBankEvent::Switch {
+                block: Block {
+                    slot: 1,
+                    block_id: block_id.into(),
+                },
+            })
+            .is_none()
+    );
+    let (sender, receiver) = bounded(2);
+    let purge_responder = std::thread::spawn(move || {
+        receiver
+            .into_iter()
+            .map(|message| {
+                let TransactionStatusMessage::PurgeTransactionHistory {
+                    slot,
+                    source,
+                    purge_input,
+                    done_sender,
+                    ..
+                } = message
+                else {
+                    panic!("expected transaction-history purge request");
+                };
+                assert_eq!(source, TransactionHistoryPurgeSource::SwitchBank);
+                assert!(matches!(
+                    purge_input,
+                    TransactionHistoryPurgeInput::SwitchBank
+                ));
+                done_sender.unwrap().send(()).unwrap();
+                slot
+            })
+            .collect::<Vec<_>>()
+    });
+    let transaction_status_sender = TransactionStatusSender {
+        sender,
+        dependency_tracker: None,
+    };
+    let mut pending_switch = None;
+
+    ReplayStage::process_switch_bank_events(
+        &Pubkey::new_unique(),
+        &latest_switch_request,
+        &mut pending_switch,
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut Vec::new(),
+        Some(&transaction_status_sender),
+    )
+    .unwrap();
+
+    assert!(pending_switch.is_some());
+    assert!(bank_forks.read().unwrap().get(1).is_some());
+    assert!(bank_forks.read().unwrap().get(2).is_some());
+
+    blockstore.insert_shreds_for_bank(leader_bank.clone_without_scheduler());
+    ReplayStage::process_switch_bank_events(
+        &Pubkey::new_unique(),
+        &latest_switch_request,
+        &mut pending_switch,
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut Vec::new(),
+        Some(&transaction_status_sender),
+    )
+    .unwrap();
+
+    drop(transaction_status_sender);
+    assert_eq!(purge_responder.join().unwrap(), vec![1, 2]);
+    assert!(pending_switch.is_none());
+    assert!(bank_forks.read().unwrap().get(1).is_none());
+    assert!(bank_forks.read().unwrap().get(2).is_none());
+    assert!(!blockstore.is_dead(1));
 }
 
 #[test]
@@ -3230,6 +3424,7 @@ fn test_update_parent_restart() {
     let cleared_bank_id = bank_forks.read().unwrap().get(4).unwrap().bank_id();
     let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
     let (entry_notification_sender, entry_notification_receiver) = bounded(1);
+    let (transaction_status_sender, purge_response_thread) = transaction_history_purge_responder();
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3241,6 +3436,13 @@ fn test_update_parent_restart() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         Some(&entry_notification_sender),
+        Some(&transaction_status_sender),
+    )
+    .unwrap();
+
+    assert_eq!(
+        purge_response_thread.join().unwrap(),
+        (4, TransactionHistoryPurgeSource::UpdateParentSignal)
     );
 
     assert!(progress.get(&4).is_none()); // cleared: 5 < 32
@@ -3378,7 +3580,9 @@ fn test_update_parent_tower_gated() {
         &replay_vote_sender,
         &MigrationStatus::default(),
         None,
-    );
+        None,
+    )
+    .unwrap();
 
     assert!(progress.get(&slot).is_some());
     assert!(bank_forks.read().unwrap().get(slot).is_some());
@@ -3423,7 +3627,9 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         None,
-    );
+        None,
+    )
+    .unwrap();
 
     assert!(progress.get(&slot).is_some());
     assert!(bank_forks.read().unwrap().get(slot).is_some());
@@ -3471,7 +3677,9 @@ fn test_update_parent_keeps_hard() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         None,
-    );
+        None,
+    )
+    .unwrap();
 
     assert!(blockstore.is_dead(slot));
     assert!(progress.get(&slot).is_some());
@@ -3685,7 +3893,9 @@ fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bo
         &replay_vote_sender,
         &migration_status,
         None,
-    );
+        None,
+    )
+    .unwrap();
 
     assert!(!blockstore.is_dead(slot));
     assert!(progress.get(&slot).is_none());
@@ -3783,6 +3993,7 @@ fn test_soft_dead_restarts() {
     progress.insert(slot, p);
 
     let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (transaction_status_sender, purge_response_thread) = transaction_history_purge_responder();
     let mut async_verification_freelist = Vec::new();
     process_soft_dead_slots(
         &Pubkey::new_unique(),
@@ -3795,8 +4006,14 @@ fn test_soft_dead_restarts() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         None,
-    );
+        Some(&transaction_status_sender),
+    )
+    .unwrap();
 
+    assert_eq!(
+        purge_response_thread.join().unwrap(),
+        (slot, TransactionHistoryPurgeSource::SoftDeadSlot)
+    );
     assert!(!blockstore.is_dead(slot));
     assert!(progress.get(&slot).is_none());
     assert!(bank_forks.read().unwrap().get(slot).is_none());
@@ -3839,7 +4056,9 @@ fn test_full_soft_dead_hardens() {
         &replay_vote_sender,
         &post_migration_status_for_tests(),
         None,
-    );
+        None,
+    )
+    .unwrap();
 
     assert!(blockstore.is_dead(slot));
     assert!(matches!(
