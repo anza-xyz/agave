@@ -63,17 +63,10 @@ use {
         bank::BankTestConfig,
         block_component_processor::BlockComponentProcessorError,
         commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
-<<<<<<< HEAD
         genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
-=======
-        genesis_utils::{
-            GenesisConfigInfo, ValidatorVoteKeypairs, bootstrap_validator_stake_lamports,
-            create_genesis_config_with_tower_leader,
-        },
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusMessage,
         },
->>>>>>> 94b68ff (blockstore: hide pre-UpdateParent transaction history (#14432))
     },
     solana_sha256_hasher::hash,
     solana_shred_version::compute_shred_version,
@@ -2944,10 +2937,7 @@ fn test_switch_bank_purges_cleared_descendants() {
     assert!(
         latest_switch_request
             .try_advance(SwitchBankEvent::Switch {
-                block: Block {
-                    slot: 1,
-                    block_id: block_id.into(),
-                },
+                block: Block { slot: 1, block_id },
             })
             .is_none()
     );

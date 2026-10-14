@@ -22,13 +22,8 @@ use {
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-<<<<<<< HEAD
-    solana_transaction::sanitized::SanitizedTransaction,
-    solana_transaction_error::{TransactionError, TransactionResult},
-=======
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
-    solana_transaction_error::TransactionResult,
->>>>>>> 94b68ff (blockstore: hide pre-UpdateParent transaction history (#14432))
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     std::{borrow::Cow, sync::Arc, time::Instant},
     thiserror::Error,

@@ -323,8 +323,6 @@ impl TransactionStatusService {
                 if let Some(done_sender) = done_sender {
                     let _ = done_sender.send(());
                 }
-
-                Ok(false)
             }
         }
         Ok(())
@@ -418,14 +416,10 @@ pub(crate) mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
-<<<<<<< HEAD
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
-=======
         solana_runtime::{
-            bank::{Bank, BankId, TransactionBalancesSet},
+            bank::{Bank, TransactionBalancesSet},
             transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
         },
->>>>>>> 94b68ff (blockstore: hide pre-UpdateParent transaction history (#14432))
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
