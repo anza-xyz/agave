@@ -191,7 +191,7 @@ use {
     },
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_syscalls::create_program_runtime_environment,
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot},
@@ -3548,7 +3548,7 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            let nonce_address = SVMMessage::get_durable_nonce(message)?;
+            let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
             let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
             verify_nonce_account(&nonce_account, message.recent_blockhash())
                 .map(|nonce_data| nonce_data.get_lamports_per_signature())
