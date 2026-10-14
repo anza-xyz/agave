@@ -36,10 +36,10 @@ use {
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
-        non_circulating_supply::calculate_non_circulating_supply,
+        bank::Bank, bank_forks::BankForks,
+        block_component_processor::validated_block_certs::validated_block_finalization::ValidatedBlockFinalizationCert,
+        commitment::BlockCommitmentCache, non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
-        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},

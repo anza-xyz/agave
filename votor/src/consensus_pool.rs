@@ -24,8 +24,9 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_runtime::{
-        bank::Bank, epoch_stakes::BLSPubkeyToRankMap,
-        validated_block_finalization::ValidatedBlockFinalizationCert,
+        bank::Bank,
+        block_component_processor::validated_block_certs::validated_block_finalization::ValidatedBlockFinalizationCert,
+        epoch_stakes::BLSPubkeyToRankMap,
     },
     std::{collections::BTreeMap, sync::Arc},
     thiserror::Error,

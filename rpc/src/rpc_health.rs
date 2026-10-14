@@ -1,10 +1,5 @@
 use {
-    crate::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-    agave_votor_messages::migration::MigrationStatus,
-    solana_clock::Slot,
-    solana_ledger::blockstore::Blockstore,
-    solana_runtime::validated_block_finalization::ValidatedBlockFinalizationCert,
-    std::sync::{
+    crate::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank, agave_votor_messages::migration::MigrationStatus, solana_clock::Slot, solana_ledger::blockstore::Blockstore, solana_runtime::block_component_processor::validated_block_certs::validated_block_finalization::ValidatedBlockFinalizationCert, std::sync::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },

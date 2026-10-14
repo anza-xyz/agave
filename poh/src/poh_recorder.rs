@@ -38,9 +38,10 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, BankId},
-        block_component_processor::BankFooterError,
+        block_component_processor::{
+            BankFooterError, validated_block_certs::validated_reward_certificate::InvalidSlots,
+        },
         installed_scheduler_pool::BankWithScheduler,
-        validated_reward_certificate::Error as ValidatedRewardCertError,
     },
     solana_transaction::versioned::VersionedTransaction,
     std::{
@@ -103,8 +104,8 @@ pub enum PohRecorderError {
     #[error("producing reward certs failed with {0}")]
     BuildRewardCerts(#[from] BuildRewardCertsRespError),
 
-    #[error("constructing validated reward cert failed with {0}")]
-    ValidatedRewardCert(#[from] ValidatedRewardCertError),
+    #[error("constructing validated reward cert failed with {0:?}")]
+    InvalidRewardSlots(InvalidSlots),
 
     #[error("updating bank footer failed with \"{0}\"")]
     UpdateBankFooter(#[from] BankFooterError),
