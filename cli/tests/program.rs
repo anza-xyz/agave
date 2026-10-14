@@ -1,10 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::{
-        enable_alt_bn128_syscall, loader_v3_minimum_extend_program_size,
-        loader_v3_set_program_data_to_elf_length,
-    },
+    agave_feature_set::{enable_alt_bn128_syscall, loader_v3_set_program_data_to_elf_length},
     assert_matches::assert_matches,
     serde_json::Value,
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
@@ -59,7 +56,6 @@ use {
 };
 
 pub struct LoaderV3Features {
-    pub minimum_extend_program_size: bool,
     pub set_programdata_to_elf_length: bool,
 }
 
@@ -83,12 +79,8 @@ fn test_validator_genesis(
         });
 
     let LoaderV3Features {
-        minimum_extend_program_size,
         set_programdata_to_elf_length,
     } = features;
-    if !minimum_extend_program_size {
-        genesis.deactivate_features(&[loader_v3_minimum_extend_program_size::id()]);
-    }
     if !set_programdata_to_elf_length {
         genesis.deactivate_features(&[loader_v3_set_program_data_to_elf_length::id()]);
     }
@@ -250,7 +242,6 @@ async fn test_cli_program_deploy_non_upgradeable() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -467,7 +458,6 @@ async fn test_cli_program_deploy_no_authority() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -577,7 +567,6 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
     let mut test_validator_builder = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     );
@@ -715,7 +704,6 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
     let mut test_validator_builder = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     );
@@ -885,7 +873,6 @@ async fn test_cli_program_deploy_local_verifier() {
     let test_validator_builder = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     );
@@ -1025,7 +1012,6 @@ async fn test_cli_program_deploy_with_authority() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -1444,7 +1430,6 @@ async fn test_cli_program_upgrade_auto_extend(
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length,
         },
     )
@@ -1695,7 +1680,6 @@ async fn test_cli_program_close_program() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -1839,7 +1823,6 @@ async fn test_cli_program_extend_program() {
         &program_keypair,
         &noop_path,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -1911,17 +1894,18 @@ async fn test_cli_program_extend_program() {
     // Wait one slot to avoid "Program was deployed in this block already" error
     wait_n_slots(&rpc_client, 1).await;
 
-    // Extend 1 last byte
+    // Extend past the missing byte
     config.signers = vec![&keypair];
     config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
         program_pubkey: program_keypair.pubkey(),
         payer_signer_index: 0,
-        additional_bytes: 1,
+        additional_bytes: MINIMUM_EXTEND_PROGRAM_BYTES,
     });
     process_command(&config).await.unwrap();
 
     let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
-    let expected_len = UpgradeableLoaderState::size_of_programdata(new_max_len);
+    let expected_len = UpgradeableLoaderState::size_of_programdata(new_max_len - 1)
+        + MINIMUM_EXTEND_PROGRAM_BYTES as usize;
     assert_eq!(expected_len, programdata_account.data.len());
 
     // Larger program deploy finally succeeds
@@ -1952,7 +1936,7 @@ async fn test_cli_program_extend_program() {
     config.signers = vec![&rent_payer];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: Rent::default().minimum_balance(1024),
+        lamports: Rent::default().minimum_balance(MINIMUM_EXTEND_PROGRAM_BYTES as usize),
     };
     process_command(&config).await.unwrap();
 
@@ -1963,12 +1947,15 @@ async fn test_cli_program_extend_program() {
     config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
         program_pubkey: program_keypair.pubkey(),
         payer_signer_index: 1,
-        additional_bytes: 1024,
+        additional_bytes: MINIMUM_EXTEND_PROGRAM_BYTES,
     });
     process_command(&config).await.unwrap();
 
     let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
-    assert_eq!(prev_len + 1024, programdata_account.data.len());
+    assert_eq!(
+        prev_len + MINIMUM_EXTEND_PROGRAM_BYTES as usize,
+        programdata_account.data.len()
+    );
 }
 
 // Tests SIMD-0431 compatibility.
@@ -1999,7 +1986,6 @@ async fn test_cli_program_extend_program_minimum_size() {
         &program_keypair,
         &noop_path,
         LoaderV3Features {
-            minimum_extend_program_size: true,
             set_programdata_to_elf_length: false,
         },
     )
@@ -2123,7 +2109,6 @@ async fn test_cli_program_write_buffer() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -2536,7 +2521,6 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
     let mut test_validator_builder = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     );
@@ -2636,7 +2620,6 @@ async fn test_cli_program_set_buffer_authority() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -2824,7 +2807,6 @@ async fn test_cli_program_mismatch_buffer_authority() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -2961,7 +2943,6 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -3161,7 +3142,6 @@ async fn test_cli_program_show() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )
@@ -3424,7 +3404,6 @@ async fn test_cli_program_dump() {
     let test_validator = test_validator_genesis(
         &mint_keypair,
         LoaderV3Features {
-            minimum_extend_program_size: false,
             set_programdata_to_elf_length: false,
         },
     )

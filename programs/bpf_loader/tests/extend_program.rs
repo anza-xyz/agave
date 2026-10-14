@@ -97,13 +97,6 @@ fn read_noop_elf() -> Vec<u8> {
     data
 }
 
-fn features_without_simd_0431() -> LoaderV3Features {
-    LoaderV3Features {
-        minimum_extend_program_size: false,
-        ..LoaderV3Features::all_enabled()
-    }
-}
-
 #[test]
 fn test_extend_program() {
     let data = read_noop_elf();
@@ -136,9 +129,9 @@ fn test_extend_program() {
         &payer_address,
     );
 
-    const ADDITIONAL_BYTES: u32 = 42;
+    const ADDITIONAL_BYTES: u32 = MINIMUM_EXTEND_PROGRAM_BYTES;
     let accounts = process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         extend_program(&program_address, Some(&payer_address), ADDITIONAL_BYTES),
         Ok(()),
@@ -181,9 +174,9 @@ fn test_failed_extend_twice_in_same_slot() {
         &payer_address,
     );
 
-    const ADDITIONAL_BYTES: u32 = 42;
+    const ADDITIONAL_BYTES: u32 = MINIMUM_EXTEND_PROGRAM_BYTES;
     let accounts = process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts.clone(),
         extend_program(&program_address, Some(&payer_address), ADDITIONAL_BYTES),
         Ok(()),
@@ -198,7 +191,7 @@ fn test_failed_extend_twice_in_same_slot() {
 
     // Extending the program in the same slot should fail
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         extend_program(&program_address, Some(&payer_address), ADDITIONAL_BYTES),
         Err(InstructionError::InvalidArgument),
@@ -235,9 +228,13 @@ fn test_extend_program_not_upgradeable() {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
-        extend_program(&program_address, Some(&payer_address), 42),
+        extend_program(
+            &program_address,
+            Some(&payer_address),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        ),
         Err(InstructionError::Immutable),
     );
 }
@@ -273,7 +270,7 @@ fn test_extend_program_by_zero_bytes() {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         extend_program(&program_address, Some(&payer_address), 0),
         Err(InstructionError::InvalidInstructionData),
@@ -311,7 +308,7 @@ fn test_extend_program_past_max_size() {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         extend_program(&program_address, Some(&payer_address), 1),
         Err(InstructionError::InvalidRealloc),
@@ -363,27 +360,39 @@ fn test_extend_program_with_invalid_payer() {
         ),
         (
             payer_with_invalid_owner,
-            AccountSharedData::new(rent.minimum_balance(0), 0, &id()),
+            AccountSharedData::new(10_000_000_000, 0, &id()),
         ),
     ]);
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts.clone(),
-        extend_program(&program_address, Some(&payer_with_insufficient_funds), 1024),
+        extend_program(
+            &program_address,
+            Some(&payer_with_insufficient_funds),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        ),
         Err(InstructionError::from(
             SystemError::ResultWithNegativeLamports,
         )),
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts.clone(),
-        extend_program(&program_address, Some(&payer_with_invalid_owner), 1),
+        extend_program(
+            &program_address,
+            Some(&payer_with_invalid_owner),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        ),
         Err(InstructionError::ExternalAccountLamportSpend),
     );
 
-    let mut ix = extend_program(&program_address, Some(&payer_with_sufficient_funds), 1);
+    let mut ix = extend_program(
+        &program_address,
+        Some(&payer_with_sufficient_funds),
+        MINIMUM_EXTEND_PROGRAM_BYTES,
+    );
 
     {
         let payer_meta = ix
@@ -395,7 +404,7 @@ fn test_extend_program_with_invalid_payer() {
     }
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         ix,
         Err(InstructionError::PrivilegeEscalation),
@@ -436,13 +445,13 @@ fn test_extend_program_without_payer() {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts.clone(),
-        extend_program(&program_address, None, 1024),
+        extend_program(&program_address, None, MINIMUM_EXTEND_PROGRAM_BYTES),
         Err(InstructionError::MissingAccount),
     );
 
-    const ADDITIONAL_BYTES: u32 = 42;
+    const ADDITIONAL_BYTES: u32 = MINIMUM_EXTEND_PROGRAM_BYTES;
     let min_balance_increase_for_extend = rent
         .minimum_balance(ADDITIONAL_BYTES as usize)
         .saturating_sub(rent.minimum_balance(0));
@@ -455,7 +464,7 @@ fn test_extend_program_without_payer() {
         .unwrap();
 
     let accounts = process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         extend_program(&program_address, None, ADDITIONAL_BYTES),
         Ok(()),
@@ -497,7 +506,11 @@ fn test_extend_program_with_invalid_system_program() {
         &payer_address,
     );
 
-    let mut ix = extend_program(&program_address, Some(&payer_address), 1);
+    let mut ix = extend_program(
+        &program_address,
+        Some(&payer_address),
+        MINIMUM_EXTEND_PROGRAM_BYTES,
+    );
 
     // Change system program to an invalid key
     {
@@ -510,7 +523,7 @@ fn test_extend_program_with_invalid_system_program() {
     }
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         ix,
         Err(InstructionError::MissingAccount),
@@ -548,7 +561,11 @@ fn test_extend_program_with_mismatch_program_data() {
         &payer_address,
     );
 
-    let mut ix = extend_program(&program_address, Some(&payer_address), 1);
+    let mut ix = extend_program(
+        &program_address,
+        Some(&payer_address),
+        MINIMUM_EXTEND_PROGRAM_BYTES,
+    );
 
     // Replace ProgramData account meta with invalid account
     {
@@ -561,7 +578,7 @@ fn test_extend_program_with_mismatch_program_data() {
     }
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         ix,
         Err(InstructionError::InvalidArgument),
@@ -598,7 +615,11 @@ fn test_extend_program_with_readonly_program_data() {
         &payer_address,
     );
 
-    let mut ix = extend_program(&program_address, Some(&payer_address), 1);
+    let mut ix = extend_program(
+        &program_address,
+        Some(&payer_address),
+        MINIMUM_EXTEND_PROGRAM_BYTES,
+    );
 
     // Demote ProgramData account meta to read-only
     {
@@ -611,7 +632,7 @@ fn test_extend_program_with_readonly_program_data() {
     }
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         ix,
         Err(InstructionError::InvalidArgument),
@@ -647,9 +668,13 @@ fn test_extend_program_with_invalid_program_data_state() {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
-        extend_program(&program_address, Some(&payer_address), 1024),
+        extend_program(
+            &program_address,
+            Some(&payer_address),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        ),
         Err(InstructionError::InvalidAccountData),
     );
 }
@@ -683,9 +708,13 @@ fn test_extend_program_with_uninitialized_program_data(with_data: bool) {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
-        extend_program(&program_address, Some(&payer_address), 1024),
+        extend_program(
+            &program_address,
+            Some(&payer_address),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        ),
         Err(InstructionError::InvalidAccountData),
     );
 }
@@ -720,9 +749,13 @@ fn test_extend_program_with_invalid_program_data_owner() {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
-        extend_program(&program_address, Some(&payer_address), 1024),
+        extend_program(
+            &program_address,
+            Some(&payer_address),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        ),
         Err(InstructionError::InvalidAccountOwner),
     );
 }
@@ -757,7 +790,11 @@ fn test_extend_program_with_readonly_program() {
         &payer_address,
     );
 
-    let mut ix = extend_program(&program_address, Some(&payer_address), 1);
+    let mut ix = extend_program(
+        &program_address,
+        Some(&payer_address),
+        MINIMUM_EXTEND_PROGRAM_BYTES,
+    );
 
     // Demote Program account meta to read-only
     {
@@ -770,7 +807,7 @@ fn test_extend_program_with_readonly_program() {
     }
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
         ix,
         Err(InstructionError::InvalidArgument),
@@ -808,9 +845,13 @@ fn test_extend_program_with_invalid_program_owner() {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
-        extend_program(&program_address, Some(&payer_address), 1024),
+        extend_program(
+            &program_address,
+            Some(&payer_address),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        ),
         Err(InstructionError::InvalidAccountOwner),
     );
 }
@@ -846,9 +887,13 @@ fn test_extend_program_with_invalid_program_state() {
     );
 
     process_instruction(
-        features_without_simd_0431(),
+        LoaderV3Features::all_enabled(),
         transaction_accounts,
-        extend_program(&program_address, Some(&payer_address), 1024),
+        extend_program(
+            &program_address,
+            Some(&payer_address),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        ),
         Err(InstructionError::InvalidAccountData),
     );
 }

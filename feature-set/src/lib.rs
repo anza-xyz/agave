@@ -74,7 +74,6 @@ pub struct FeatureSnapshot {
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub upgrade_bpf_stake_program_to_v5: bool,
-    pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
@@ -173,9 +172,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &direct_account_pointers_in_program_input::ID,
             ),
             upgrade_bpf_stake_program_to_v5: is_active(&upgrade_bpf_stake_program_to_v5::ID),
-            loader_v3_minimum_extend_program_size: is_active(
-                &loader_v3_minimum_extend_program_size::ID,
-            ),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
@@ -341,7 +337,6 @@ impl FeatureSet {
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot
                 .direct_account_pointers_in_program_input,
-            loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,

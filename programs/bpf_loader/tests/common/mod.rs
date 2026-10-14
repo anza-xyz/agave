@@ -17,8 +17,6 @@ use {
 
 #[derive(Clone, Copy)]
 pub struct LoaderV3Features {
-    /// SIMD-0431
-    pub minimum_extend_program_size: bool,
     /// SIMD-0433
     pub set_programdata_to_elf_length: bool,
 }
@@ -26,7 +24,6 @@ pub struct LoaderV3Features {
 impl LoaderV3Features {
     pub fn all_enabled() -> Self {
         Self {
-            minimum_extend_program_size: true,
             set_programdata_to_elf_length: true,
         }
     }
@@ -34,10 +31,8 @@ impl LoaderV3Features {
 
 fn setup_features(feature_set: &mut SVMFeatureSet, loader_v3_features: LoaderV3Features) {
     let LoaderV3Features {
-        minimum_extend_program_size,
         set_programdata_to_elf_length,
     } = loader_v3_features;
-    feature_set.loader_v3_minimum_extend_program_size = minimum_extend_program_size;
     feature_set.loader_v3_set_program_data_to_elf_length = set_programdata_to_elf_length;
 }
 
