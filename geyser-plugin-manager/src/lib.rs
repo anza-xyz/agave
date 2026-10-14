@@ -11,4 +11,6 @@ pub mod slot_status_notifier;
 pub mod slot_status_observer;
 pub mod transaction_notifier;
 
-pub use geyser_plugin_manager::GeyserPluginManagerRequest;
+pub use {
+    agave_geyser_plugin_host::GeyserPluginHost, geyser_plugin_manager::GeyserPluginManagerRequest,
+};
