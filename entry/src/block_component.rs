@@ -349,6 +349,14 @@ impl VotesAggregate {
     /// Returns every field of the aggregate. Callers that must not silently
     /// ignore new fields (e.g. the geyser boundary conversion) bind this
     /// tuple exhaustively, so growing it breaks them at compile time.
+    pub fn into_parts(self) -> (BLSSignatureCompressed, Vec<u8>) {
+        let Self { signature, bitmap } = self;
+        (signature, bitmap)
+    }
+
+    /// Returns every field of the aggregate. Callers that must not silently
+    /// ignore new fields (e.g. the geyser boundary conversion) bind this
+    /// tuple exhaustively, so growing it breaks them at compile time.
     pub fn as_parts(&self) -> (&BLSSignatureCompressed, &[u8]) {
         let Self { signature, bitmap } = self;
         (signature, bitmap)

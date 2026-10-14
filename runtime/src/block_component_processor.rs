@@ -23,18 +23,23 @@ use {
     },
     crossbeam_channel::{Sender, TrySendError},
     log::*,
-    rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
+    rayon::{
+        ThreadPool,
+        iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
+    },
     smallvec::{SmallVec, smallvec},
     solana_bls_signatures::{
-        PubkeyProjective, SignatureCompressed, VerifySignature,
-        pubkey::{PopVerified, PubkeyAffine},
+        BlsError, PubkeyProjective, Signature as BLSSignature, SignatureCompressed,
+        VerifySignature,
+        pubkey::{AggregatePubkey, PopVerified, PubkeyAffine},
+        signature::AsSignatureAffine,
     },
     solana_clock::Slot,
     solana_entry::{
         block_component::{
             BlockFinalizationCert, BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker,
             VersionedBlockFooter, VersionedBlockHeader, VersionedBlockMarker,
-            VersionedUpdateParent,
+            VersionedUpdateParent, VotesAggregate,
         },
         entry::EntryView,
     },
@@ -413,6 +418,7 @@ impl BlockComponentProcessor {
     /// - Once the migration is complete all markers are allowed
     pub fn on_marker(
         &mut self,
+        thread_pool: &ThreadPool,
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
         shred_version: u16,
@@ -449,6 +455,7 @@ impl BlockComponentProcessor {
 
             // Everything else is only valid once migration is complete
             BlockMarkerV1::BlockFooter(footer) if markers_fully_enabled => self.on_footer(
+                thread_pool,
                 &migration_status.my_pubkey(),
                 bank,
                 parent_bank,
@@ -598,6 +605,7 @@ impl BlockComponentProcessor {
 
     fn on_footer(
         &mut self,
+        thread_pool: &ThreadPool,
         my_pubkey: &Pubkey,
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
@@ -622,22 +630,15 @@ impl BlockComponentProcessor {
 
         let block_producer_time_nanos =
             Self::block_producer_time_nanos_as_i64(block_producer_time_nanos)?;
-        verify_certs(
+        let (reward_cert, final_cert) = verify_certs(
+            thread_pool,
             &bank,
             shred_version,
-            &block_final_cert,
-            &skip_reward_cert,
-            &notar_reward_cert,
+            block_final_cert,
+            skip_reward_cert,
+            notar_reward_cert,
         )
         .map_err(|()| BlockComponentProcessorError::FooterVerificationFailed)?;
-        let reward_cert =
-            ValidatedRewardCert::try_new_validated(&bank, &skip_reward_cert, &notar_reward_cert)?;
-        let final_cert = block_final_cert
-            .map(|final_cert| {
-                ValidatedBlockFinalizationCert::try_validated(final_cert, &bank)
-                    .map_err(BlockComponentProcessorError::InvalidFinalizationCertificate)
-            })
-            .transpose()?;
 
         let (footer_input, pool_input) = match final_cert {
             None => (None, None),
@@ -814,53 +815,182 @@ pub struct VoteAccountUpdateStats {
     pub vote_accounts_updated: usize,
 }
 
+enum MySignature {
+    Compressed(SignatureCompressed),
+    Bls(BLSSignature),
+}
+
+impl MySignature {
+    fn verify(
+        &self,
+        pubkey: AggregatePubkey<PubkeyProjective>,
+        message: &[u8],
+    ) -> Result<(), BlsError> {
+        match self {
+            Self::Compressed(s) => pubkey.verify_signature(s, message),
+            Self::Bls(s) => pubkey.verify_signature(s, message),
+        }
+    }
+}
+
+struct Payload {
+    message: Vec<u8>,
+    pubkeys: Vec<PopVerified<PubkeyAffine>>,
+    signature: MySignature,
+}
+
+fn add_reward_payload(
+    bank: &Bank,
+    vote: Vote,
+    shred_version: u16,
+    bitmap: &[u8],
+    signature: SignatureCompressed,
+    validators: &mut HashSet<Pubkey>,
+) -> Result<Payload, ()> {
+    let rank_map = bank
+        .epoch_stakes_from_slot(vote.slot())
+        .ok_or(())?
+        .bls_pubkey_to_rank_map();
+    let message = get_vote_payload_to_sign(vote, shred_version);
+    let (pubkeys, _) = get_pubkeys_validators_stake(rank_map, bitmap, validators)?;
+    let payload = Payload {
+        message,
+        pubkeys,
+        signature: MySignature::Compressed(signature),
+    };
+    Ok(payload)
+}
+
+fn add_fast_block_payload(
+    block: Block,
+    shred_version: u16,
+    final_aggregate: VotesAggregate,
+    rank_map: &BLSPubkeyToRankMap,
+) -> Result<(Payload, ValidatedBlockFinalizationCert), ()> {
+    let mut signers = HashSet::new();
+    let notar_vote = Vote::new_notarization_vote(block);
+    let message = get_vote_payload_to_sign(notar_vote, shred_version);
+    let (signature, bitmap) = final_aggregate.into_parts();
+    let signature = BLSSignature::from(signature.try_as_affine().unwrap());
+    let (pubkeys, cert_stake) = get_pubkeys_validators_stake(rank_map, &bitmap, &mut signers)?;
+    let cert_sig = CertSignature { signature, bitmap };
+    let block_cert = ValidatedBlockFinalizationCert::try_new_validated_fast(
+        block,
+        cert_stake,
+        rank_map.total_stake(),
+        cert_sig,
+        signers,
+    )
+    .unwrap();
+    let signature = MySignature::Bls(signature);
+    let payload = Payload {
+        signature,
+        pubkeys,
+        message,
+    };
+    Ok((payload, block_cert))
+}
+
+fn add_slow_block_payload(
+    block: Block,
+    shred_version: u16,
+    final_aggregate: VotesAggregate,
+    notar_aggregate: VotesAggregate,
+    rank_map: &BLSPubkeyToRankMap,
+    payloads: &mut Vec<Payload>,
+) -> Result<ValidatedBlockFinalizationCert, ()> {
+    let mut signers = HashSet::new();
+    let vote = Vote::new_finalization_vote(block.slot);
+    let message = get_vote_payload_to_sign(vote, shred_version);
+    let (signature, bitmap) = final_aggregate.into_parts();
+    let signature = BLSSignature::from(signature.try_as_affine().unwrap());
+    let (pubkeys, final_stake) = get_pubkeys_validators_stake(rank_map, &bitmap, &mut signers)?;
+    let final_sig = CertSignature { signature, bitmap };
+    let signature = MySignature::Bls(signature);
+    let payload = Payload {
+        signature,
+        pubkeys,
+        message,
+    };
+    payloads.push(payload);
+
+    let notar_vote = Vote::new_notarization_vote(block);
+    let message = get_vote_payload_to_sign(notar_vote, shred_version);
+    let (signature, bitmap) = notar_aggregate.into_parts();
+    let (pubkeys, notar_stake) = get_pubkeys_validators_stake(rank_map, &bitmap, &mut signers)?;
+    let signature = BLSSignature::from(signature.try_as_affine().unwrap());
+    let notar_sig = CertSignature { signature, bitmap };
+    let block_cert = ValidatedBlockFinalizationCert::try_new_validated_slow(
+        block,
+        final_stake,
+        final_sig,
+        notar_stake,
+        notar_sig,
+        rank_map.total_stake(),
+        signers,
+    )
+    .unwrap();
+    let signature = MySignature::Bls(signature);
+    let payload = Payload {
+        signature,
+        pubkeys,
+        message,
+    };
+    payloads.push(payload);
+    Ok(block_cert)
+}
+
 fn verify_certs(
+    thread_pool: &ThreadPool,
     bank: &Bank,
     shred_version: u16,
-    block_final_cert: &Option<BlockFinalizationCert>,
-    skip_reward_cert: &Option<SkipRewardCertificate>,
-    notar_reward_cert: &Option<NotarRewardCertificate>,
-) -> Result<(), ()> {
+    block_final_cert: Option<BlockFinalizationCert>,
+    skip_reward_cert: Option<SkipRewardCertificate>,
+    notar_reward_cert: Option<NotarRewardCertificate>,
+) -> Result<
+    (
+        Option<ValidatedRewardCert>,
+        Option<ValidatedBlockFinalizationCert>,
+    ),
+    (),
+> {
+    let mut reward_validators = HashSet::new();
     let mut payloads = Vec::with_capacity(4);
-    struct Payload {
-        message: Vec<u8>,
-        pubkeys: Vec<PopVerified<PubkeyAffine>>,
-        signature: SignatureCompressed,
-    }
-    if let Some(skip) = skip_reward_cert {
-        let rank_map = bank
-            .epoch_stakes_from_slot(skip.slot)
-            .ok_or(())?
-            .bls_pubkey_to_rank_map();
+    let skip_slot = if let Some(skip) = skip_reward_cert {
         let vote = Vote::new_skip_vote(skip.slot);
-        let message = get_vote_payload_to_sign(vote, shred_version);
-        let pubkeys = get_pubkeys(rank_map, skip.to_bitmap())?;
-        let payload = Payload {
-            message,
-            pubkeys,
-            signature: skip.signature,
-        };
+        let payload = add_reward_payload(
+            bank,
+            vote,
+            shred_version,
+            skip.to_bitmap(),
+            skip.signature,
+            &mut reward_validators,
+        )?;
         payloads.push(payload);
-    }
-    if let Some(notar) = notar_reward_cert {
-        let rank_map = bank
-            .epoch_stakes_from_slot(notar.slot)
-            .ok_or(())?
-            .bls_pubkey_to_rank_map();
+        Some(skip.slot)
+    } else {
+        None
+    };
+    let notar_slot = if let Some(notar) = notar_reward_cert {
         let vote = Vote::new_notarization_vote(Block {
             slot: notar.slot,
             block_id: BlockId::from(notar.block_id),
         });
-        let message = get_vote_payload_to_sign(vote, shred_version);
-        let pubkeys = get_pubkeys(rank_map, notar.bitmap())?;
-        let payload = Payload {
-            message,
-            pubkeys,
-            signature: notar.signature,
-        };
+        let payload = add_reward_payload(
+            bank,
+            vote,
+            shred_version,
+            notar.bitmap(),
+            notar.signature,
+            &mut reward_validators,
+        )?;
         payloads.push(payload);
-    }
-    if let Some(block_cert) = block_final_cert {
+        Some(notar.slot)
+    } else {
+        None
+    };
+
+    let block_cert = if let Some(block_cert) = block_final_cert {
         let rank_map = bank
             .epoch_stakes_from_slot(block_cert.slot)
             .ok_or(())?
@@ -869,94 +999,71 @@ fn verify_certs(
             slot: block_cert.slot,
             block_id: block_cert.block_id,
         };
-        let notar_vote = Vote::new_notarization_vote(block);
-        match &block_cert.notar_aggregate {
-            None => {
-                let message = get_vote_payload_to_sign(notar_vote, shred_version);
-                let (signature, bitmap) = block_cert.final_aggregate.as_parts();
-                let pubkeys = get_pubkeys(rank_map, bitmap)?;
-                let payload = Payload {
-                    signature: *signature,
-                    pubkeys,
-                    message,
-                };
-                payloads.push(payload);
-            }
+        match block_cert.notar_aggregate {
             Some(notar_aggregate) => {
-                let vote = Vote::new_finalization_vote(block_cert.slot);
-                let message = get_vote_payload_to_sign(vote, shred_version);
-                let (signature, bitmap) = block_cert.final_aggregate.as_parts();
-                let pubkeys = get_pubkeys(rank_map, bitmap)?;
-                let payload = Payload {
-                    signature: *signature,
-                    pubkeys,
-                    message,
-                };
+                let cert = add_slow_block_payload(
+                    block,
+                    shred_version,
+                    block_cert.final_aggregate,
+                    notar_aggregate,
+                    rank_map,
+                    &mut payloads,
+                )?;
+                Some(cert)
+            }
+            None => {
+                let (payload, cert) = add_fast_block_payload(
+                    block,
+                    shred_version,
+                    block_cert.final_aggregate,
+                    rank_map,
+                )?;
                 payloads.push(payload);
-
-                let message = get_vote_payload_to_sign(notar_vote, shred_version);
-                let (signature, bitmap) = notar_aggregate.as_parts();
-                let pubkeys = get_pubkeys(rank_map, bitmap)?;
-                let payload = Payload {
-                    signature: *signature,
-                    pubkeys,
-                    message,
-                };
-                payloads.push(payload);
+                Some(cert)
             }
         }
-    }
+    } else {
+        None
+    };
 
-    if let Err(()) = payloads.into_par_iter().try_for_each(|payload| {
-        let pubkeys = payload.pubkeys;
-        let agg_pubkey = PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(|_| ())?;
-        agg_pubkey
-            .verify_signature(&payload.signature, &payload.message)
-            .map_err(|_| ())
+    if let Err(()) = thread_pool.install(|| {
+        payloads.into_par_iter().try_for_each(|payload| {
+            let pubkeys = payload.pubkeys;
+            let agg_pubkey = PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(|_| ())?;
+            payload
+                .signature
+                .verify(agg_pubkey, &payload.message)
+                .map_err(|_| ())
+        })
     }) {
         return Err(());
     }
-    Ok(())
+    let reward_cert =
+        ValidatedRewardCert::try_new_validated(bank, skip_slot, notar_slot, reward_validators)
+            .unwrap();
+    Ok((reward_cert, block_cert))
 }
 
-pub(super) fn get_validators_and_stake(
+fn get_pubkeys_validators_stake(
     rank_map: &BLSPubkeyToRankMap,
     bitmap: &[u8],
     validators: &mut HashSet<Pubkey>,
-) -> Result<u64, ()> {
+) -> Result<(Vec<PopVerified<PubkeyAffine>>, u64), ()> {
     let max_validators = rank_map.len();
     let ranks = decode(bitmap, max_validators).map_err(|_| ())?;
     let ranks = match ranks {
         Decoded::Base2(ranks) => ranks,
         Decoded::Base3(_, _) => return Err(()),
     };
-    let mut pubkeys = Vec::with_capacity(ranks.count_ones());
     let mut stake = 0;
-    for rank in ranks.iter_ones() {
-        let rank_map_entry = rank_map.get_pubkey_stake_entry(rank).ok_or(())?;
-        pubkeys.push(rank_map_entry.bls_pubkey);
-        validators.insert(rank_map_entry.vote_account_pubkey);
-        stake += rank_map_entry.stake.get();
-    }
-    Ok(stake)
-}
-
-fn get_pubkeys(
-    rank_map: &BLSPubkeyToRankMap,
-    bitmap: &[u8],
-) -> Result<Vec<PopVerified<PubkeyAffine>>, ()> {
-    let max_validators = rank_map.len();
-    let ranks = decode(bitmap, max_validators).map_err(|_| ())?;
-    let ranks = match ranks {
-        Decoded::Base2(ranks) => ranks,
-        Decoded::Base3(_, _) => return Err(()),
-    };
     let mut pubkeys = Vec::with_capacity(ranks.count_ones());
     for rank in ranks.iter_ones() {
         let rank_map_entry = rank_map.get_pubkey_stake_entry(rank).ok_or(())?;
         pubkeys.push(rank_map_entry.bls_pubkey);
+        stake += rank_map_entry.stake.get();
+        validators.insert(rank_map_entry.vote_account_pubkey);
     }
-    Ok(pubkeys)
+    Ok((pubkeys, stake))
 }
 
 #[cfg(test)]
@@ -971,6 +1078,7 @@ mod tests {
         agave_votor_messages::consensus_message::BlockId,
         bytes::Bytes,
         rand::Rng,
+        rayon::ThreadPoolBuilder,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::DEFAULT_MS_PER_SLOT,
         solana_entry::block_component::{
@@ -1128,6 +1236,7 @@ mod tests {
 
     #[test]
     fn test_on_footer_sets_timestamp() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
 
@@ -1151,6 +1260,7 @@ mod tests {
 
         processor
             .on_footer(
+                &thread_pool,
                 &my_pubkey,
                 bank.clone(),
                 parent,
@@ -1168,6 +1278,7 @@ mod tests {
 
     #[test]
     fn test_footer_sets_epoch_start_timestamp_on_epoch_change() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
@@ -1219,6 +1330,7 @@ mod tests {
 
         processor
             .on_footer(
+                &thread_pool,
                 &my_pubkey,
                 bank.clone(),
                 parent,
@@ -1252,6 +1364,7 @@ mod tests {
         timestamp_fn: impl FnOnce(i64, i64, i64) -> i64,
         should_pass: bool,
     ) {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
@@ -1281,7 +1394,15 @@ mod tests {
             notar_reward_cert: None,
         });
 
-        let result = processor.on_footer(&my_pubkey, bank, parent, shred_version, footer, None);
+        let result = processor.on_footer(
+            &thread_pool,
+            &my_pubkey,
+            bank,
+            parent,
+            shred_version,
+            footer,
+            None,
+        );
         if should_pass {
             result.unwrap();
         } else {
@@ -1294,6 +1415,7 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_without_parent_nanosecond_clock_rejects_out_of_bounds() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
@@ -1321,7 +1443,15 @@ mod tests {
 
         assert!(matches!(
             processor
-                .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
+                .on_footer(
+                    &thread_pool,
+                    &my_pubkey,
+                    bank,
+                    parent,
+                    shred_version,
+                    footer,
+                    None
+                )
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1329,6 +1459,7 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_rejects_timestamp_above_i64() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
@@ -1349,7 +1480,15 @@ mod tests {
 
         assert!(matches!(
             processor
-                .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
+                .on_footer(
+                    &thread_pool,
+                    &my_pubkey,
+                    bank,
+                    parent,
+                    shred_version,
+                    footer,
+                    None
+                )
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1425,6 +1564,7 @@ mod tests {
             ) -> Result<(), BlockComponentProcessorError>,
         >;
 
+        let thread_pool = Arc::new(ThreadPoolBuilder::new().num_threads(2).build().unwrap());
         let post_migration = MigrationStatus::post_migration_status();
         let pre_migration = MigrationStatus::default();
         // Feature activated but migration not yet complete
@@ -1449,10 +1589,13 @@ mod tests {
         // One step = one direct `on_marker` call
         let marker_step = {
             let (bank, parent) = (bank.clone(), parent.clone());
+            let thread_pool = thread_pool.clone();
             move |marker: VersionedBlockMarker, allow_initial_update_parent: bool| -> Step {
                 let (bank, parent) = (bank.clone(), parent.clone());
+                let thread_pool = thread_pool.clone();
                 Box::new(move |processor, migration_status| {
                     processor.on_marker(
+                        &thread_pool,
                         bank,
                         parent,
                         shred_version,
@@ -1501,10 +1644,13 @@ mod tests {
         // first in its leader window
         let update_parent_not_window_start = {
             let (bank, parent) = (bank_not_window_start.clone(), parent.clone());
+            let thread_pool = thread_pool.clone();
             move |allow_initial_update_parent: bool| -> Step {
                 let (bank, parent) = (bank.clone(), parent.clone());
+                let thread_pool = thread_pool.clone();
                 Box::new(move |processor, migration_status| {
                     processor.on_marker(
+                        &thread_pool,
                         bank,
                         parent,
                         shred_version,
