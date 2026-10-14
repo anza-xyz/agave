@@ -57,6 +57,36 @@ default_cargo_audit_extra_args=(
   # Agave Ok:  handshake stays authenticated; no integrity or availability impact
   --ignore RUSTSEC-2026-0285
 
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     `Debug` impls for client session values expose TLS secrets
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0346
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0346
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  local attacker/log-access risk accepted for v4.3.
+  --ignore RUSTSEC-2026-0346
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     Brotli certificate decompression can allocate up to 1 GiB before authentication
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0348
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0348
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  rustls's optional Brotli certificate decompression feature is not enabled.
+  --ignore RUSTSEC-2026-0348
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     Unauthenticated ServerHello can downgrade later connections to classical key exchange
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0349
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0349
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  rustls uses ring's classical key exchanges; post-quantum groups are not enabled.
+  --ignore RUSTSEC-2026-0349
+
   # Crate:     tonic
   # Version:   0.9.2
   # Title:     Remotely exploitable Denial of Service in Tonic
@@ -107,6 +137,36 @@ xtask_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=0.23.45
   # Agave Ok:  handshake stays authenticated; no integrity or availability impact
   --ignore RUSTSEC-2026-0285
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     `Debug` impls for client session values expose TLS secrets
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0346
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0346
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  local attacker/log-access risk accepted for v4.3.
+  --ignore RUSTSEC-2026-0346
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     Brotli certificate decompression can allocate up to 1 GiB before authentication
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0348
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0348
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  rustls's optional Brotli certificate decompression feature is not enabled.
+  --ignore RUSTSEC-2026-0348
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     Unauthenticated ServerHello can downgrade later connections to classical key exchange
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0349
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0349
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  rustls uses ring's classical key exchanges; post-quantum groups are not enabled.
+  --ignore RUSTSEC-2026-0349
 )
 
 lock_files="$(git ls-files ':**Cargo.lock')"
