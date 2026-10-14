@@ -1162,6 +1162,66 @@ mod tests {
         std::{fs::File, io::Read},
     };
 
+    /// Checks that the account-state wincode decoder matches bincode on `data`.
+    fn assert_loader_state_decoders_agree(data: &[u8]) {
+        assert_eq!(
+            bincode::deserialize::<UpgradeableLoaderState>(data).ok(),
+            wincode::config::deserialize::<UpgradeableLoaderState, _>(
+                data,
+                solana_account::WINCODE_CONFIG,
+            )
+            .ok(),
+            "data: {data:?}",
+        );
+    }
+
+    #[test]
+    fn test_loader_state_decoders_agree() {
+        for len in [
+            0,
+            UpgradeableLoaderState::size_of_uninitialized(),
+            UpgradeableLoaderState::size_of_buffer_metadata(),
+            UpgradeableLoaderState::size_of_programdata_metadata(),
+        ] {
+            assert_loader_state_decoders_agree(&vec![0; len]);
+        }
+        for state in [
+            UpgradeableLoaderState::Uninitialized,
+            UpgradeableLoaderState::Buffer {
+                authority_address: Some(Pubkey::new_unique()),
+            },
+            UpgradeableLoaderState::Buffer {
+                authority_address: None,
+            },
+            UpgradeableLoaderState::Program {
+                programdata_address: Pubkey::new_unique(),
+            },
+            UpgradeableLoaderState::ProgramData {
+                slot: u64::MAX,
+                upgrade_authority_address: Some(Pubkey::new_unique()),
+            },
+            UpgradeableLoaderState::ProgramData {
+                slot: 7,
+                upgrade_authority_address: None,
+            },
+        ] {
+            let encoded = bincode::serialize(&state).unwrap();
+            let mut trailing = encoded.clone();
+            trailing.extend_from_slice(&[0xff; 16]);
+            assert_loader_state_decoders_agree(&trailing);
+            for len in 0..=encoded.len() {
+                assert_loader_state_decoders_agree(encoded.get(..len).unwrap());
+            }
+            for index in 0..encoded.len() {
+                for byte in [0x00, 0x01, 0x02, 0x7f, 0x80, 0xff] {
+                    let mut mutated = encoded.clone();
+                    *mutated.get_mut(index).unwrap() = byte;
+                    assert_loader_state_decoders_agree(&mutated);
+                }
+            }
+        }
+    }
+
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
     where
         T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>

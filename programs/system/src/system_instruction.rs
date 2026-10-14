@@ -262,6 +262,54 @@ mod test {
         solana_transaction_context::instruction_accounts::InstructionAccount,
     };
 
+    /// Checks that the account-state wincode decoder matches bincode on `data`.
+    fn assert_nonce_decoders_agree(data: &[u8]) {
+        assert_eq!(
+            bincode::deserialize::<Versions>(data).ok(),
+            wincode::config::deserialize::<Versions, _>(data, solana_account::WINCODE_CONFIG).ok(),
+            "data: {data:?}",
+        );
+    }
+
+    #[test]
+    fn test_nonce_decoders_agree() {
+        for len in [0, 4, 100, State::size()] {
+            assert_nonce_decoders_agree(&vec![0; len]);
+        }
+        let data = nonce::state::Data {
+            authority: Pubkey::new_unique(),
+            durable_nonce: DurableNonce::from_blockhash(&hash(&[1; 32])),
+            fee_calculator: solana_fee_calculator::FeeCalculator {
+                lamports_per_signature: u64::MAX,
+            },
+        };
+        for versions in [
+            Versions::new(State::Initialized(data.clone())),
+            Versions::Legacy(Box::new(State::Initialized(data))),
+            Versions::Legacy(Box::new(State::Uninitialized)),
+            Versions::new(State::Uninitialized),
+        ] {
+            assert_eq!(
+                bincode::serialize(&versions).unwrap(),
+                wincode::config::serialize(&versions, solana_account::WINCODE_CONFIG).unwrap(),
+            );
+            let encoded = bincode::serialize(&versions).unwrap();
+            let mut trailing = encoded.clone();
+            trailing.extend_from_slice(&[0xff; 16]);
+            assert_nonce_decoders_agree(&trailing);
+            for len in 0..=encoded.len() {
+                assert_nonce_decoders_agree(encoded.get(..len).unwrap());
+            }
+            for index in 0..encoded.len() {
+                for byte in [0x00, 0x01, 0x02, 0x7f, 0x80, 0xff] {
+                    let mut mutated = encoded.clone();
+                    *mutated.get_mut(index).unwrap() = byte;
+                    assert_nonce_decoders_agree(&mutated);
+                }
+            }
+        }
+    }
+
     pub const NONCE_ACCOUNT_INDEX: IndexOfAccount = 0;
     pub const WITHDRAW_TO_ACCOUNT_INDEX: IndexOfAccount = 1;
 
