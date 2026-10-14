@@ -31,6 +31,7 @@ use {
         epoch_slots::EpochSlots,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
+        pending_pull_requests::{PendingPullRequests, PullResponseStatus},
         ping_pong::Pong,
         protocol::{
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, GossipProtocolWincodeConfig,
@@ -102,7 +103,7 @@ use {
 /// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// Interval between pull requests (in gossip rounds)
-const PULL_REQUEST_PERIOD: usize = 5;
+pub(crate) const PULL_REQUEST_PERIOD: usize = 5;
 
 /// Max number of packet batches sigverified in one [`ClusterInfo::run_socket_consume`] iteration.
 ///
@@ -200,6 +201,7 @@ pub struct ClusterInfo {
     outbound_budget: DataBudget,
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
+    pending_pull_requests: PendingPullRequests,
     pull_request_budget: KeyedRateLimiter<IpAddr>,
     pub(crate) stats: GossipStats,
     local_message_pending_push_queue: Mutex<Vec<CrdsValue>>,
@@ -232,6 +234,7 @@ impl ClusterInfo {
                 GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
+            pending_pull_requests: PendingPullRequests::default(),
             pull_request_budget: KeyedRateLimiter::new(
                 GOSSIP_PULL_SCAN_BUDGET_CACHE_CAPACITY,
                 TokenBucket::new(
@@ -1291,26 +1294,33 @@ impl ClusterInfo {
         let mut pings = Vec::new();
         let pulls = {
             let _st = ScopedTimer::from(&self.stats.new_pull_requests);
-            self.gossip
-                .new_pull_request(
-                    thread_pool,
-                    &keypair,
-                    self.my_shred_version(),
-                    now,
-                    gossip_validators,
-                    stakes,
-                    max_bloom_filter_bytes,
-                    &self.ping_cache,
-                    &mut pings,
-                    &self.socket_addr_space,
-                )
-                .into_iter()
-                .flatten()
+            self.gossip.new_pull_request(
+                thread_pool,
+                &keypair,
+                self.my_shred_version(),
+                now,
+                gossip_validators,
+                stakes,
+                max_bloom_filter_bytes,
+                &self.ping_cache,
+                &mut pings,
+                &self.socket_addr_space,
+            )
         };
+        if pulls.is_ok() {
+            self.pending_pull_requests.set_has_pull_peers();
+        }
+        let pulls = pulls.into_iter().flatten();
         let pings = pings
             .into_iter()
             .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
-        self.append_entrypoint_to_pulls(thread_pool, max_bloom_filter_bytes, pulls)
+        let pulls: Vec<_> = self
+            .append_entrypoint_to_pulls(thread_pool, max_bloom_filter_bytes, pulls)
+            .collect();
+        self.pending_pull_requests
+            .record(pulls.iter().map(|(addr, _)| *addr), Instant::now());
+        pulls
+            .into_iter()
             .map(move |(gossip_addr, filter)| {
                 let request = Protocol::PullRequest(filter, self_info.clone());
                 (gossip_addr, request)
@@ -2205,6 +2215,8 @@ impl ClusterInfo {
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
             sigverify_cache: &SigVerifyCache,
+            pending_pull_requests: &PendingPullRequests,
+            now: Instant,
             is_full_alpenglow_epoch: bool,
         ) -> Option<(SocketAddr, Protocol)> {
             let result: wincode::ReadResult<Protocol> = packet
@@ -2212,6 +2224,19 @@ impl ClusterInfo {
                 .ok_or(wincode::ReadError::Custom("packet discarded"))
                 .and_then(deserialize_protocol);
             let mut protocol: Protocol = stats.record_received_packet(result)?;
+            if matches!(protocol, Protocol::PullResponse(..)) {
+                match pending_pull_requests.check(&packet.meta().socket_addr(), now) {
+                    PullResponseStatus::Solicited => (),
+                    PullResponseStatus::Expired => {
+                        stats.skip_pull_response_expired.add_relaxed(1);
+                        return None;
+                    }
+                    PullResponseStatus::Unsolicited => {
+                        stats.skip_pull_response_unsolicited.add_relaxed(1);
+                        return None;
+                    }
+                }
+            }
             protocol.sanitize().ok()?;
             if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) =
                 &mut protocol
@@ -2237,6 +2262,7 @@ impl ClusterInfo {
             .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
         let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
+        let now = Instant::now();
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
             thread_pool.install(|| {
@@ -2249,6 +2275,8 @@ impl ClusterInfo {
                                 &stakes,
                                 &self.stats,
                                 &self.sigverify_cache,
+                                &self.pending_pull_requests,
+                                now,
                                 is_full_alpenglow_epoch,
                             )
                         })
@@ -2263,6 +2291,8 @@ impl ClusterInfo {
                                 &stakes,
                                 &self.stats,
                                 &self.sigverify_cache,
+                                &self.pending_pull_requests,
+                                now,
                                 is_full_alpenglow_epoch,
                             )
                         })
@@ -3591,6 +3621,96 @@ mod tests {
         assert_ne!(contact_info.shred_version(), d.shred_version());
         cluster_info.insert_info(contact_info);
         stakes.insert(id4, 10);
+    }
+
+    #[test]
+    fn test_drop_unsolicited_pull_responses() {
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let keypair = Arc::new(Keypair::new());
+        let cluster_info = ClusterInfo::new(
+            ContactInfo::new_localhost(&keypair.pubkey(), timestamp()),
+            keypair,
+            SocketAddrSpace::Unspecified,
+        );
+        let mut entrypoint = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        entrypoint
+            .set_gossip(socketaddr!("127.0.0.2:1234"))
+            .unwrap();
+        let entrypoint_addr = entrypoint.gossip().unwrap();
+        cluster_info.set_entrypoint(entrypoint);
+        let mut peer = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        peer.set_gossip(socketaddr!("127.0.0.3:1234")).unwrap();
+        let peer_addr = peer.gossip().unwrap();
+        let other_addr = socketaddr!("10.0.0.1:8001");
+        let values: Vec<_> = repeat_with(|| {
+            let keypair = Keypair::new();
+            let node = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+            CrdsValue::new(CrdsData::from(&node), &keypair)
+        })
+        .take(4)
+        .collect();
+        let node = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        let unsigned = CrdsValue::new_unsigned(CrdsData::from(&node));
+        let consume = |pkts: Vec<(SocketAddr, CrdsValue)>| -> Vec<(SocketAddr, Vec<CrdsValue>)> {
+            let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
+            let (sender, receiver) = crossbeam_channel::unbounded();
+            let pkts = pkts.into_iter().map(|(addr, value)| {
+                (addr, Protocol::PullResponse(Pubkey::default(), vec![value]))
+            });
+            let pkts = make_gossip_packet_batch(pkts.collect::<Vec<_>>(), &cluster_info.stats);
+            packet_sender.send(pkts.into()).unwrap();
+            cluster_info
+                .run_socket_consume(
+                    &thread_pool,
+                    None,
+                    &packet_receiver,
+                    &sender,
+                    &mut Vec::new(),
+                )
+                .unwrap();
+            receiver
+                .try_iter()
+                .flatten()
+                .map(|(addr, msg)| match msg {
+                    Protocol::PullResponse(_, values) => (addr, values),
+                    _ => panic!("wrong protocol"),
+                })
+                .collect()
+        };
+        let stats = &cluster_info.stats;
+        let verified_values = &cluster_info.sigverify_cache.verified_values;
+        let stakes = HashMap::from([(*peer.pubkey(), 10)]);
+        cluster_info
+            .new_pull_requests(&thread_pool, None, &stakes)
+            .for_each(drop);
+        let out = consume(vec![(other_addr, values[0].clone())]);
+        assert_eq!(out, vec![(other_addr, vec![values[0].clone()])]);
+        cluster_info.ping_cache.lock().unwrap().mock_pong(
+            *peer.pubkey(),
+            peer_addr,
+            Instant::now(),
+        );
+        cluster_info.insert_info(peer);
+        cluster_info
+            .new_pull_requests(&thread_pool, None, &stakes)
+            .for_each(drop);
+        let out = consume(vec![
+            (other_addr, values[1].clone()),
+            (other_addr, unsigned.clone()),
+            (peer_addr, values[2].clone()),
+            (peer_addr, unsigned),
+            (entrypoint_addr, values[3].clone()),
+        ]);
+        assert_eq!(
+            out,
+            vec![
+                (peer_addr, vec![values[2].clone()]),
+                (entrypoint_addr, vec![values[3].clone()]),
+            ]
+        );
+        assert_eq!(stats.skip_pull_response_unsolicited.load_relaxed(), 2);
+        assert_eq!(stats.skip_pull_response_expired.load_relaxed(), 0);
+        assert!(!verified_values.contains(values[1].hash()));
     }
 
     #[test]
