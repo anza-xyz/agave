@@ -48,7 +48,6 @@ impl TransactionNotifier for TransactionNotifierImpl {
         // transaction notifications.
         if !plugin_manager
             .plugins()
-            .iter()
             .any(|plugin| plugin.transaction_notifications_enabled())
         {
             return;
@@ -164,7 +163,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             transaction_status_meta: &transaction_status_meta,
         };
 
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.transaction_notifications_enabled() {
                 continue;
             }

@@ -33,7 +33,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         commission_rate_in_basis_points: bool,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
@@ -62,7 +62,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             entry_count,
         );
 
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             let block_info = ReplicaBlockInfoVersions::V0_0_5(&block_info);
             match plugin.notify_block_metadata_for_bank(block_info, bank_id.into()) {
                 Err(err) => {

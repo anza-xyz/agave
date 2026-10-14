@@ -110,6 +110,8 @@ impl DerefMut for LoadedGeyserPlugin {
     }
 }
 
+/// A loaded plugin set. Clones share ownership of the plugins.
+/// Drop other owners of a plugin before unloading it.
 #[derive(Default, Debug, Clone)]
 pub struct GeyserPluginHost {
     plugins: Vec<Arc<LoadedGeyserPlugin>>,
@@ -121,9 +123,20 @@ impl GeyserPluginHost {
         Self { plugins }
     }
 
-    /// The currently loaded plugins.
-    pub fn plugins(&self) -> &[Arc<LoadedGeyserPlugin>] {
-        &self.plugins
+    /// Borrows the currently loaded plugins without exposing their shared ownership.
+    ///
+    /// Iteration cannot retain an owning reference that would block unloading:
+    ///
+    /// ```compile_fail
+    /// use agave_geyser_plugin_host::{GeyserPluginHost, LoadedGeyserPlugin};
+    /// use std::sync::Arc;
+    ///
+    /// fn retain_plugin(host: &GeyserPluginHost) -> Arc<LoadedGeyserPlugin> {
+    ///     Arc::clone(host.plugins().into_iter().next().unwrap())
+    /// }
+    /// ```
+    pub fn plugins(&self) -> impl ExactSizeIterator<Item = &LoadedGeyserPlugin> {
+        self.plugins.iter().map(AsRef::as_ref)
     }
 
     /// Adds an already-loaded plugin to the set.
@@ -427,27 +440,19 @@ mod tests {
     #[test]
     fn test_push_and_remove_plugin() {
         let mut manager = GeyserPluginHost::default();
-        assert!(manager.plugins().is_empty());
+        assert!(manager.plugins().next().is_none());
 
         manager.push_plugin(test_plugin("first", false, false));
         manager.push_plugin(test_plugin("second", false, false));
         assert_eq!(
-            manager
-                .plugins()
-                .iter()
-                .map(|p| p.name())
-                .collect::<Vec<_>>(),
+            manager.plugins().map(|p| p.name()).collect::<Vec<_>>(),
             ["first", "second"]
         );
 
         let removed = manager.remove_plugin(0);
         assert_eq!(removed.name(), "first");
         assert_eq!(
-            manager
-                .plugins()
-                .iter()
-                .map(|p| p.name())
-                .collect::<Vec<_>>(),
+            manager.plugins().map(|p| p.name()).collect::<Vec<_>>(),
             ["second"]
         );
     }
@@ -459,11 +464,7 @@ mod tests {
             Arc::new(test_plugin("b", false, false)),
         ]);
         assert_eq!(
-            manager
-                .plugins()
-                .iter()
-                .map(|p| p.name())
-                .collect::<Vec<_>>(),
+            manager.plugins().map(|p| p.name()).collect::<Vec<_>>(),
             ["a", "b"]
         );
     }
@@ -532,7 +533,7 @@ mod tests {
         manager.push_plugin(test_plugin("second", false, false));
 
         manager.unload();
-        assert!(manager.plugins().is_empty());
+        assert!(manager.plugins().next().is_none());
     }
 
     /// Writes a config file into a fresh temp directory and returns its path.
@@ -643,7 +644,7 @@ mod tests {
             let mut manager = GeyserPluginHost::default();
             manager.push_plugin(plugin);
             manager.unload();
-            assert!(manager.plugins().is_empty());
+            assert!(manager.plugins().next().is_none());
             assert_eq!(
                 std::fs::read_to_string(config.with_extension("unloaded")).unwrap(),
                 "unloaded"

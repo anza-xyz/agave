@@ -394,7 +394,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert!(manager.load().plugins().is_empty());
+        assert!(manager.load().plugins().next().is_none());
         let name = request(&sender, |response_sender| {
             GeyserPluginManagerRequest::LoadPlugin {
                 config_file: TESTPLUGIN2_CONFIG.to_owned(),
@@ -411,13 +411,13 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(manager.load().plugins()[0].name(), "dummy");
+        assert_eq!(manager.load().plugins().next().unwrap().name(), "dummy");
 
         exit.store(true, Ordering::Relaxed);
         drop(sender);
         drop(slot_sender);
         service.join().unwrap();
-        assert!(manager.load().plugins().is_empty());
+        assert!(manager.load().plugins().next().is_none());
     }
 
     #[test]

@@ -11,11 +11,4 @@ pub mod slot_status_notifier;
 pub mod slot_status_observer;
 pub mod transaction_notifier;
 
-// Keep the existing manager imports working after the host extraction.
-pub use {
-    self::{
-        GeyserPluginHost as GeyserPluginManager, GeyserPluginHostError as GeyserPluginManagerError,
-    },
-    agave_geyser_plugin_host::{GeyserPluginHost, GeyserPluginHostError, LoadedGeyserPlugin},
-    geyser_plugin_manager::GeyserPluginManagerRequest,
-};
+pub use geyser_plugin_manager::GeyserPluginManagerRequest;

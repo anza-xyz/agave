@@ -4,11 +4,28 @@
 //! `agave-geyser-plugin-host`. What stays here is the validator-operational
 //! surface: the admin RPC handlers for listing, loading, unloading and
 //! reloading plugins at runtime.
+//!
+//! The extracted types remain available through their original module paths:
+//!
+//! ```
+//! use solana_geyser_plugin_manager::geyser_plugin_manager::{
+//!     GeyserPluginManager, GeyserPluginManagerError, LoadedGeyserPlugin,
+//! };
+//!
+//! let mut manager = GeyserPluginManager::default();
+//! let _: Option<&LoadedGeyserPlugin> = manager.plugins().next();
+//! let _: GeyserPluginManagerError = GeyserPluginManagerError::LibPathNotSet;
+//! manager.unload();
+//! ```
 
+#[cfg(test)]
+use agave_geyser_plugin_host::GeyserPluginHostError;
 #[cfg(not(test))]
 use agave_geyser_plugin_host::load_plugin_from_config;
-#[cfg(test)]
-use agave_geyser_plugin_host::{GeyserPluginHostError, LoadedGeyserPlugin};
+pub use agave_geyser_plugin_host::{
+    GeyserPluginHost as GeyserPluginManager, GeyserPluginHostError as GeyserPluginManagerError,
+    LoadedGeyserPlugin,
+};
 use {
     agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
@@ -20,11 +37,7 @@ use {
 
 /// Admin RPC request handler
 pub(crate) fn list_plugins(manager: &GeyserPluginHost) -> JsonRpcResult<Vec<String>> {
-    Ok(manager
-        .plugins()
-        .iter()
-        .map(|p| p.name().to_owned())
-        .collect())
+    Ok(manager.plugins().map(|p| p.name().to_owned()).collect())
 }
 
 /// Loads a plugin selected by the validator operator through the admin RPC.
@@ -48,7 +61,6 @@ pub(crate) fn load_plugin(
     // Then see if a plugin with this name already exists. If so, abort
     if new_plugin_manager
         .plugins()
-        .iter()
         .any(|plugin| plugin.name().eq(new_plugin.name()))
     {
         return Err(jsonrpc_core::Error {
@@ -90,7 +102,6 @@ pub(crate) fn unload_plugin(
     // Check if any plugin names match this one
     let Some(idx) = new_plugin_manager
         .plugins()
-        .iter()
         .position(|plugin| plugin.name().eq(name))
     else {
         // If we don't find one return an error
@@ -122,7 +133,6 @@ pub(crate) fn reload_plugin(
     // Check if any plugin names match this one
     let Some(idx) = new_plugin_manager
         .plugins()
-        .iter()
         .position(|plugin| plugin.name().eq(name))
     else {
         // If we don't find one return an error
@@ -156,7 +166,6 @@ pub(crate) fn reload_plugin(
     // Then see if a plugin with this name already exists. If so, abort
     if new_plugin_manager
         .plugins()
-        .iter()
         .any(|plugin| plugin.name().eq(new_plugin.name()))
     {
         return Err(jsonrpc_core::Error {
@@ -496,8 +505,11 @@ mod tests {
         assert!(test_plugin_loaded.load(Ordering::Relaxed));
         let mut new_plugin_manager = (**plugin_manager.load()).clone();
         new_plugin_manager.push_plugin(plugin);
-        assert_eq!(new_plugin_manager.plugins()[0].name(), DUMMY_NAME);
-        new_plugin_manager.plugins()[0].name();
+        assert_eq!(
+            new_plugin_manager.plugins().next().unwrap().name(),
+            DUMMY_NAME
+        );
+        new_plugin_manager.plugins().next().unwrap().name();
         plugin_manager.store(Arc::new(new_plugin_manager));
 
         // Try wrong name (same error)
@@ -581,7 +593,7 @@ mod tests {
             "{}",
             err.message
         );
-        assert!(plugin_manager.load().plugins().is_empty());
+        assert!(plugin_manager.load().plugins().next().is_none());
     }
 
     #[test]
@@ -590,14 +602,14 @@ mod tests {
         let error = load_plugin(&manager, FAILING_TESTPLUGIN_CONFIG).unwrap_err();
         assert_eq!(error.code, jsonrpc_core::ErrorCode::InvalidRequest);
         assert!(error.message.contains("test initialization failure"));
-        assert!(manager.load().plugins().is_empty());
+        assert!(manager.load().plugins().next().is_none());
 
         load_plugin(&manager, TESTPLUGIN_CONFIG).unwrap();
         let error = reload_plugin(&manager, DUMMY_NAME, FAILING_TESTPLUGIN_CONFIG).unwrap_err();
         assert_eq!(error.code, jsonrpc_core::ErrorCode::InvalidRequest);
         assert!(error.message.contains("previous plugin was dropped"));
         assert!(error.message.contains("test initialization failure"));
-        assert!(manager.load().plugins().is_empty());
+        assert!(manager.load().plugins().next().is_none());
     }
 
     #[test]
@@ -622,7 +634,7 @@ mod tests {
         let err = reload_plugin(&plugin_manager, DUMMY_NAME, "not_a_known_config")
             .expect_err("reload with an unloadable config must fail");
         assert!(!err.message.is_empty());
-        assert!(plugin_manager.load().plugins().is_empty());
+        assert!(plugin_manager.load().plugins().next().is_none());
     }
 
     #[test]
@@ -639,7 +651,6 @@ mod tests {
         let names: Vec<_> = plugin_manager
             .load()
             .plugins()
-            .iter()
             .map(|p| p.name().to_string())
             .collect();
         assert_eq!(names, vec![ANOTHER_DUMMY_NAME.to_string()]);
@@ -849,8 +860,11 @@ mod tests {
         assert!(test_plugin_loaded.load(Ordering::Relaxed));
         let mut new_plugin_manager = (**plugin_manager.load()).clone();
         new_plugin_manager.push_plugin(plugin);
-        assert_eq!(new_plugin_manager.plugins()[0].name(), DUMMY_NAME);
-        new_plugin_manager.plugins()[0].name();
+        assert_eq!(
+            new_plugin_manager.plugins().next().unwrap().name(),
+            DUMMY_NAME
+        );
+        new_plugin_manager.plugins().next().unwrap().name();
         plugin_manager.store(Arc::new(new_plugin_manager));
 
         // check that plugin gets unloaded when we unload the plugin manager

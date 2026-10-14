@@ -54,11 +54,11 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
 
     fn notify_end_of_restore_from_snapshot(&self) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             match plugin.notify_end_of_startup() {
                 Err(err) => {
                     error!(
@@ -131,10 +131,10 @@ impl AccountsUpdateNotifierImpl {
     ) {
         let plugin_manager = self.plugin_manager.load();
 
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.account_data_notifications_enabled() {
                 continue;
             }
@@ -170,10 +170,10 @@ impl AccountsUpdateNotifierImpl {
     ) {
         let plugin_manager = self.plugin_manager.load();
 
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.account_data_notifications_enabled() {
                 continue;
             }

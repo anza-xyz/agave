@@ -102,14 +102,14 @@ impl EntryNotifier for EntryNotifierImpl {
         starting_transaction_index: usize,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
         let entry_info =
             Self::build_replica_entry_info(slot, index, entry, starting_transaction_index);
 
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.entry_notifications_enabled() {
                 continue;
             }
@@ -138,7 +138,7 @@ impl EntryNotifier for EntryNotifierImpl {
         block_footer: &block_component::VersionedBlockFooter,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
@@ -147,7 +147,7 @@ impl EntryNotifier for EntryNotifierImpl {
             slot,
             block_footer: &block_footer,
         };
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.block_footer_notifications_enabled() {
                 continue;
             }
@@ -176,7 +176,7 @@ impl EntryNotifier for EntryNotifierImpl {
             parent_slot: update_parent.parent_slot,
             parent_block_id: &update_parent.parent_block_id,
         };
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             if plugin.entry_notifications_enabled()
                 && let Err(err) = plugin.notify_entry_update_parent(
                     ReplicaEntryUpdateParentInfoVersions::V0_0_1(&update_parent_info),

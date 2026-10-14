@@ -41,7 +41,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
     ) {
         let plugin_manager = self.plugin_manager.load();
 
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
@@ -56,7 +56,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             completed_data_set_ending_shred_index_exclusive,
         };
 
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.deshred_transaction_notifications_enabled() {
                 continue;
             }
@@ -96,7 +96,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             parent_slot: update_parent.parent_slot,
             parent_block_id: &update_parent.parent_block_id,
         };
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             if plugin.deshred_transaction_notifications_enabled()
                 && let Err(err) = plugin.notify_deshred_update_parent(
                     ReplicaDeshredUpdateParentInfoVersions::V0_0_1(&update_parent_info),

@@ -121,7 +121,6 @@ pub fn channel(capacity: usize) -> (ContactInfoSender, ContactInfoReceiver) {
 pub fn any_plugin_opts_in(plugin_manager: &GeyserPluginHost) -> bool {
     plugin_manager
         .plugins()
-        .iter()
         .any(|p| p.contact_info_notifications_enabled())
 }
 
@@ -195,7 +194,7 @@ fn dispatch_updated(
     is_startup: bool,
 ) {
     let plugin_manager = plugin_manager.load();
-    if plugin_manager.plugins().is_empty() {
+    if plugin_manager.plugins().next().is_none() {
         return;
     }
 
@@ -229,7 +228,7 @@ fn dispatch_updated(
         alpenglow: snapshot.alpenglow,
     };
 
-    for plugin in plugin_manager.plugins().iter() {
+    for plugin in plugin_manager.plugins() {
         if !plugin.contact_info_notifications_enabled() {
             continue;
         }
@@ -251,11 +250,11 @@ fn dispatch_updated(
 /// other plugins continue to be called.
 fn dispatch_removed(plugin_manager: &Arc<ArcSwap<GeyserPluginHost>>, pubkey: &Pubkey) {
     let plugin_manager = plugin_manager.load();
-    if plugin_manager.plugins().is_empty() {
+    if plugin_manager.plugins().next().is_none() {
         return;
     }
     let pubkey_bytes = pubkey.as_ref();
-    for plugin in plugin_manager.plugins().iter() {
+    for plugin in plugin_manager.plugins() {
         if !plugin.contact_info_notifications_enabled() {
             continue;
         }

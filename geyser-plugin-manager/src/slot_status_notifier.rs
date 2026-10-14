@@ -46,11 +46,11 @@ impl SlotStatusNotifierImpl {
 
     pub fn notify_slot_status(&self, slot: Slot, parent: Option<Slot>, slot_status: SlotStatus) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             match plugin.update_slot_status(slot, parent, &slot_status) {
                 Err(err) => {
                     error!(
@@ -79,11 +79,11 @@ impl SlotStatusNotifierImpl {
         bank_id: BankId,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins().is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
-        for plugin in plugin_manager.plugins().iter() {
+        for plugin in plugin_manager.plugins() {
             match plugin.update_bank_status(slot, parent, &slot_status, bank_id.into()) {
                 Err(err) => {
                     error!(
