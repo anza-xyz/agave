@@ -295,7 +295,7 @@ pub enum BlockstoreProcessorError {
     ChainedBlockIdFailure(Slot, Slot),
 
     #[error("block component processor error: {0}")]
-    BlockComponentProcessor(#[from] BlockComponentProcessorError),
+    BlockComponentProcessor(#[source] BlockComponentProcessorError),
 
     #[error("bank hash mismatch at slot {0}: expected {1}, got {2}")]
     BankHashMismatch(Slot, Hash, Hash),
@@ -305,6 +305,15 @@ pub enum BlockstoreProcessorError {
 
     #[error("failed to purge transaction history for slot {0}: {1}")]
     FailedToPurgeTransactionHistory(Slot, #[source] BlockstoreError),
+}
+
+impl From<BlockComponentProcessorError> for BlockstoreProcessorError {
+    fn from(err: BlockComponentProcessorError) -> Self {
+        match err {
+            BlockComponentProcessorError::TransactionExecution(err) => err.into(),
+            err => Self::BlockComponentProcessor(err),
+        }
+    }
 }
 
 impl BlockstoreProcessorError {
@@ -1493,32 +1502,26 @@ pub fn confirm_slot(
                 let block_footer = match &marker {
                     VersionedBlockMarker::V1(marker) => marker.as_block_footer().cloned(),
                 };
-                if block_footer.is_some() {
-                    // The footer path mutates vote accounts directly to pay rewards.
-                    // All prior transactions must finish first so vote account view is deterministic.
-                    if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
-                        timing.batch_execute.totals.accumulate(&execute_time);
-                        result?;
-                    }
-                }
                 if let Some(parent_bank) = bank.parent() {
                     let allow_initial_update_parent =
                         replay_starts_at_update_parent && marker.is_update_parent();
                     processor
                         .on_marker(
-                            bank.clone_without_scheduler(),
+                            bank,
                             parent_bank,
                             shred_version,
                             marker,
                             allow_initial_update_parent,
                             finalization_cert_sender,
                             migration_status,
+                            &mut timing.batch_execute.totals,
                         )
                         .inspect_err(|err| {
                             if !matches!(
                                 err,
                                 BlockComponentProcessorError::AbandonedBank(_)
                                     | BlockComponentProcessorError::AlpenglowMigrationTransition
+                                    | BlockComponentProcessorError::TransactionExecution(_)
                             ) {
                                 warn!(
                                     "BlockComponentProcessor::on_marker() for slot {slot} failed \
