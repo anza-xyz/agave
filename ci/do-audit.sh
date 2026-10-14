@@ -55,9 +55,51 @@ default_cargo_audit_extra_args=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
+
+  # Crate:     rustls
+  # Version:   0.23.45
+  # Title:     `Debug` impls for client session values expose TLS secrets
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0346
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0346
+  # Solution:  Upgrade to >=0.23.46
+  --ignore RUSTSEC-2026-0346
+
+  # Crate:     rustls
+  # Version:   0.23.45
+  # Title:     Buffered application data sent to outer server after ECH rejection
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0347
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0347
+  # Solution:  Upgrade to >=0.23.46
+  --ignore RUSTSEC-2026-0347
+
+  # Crate:     rustls
+  # Version:   0.23.45
+  # Title:     Brotli certificate decompression can allocate up to 1 GiB before authentication
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0348
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0348
+  # Solution:  Upgrade to >=0.23.46
+  --ignore RUSTSEC-2026-0348
+
+  # Crate:     rustls
+  # Version:   0.23.45
+  # Title:     Unauthenticated ServerHello can downgrade later connections to classical key exchange
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0349
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0349
+  # Solution:  Upgrade to >=0.23.46
+  --ignore RUSTSEC-2026-0349
 )
 
 xtask_cargo_audit_extra_args=(
+  # The rustls advisories documented above also affect xtask.
+  --ignore RUSTSEC-2026-0346
+  --ignore RUSTSEC-2026-0347
+  --ignore RUSTSEC-2026-0348
+  --ignore RUSTSEC-2026-0349
+
   # Crate:     rsa
   # Version:   0.9.10
   # Title:     Marvin Attack: potential key recovery through timing sidechannels
