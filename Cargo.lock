@@ -11783,7 +11783,6 @@ dependencies = [
  "bytemuck",
  "solana-account",
  "solana-compute-budget",
- "solana-compute-budget-interface",
  "solana-hash",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
