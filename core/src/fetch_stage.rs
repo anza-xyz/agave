@@ -4,8 +4,7 @@ use {
     crate::result::{Error, Result},
     crossbeam_channel::{RecvTimeoutError, TrySendError, unbounded},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
-    solana_packet::PacketFlags,
-    solana_perf::packet::{BytesPacket, PacketBatch},
+    solana_perf::packet::{BytesPacket, PacketBatch, PacketFlags},
     solana_poh::poh_recorder::PohRecorder,
     solana_streamer::{
         evicting_sender::EvictingSender,

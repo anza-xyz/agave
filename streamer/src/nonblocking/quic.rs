@@ -16,8 +16,7 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_net_utils::{quic_socket::QuicSocket, token_bucket::TokenBucket},
-    solana_packet::Meta,
-    solana_perf::packet::{BytesPacket, PacketBatch},
+    solana_perf::packet::{BytesPacket, Meta, PacketBatch},
     solana_pubkey::Pubkey,
     solana_tls_utils::get_remote_pubkey,
     std::{
