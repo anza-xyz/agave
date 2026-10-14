@@ -10714,6 +10714,7 @@ name = "solana-storage-bigtable"
 version = "4.5.0-alpha.2"
 dependencies = [
  "agave-reserved-account-keys",
+ "agave-votor-messages",
  "base64 0.23.1",
  "bincode",
  "bzip2",
