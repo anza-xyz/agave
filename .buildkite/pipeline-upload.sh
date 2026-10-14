@@ -11,6 +11,7 @@ set -e
 cd "$(dirname "$0")"/..
 source ci/_
 
+export CI_QUEUE=k8s
 _ cargo xtask generate-pipeline
 echo +++ pipeline
 cat pipeline.yml
