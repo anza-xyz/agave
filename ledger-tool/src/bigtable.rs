@@ -125,7 +125,7 @@ async fn block(
     slot: Slot,
     output_format: OutputFormat,
     show_entries: bool,
-    show_markers: bool,
+    verbose_level: u64,
     config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
@@ -133,7 +133,7 @@ async fn block(
         .map_err(|err| format!("Failed to connect to storage: {err:?}"))?;
 
     let confirmed_block = bigtable.get_confirmed_block(slot).await?;
-    let components = if show_markers {
+    let components = if verbose_level > 2 {
         let entries = bigtable.get_entries(slot).await?.collect();
         let markers = match bigtable.get_block_markers(slot).await {
             Ok(markers) => markers,
@@ -160,7 +160,7 @@ async fn block(
             slot,
         };
         println!("{}", output_format.formatted_string(&cli_block));
-    } else if show_entries {
+    } else if show_entries || verbose_level > 1 {
         let entries = bigtable.get_entries(slot).await?;
         let cli_block = CliBlockWithEntries {
             encoded_confirmed_block: EncodedConfirmedBlockWithEntries::try_from(
@@ -1334,12 +1334,6 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .long("show-entries")
                                 .required(false)
                                 .help("Display the transactions in their entries"),
-                        )
-                        .arg(
-                            Arg::with_name("show_markers")
-                                .long("show-markers")
-                                .required(false)
-                                .help("Display entries and block markers in component order"),
                         ),
                 )
                 .subcommand(
@@ -1618,7 +1612,8 @@ fn get_global_subcommand_arg<T: FromStr>(
 pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    let verbose = matches.is_present("verbose");
+    let verbose_level = matches.occurrences_of("verbose");
+    let verbose = verbose_level > 0;
     let output_format = OutputFormat::from_matches(matches, "output_format", verbose);
 
     let (subcommand, sub_matches) = matches.subcommand();
@@ -1681,7 +1676,6 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
         ("block", Some(arg_matches)) => {
             let slot = value_t_or_exit!(arg_matches, "slot", Slot);
             let show_entries = arg_matches.is_present("show_entries");
-            let show_markers = arg_matches.is_present("show_markers");
             let config = solana_storage_bigtable::LedgerStorageConfig {
                 read_only: true,
                 instance_name,
@@ -1692,7 +1686,7 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 slot,
                 output_format,
                 show_entries,
-                show_markers,
+                verbose_level,
                 config,
             ))
         }
