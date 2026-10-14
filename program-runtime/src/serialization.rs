@@ -1179,10 +1179,8 @@ mod tests {
             };
             assert_eq!(&program_id, de_program_id);
             assert_eq!(instruction_data, de_instruction_data);
-            assert_eq!(
-                direct_account_pointers_in_program_input,
-                account_pointers_offset.is_some()
-            );
+            // abiv0 does not support direct account pointers in program input.
+            assert!(account_pointers_offset.is_none());
             for account_info in de_accounts {
                 let index_in_transaction = invoke_context
                     .transaction_context
