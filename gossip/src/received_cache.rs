@@ -73,17 +73,34 @@ impl ReceivedCacheEntry {
         if num_dups == 0 {
             self.num_upserts = self.num_upserts.saturating_add(1);
         }
-        // If the message has been timely enough increment node's score.
-        if num_dups < Self::NUM_DUPS_THRESHOLD {
-            let score = self.nodes.entry(node).or_default();
-            *score = score.saturating_add(1);
-        } else if self.nodes.len() < Self::CAPACITY {
-            // Ensure that node is inserted into the cache for later pruning.
-            // This intentionally does not negatively impact node's score, in
-            // order to prevent replayed messages with spoofed addresses force
-            // pruning a good node.
-            let _ = self.nodes.entry(node).or_default();
+        let is_timely = num_dups < Self::NUM_DUPS_THRESHOLD;
+        if let Some(score) = self.nodes.get_mut(&node) {
+            // If the message has been timely enough increment node's score.
+            // Late messages intentionally do not negatively impact node's
+            // score, in order to prevent replayed messages with spoofed
+            // addresses force pruning a good node.
+            if is_timely {
+                *score = score.saturating_add(1);
+            }
+            return;
         }
+        if self.nodes.len() >= Self::CAPACITY {
+            // Only a timely message may displace a node which has not
+            // delivered any timely messages; otherwise drop the record.
+            if !is_timely {
+                return;
+            }
+            let Some(stale) = self
+                .nodes
+                .iter()
+                .find_map(|(node, &score)| (score == 0).then_some(*node))
+            else {
+                return;
+            };
+            self.nodes.remove(&stale);
+        }
+        // Ensure that node is inserted into the cache for later pruning.
+        self.nodes.insert(node, usize::from(is_timely));
     }
 
     fn prune(
@@ -186,5 +203,56 @@ mod tests {
                 .collect::<HashSet<_>>(),
             prunes
         );
+    }
+
+    #[test]
+    fn test_received_cache_entry_capacity() {
+        for num_dups in [0, 1, ReceivedCacheEntry::NUM_DUPS_THRESHOLD, 5, usize::MAX] {
+            let mut cache = ReceivedCache::new(/*capacity:*/ 100);
+            let origin = Pubkey::new_unique();
+            for _ in 0..ReceivedCacheEntry::CAPACITY * 4 {
+                cache.record(origin, Pubkey::new_unique(), num_dups);
+            }
+            assert_eq!(
+                cache.0.get(&origin).unwrap().nodes.len(),
+                ReceivedCacheEntry::CAPACITY
+            );
+        }
+    }
+
+    #[test]
+    fn test_received_cache_entry_timely_displaces_late() {
+        let mut cache = ReceivedCache::new(/*capacity:*/ 100);
+        let origin = Pubkey::new_unique();
+        // Fill the entry with nodes which only delivered late messages.
+        let late: Vec<_> = repeat_with(Pubkey::new_unique)
+            .take(ReceivedCacheEntry::CAPACITY)
+            .collect();
+        for node in &late {
+            cache.record(origin, *node, /*num_dups:*/ 7);
+        }
+        // Late messages from new nodes are dropped once full.
+        let node = Pubkey::new_unique();
+        cache.record(origin, node, /*num_dups:*/ 7);
+        assert!(!cache.0.get(&origin).unwrap().nodes.contains_key(&node));
+        // Timely messages displace nodes with a zero score.
+        let timely: Vec<_> = repeat_with(Pubkey::new_unique)
+            .take(ReceivedCacheEntry::CAPACITY)
+            .collect();
+        for node in &timely {
+            cache.record(origin, *node, /*num_dups:*/ 1);
+        }
+        let entry = cache.0.get(&origin).unwrap();
+        assert_eq!(entry.nodes.len(), ReceivedCacheEntry::CAPACITY);
+        assert!(timely.iter().all(|node| entry.nodes[node] == 1));
+        // Once all nodes have a positive score, new nodes are dropped while
+        // existing nodes keep accumulating score.
+        let node = Pubkey::new_unique();
+        cache.record(origin, node, /*num_dups:*/ 0);
+        cache.record(origin, timely[0], /*num_dups:*/ 0);
+        let entry = cache.0.get(&origin).unwrap();
+        assert!(!entry.nodes.contains_key(&node));
+        assert_eq!(entry.nodes[&timely[0]], 2);
+        assert_eq!(entry.nodes.len(), ReceivedCacheEntry::CAPACITY);
     }
 }
