@@ -115,10 +115,11 @@ impl VoteState {
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
         let mut updated_account = AccountSharedData::new_rent_epoch(
             self.lamports,
-            self.space,
+            0,
             &self.owner,
             RENT_EXEMPT_RENT_EPOCH,
         );
+        updated_account.resize(self.space, 0);
         match self
             .handler
             .serialize_into(updated_account.data_as_mut_slice())
