@@ -1,11 +1,8 @@
 use {
     crate::bank::Bank,
-    agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2},
-    agave_votor_messages::{
-        consensus_message::{Block, BlockId},
-        reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
-        vote::Vote,
-        wire::get_vote_payload_to_sign,
+    agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
+    agave_votor_messages::reward_certificate::{
+        NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate,
     },
     solana_bls_signatures::BlsError,
     solana_clock::Slot,
@@ -40,23 +37,23 @@ pub enum Error {
 /// Returns Error if the reward slot is invalid.
 fn extract_slot(
     bank: &Bank,
-    skip: &Option<SkipRewardCertificate>,
-    notar: &Option<NotarRewardCertificate>,
+    skip_slot: Option<Slot>,
+    notar_slot: Option<Slot>,
 ) -> Result<Option<Slot>, Error> {
     let current_slot = bank.slot();
-    let slot = match (skip, notar) {
+    let slot = match (skip_slot, notar_slot) {
         (None, None) => return Ok(None),
-        (Some(s), None) => s.slot,
-        (None, Some(n)) => n.slot,
-        (Some(s), Some(n)) => {
-            if s.slot != n.slot {
+        (Some(s), None) => s,
+        (None, Some(n)) => n,
+        (Some(skip), Some(notar)) => {
+            if skip != notar {
                 return Err(Error::InvalidSlotNumbers {
                     current_slot,
-                    notar_slot: Some(n.slot),
-                    skip_slot: Some(s.slot),
+                    notar_slot: Some(notar),
+                    skip_slot: Some(skip),
                 });
             }
-            s.slot
+            skip
         }
     };
     if slot.saturating_add(NUM_SLOTS_FOR_REWARD) != current_slot
@@ -64,8 +61,8 @@ fn extract_slot(
     {
         return Err(Error::InvalidSlotNumbers {
             current_slot: bank.slot(),
-            notar_slot: notar.as_ref().map(|c| c.slot),
-            skip_slot: skip.as_ref().map(|c| c.slot),
+            notar_slot,
+            skip_slot,
         });
     }
     Ok(Some(slot))
@@ -81,55 +78,15 @@ pub struct ValidatedRewardCert {
 }
 
 impl ValidatedRewardCert {
-    /// If validation of the provided reward certs succeeds, returns an instance of [`ValidatedRewardCert`].
-    pub fn try_new(
+    pub(crate) fn try_new_validated(
         bank: &Bank,
-        shred_version: u16,
-        skip: &Option<SkipRewardCertificate>,
-        notar: &Option<NotarRewardCertificate>,
+        skip: Option<Slot>,
+        notar: Option<Slot>,
+        validators: HashSet<Pubkey>,
     ) -> Result<Option<Self>, Error> {
         let Some(reward_slot) = extract_slot(bank, skip, notar)? else {
             return Ok(None);
         };
-        let rank_map = bank
-            .epoch_stakes_from_slot(reward_slot)
-            .ok_or(Error::NoRankMap)?
-            .bls_pubkey_to_rank_map();
-        let max_validators = rank_map.len();
-        let mut validators = HashSet::with_capacity(max_validators);
-
-        let mut rank_map = |ind: usize| {
-            rank_map.get_pubkey_stake_entry(ind).map(|entry| {
-                validators.insert(entry.vote_account_pubkey);
-                entry.bls_pubkey
-            })
-        };
-
-        if let Some(skip) = skip {
-            let vote = Vote::new_skip_vote(skip.slot);
-            let payload = get_vote_payload_to_sign(vote, shred_version);
-            verify_base2(
-                &payload,
-                &skip.signature,
-                skip.to_bitmap(),
-                max_validators,
-                &mut rank_map,
-            )?
-        }
-        if let Some(notar) = notar {
-            let vote = Vote::new_notarization_vote(Block {
-                slot: notar.slot,
-                block_id: BlockId::from(notar.block_id),
-            });
-            let payload = get_vote_payload_to_sign(vote, shred_version);
-            verify_base2(
-                &payload,
-                &notar.signature,
-                notar.bitmap(),
-                max_validators,
-                rank_map,
-            )?
-        }
         if validators.is_empty() {
             return Ok(None);
         }
@@ -151,7 +108,12 @@ impl ValidatedRewardCert {
         notar: &Option<NotarRewardCertificate>,
         validators: impl IntoIterator<Item = Pubkey>,
     ) -> Result<Option<Self>, Error> {
-        let Some(reward_slot) = extract_slot(bank, skip, notar)? else {
+        let Some(reward_slot) = extract_slot(
+            bank,
+            skip.as_ref().map(|s| s.slot),
+            notar.as_ref().map(|n| n.slot),
+        )?
+        else {
             return Ok(None);
         };
         let validators: HashSet<_> = validators.into_iter().collect();
@@ -189,51 +151,11 @@ mod tests {
         crate::genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
-            consensus_message::VoteMessage,
+            consensus_message::Block,
         },
-        bitvec::vec::BitVec,
-        rand::Rng,
-        solana_bls_signatures::{
-            BLS_SIGNATURE_AFFINE_SIZE, BLS_SIGNATURE_COMPRESSED_SIZE, Keypair as BlsKeypair,
-            Signature as BLSSignature, SignatureCompressed as BlsSignatureCompressed,
-            SignatureProjective, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-        },
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_leader_schedule::SlotLeader,
-        solana_signer_store::encode_base2,
-        std::{collections::HashMap, num::NonZero},
     };
-
-    fn new_vote_msg(
-        vote: Vote,
-        rank: usize,
-        keypair: &BlsKeypair,
-        shred_version: u16,
-    ) -> VoteMessage {
-        let payload = get_vote_payload_to_sign(vote, shred_version);
-        let signature = keypair.sign(&payload).into();
-        VoteMessage {
-            vote,
-            signature,
-            rank: rank.try_into().unwrap(),
-            stake: NonZero::new(123).unwrap(),
-        }
-    }
-
-    fn build_sig_bitmap(votes: &[VoteMessage]) -> (BlsSignatureCompressed, Vec<u8>) {
-        let max_rank = votes.last().unwrap().rank;
-        let mut signature = SignatureProjective::identity();
-        let mut bitvec = BitVec::repeat(false, (max_rank + 1) as usize);
-        for vote in votes {
-            signature
-                .aggregate_with(std::iter::once(&vote.signature))
-                .unwrap();
-            bitvec.set(vote.rank as usize, true);
-        }
-        (
-            BLSSignature::from(signature).try_into().unwrap(),
-            encode_base2(&bitvec).unwrap(),
-        )
-    }
 
     #[test]
     fn test_extract_slot_rejects_tower_slots() {
@@ -258,16 +180,9 @@ mod tests {
                 reward_slot + NUM_SLOTS_FOR_REWARD,
             );
             bank.set_alpenglow_genesis_certificate(&genesis_cert);
-            let skip = Some(
-                SkipRewardCertificate::try_new(
-                    reward_slot,
-                    BlsSignatureCompressed([0; BLS_SIGNATURE_COMPRESSED_SIZE]),
-                    vec![],
-                )
-                .unwrap(),
-            );
+            let skip = Some(reward_slot);
 
-            let result = extract_slot(&bank, &skip, &None);
+            let result = extract_slot(&bank, skip, None);
             if reward_slot <= migration_slot {
                 assert_eq!(
                     result,
@@ -281,80 +196,5 @@ mod tests {
                 assert_eq!(result, Ok(Some(reward_slot)));
             }
         }
-    }
-
-    #[test]
-    fn validate_try_new() {
-        let reward_slot = 1;
-        let bank_slot = reward_slot + NUM_SLOTS_FOR_REWARD;
-        let num_skip_validators = 3;
-        let num_notar_validators = 5;
-        let num_validators = num_skip_validators + num_notar_validators;
-
-        let validator_keypairs = (0..num_validators)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-        let shred_version = rand::rng().random();
-        let keypair_map = validator_keypairs
-            .iter()
-            .map(|k| {
-                (
-                    BLSPubkeyCompressed::from(*k.bls_keypair.public),
-                    k.bls_keypair.clone(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        let genesis = create_genesis_config_with_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            vec![100; validator_keypairs.len()],
-        );
-        let (bank, _bank_forks) =
-            Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
-        let bank = Bank::new_from_parent(bank, SlotLeader::default(), bank_slot);
-
-        let rank_map = bank
-            .epoch_stakes_from_slot(reward_slot)
-            .unwrap()
-            .bls_pubkey_to_rank_map();
-        let signing_keys = (0..num_validators)
-            .map(|index| {
-                let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
-                keypair_map
-                    .get(&BLSPubkeyCompressed::from(*pubkey_affine))
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
-
-        let block_id = BlockId::new_unique();
-        let notar_vote = Vote::new_notarization_vote(Block {
-            slot: reward_slot,
-            block_id,
-        });
-        let notar_votes = (0..num_notar_validators)
-            .map(|rank| new_vote_msg(notar_vote, rank, signing_keys[rank], shred_version))
-            .collect::<Vec<_>>();
-        let (signature, bitmap) = build_sig_bitmap(&notar_votes);
-        let notar_reward_cert =
-            NotarRewardCertificate::try_new(reward_slot, block_id.to_hash(), signature, bitmap)
-                .unwrap();
-
-        let skip_vote = Vote::new_skip_vote(reward_slot);
-        let skip_votes = (num_notar_validators..num_validators)
-            .map(|rank| new_vote_msg(skip_vote, rank, signing_keys[rank], shred_version))
-            .collect::<Vec<_>>();
-        let (signature, bitmap) = build_sig_bitmap(&skip_votes);
-        let skip_reward_cert =
-            SkipRewardCertificate::try_new(reward_slot, signature, bitmap).unwrap();
-
-        let validated_reward_cert = ValidatedRewardCert::try_new(
-            &bank,
-            shred_version,
-            &Some(skip_reward_cert),
-            &Some(notar_reward_cert),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(validated_reward_cert.validators.len(), num_validators);
     }
 }

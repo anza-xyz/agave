@@ -12,6 +12,7 @@ use {
         },
         consensus_message::Block,
         finalized_slot::FinalizedSlot,
+        fraction::Fraction,
         unverified_vote_message::UnverifiedCertificate,
     },
     solana_bls_signatures::BlsError,
@@ -19,7 +20,7 @@ use {
     solana_entry::block_component::{BlockFinalizationCert, VotesAggregate},
     solana_pubkey::Pubkey,
     solana_signer_store::{DecodeError, Decoded, decode},
-    std::collections::HashSet,
+    std::{collections::HashSet, num::NonZero},
     thiserror::Error,
 };
 
@@ -74,7 +75,66 @@ pub struct ValidatedBlockFinalizationCert {
     signers: HashSet<Pubkey>,
 }
 
+fn check(
+    cert_type: CertificateType,
+    cert_stake: u64,
+    total_stake: NonZero<u64>,
+) -> Result<(), BlockFinalizationCertError> {
+    if Fraction::new(cert_stake, total_stake) < cert_type.threshold() {
+        return Err(BlockFinalizationCertError::CertificateVerificationFailed(
+            cert_type,
+        ));
+    }
+    Ok(())
+}
+
 impl ValidatedBlockFinalizationCert {
+    pub(crate) fn try_new_validated_fast(
+        block: Block,
+        cert_stake: u64,
+        total_stake: NonZero<u64>,
+        signature: CertSignature,
+        signers: HashSet<Pubkey>,
+    ) -> Result<Self, BlockFinalizationCertError> {
+        let cert_type = CertificateType::FinalizeFast(block);
+        check(cert_type, cert_stake, total_stake)?;
+        let cert = FastFinalizeCert { block, signature };
+        Ok(Self {
+            kind: ValidatedBlockFinalizationCertKind::FastFinalize(cert),
+            signers,
+        })
+    }
+
+    pub(crate) fn try_new_validated_slow(
+        block: Block,
+        final_stake: u64,
+        final_sig: CertSignature,
+        notar_stake: u64,
+        notar_sig: CertSignature,
+        total_stake: NonZero<u64>,
+        signers: HashSet<Pubkey>,
+    ) -> Result<Self, BlockFinalizationCertError> {
+        let finalize_cert_type = CertificateType::Finalize(block.slot);
+        check(finalize_cert_type, final_stake, total_stake)?;
+        let finalize_cert = FinalizeCert {
+            slot: block.slot,
+            signature: final_sig,
+        };
+        let notarize_cert_type = CertificateType::Notarize(block);
+        check(notarize_cert_type, notar_stake, total_stake)?;
+        let notarize_cert = NotarCert {
+            block,
+            signature: notar_sig,
+        };
+        Ok(Self {
+            kind: ValidatedBlockFinalizationCertKind::Finalize {
+                finalize_cert,
+                notarize_cert,
+            },
+            signers,
+        })
+    }
+
     /// Creates a validated block finalization certificate from a footer's final certificate.
     ///
     /// This method performs both BLS signature conversion and stake threshold verification

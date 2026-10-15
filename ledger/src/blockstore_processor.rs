@@ -1506,6 +1506,7 @@ pub fn confirm_slot(
                         replay_starts_at_update_parent && marker.is_update_parent();
                     processor
                         .on_marker(
+                            transaction_hash_verify_thread_pool(),
                             bank.clone_without_scheduler(),
                             parent_bank,
                             shred_version,
