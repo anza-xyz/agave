@@ -255,12 +255,12 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         account.map(LoadedTransactionAccount::new)
     }
 
-    // Load a requied account before loaded transaction data size calculations begin.
-    // "Required" means that if this account does not exist or does not meet its filter,
-    // processing will abort before execution and the processing result will be Err or NoOp.
-    //
-    // This function is NOT SAFE to use for normal transaction account loading because None
-    // indicates in such a context that the account does not exist and is safe to write to.
+    /// Load a required account before loaded transaction data size calculations begin.
+    /// "Required" means that if this account does not exist or does not meet its filter,
+    /// processing will abort before execution and the processing result will be Err or NoOp.
+    ///
+    /// This function is NOT SAFE to use for normal transaction account loading because None
+    /// indicates in such a context that the account does not exist and is safe to write to.
     pub(crate) fn preload_required_account(
         &mut self,
         account_key: &Pubkey,
@@ -268,7 +268,8 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     ) -> Option<LoadedTransactionAccount> {
         let account = if let Some(account) = self.loaded_accounts.get(account_key) {
             // Return None if this is a placeholder for a nonexistent account or if
-            // the load_filter predicate rejects it.
+            // the load_filter predicate rejects it. We check lamports to be robust
+            // in case load_filter does not check lamports itself.
             (account.lamports() > 0
                 && load_filter(account.lamports(), account.owner(), account.data().len()))
             .then(|| account.clone())
