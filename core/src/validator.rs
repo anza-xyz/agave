@@ -45,7 +45,7 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
-    solana_account::{ReadableAccount, WINCODE_CONFIG},
+    solana_account::ReadableAccount,
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -2087,7 +2087,7 @@ pub fn should_require_vote_history_file(
 
     let Some(Ok(vote_state)) = bank
         .get_account(vote_account)
-        .map(|acct| wincode::config::deserialize(acct.data(), WINCODE_CONFIG))
+        .map(|acct| wincode::deserialize(acct.data()))
     else {
         // Must have a vote account
         return false;

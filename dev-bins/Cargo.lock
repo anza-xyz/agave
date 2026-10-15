@@ -9283,6 +9283,7 @@ dependencies = [
  "solana-system-interface 3.3.0",
  "solana-transaction-context",
  "solana-vote-interface",
+ "wincode",
 ]
 
 [[package]]

@@ -89,7 +89,7 @@ impl VoteState {
             info!("did not find vote account for vote_pubkey={vote_pubkey}");
             return None;
         };
-        let versions = match bincode::deserialize(account.account().data()) {
+        let versions = match wincode::deserialize(account.account().data()) {
             Ok(s) => s,
             Err(e) => {
                 info!("bincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
@@ -656,11 +656,7 @@ mod tests {
     }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
-<<<<<<< HEAD
-        let versions = bincode::deserialize(account.data()).unwrap();
-=======
         let versions = wincode::deserialize(account.data()).unwrap();
->>>>>>> aa24a04 (Improves performance of [de]serializing `VoteStateVersions` (#15986))
         VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
     }
 
