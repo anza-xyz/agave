@@ -749,11 +749,23 @@ mod test {
         assert!(bank0.get_account(&account_key).is_some());
         pruned_banks_sender.send((0, BankId::new(0))).unwrap();
 
-        assert!(!bank0.rc.accounts.scan_slot(0, |_| Some(())).is_empty());
+        assert!(
+            !bank0
+                .rc
+                .accounts
+                .scan_slot(0, bank0.bank_id(), |_| Some(()))
+                .is_empty()
+        );
 
         pruned_banks_request_handler.remove_dead_slots(&bank0, &mut 0, &mut 0);
 
-        assert!(bank0.rc.accounts.scan_slot(0, |_| Some(())).is_empty());
+        assert!(
+            bank0
+                .rc
+                .accounts
+                .scan_slot(0, bank0.bank_id(), |_| Some(()))
+                .is_empty()
+        );
     }
 
     /// Ensure that unhandled snapshot requests are properly re-enqueued or dropped

@@ -4736,8 +4736,8 @@ fn test_check_ro_durable_nonce_fails() {
         &[&custodian_keypair, &nonce_keypair],
         nonce_hash,
     );
-    // SanitizedMessage::get_durable_nonce returns None because nonce
-    // account is not writable. Durable nonce and blockhash domains are
+    // get_durable_nonce returns None because nonce account is not
+    // requested writable. Durable nonce and blockhash domains are
     // separate, so the recent_blockhash (== durable nonce) in the
     // transaction is not found in the hash queue.
     assert_eq!(

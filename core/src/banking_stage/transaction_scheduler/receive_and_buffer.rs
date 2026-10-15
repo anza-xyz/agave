@@ -32,7 +32,7 @@ use {
         transaction_meta::TransactionMeta, transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
     std::{collections::HashSet, time::Instant},
@@ -487,10 +487,12 @@ impl TransactionViewReceiveAndBuffer {
         let priority = state.priority();
 
         // Reject a nonce-like transaction if a higher-or-equal-priority conflict
-        // is queued, or any conflict is already in flight.
+        // is queued, or any conflict is already in flight. We always pass `true`
+        // for `disallow_nonce_as_program_id` in line with our check function's
+        // forcing it on via `strict_nonce_checks`.
         let nonce_priority = state
             .transaction()
-            .get_durable_nonce()
+            .get_durable_nonce(true)
             .map(|address| (*address, priority));
         if Self::should_drop_nonce(nonce_priority, container) {
             stats.num_dropped_on_nonce_dedup += 1;
@@ -642,7 +644,7 @@ mod tests {
 
         assert_runtime_view(state.transaction());
         assert_eq!(state.transaction().data().as_ptr(), bytes_ptr);
-        assert_eq!(state.transaction().get_durable_nonce(), None);
+        assert_eq!(state.transaction().get_durable_nonce(true), None);
         assert_eq!(validated_nonce_address, None);
         assert_eq!(state.nonce_address(), None);
     }

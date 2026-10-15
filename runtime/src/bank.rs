@@ -191,7 +191,7 @@ use {
     },
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_syscalls::create_program_runtime_environment,
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot},
@@ -3548,7 +3548,7 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            let nonce_address = SVMMessage::get_durable_nonce(message)?;
+            let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
             let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
             verify_nonce_account(&nonce_account, message.recent_blockhash())
                 .map(|nonce_data| nonce_data.get_lamports_per_signature())
@@ -4756,7 +4756,7 @@ impl Bank {
             .rc
             .accounts
             .accounts_db
-            .get_pubkey_account_for_slot(self.slot());
+            .get_pubkey_account_for_slot(self.slot(), self.bank_id());
         // Sort the accounts by pubkey to make diff deterministic.
         accounts.sort_unstable_by_key(|a| a.0);
         accounts
@@ -5417,7 +5417,7 @@ impl Bank {
     ) -> Vec<KeyedAccountSharedData> {
         self.rc
             .accounts
-            .load_by_program_slot(self.slot(), Some(program_id))
+            .load_by_program_slot(self.slot(), self.bank_id(), Some(program_id))
     }
 
     pub fn get_transaction_logs(
@@ -5432,7 +5432,9 @@ impl Bank {
 
     /// Returns all the accounts stored in this slot
     pub fn get_all_accounts_modified_since_parent(&self) -> Vec<KeyedAccountSharedData> {
-        self.rc.accounts.load_by_program_slot(self.slot(), None)
+        self.rc
+            .accounts
+            .load_by_program_slot(self.slot(), self.bank_id(), None)
     }
 
     // if you want get_account_modified_since_parent without fixed_root, please define so...
