@@ -1242,6 +1242,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
+        Arg::with_name("replay_arenas")
+            .long("experimental-replay-arenas")
+            .value_name("COUNT")
+            .takes_value(true)
+            .validator(|s| is_within_range(s, 1..))
+            .help(
+                "Number of jemalloc arenas for replay. solReplayStage uses arena 0 and unified \
+                 scheduler handler threads use the arenas in round-robin order",
+            ),
+    )
+    .arg(
         Arg::with_name("no_xdp")
             .long("no-xdp")
             .takes_value(false)
