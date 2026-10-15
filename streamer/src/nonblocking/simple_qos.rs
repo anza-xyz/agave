@@ -187,22 +187,6 @@ impl SimpleQos {
         conn_context: &SimpleQosConnectionContext,
     ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<TokenBucket>), ConnectionHandlerError> {
         let remote_addr = conn_context.remote_address;
-
-        // this will never overflow u32 for reasonable MAX_RTT
-        let rtt = connection.rtt().clamp(MIN_RTT, MAX_RTT).as_millis() as u32;
-        let max_streams_in_flight = (self.config.max_streams_per_second as u32).saturating_mul(rtt)
-            / 1000
-            * STREAMS_IN_FLIGHT_MARGIN;
-        // for very low values of max_streams_per_second, prevent connections from having zero
-        // streams in flight
-        let max_streams_in_flight = max_streams_in_flight.max(STREAMS_IN_FLIGHT_MARGIN);
-        connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams_in_flight));
-
-        debug!(
-            "Peer type {:?}, from peer {}, max_streams {max_streams_in_flight}",
-            conn_context.peer_type(),
-            remote_addr,
-        );
         let key = ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey);
         if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
             .try_add_connection(
@@ -224,6 +208,24 @@ impl SimpleQos {
         {
             update_open_connections_stat(&self.stats, &connection_table_l);
             drop(connection_table_l);
+
+            // rtt() and set_max_concurrent_uni_streams() lock the quinn connection, so
+            // call them only once it is admitted and the table lock is released.
+
+            // this will never overflow u32 for reasonable MAX_RTT
+            let rtt = connection.rtt().clamp(MIN_RTT, MAX_RTT).as_millis() as u32;
+            let max_streams_in_flight =
+                (self.config.max_streams_per_second as u32).saturating_mul(rtt) / 1000
+                    * STREAMS_IN_FLIGHT_MARGIN;
+            // for very low values of max_streams_per_second, prevent connections from having zero
+            // streams in flight
+            let max_streams_in_flight = max_streams_in_flight.max(STREAMS_IN_FLIGHT_MARGIN);
+            connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams_in_flight));
+            debug!(
+                "Peer type {:?}, from peer {}, max_streams {max_streams_in_flight}",
+                conn_context.peer_type(),
+                remote_addr,
+            );
             Ok((last_update, cancel_connection, stream_counter))
         } else {
             self.stats
