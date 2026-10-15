@@ -328,6 +328,10 @@ pub fn execute<'a, 'b: 'a>(
             vm.registers[4] = if let Some(account_pointers_offset) = account_pointers_offset {
                 account_pointers_offset as u64
             } else {
+                // SIMD-0683 depends on SIMD-0449, which provides the account
+                // pointers array. Since this path only handles ABIv1, the offset
+                // should always be present when SIMD-0683 is enabled so this error
+                // should never happen.
                 ic_logger_msg!(
                     log_collector,
                     "Failed to create SBF VM: cannot determine account pointers offset"
