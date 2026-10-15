@@ -8116,8 +8116,7 @@ checksum = "dcf09694a0fc14e5ffb18f9b7b7c0f15ecb6eac5b5610bf76a1853459d19daf9"
 [[package]]
 name = "solana-sbpf"
 version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15d33de23e974ac882f28387785ad40ac9f6114d4bf074a01f54543e2508cd68"
+source = "git+https://github.com/buffalojoec/sbpf?rev=efe397005ec493e513e36ec83d1e3eb415033673#efe397005ec493e513e36ec83d1e3eb415033673"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
@@ -8128,7 +8127,7 @@ dependencies = [
  "rand 0.8.6",
  "rustc-demangle",
  "thiserror 2.0.21",
- "winapi",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

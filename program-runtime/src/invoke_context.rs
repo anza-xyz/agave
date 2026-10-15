@@ -52,6 +52,7 @@ use {
         borrow::Cow,
         cell::RefCell,
         fmt::{self, Debug},
+        num::NonZeroU64,
         ptr,
         rc::Rc,
         time::Duration,
@@ -109,6 +110,14 @@ impl ContextObject for InvokeContext<'_, '_> {
 
     fn get_remaining(&self) -> u64 {
         self.transaction_context.compute_meter.get_remaining()
+    }
+
+    fn get_deadline(&self) -> Option<NonZeroU64> {
+        self.transaction_context.get_execution_deadline()
+    }
+
+    fn get_deadline_check_interval(&self) -> NonZeroU64 {
+        self.transaction_context.get_deadline_check_interval()
     }
 
     fn active_mapping_ptr(&mut self) -> ptr::NonNull<MemoryMapping> {
@@ -244,6 +253,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     /// Push a stack frame onto the invocation stack
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn push(&mut self) -> Result<(), InstructionError> {
+        self.transaction_context.check_execution_deadline()?;
         let instruction_context = self.transaction_context.get_next_instruction_context()?;
         let program_id = instruction_context
             .get_program_key()
@@ -700,6 +710,13 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             ProgramResult::Ok(_) => {
                 stable_log::program_success(&logger, &program_id);
                 Ok(())
+            }
+            // We should only ever see this error on timeout, and that's only
+            // if we've imposed a limit. If we have, that means we're the
+            // leader, so bail out.
+            ProgramResult::Err(EbpfError::ExceededTimeLimit) => {
+                stable_log::program_failure(&logger, &program_id, &InstructionError::BailOut);
+                Err(InstructionError::BailOut)
             }
             ProgramResult::Err(ref err) => {
                 if let EbpfError::SyscallError(syscall_error) = err {

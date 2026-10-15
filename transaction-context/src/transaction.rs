@@ -16,8 +16,12 @@ use {
     solana_instruction_error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
-    solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
-    std::{borrow::Cow, cell::Cell, rc::Rc},
+    solana_sbpf::{
+        clock,
+        memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
+        vm::DEFAULT_DEADLINE_CHECK_INTERVAL,
+    },
+    std::{borrow::Cow, cell::Cell, num::NonZeroU64, rc::Rc},
 };
 use {
     crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
@@ -131,6 +135,9 @@ pub struct TransactionContext<'ix_data> {
     /// the designated compute budget during program execution.
     #[cfg(not(target_os = "solana"))]
     pub compute_meter: ComputeMeter,
+    /// Bail out once the clock passes this number of ticks.
+    execution_deadline: Option<NonZeroU64>,
+    deadline_check_interval: NonZeroU64,
     #[cfg(not(target_os = "solana"))]
     pub(crate) lamports_delta: Cell<i128>,
     #[cfg(not(target_os = "solana"))]
@@ -187,6 +194,13 @@ impl<'ix_data> TransactionContext<'ix_data> {
             InstructionFrame::default,
         );
 
+        let execution_time_limit = match drop_on_bail_out {
+            DropOnBailOut::Disabled => None,
+            DropOnBailOut::Enabled {
+                execution_time_limit,
+            } => execution_time_limit,
+        };
+
         Self {
             accounts: Rc::new(TransactionAccounts::new_with_feature_flags(
                 transaction_accounts,
@@ -200,6 +214,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
             transaction_frame,
             next_top_level_instruction_index: 0,
             compute_meter,
+            execution_deadline: execution_time_limit
+                .map(|time_limit| clock::deadline_from_now(time_limit.duration)),
+            deadline_check_interval: execution_time_limit
+                .map_or(DEFAULT_DEADLINE_CHECK_INTERVAL, |time_limit| {
+                    time_limit.deadline_check_interval
+                }),
             lamports_delta: Cell::new(0),
             rent,
             instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
@@ -808,6 +828,23 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Return number of CPIs in instruction trace
     pub fn number_of_cpis_in_trace(&self) -> usize {
         self.transaction_frame.number_of_cpis_in_trace as usize
+    }
+
+    pub fn get_execution_deadline(&self) -> Option<NonZeroU64> {
+        self.execution_deadline
+    }
+
+    pub fn get_deadline_check_interval(&self) -> NonZeroU64 {
+        self.deadline_check_interval
+    }
+
+    pub fn check_execution_deadline(&self) -> Result<(), InstructionError> {
+        match self.execution_deadline {
+            Some(deadline) if clock::deadline_passed(deadline.get()) => {
+                Err(InstructionError::BailOut)
+            }
+            _ => Ok(()),
+        }
     }
 }
 

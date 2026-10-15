@@ -312,7 +312,6 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
-        enable_register_tracing: true,
         enable_symbol_and_section_labels: false,
         reject_broken_elfs: true,
         noop_instruction_rate: 256,

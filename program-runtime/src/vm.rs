@@ -360,6 +360,12 @@ pub fn execute<'a, 'b: 'a>(
                 let error: InstructionError = status.into();
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
+            // We should only ever see this error on timeout, and that's only
+            // if we've imposed a limit. If we have, that means we're the
+            // leader, so bail out.
+            ProgramResult::Err(EbpfError::ExceededTimeLimit) => {
+                Err(Box::new(InstructionError::BailOut) as Box<dyn std::error::Error>)
+            }
             ProgramResult::Err(mut error) => {
                 // Don't clean me up!!
                 // This feature is active on all networks, but we still toggle

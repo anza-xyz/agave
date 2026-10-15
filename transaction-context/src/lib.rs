@@ -11,6 +11,8 @@ pub mod vm_slice;
 
 pub mod transaction;
 
+use std::{num::NonZeroU64, time::Duration};
+
 pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
 // This is one less than MAX_ACCOUNTS_PER_TRANSACTION because
 // one index is used as NON_DUP_MARKER in ABI v0 and v1.
@@ -61,5 +63,28 @@ pub enum DropOnBailOut {
     /// As follower, in replay: Transactions failing with InstructionError::BailOut are part of consensus
     Disabled,
     /// As leader, in block production: Transactions failing with InstructionError::BailOut are dropped
-    Enabled,
+    Enabled {
+        /// Bail out once execution runs longer than this.
+        execution_time_limit: Option<ExecutionTimeLimit>,
+    },
+}
+
+/// Limit on the wall-clock duration of a transaction's program execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionTimeLimit {
+    /// Wall-clock budget for the program execution.
+    pub(crate) duration: Duration,
+    /// Maximal number of instructions the VM executes between deadline checks.
+    pub(crate) deadline_check_interval: NonZeroU64,
+}
+
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
+impl ExecutionTimeLimit {
+    /// Limits execution to `duration`, with the default deadline check interval.
+    pub const fn new(duration: Duration) -> Self {
+        Self {
+            duration,
+            deadline_check_interval: solana_sbpf::vm::DEFAULT_DEADLINE_CHECK_INTERVAL,
+        }
+    }
 }

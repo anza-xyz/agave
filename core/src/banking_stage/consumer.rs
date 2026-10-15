@@ -24,11 +24,13 @@ use {
         account_loader::{TransactionCheckResult, validate_fee_payer},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
-        transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
+        transaction_processor::{
+            ExecutionRecordingConfig, ExecutionTimeLimit, TransactionProcessingConfig,
+        },
     },
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_vote::vote_parser,
-    std::num::Saturating,
+    std::{num::Saturating, time::Duration},
 };
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
@@ -37,6 +39,10 @@ pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 pub(crate) const ENTRY_OVERHEAD_BYTES: u64 = 48;
 
 const SERIALIZED_ENTRIES_OVERHEAD: u64 = ENTRY_OVERHEAD_BYTES + 8; // Vec<Entry> length
+
+/// Wall-clock budget for a single transaction's program execution before it is dropped.
+// TODO: Make this a validator flag, so leaders can tune it themselves.
+const EXECUTION_TIME_LIMIT: ExecutionTimeLimit = ExecutionTimeLimit::new(Duration::from_millis(10));
 
 #[derive(Debug)]
 pub struct ExecutionFlags {
@@ -368,6 +374,7 @@ impl Consumer {
                     strict_nonce_size_check: true,
                     drop_noop_transactions: true,
                     drop_bail_out_transactions: true,
+                    execution_time_limit: Some(EXECUTION_TIME_LIMIT),
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;

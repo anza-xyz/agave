@@ -1,3 +1,4 @@
+pub use solana_transaction_context::ExecutionTimeLimit;
 use {
     crate::{
         account_loader::{
@@ -152,6 +153,11 @@ pub struct TransactionProcessingConfig<'a> {
     ///
     /// This is a leader-side filtering policy. It must not be enabled for replay.
     pub drop_bail_out_transactions: bool,
+    /// Bails out of transactions whose program execution exceeds this
+    /// wall-clock duration.
+    ///
+    /// Only takes effect together with `drop_bail_out_transactions`.
+    pub execution_time_limit: Option<ExecutionTimeLimit>,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -1135,7 +1141,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             tx.num_instructions(),
             ComputeMeter::new(compute_budget.compute_unit_limit),
             if config.drop_bail_out_transactions {
-                DropOnBailOut::Enabled
+                DropOnBailOut::Enabled {
+                    execution_time_limit: config.execution_time_limit,
+                }
             } else {
                 DropOnBailOut::Disabled
             },
