@@ -6064,6 +6064,7 @@ impl Bank {
     pub fn verify_certificate(
         &self,
         cert: UnverifiedCertificate,
+        thread_pool: Option<&ThreadPool>,
     ) -> std::result::Result<Certificate, CertVerifyError> {
         let slot = cert.cert_type.slot();
         let epoch_stakes = self
@@ -6072,12 +6073,17 @@ impl Bank {
         let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
         let total_stake = key_to_rank_map.total_stake();
 
-        let cert =
-            cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {
+        let cert = cert_verify::verify_certificate(
+            cert,
+            key_to_rank_map.len(),
+            total_stake,
+            |rank| {
                 key_to_rank_map
                     .get_pubkey_stake_entry(rank)
                     .map(|entry| (entry.stake, entry.bls_pubkey))
-            })?;
+            },
+            thread_pool,
+        )?;
 
         Ok(cert)
     }
