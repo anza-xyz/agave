@@ -773,6 +773,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
                 found_slot = true;
             } else if reclaim == UpsertReclaim::ReclaimOldSlots {
+                assert_ne!(
+                    *cur_slot, slot,
+                    "slot_list has slot in slot_list but is not replacing it"
+                );
                 if *cur_slot < slot {
                     reclaims.push(*cur_item);
                     return false;
@@ -2119,6 +2123,30 @@ mod tests {
             Some(slot_to_replace),
             &mut reclaims,
             UpsertReclaim::IgnoreReclaims,
+        );
+    }
+
+    #[should_panic(expected = "slot_list has slot in slot_list but is not replacing it")]
+    #[test_case(2; "Slot to replace is in the slot list")]
+    #[test_case(3; "Slot to replace is not in the slot list")]
+    fn test_update_slot_list_new_slot_duplicate_panic_reclaim_old_slots(slot_to_replace: u64) {
+        let new_slot = 1; // This slot already exists in the list
+        let old_slot = 2; // This slot already exists in the list
+        let entry = AccountMapEntry::new(
+            SlotList::from_iter([(new_slot, 0u64), (old_slot, 0)]),
+            AccountMapEntryMeta::default(),
+        );
+        let mut slot_list = entry.slot_list_write_lock();
+        let mut reclaims = ReclaimsSlotList::new();
+        let new_info = 1;
+
+        InMemAccountsIndex::<u64, u64>::update_slot_list(
+            &mut slot_list,
+            new_slot,
+            new_info,
+            Some(slot_to_replace),
+            &mut reclaims,
+            UpsertReclaim::ReclaimOldSlots,
         );
     }
 
