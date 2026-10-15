@@ -4,6 +4,7 @@ mod common;
 
 use {
     agave_xdp::route::{RouteTable, Router, RoutingTables},
+    common::NudState,
     std::net::{IpAddr, Ipv4Addr},
 };
 
@@ -13,7 +14,12 @@ fn router_snapshot_resolves_gre_routes_from_netlink() {
     let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair_with_tx_queue_count(1);
 
-    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
     common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
     common::add_route_to_dev_with_src("192.0.2.0/24", common::GRE_IFACE, gre.overlay_ip);
