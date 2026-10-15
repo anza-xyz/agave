@@ -18,9 +18,9 @@ use {
     },
 };
 pub use {
-    solana_packet::{Meta, PACKET_DATA_SIZE},
+    solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::{
-        BytesPacket, BytesPacketBatch, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch,
+        BytesPacket, BytesPacketBatch, Meta, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch,
     },
 };
 
