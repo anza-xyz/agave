@@ -650,13 +650,8 @@ impl VoteStateHandler {
     pub fn serialize_into(&self, data: &mut [u8]) -> Result<(), InstructionError> {
         match &self.target_state {
             TargetVoteState::V4(v4) => {
-<<<<<<< HEAD
-                let versioned = VoteStateVersions::V4(Box::new(v4));
-                bincode::serialize_into(data, &versioned)
-=======
                 let versioned = VoteStateVersionsRef::V4(v4);
                 wincode::serialize_into(data, &versioned)
->>>>>>> aa24a04 (Improves performance of [de]serializing `VoteStateVersions` (#15986))
                     .map_err(|_e| InstructionError::InvalidAccountData)
             }
         }
