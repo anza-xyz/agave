@@ -504,7 +504,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         accounts_metadata: account_lengths,
         instruction_data_offset,
         ..
-     } = serialize_parameters(
+    } = serialize_parameters(
         &invoke_context
             .transaction_context
             .get_current_instruction_context()
