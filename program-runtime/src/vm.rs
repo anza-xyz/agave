@@ -9,7 +9,8 @@ use {
         mem_pool::VmMemoryPool,
         memory_context::{MemoryContext, SerializedAccountMetadata},
         program_cache_entry::ProgramCacheEntry,
-        serialization, stable_log,
+        serialization::{self, SerializationResult},
+        stable_log,
     },
     solana_instruction_error::InstructionError,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
@@ -212,13 +213,13 @@ pub fn execute<'a, 'b: 'a>(
         .pass_input_metadata_in_vm_r3_r5;
 
     let mut serialize_time = Measure::start("serialize");
-    let (
+    let SerializationResult {
         parameter_bytes,
         regions,
         accounts_metadata,
         instruction_data_offset,
         account_pointers_offset,
-    ) = serialization::serialize_parameters(
+    } = serialization::serialize_parameters(
         &instruction_context,
         virtual_address_space_adjustments,
         account_data_direct_mapping,

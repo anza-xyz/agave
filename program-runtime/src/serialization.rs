@@ -237,13 +237,24 @@ impl Serializer {
 }
 
 /// The result of serializing the parameters for a program's execution.
-pub type SerializationResult = (
-    AlignedMemory<HOST_ALIGN>,
-    Vec<MemoryRegion>,
-    Vec<SerializedAccountMetadata>,
-    usize,
-    Option<usize>,
-);
+pub struct SerializationResult {
+    /// The serialized parameters for the program's execution.
+    pub parameter_bytes: AlignedMemory<HOST_ALIGN>,
+
+    /// The memory regions that were serialized into `parameter_bytes`.
+    pub regions: Vec<MemoryRegion>,
+
+    /// Metadata about the accounts that were serialized into `parameter_bytes`.
+    pub accounts_metadata: Vec<SerializedAccountMetadata>,
+
+    /// The VM address of the instruction data in `parameter_bytes`.
+    pub instruction_data_offset: usize,
+
+    /// The VM address of the array of account pointers in `parameter_bytes`,
+    /// if `direct_account_pointers_in_program_input` was enabled during
+    /// serialization.
+    pub account_pointers_offset: Option<usize>,
+}
 
 pub fn serialize_parameters(
     instruction_context: &InstructionContext,
@@ -290,13 +301,13 @@ pub fn serialize_parameters(
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             )?;
-        Ok((
+        Ok(SerializationResult {
             parameter_bytes,
             regions,
             accounts_metadata,
             instruction_data_offset,
-            None,
-        ))
+            account_pointers_offset: None,
+        })
     } else {
         // Used by loader-v2 (bpf_loader) and loader-v3 (bpf_loader_upgradeable)
         serialize_parameters_for_abiv1(
@@ -610,13 +621,13 @@ fn serialize_parameters_for_abiv1(
     };
 
     let (mem, regions) = s.finish();
-    Ok((
-        mem,
+    Ok(SerializationResult {
+        parameter_bytes: mem,
         regions,
         accounts_metadata,
-        instruction_data_offset as usize,
+        instruction_data_offset: instruction_data_offset as usize,
         account_pointers_offset,
-    ))
+    })
 }
 
 fn deserialize_parameters_for_abiv1<I: IntoIterator<Item = usize>>(
@@ -877,13 +888,12 @@ mod tests {
                     continue;
                 }
 
-                let (
-                    mut serialized,
+                let SerializationResult {
+                    parameter_bytes: mut serialized,
                     regions,
-                    _account_lengths,
-                    _instruction_data_offset,
                     account_pointers_offset,
-                ) = serialization_result.unwrap();
+                    ..
+                } = serialization_result.unwrap();
                 let mut serialized_regions = unsafe {
                     // SAFETY: test code, serialize_parameters should be constructing valid regions.
                     concat_regions(&regions)
@@ -1036,13 +1046,13 @@ mod tests {
                 .unwrap();
 
             // check serialize_parameters_for_abiv1
-            let (
-                mut serialized,
+            let SerializationResult {
+                parameter_bytes: mut serialized,
                 regions,
                 accounts_metadata,
-                _instruction_data_offset,
                 account_pointers_offset,
-            ) = serialize_parameters(
+                ..
+            } = serialize_parameters(
                 &instruction_context,
                 virtual_address_space_adjustments,
                 false, // account_data_direct_mapping
@@ -1148,13 +1158,13 @@ mod tests {
                 .get_current_instruction_context()
                 .unwrap();
 
-            let (
-                mut serialized,
+            let SerializationResult {
+                parameter_bytes: mut serialized,
                 regions,
-                account_lengths,
-                _instruction_data_offset,
+                accounts_metadata: account_lengths,
                 account_pointers_offset,
-            ) = serialize_parameters(
+                ..
+            } = serialize_parameters(
                 &instruction_context,
                 virtual_address_space_adjustments,
                 false, // account_data_direct_mapping
@@ -1323,13 +1333,11 @@ mod tests {
             .unwrap();
 
         // check serialize_parameters_for_abiv1
-        let (
-            _serialized,
+        let SerializationResult {
+            parameter_bytes: _serialized,
             regions,
-            _accounts_metadata,
-            _instruction_data_offset,
-            _account_pointers_offset,
-        ) = serialize_parameters(
+            ..
+        } = serialize_parameters(
             &instruction_context,
             true,
             false, // account_data_direct_mapping
@@ -1364,13 +1372,11 @@ mod tests {
             .get_current_instruction_context()
             .unwrap();
 
-        let (
-            _serialized,
+        let SerializationResult {
+            parameter_bytes: _serialized,
             regions,
-            _account_lengths,
-            _instruction_data_offset,
-            _account_pointers_offset,
-        ) = serialize_parameters(
+            ..
+        } = serialize_parameters(
             &instruction_context,
             true,
             false, // account_data_direct_mapping
@@ -1790,13 +1796,11 @@ mod tests {
             .transaction_context
             .get_current_instruction_context()
             .unwrap();
-        let (
-            _serialized,
+        let SerializationResult {
             regions,
             accounts_metadata,
-            _instruction_data_offset,
-            _account_pointers_offset,
-        ) = crate::serialization::serialize_parameters(
+            ..
+        } = crate::serialization::serialize_parameters(
             &instruction_context,
             true,  // virtual_address_space_adjustments
             false, // account_data_direct_mapping

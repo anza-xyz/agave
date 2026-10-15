@@ -18,7 +18,7 @@ use {
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },
         program_metrics::LoadProgramMetrics,
-        serialization::serialize_parameters,
+        serialization::{SerializationResult, serialize_parameters},
         with_mock_invoke_context,
     },
     solana_pubkey::Pubkey,
@@ -498,13 +498,13 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
     invoke_context.push().unwrap();
-    let (
-        _parameter_bytes,
+    let SerializationResult {
+        parameter_bytes: _parameter_bytes,
         regions,
-        account_lengths,
+        accounts_metadata: account_lengths,
         instruction_data_offset,
-        _account_pointers_offset,
-    ) = serialize_parameters(
+        ..
+     } = serialize_parameters(
         &invoke_context
             .transaction_context
             .get_current_instruction_context()

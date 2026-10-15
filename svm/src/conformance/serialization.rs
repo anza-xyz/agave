@@ -6,7 +6,7 @@ use {
     solana_program_runtime::{
         invoke_context::InvokeContext,
         memory_context::SerializedAccountMetadata,
-        serialization::serialize_parameters,
+        serialization::{SerializationResult, serialize_parameters},
         solana_sbpf::{
             aligned_memory::AlignedMemory, ebpf::HOST_ALIGN, memory_region::MemoryRegion,
         },
@@ -47,13 +47,12 @@ pub fn push_and_serialize_parameters<'ix_data>(
         feature_set.direct_account_pointers_in_program_input,
     )
     .map(
-        |(
-            aligned_memory,
-            input_memory_regions,
-            account_metadata,
-            _instruction_data_offset,
-            _account_pointers_offset,
-        )| {
+        |SerializationResult {
+             parameter_bytes: aligned_memory,
+             regions: input_memory_regions,
+             accounts_metadata: account_metadata,
+             ..
+         }| {
             SerializedParameters {
                 aligned_memory,
                 input_memory_regions,
