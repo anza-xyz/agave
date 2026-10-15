@@ -86,7 +86,7 @@ fn bench_verify_cert(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("Component_Aggregate_Pubkeys", size),
             &size,
-            |b, &_| b.iter(|| aggregate_pubkeys(&pre_collected_pubkeys).unwrap()),
+            |b, &_| b.iter(|| aggregate_pubkeys(&pre_collected_pubkeys, None).unwrap()),
         );
 
         group.bench_with_input(
@@ -99,11 +99,17 @@ fn bench_verify_cert(c: &mut Criterion) {
                     |cert_base2| {
                         // The rank_map closure simulates the Bank lookup.
                         // It adds stake (we use 1000 per validator) and returns the pubkey.
-                        verify_certificate(cert_base2, total_validators, total_stake, |rank| {
-                            pubkeys_ref
-                                .get(rank)
-                                .map(|bls_pubkey| (NonZero::new(TEST_STAKE).unwrap(), *bls_pubkey))
-                        })
+                        verify_certificate(
+                            cert_base2,
+                            total_validators,
+                            total_stake,
+                            |rank| {
+                                pubkeys_ref.get(rank).map(|bls_pubkey| {
+                                    (NonZero::new(TEST_STAKE).unwrap(), *bls_pubkey)
+                                })
+                            },
+                            None,
+                        )
                         .unwrap();
                     },
                     BatchSize::SmallInput,
@@ -137,11 +143,17 @@ fn bench_verify_cert(c: &mut Criterion) {
                 b.iter_batched(
                     || cert_base3.clone(),
                     |cert_base3| {
-                        verify_certificate(cert_base3, total_validators, total_stake, |rank| {
-                            pubkeys_ref
-                                .get(rank)
-                                .map(|bls_pubkey| (NonZero::new(TEST_STAKE).unwrap(), *bls_pubkey))
-                        })
+                        verify_certificate(
+                            cert_base3,
+                            total_validators,
+                            total_stake,
+                            |rank| {
+                                pubkeys_ref.get(rank).map(|bls_pubkey| {
+                                    (NonZero::new(TEST_STAKE).unwrap(), *bls_pubkey)
+                                })
+                            },
+                            None,
+                        )
                         .unwrap();
                     },
                     BatchSize::SmallInput,

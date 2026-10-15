@@ -4804,10 +4804,14 @@ impl Bank {
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
 
         (0..accounts.len()).for_each(|i| {
-            accounts.account(i, |account| {
+            // The unfortunately named `account_for_geyser()` is just a means to get
+            // a ref to the underlying `AccountSharedData`. The function may be
+            // `unimplemented!()`, but this is only done internally to accounts-db;
+            // every impl passed to `store_accounts()` is a wrapper over `AccountSharedData`.
+            accounts.account_for_geyser(i, |pubkey, account| {
                 self.stakes_cache.check_and_store(
-                    account.pubkey(),
-                    &account,
+                    pubkey,
+                    account,
                     new_warmup_cooldown_rate_epoch,
                     use_fixed_point_stake_math,
                 )
@@ -5862,6 +5866,7 @@ impl Bank {
     pub fn verify_certificate(
         &self,
         cert: UnverifiedCertificate,
+        thread_pool: Option<&ThreadPool>,
     ) -> std::result::Result<Certificate, CertVerifyError> {
         let slot = cert.cert_type.slot();
         let epoch_stakes = self
@@ -5870,12 +5875,17 @@ impl Bank {
         let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
         let total_stake = key_to_rank_map.total_stake();
 
-        let cert =
-            cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {
+        let cert = cert_verify::verify_certificate(
+            cert,
+            key_to_rank_map.len(),
+            total_stake,
+            |rank| {
                 key_to_rank_map
                     .get_pubkey_stake_entry(rank)
                     .map(|entry| (entry.stake, entry.bls_pubkey))
-            })?;
+            },
+            thread_pool,
+        )?;
 
         Ok(cert)
     }

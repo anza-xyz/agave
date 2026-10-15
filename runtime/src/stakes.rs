@@ -71,9 +71,6 @@ pub enum InvalidCacheEntryReason {
 type StakeAccount = stake_account::StakeAccount<Delegation>;
 pub(crate) type DelegatedStakes = ImblHashMap<Pubkey, u64>;
 
-<<<<<<< HEAD
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-=======
 /// Maximum number of inert delegations evicted from StakesCache at epoch
 /// boundaries. This number is chosen to cover normal deactivation pressure
 /// while not imposing undue cost in event of a backlog.
@@ -99,7 +96,7 @@ pub(crate) struct EpochBoundaryStakes {
     pub(crate) inert_stake_delegations: Vec<Pubkey>,
 }
 
->>>>>>> bedb819 (stakes cache: check StakeStateV2 tag in check_and_store() (#16050))
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Default, Debug)]
 pub(crate) struct StakesCache(RwLock<Stakes<StakeAccount>>);
 
@@ -115,7 +112,7 @@ impl StakesCache {
     pub(crate) fn check_and_store(
         &self,
         pubkey: &Pubkey,
-        account: &impl ReadableAccount,
+        account: &AccountSharedData,
         new_rate_activation_epoch: Option<Epoch>,
         use_fixed_point_stake_math: bool,
     ) {
@@ -145,11 +142,7 @@ impl StakesCache {
         debug_assert_ne!(account.lamports(), 0u64);
         if solana_vote_program::check_id(owner) {
             if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
-<<<<<<< HEAD
-                match VoteAccount::try_from(create_account_shared_data(account)) {
-=======
                 match VoteAccount::try_from(stakes_cache_account_shared_data(account)) {
->>>>>>> bedb819 (stakes cache: check StakeStateV2 tag in check_and_store() (#16050))
                     Ok(vote_account) => {
                         // drop the old account after releasing the lock
                         let _old_vote_account = {
@@ -173,26 +166,6 @@ impl StakesCache {
                 };
             };
         } else if stake_program::check_id(owner) {
-<<<<<<< HEAD
-            match StakeAccount::try_from(create_account_shared_data(account)) {
-                Ok(stake_account) => {
-                    let mut stakes = self.0.write().unwrap();
-                    stakes.upsert_stake_delegation(
-                        *pubkey,
-                        stake_account,
-                        new_rate_activation_epoch,
-                        use_fixed_point_stake_math,
-                    );
-                }
-                Err(_) => {
-                    let mut stakes = self.0.write().unwrap();
-                    stakes.remove_stake_delegation(
-                        pubkey,
-                        new_rate_activation_epoch,
-                        use_fixed_point_stake_math,
-                    );
-                }
-=======
             if account.data().starts_with(&STAKE_STATE_STAKE_TAG)
                 && let Ok(stake_account) =
                     StakeAccount::try_from(stakes_cache_account_shared_data(account))
@@ -208,7 +181,6 @@ impl StakesCache {
             } else {
                 let mut stakes = self.0.write().unwrap();
                 stakes.remove_stake_delegation(pubkey, new_rate_activation_epoch);
->>>>>>> bedb819 (stakes cache: check StakeStateV2 tag in check_and_store() (#16050))
             }
         }
     }
