@@ -1726,7 +1726,7 @@ impl Validator {
             config.vote_history_storage.clone(),
             &leader_schedule_cache,
             exit.clone(),
-            block_commitment_cache,
+            block_commitment_cache.clone(),
             config.turbine_mode.clone(),
             transaction_status_sender.clone(),
             entry_notification_sender.clone(),
@@ -1882,6 +1882,7 @@ impl Validator {
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
             bank_forks: bank_forks.clone(),
+            block_commitment_cache,
             cluster_info: cluster_info.clone(),
             vote_account: *vote_account,
             repair_whitelist: config.repair_whitelist.clone(),
