@@ -5830,7 +5830,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "wSbqZyqZ2KXJFf3j2qQNwqipBqJHN9U7pgMDZPJv1vH",
+        "6kYHcqYKtcgU5J12GpsRc9CJUfvgj2XXH39MKtku2vER",
     );
 }
 

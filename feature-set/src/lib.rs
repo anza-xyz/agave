@@ -81,6 +81,7 @@ pub struct FeatureSnapshot {
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
+    pub secp256r1_syscall_enabled: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -183,6 +184,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             early_instruction_trace_overflow_detection: is_active(
                 &early_instruction_trace_overflow_detection::ID,
             ),
+            secp256r1_syscall_enabled: is_active(&secp256r1_syscall_enabled::ID),
         }
     }
 }
@@ -345,6 +347,7 @@ impl FeatureSet {
                 .loader_v3_set_program_data_to_elf_length,
             early_instruction_trace_overflow_detection: snapshot
                 .early_instruction_trace_overflow_detection,
+            secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
         }
     }
 }
@@ -1546,6 +1549,10 @@ pub mod early_instruction_trace_overflow_detection {
     solana_pubkey::declare_id!("HeqqMQXVqavmiJsGTEXgCMydzMEWiiQTAgbs9KVKJVww");
 }
 
+pub mod secp256r1_syscall_enabled {
+    solana_pubkey::declare_id!("SeRjtX7Abiq5hQYbzdCny266oveDseHZh9tnrs2cdVC");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2643,6 +2650,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             early_instruction_trace_overflow_detection::id(),
             "SIMD-582: Early detection of instruction trace overflow",
+        ),
+        (
+            secp256r1_syscall_enabled::id(),
+            "SIMD-0565: Enable secp256r1 syscalls",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
