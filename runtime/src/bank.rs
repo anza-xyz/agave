@@ -6101,16 +6101,6 @@ impl Bank {
             .as_ref()
     }
 
-    /// Get the fixed authorized voter for the given vote account for the
-    /// current epoch
-    pub fn epoch_authorized_voter(&self, vote_account: &Pubkey) -> Option<&Pubkey> {
-        self.epoch_stakes
-            .get(&self.epoch)
-            .expect("Epoch stakes for bank's own epoch must exist")
-            .epoch_authorized_voters()
-            .get(vote_account)
-    }
-
     /// Get the fixed set of vote accounts for the given node id for the
     /// current epoch
     pub fn epoch_vote_accounts_for_node_id(&self, node_id: &Pubkey) -> Option<&NodeVoteAccounts> {
