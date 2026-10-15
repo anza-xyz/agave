@@ -161,6 +161,7 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
                 instruction_accounts,
                 LoaderV3Features {
                     set_programdata_to_elf_length,
+                    ..LoaderV3Features::all_enabled()
                 },
                 expected_result,
                 |_invoke_context| {},
@@ -331,6 +332,7 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         instruction_accounts.clone(),
         LoaderV3Features {
             set_programdata_to_elf_length,
+            ..LoaderV3Features::all_enabled()
         },
         Err(InstructionError::InvalidAccountData),
         |invoke_context| {
@@ -815,6 +817,7 @@ fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
                 instruction_accounts,
                 LoaderV3Features {
                     set_programdata_to_elf_length: true,
+                    ..LoaderV3Features::all_enabled()
                 },
                 expected_result,
                 |_invoke_context| {},

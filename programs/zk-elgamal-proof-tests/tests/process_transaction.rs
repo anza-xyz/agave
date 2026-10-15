@@ -1,13 +1,22 @@
 use {
     bytemuck::{Pod, bytes_of},
     solana_account::Account,
+    solana_compute_budget::compute_budget_limits::{
+        MAX_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+    },
+    solana_hash::Hash,
+    solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
+    solana_message::{
+        VersionedMessage,
+        v1::{Message, TransactionConfig},
+    },
     solana_program_test::*,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::TransactionError,
     solana_zk_elgamal_proof_interface::{
         self, instruction::*, proof_data::*, state::ProofContextState,
@@ -22,6 +31,27 @@ use {
     },
     std::mem::size_of,
 };
+
+// Inline proofs plus context-account instructions can exceed the legacy size limit.
+fn proof_transaction(
+    instructions: &[Instruction],
+    payer: &Pubkey,
+    signers: &[&Keypair],
+    blockhash: Hash,
+) -> VersionedTransaction {
+    let message = Message::try_compile_with_config(
+        payer,
+        instructions,
+        blockhash,
+        TransactionConfig {
+            compute_unit_limit: Some(MAX_COMPUTE_UNIT_LIMIT),
+            loaded_accounts_data_size_limit: Some(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get()),
+            ..TransactionConfig::default()
+        },
+    )
+    .unwrap();
+    VersionedTransaction::try_new(VersionedMessage::V1(message), signers).unwrap()
+}
 
 const VERIFY_INSTRUCTION_TYPES: [ProofInstruction; 12] = [
     ProofInstruction::VerifyZeroCiphertext,
@@ -710,9 +740,9 @@ async fn test_verify_proof_without_context<T, U>(
 
     // verify a valid proof (wihtout creating a context account)
     let instructions = vec![proof_instruction.encode_verify_proof(None, success_proof_data)];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -720,9 +750,9 @@ async fn test_verify_proof_without_context<T, U>(
 
     // try to verify an invalid proof (without creating a context account)
     let instructions = vec![proof_instruction.encode_verify_proof(None, fail_proof_data)];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -744,9 +774,9 @@ async fn test_verify_proof_without_context<T, U>(
 
         let instruction =
             vec![wrong_instruction_type.encode_verify_proof(None, success_proof_data)];
-        let transaction = Transaction::new_signed_with_payer(
-            &instruction.with_max_compute_unit_limit(),
-            Some(&payer.pubkey()),
+        let transaction = proof_transaction(
+            &instruction,
+            &payer.pubkey(),
             &[payer],
             client.get_latest_blockhash().await.unwrap(),
         );
@@ -829,9 +859,9 @@ async fn test_verify_proof_with_context<T, U>(
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), fail_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -856,9 +886,9 @@ async fn test_verify_proof_with_context<T, U>(
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -883,9 +913,9 @@ async fn test_verify_proof_with_context<T, U>(
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -916,9 +946,9 @@ async fn test_verify_proof_with_context<T, U>(
             wrong_instruction_type
                 .encode_verify_proof(Some(context_state_info), success_proof_data),
         ];
-        let transaction = Transaction::new_signed_with_payer(
-            &instructions.with_max_compute_unit_limit(),
-            Some(&payer.pubkey()),
+        let transaction = proof_transaction(
+            &instructions,
+            &payer.pubkey(),
             &[payer, &context_state_account],
             client.get_latest_blockhash().await.unwrap(),
         );
@@ -944,9 +974,9 @@ async fn test_verify_proof_with_context<T, U>(
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -955,9 +985,9 @@ async fn test_verify_proof_with_context<T, U>(
     // try overwriting the context state
     let instructions =
         vec![instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data)];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -988,9 +1018,9 @@ async fn test_verify_proof_with_context<T, U>(
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account_and_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1187,9 +1217,9 @@ async fn test_close_context_state<T, U>(
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1204,9 +1234,9 @@ async fn test_close_context_state<T, U>(
         },
         &destination_account.pubkey(),
     );
-    let transaction = Transaction::new_signed_with_payer(
-        &vec![instruction].with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &[instruction],
+        &payer.pubkey(),
         &[payer, &incorrect_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1228,9 +1258,9 @@ async fn test_close_context_state<T, U>(
         },
         &destination_account.pubkey(),
     );
-    let transaction = Transaction::new_signed_with_payer(
-        &vec![instruction.clone()].with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &[instruction],
+        &payer.pubkey(),
         &[payer, &context_state_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1254,9 +1284,9 @@ async fn test_close_context_state<T, U>(
             &destination_account.pubkey(),
         ),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account, &context_state_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1280,9 +1310,9 @@ async fn test_close_context_state<T, U>(
             &context_state_authority.pubkey(),
         ),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account, &context_state_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1306,9 +1336,9 @@ async fn test_close_context_state<T, U>(
             &context_state_account.pubkey(),
         ),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account, &context_state_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1340,28 +1370,11 @@ async fn test_close_context_state<T, U>(
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
         close_context_state(context_state_info, &context_state_account.pubkey()),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account_and_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
     client.process_transaction(transaction).await.unwrap();
-}
-
-// native programs consumes compute budget, some of ZK program consumes more than default
-// budget (eg 200_000 CUs). To simplify tests, request Max cu for test transactions.
-trait WithMaxComputeUnitLimit {
-    fn with_max_compute_unit_limit(self) -> Self;
-}
-
-impl WithMaxComputeUnitLimit for Vec<solana_instruction::Instruction> {
-    fn with_max_compute_unit_limit(mut self) -> Self {
-        self.push(
-            solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
-                solana_compute_budget::compute_budget_limits::MAX_COMPUTE_UNIT_LIMIT,
-            ),
-        );
-        self
-    }
 }

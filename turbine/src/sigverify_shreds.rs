@@ -39,8 +39,12 @@ const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 const DEDUPER_NUM_BITS: u64 = 637_534_199; // 76MB
 const DEDUPER_RESET_CYCLE: Duration = Duration::from_secs(5 * 60);
 
-/// Maximum number of packet batches to process in a single sigverify iteration.
-const SIGVERIFY_SHRED_BATCH_SIZE: usize = 1024;
+/// Maximum number of packet batches processed in a single sigverify iteration.
+///
+/// In case of legitimate sigverify traffic sigverify stage keeps up with fetch stage and processes
+/// one packet batch per iteration. If a backlog accumulates, this limits each iteration to
+/// `SIGVERIFY_SHRED_BATCH_SIZE` batches, each up to `PACKETS_PER_BATCH` shreds.
+const SIGVERIFY_SHRED_BATCH_SIZE: usize = 128;
 
 #[allow(clippy::enum_variant_names)]
 enum ShredSigverifyError {

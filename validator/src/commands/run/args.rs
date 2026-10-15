@@ -7,7 +7,6 @@ use {
     agave_snapshots::{SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion},
     bytesize::ByteSize,
     clap::{App, Arg, ArgMatches, values_t},
-    solana_accounts_db::utils::create_and_canonicalize_directory,
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
@@ -75,14 +74,6 @@ impl FromClapArgMatches for RunArgs {
                 clap::ErrorKind::ArgumentNotFound,
             ),
         )?);
-        // Canonicalize ledger path to avoid issues with symlink creation
-        let ledger_path =
-            create_and_canonicalize_directory(ledger_path.as_path()).map_err(|err| {
-                crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
-                    "failed to create and canonicalize ledger path '{}': {err}",
-                    ledger_path.display(),
-                )))
-            })?;
 
         let logfile = matches
             .value_of("logfile")
@@ -1331,18 +1322,16 @@ mod tests {
     use {
         super::*,
         crate::cli::thread_args::thread_args,
-        scopeguard::defer,
         std::{
-            fs,
             net::{IpAddr, Ipv4Addr},
-            path::{PathBuf, absolute},
+            path::PathBuf,
         },
     };
 
     impl Default for RunArgs {
         fn default() -> Self {
             let identity_keypair = Keypair::new();
-            let ledger_path = absolute(PathBuf::from("ledger")).unwrap();
+            let ledger_path = PathBuf::from("ledger");
             let logfile =
                 PathBuf::from(format!("agave-validator-{}.log", identity_keypair.pubkey()));
             let entrypoints = vec![];
@@ -1490,88 +1479,18 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_run_with_ledger_path() {
-        // nonexistent absolute ledger path
-        {
-            let default_run_args = RunArgs::default();
-            let tmp_dir = fs::canonicalize(tempfile::tempdir().unwrap()).unwrap();
-            let ledger_path = tmp_dir.join("nonexistent_ledger_path");
-            assert!(!fs::exists(&ledger_path).unwrap());
-
-            let expected_args = RunArgs {
-                ledger_path: ledger_path.clone(),
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--ledger", ledger_path.to_str().unwrap()],
-                expected_args,
-            );
-            assert!(fs::exists(&ledger_path).unwrap());
-        }
-
-        // existing absolute ledger path
-        {
-            let default_run_args = RunArgs::default();
-            let tmp_dir = tempfile::tempdir().unwrap();
-            let ledger_path = tmp_dir.path().join("existing_ledger_path");
-            fs::create_dir_all(&ledger_path).unwrap();
-            let ledger_path = fs::canonicalize(ledger_path).unwrap();
-            assert!(fs::exists(ledger_path.as_path()).unwrap());
-
-            let expected_args = RunArgs {
-                ledger_path: ledger_path.clone(),
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--ledger", ledger_path.to_str().unwrap()],
-                expected_args,
-            );
-            assert!(fs::exists(&ledger_path).unwrap());
-        }
-
-        // nonexistent relative ledger path
-        {
-            let default_run_args = RunArgs::default();
-            let ledger_path = PathBuf::from("nonexistent_ledger_path");
-            assert!(!fs::exists(&ledger_path).unwrap());
-            defer! {
-                fs::remove_dir_all(&ledger_path).unwrap()
-            };
-
-            let expected_args = RunArgs {
-                ledger_path: absolute(&ledger_path).unwrap(),
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--ledger", ledger_path.to_str().unwrap()],
-                expected_args,
-            );
-            assert!(fs::exists(&ledger_path).unwrap());
-        }
-
-        // existing relative ledger path
-        {
-            let default_run_args = RunArgs::default();
-            let ledger_path = PathBuf::from("existing_ledger_path");
-            fs::create_dir_all(&ledger_path).unwrap();
-            assert!(fs::exists(&ledger_path).unwrap());
-            defer! {
-                fs::remove_dir_all(&ledger_path).unwrap()
-            };
-
-            let expected_args = RunArgs {
-                ledger_path: absolute(&ledger_path).unwrap(),
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--ledger", ledger_path.to_str().unwrap()],
-                expected_args,
-            );
-            assert!(fs::exists(&ledger_path).unwrap());
-        }
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let ledger_path = tmp_dir.path().join("ledger");
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            ledger_path: ledger_path.clone(),
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--ledger", ledger_path.to_str().unwrap()],
+            expected_args,
+        );
     }
 
     #[test]
