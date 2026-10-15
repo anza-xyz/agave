@@ -43,6 +43,8 @@ Release channels have their own copy of this changelog:
 * Added `agave-validator --no-xdp-zero-copy` to explicitly select XDP copy mode. It conflicts
   with `--xdp-zero-copy` and `--no-xdp`.
 * The default full snapshot interval is now 200,000 slots.
+* `agave-validator` and `solana-test-validator` now reject `--rpc-port 65535`: the RPC websocket
+  uses `rpc-port + 1`, which would overflow and silently bind an arbitrary port.
 * XDP interface, address, and transmitter setup failures now report startup errors instead of
   panicking.
 
