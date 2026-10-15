@@ -53,6 +53,8 @@ Release channels have their own copy of this changelog:
   `failed to deserialize transaction` (including some previously reported as
   `Transaction failed to sanitize accounts offsets correctly`), and malformed messages return
   `invalid transaction message` without further detail.
+* `jsonParsed` ProgramData accounts of programs without an upgrade authority no longer return the
+  removed authority's 32 bytes in front of the program data.
 
 ### Validator
 
