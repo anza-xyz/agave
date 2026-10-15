@@ -25,7 +25,10 @@ use {
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
-    solana_runtime::{bank::BankId, bank_forks::SharableBanks},
+    solana_runtime::{
+        bank::{Bank, BankId},
+        bank_forks::SharableBanks,
+    },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},
@@ -265,39 +268,9 @@ where
             }
             if bank_transition_status == BankTransitionStatus::Transitioned {
                 self.container.flush_held_transactions();
-                cost_pacer = decision.bank().map(|b| {
-                    let cost_tracker = b.read_cost_tracker().unwrap();
-                    let block_limit = cost_tracker.get_block_limit();
-                    let shared_block_cost = cost_tracker.shared_block_cost();
-                    drop(cost_tracker);
-
-                    // If pacing_fill_time is greater than the bank's slot time,
-                    // adjust the pacing_fill_time to be the slot time, and warn.
-                    let fill_time = self.config.scheduler_pacing.fill_time();
-                    if let Some(pacing_fill_time) = fill_time.as_ref()
-                        && pacing_fill_time.as_nanos() > b.ns_per_slot
-                    {
-                        warn!(
-                            "scheduler pacing config pacing_fill_time {:?} is greater than the \
-                             bank's slot time {}, setting to slot time",
-                            pacing_fill_time, b.ns_per_slot,
-                        );
-                        self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
-                            NonZeroU64::new(
-                                (b.ns_per_slot as u64 / 1_000_000)
-                                    .saturating_sub(DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS),
-                            )
-                            .unwrap_or(NonZeroU64::new(1).unwrap()),
-                        );
-                    }
-
-                    CostPacer {
-                        block_limit,
-                        shared_block_cost,
-                        detection_time: now,
-                        fill_time,
-                    }
-                });
+                cost_pacer = decision
+                    .bank()
+                    .map(|bank| CostPacer::new(bank, &mut self.config.scheduler_pacing, now));
             }
 
             let mut receiving_stats = self.drain_check_results(&decision);
@@ -581,6 +554,39 @@ struct CostPacer {
 }
 
 impl CostPacer {
+    fn new(bank: &Bank, scheduler_pacing: &mut SchedulerPacing, now: Instant) -> Self {
+        let cost_tracker = bank.read_cost_tracker().unwrap();
+        let block_limit = cost_tracker.get_block_limit();
+        let shared_block_cost = cost_tracker.shared_block_cost();
+        drop(cost_tracker);
+
+        if let Some(fill_time) = scheduler_pacing.fill_time()
+            && fill_time.as_nanos() > bank.ns_per_slot
+        {
+            *scheduler_pacing = SchedulerPacing::FillTimeMillis(
+                NonZeroU64::new(
+                    (bank.ns_per_slot as u64 / 1_000_000)
+                        .saturating_sub(DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS),
+                )
+                .unwrap_or(NonZeroU64::new(1).unwrap()),
+            );
+            warn!(
+                "scheduler pacing config fill time {:?} exceeds bank slot time {}ns, adjusting \
+                 fill time to {:?}",
+                fill_time,
+                bank.ns_per_slot,
+                scheduler_pacing.fill_time().unwrap(),
+            );
+        }
+
+        Self {
+            block_limit,
+            shared_block_cost,
+            detection_time: now,
+            fill_time: scheduler_pacing.fill_time(),
+        }
+    }
+
     fn scheduling_budget(&self, current_time: &Instant) -> u64 {
         let target = if let Some(fill_time) = &self.fill_time {
             let time_since = current_time.saturating_duration_since(self.detection_time);
@@ -644,6 +650,43 @@ mod tests {
             sync::{Arc, RwLock},
         },
     };
+
+    #[test]
+    fn test_cost_pacer_adjusts_fill_time_for_current_bank() {
+        let mut bank = Bank::new_for_tests(&create_slow_genesis_config(u64::MAX).genesis_config);
+        bank.ns_per_slot = Duration::from_millis(200).as_nanos();
+        let mut pacing = SchedulerConfig::default().scheduler_pacing;
+        let now = Instant::now();
+        let filled_at = now.checked_add(Duration::from_millis(150)).unwrap();
+
+        let pacer = CostPacer::new(&bank, &mut pacing, now);
+        assert_eq!(pacer.fill_time, Some(Duration::from_millis(150)));
+        assert_eq!(pacing.fill_time(), pacer.fill_time);
+        assert_eq!(pacer.scheduling_budget(&now), 0);
+        assert_eq!(pacer.scheduling_budget(&filled_at), pacer.block_limit);
+
+        let next_pacer = CostPacer::new(&bank, &mut pacing, now);
+        assert_eq!(next_pacer.fill_time, pacer.fill_time);
+    }
+
+    #[test]
+    fn test_cost_pacer_preserves_valid_or_disabled_pacing() {
+        let mut bank = Bank::new_for_tests(&create_slow_genesis_config(u64::MAX).genesis_config);
+        for (slot_millis, mut pacing) in [
+            (400, SchedulerConfig::default().scheduler_pacing),
+            (
+                200,
+                SchedulerPacing::FillTimeMillis(NonZeroU64::new(100).unwrap()),
+            ),
+            (200, SchedulerPacing::Disabled),
+        ] {
+            bank.ns_per_slot = Duration::from_millis(slot_millis).as_nanos();
+            let expected = pacing.fill_time();
+            let pacer = CostPacer::new(&bank, &mut pacing, Instant::now());
+            assert_eq!(pacer.fill_time, expected);
+            assert_eq!(pacing.fill_time(), expected);
+        }
+    }
 
     #[test]
     fn test_scheduling_bank_waits_for_in_flight_and_adopts_latest_bank() {
