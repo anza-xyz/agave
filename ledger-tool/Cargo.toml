@@ -104,6 +104,7 @@ signal-hook = { workspace = true }
 agave-votor-messages = { workspace = true }
 assert_cmd = { workspace = true }
 solana-bls-signatures = { workspace = true }
+solana-hash = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 
