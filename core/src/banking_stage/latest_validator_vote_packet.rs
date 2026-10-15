@@ -159,8 +159,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_packet::PacketFlags,
-        solana_perf::packet::{BytesPacket, PacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch, PacketFlags},
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_signer::Signer,
         solana_system_transaction::transfer,
