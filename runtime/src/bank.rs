@@ -3869,7 +3869,7 @@ impl Bank {
     /// an entry. Used for tests only.
     pub fn prepare_entry_batch(
         &self,
-        txs: Vec<VersionedTransaction>,
+        txs: impl IntoIterator<Item = VersionedTransaction>,
     ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
         let sanitized_txs = txs
             .into_iter()
@@ -4869,8 +4869,7 @@ impl Bank {
         &self,
         tx: impl Into<VersionedTransaction>,
     ) -> Result<CommittedTransaction> {
-        let txs = vec![tx.into()];
-        let batch = self.prepare_entry_batch(txs)?;
+        let batch = self.prepare_entry_batch(std::iter::once(tx.into()))?;
 
         let (mut commit_results, ..) = self.load_execute_and_commit_transactions(
             &batch,
@@ -4893,17 +4892,14 @@ impl Bank {
         &self,
         txs: impl Iterator<Item = &'a Transaction>,
     ) -> Result<Vec<Result<()>>> {
-        let txs = txs
-            .map(|tx| VersionedTransaction::from(tx.clone()))
-            .collect();
-        self.try_process_entry_transactions(txs)
+        self.try_process_entry_transactions(txs.map(|tx| VersionedTransaction::from(tx.clone())))
     }
 
     /// Process multiple transaction in a single batch. This is used for benches and unit tests.
     /// Short circuits if any of the transactions do not pass sanitization checks.
     pub fn try_process_entry_transactions(
         &self,
-        txs: Vec<VersionedTransaction>,
+        txs: impl IntoIterator<Item = VersionedTransaction>,
     ) -> Result<Vec<Result<()>>> {
         let batch = self.prepare_entry_batch(txs)?;
         Ok(self.process_transaction_batch(&batch))
