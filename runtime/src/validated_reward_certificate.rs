@@ -114,6 +114,7 @@ impl ValidatedRewardCert {
                 skip.to_bitmap(),
                 max_validators,
                 &mut rank_map,
+                None,
             )?
         }
         if let Some(notar) = notar {
@@ -128,6 +129,7 @@ impl ValidatedRewardCert {
                 notar.bitmap(),
                 max_validators,
                 rank_map,
+                None,
             )?
         }
         if validators.is_empty() {
