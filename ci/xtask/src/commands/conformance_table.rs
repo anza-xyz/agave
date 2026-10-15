@@ -200,6 +200,7 @@ fn is_workspace_wide_change(changed_files: &[String]) -> bool {
 /// every fixture set is fetched, selected, or run.
 const CONFORMANCE_INFRA: &[&str] = &[
     ".github/workflows/conformance-dispatch.yml",
+    "ci/download-test-vectors.sh",
     "ci/test-conformance.sh",
     "ci/xtask/src/commands/conformance_table.rs",
 ];
