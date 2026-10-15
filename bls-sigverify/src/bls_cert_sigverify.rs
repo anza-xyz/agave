@@ -184,7 +184,7 @@ fn handle_cert_verify_error(
 fn verify_cert(
     cert: UnverifiedCertificate,
     root_bank: &Bank,
-<<<<<<< HEAD
+    thread_pool: &ThreadPool,
 ) -> Result<Certificate, CertVerifyError> {
     let cert_slot = cert.cert_type.slot();
     let root_slot = root_bank.slot();
@@ -194,14 +194,6 @@ fn verify_cert(
             root_slot,
         });
     }
-    let cert = root_bank.verify_certificate(cert)?;
+    let cert = root_bank.verify_certificate(cert, Some(thread_pool))?;
     Ok(cert)
-=======
-    thread_pool: &ThreadPool,
-) -> Result<Certificate, BlsCertVerifyError> {
-    let cert_slot = cert.cert_type.slot();
-    let root_slot = root_bank.slot();
-    debug_assert!(cert_slot <= root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY));
-    root_bank.verify_certificate(cert, Some(thread_pool))
->>>>>>> 534c3e1 (bls-cert-verify: specify an optional thread pool (#16059))
 }
