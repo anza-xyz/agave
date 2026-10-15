@@ -229,11 +229,11 @@ impl Bank {
             &config.migration_target,
             allow_prefunded,
         )?;
-        let source = if let Some(expected_hash) = config.verified_build_hash {
+        let source = if self.feature_set.snapshot().core_bpf_hash_validation {
             SourceBuffer::new_checked_with_verified_build_hash(
                 self,
                 &config.source_buffer_address,
-                expected_hash,
+                config.verified_build_hash,
             )?
         } else {
             SourceBuffer::new_checked(self, &config.source_buffer_address)?
@@ -493,10 +493,15 @@ impl Bank {
 pub(crate) mod tests {
     use {
         super::*,
-        crate::bank::{
-            Bank, SlotLeader,
-            test_utils::goto_end_of_slot,
-            tests::{create_genesis_config, create_simple_test_arc_bank},
+        crate::{
+            bank::{
+                Bank, SlotLeader,
+                test_utils::goto_end_of_slot,
+                tests::{
+                    create_genesis_config, create_simple_test_arc_bank, create_simple_test_bank,
+                },
+            },
+            bank_forks::BankForks,
         },
         agave_feature_set::FeatureSet,
         assert_matches::assert_matches,
@@ -505,6 +510,7 @@ pub(crate) mod tests {
             BUILTINS,
             core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
             prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
+            test_only::{TEST_ELF_FILE, TEST_ELF_HASH},
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
@@ -529,7 +535,11 @@ pub(crate) mod tests {
         solana_svm_timings::ExecuteTimings,
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
-        std::{fs::File, io::Read, sync::Arc},
+        std::{
+            fs::File,
+            io::Read,
+            sync::{Arc, RwLock},
+        },
         test_case::test_case,
     };
 
@@ -561,11 +571,41 @@ pub(crate) mod tests {
 
     fn test_elf() -> Vec<u8> {
         let mut elf = Vec::new();
-        File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
+        File::open(format!("../{TEST_ELF_FILE}"))
             .unwrap()
             .read_to_end(&mut elf)
             .unwrap();
         elf
+    }
+
+    struct CoreBpfFeatures {
+        migration_hash_validation: bool,
+    }
+
+    impl CoreBpfFeatures {
+        fn all_enabled() -> Self {
+            Self {
+                migration_hash_validation: true,
+            }
+        }
+    }
+
+    fn test_bank(features: CoreBpfFeatures) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+        let CoreBpfFeatures {
+            migration_hash_validation,
+        } = features;
+        let mut bank = create_simple_test_bank(0);
+        let feature_id = agave_feature_set::core_bpf_hash_validation::id();
+        if migration_hash_validation {
+            bank.activate_feature(&feature_id);
+        } else {
+            bank.deactivate_feature(&feature_id);
+        }
+        assert_eq!(
+            bank.feature_set.snapshot().core_bpf_hash_validation,
+            migration_hash_validation,
+        );
+        bank.wrap_with_bank_forks_for_tests()
     }
 
     pub(crate) enum ExpectedCacheEntry {
@@ -821,7 +861,7 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_migrate_builtin(upgrade_authority_address: Option<Pubkey>) {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -865,7 +905,7 @@ pub(crate) mod tests {
             upgrade_authority_address,
             feature_id: Pubkey::new_unique(),
             migration_target: CoreBpfMigrationTargetType::Builtin,
-            verified_build_hash: None,
+            verified_build_hash: TEST_ELF_HASH,
             datapoint_name: "test_migrate_builtin",
         };
 
@@ -898,7 +938,7 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_migrate_stateless_builtin(upgrade_authority_address: Option<Pubkey>) {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -925,16 +965,11 @@ pub(crate) mod tests {
         ) = test_context
             .calculate_post_migration_capitalization_and_accounts_data_size_delta_off_chain(&bank);
 
-        let expected_hash = {
-            let data = test_elf();
-            let end_offset = data.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
-            solana_sha256_hasher::hash(&data[..end_offset])
-        };
         let core_bpf_migration_config = CoreBpfMigrationConfig {
             source_buffer_address,
             upgrade_authority_address,
             feature_id: Pubkey::new_unique(),
-            verified_build_hash: Some(expected_hash),
+            verified_build_hash: TEST_ELF_HASH,
             migration_target: CoreBpfMigrationTargetType::Stateless,
             datapoint_name: "test_migrate_stateless_builtin",
         };
@@ -967,7 +1002,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_migrate_fail_authority_mismatch() {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1004,7 +1039,7 @@ pub(crate) mod tests {
             upgrade_authority_address: Some(Pubkey::new_unique()), // Mismatch.
             feature_id: Pubkey::new_unique(),
             migration_target: CoreBpfMigrationTargetType::Builtin,
-            verified_build_hash: None,
+            verified_build_hash: TEST_ELF_HASH,
             datapoint_name: "test_migrate_builtin",
         };
 
@@ -1015,9 +1050,12 @@ pub(crate) mod tests {
         )
     }
 
-    #[test]
-    fn test_migrate_fail_verified_build_mismatch() {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+    #[test_case(true; "hash_validation_active")]
+    #[test_case(false; "hash_validation_inactive")]
+    fn test_migrate_verified_build_mismatch(migration_hash_validation: bool) {
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures {
+            migration_hash_validation,
+        });
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1054,20 +1092,25 @@ pub(crate) mod tests {
             upgrade_authority_address: None,
             feature_id: Pubkey::new_unique(),
             migration_target: CoreBpfMigrationTargetType::Builtin,
-            verified_build_hash: Some(Hash::default()),
+            verified_build_hash: Hash::default(),
             datapoint_name: "test_migrate_builtin",
         };
 
-        assert_matches!(
-            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
-                .unwrap_err(),
-            CoreBpfMigrationError::BuildHashMismatch(_, _)
-        )
+        let result =
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true);
+        if migration_hash_validation {
+            assert_matches!(
+                result.unwrap_err(),
+                CoreBpfMigrationError::BuildHashMismatch(_, _)
+            );
+        } else {
+            assert!(result.is_ok());
+        }
     }
 
     #[test]
     fn test_migrate_none_authority_with_some_buffer_authority() {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let builtin_id = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1113,7 +1156,7 @@ pub(crate) mod tests {
             upgrade_authority_address: None, // None.
             feature_id: Pubkey::new_unique(),
             migration_target: CoreBpfMigrationTargetType::Builtin,
-            verified_build_hash: None,
+            verified_build_hash: TEST_ELF_HASH,
             datapoint_name: "test_migrate_builtin",
         };
 

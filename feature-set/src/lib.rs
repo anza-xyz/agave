@@ -80,6 +80,7 @@ pub struct FeatureSnapshot {
     pub secp256r1_syscall_enabled: bool,
     pub single_program_runtime_environment: bool,
     pub loader_v3_allow_prefunded_programdata: bool,
+    pub core_bpf_hash_validation: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -183,6 +184,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             loader_v3_allow_prefunded_programdata: is_active(
                 &loader_v3_allow_prefunded_programdata::ID,
             ),
+            core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
         }
     }
 }
@@ -1562,6 +1564,10 @@ pub mod loader_v3_allow_prefunded_programdata {
     solana_pubkey::declare_id!("63Zvc4ixE2NQsP1ef9R5AWQyty96BhRp7NiSuejUmXGM");
 }
 
+pub mod core_bpf_hash_validation {
+    solana_pubkey::declare_id!("FCsQnd4V52NESBhVURWYSWBbmLFzgxEZVC2WngzHzp1u");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2679,6 +2685,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loader_v3_allow_prefunded_programdata::id(),
             "SIMD-0684: Loader V3 Allow Prefunded ProgramData",
+        ),
+        (
+            core_bpf_hash_validation::id(),
+            "SIMD-0690: Hash validation in Core BPF program migrations and upgrades",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
