@@ -22,12 +22,16 @@ name = "agave_logger"
 agave-unstable-api = []
 
 [dependencies]
+crossbeam-channel = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
 signal-hook = { workspace = true }
+
+[dev-dependencies]
+agave-logger = { path = ".", features = ["agave-unstable-api"] }
 
 [lints]
 workspace = true

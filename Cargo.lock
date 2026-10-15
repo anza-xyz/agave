@@ -239,6 +239,8 @@ dependencies = [
 name = "agave-logger"
 version = "4.5.0-alpha.2"
 dependencies = [
+ "agave-logger",
+ "crossbeam-channel",
  "env_logger",
  "libc",
  "log",
