@@ -1280,6 +1280,11 @@ fn get_default_program_keypair(
         filename.push("-keypair");
         keypair_file.set_file_name(filename);
         keypair_file.set_extension("json");
+        eprintln!(
+            "No program pubkey or keypair file was provided with `--program-id`. Looking for a \
+             program keypair at the default location '{}'.",
+            keypair_file.display(),
+        );
         match read_keypair_file(keypair_file.to_str().unwrap()) {
             Ok(keypair) => Ok(keypair),
             Err(err) => Err(format!(
@@ -1288,7 +1293,9 @@ fn get_default_program_keypair(
                  path/to/keypair/file.json`. Update the program ID declared in your program code \
                  and project configuration files, then rebuild your project. Finally, pass the \
                  keypair file to `solana program deploy` with `--program-id \
-                 path/to/keypair/file.json`",
+                 path/to/keypair/file.json`.\n\
+                 Did you mean to pass a program pubkey? Use `solana program deploy \
+                 path/to/program.so --program-id <PROGRAM_ID>`.",
                 keypair_file.display(),
             )
             .into()),
@@ -3492,6 +3499,8 @@ mod tests {
         assert!(message.contains("Update the program ID declared in your program code"));
         assert!(message.contains("project configuration files, then rebuild your project"));
         assert!(message.contains("--program-id path/to/keypair/file.json"));
+        assert!(message.contains("Did you mean to pass a program pubkey?"));
+        assert!(message.contains("path/to/program.so --program-id <PROGRAM_ID>"));
     }
 
     #[test]
