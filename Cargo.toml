@@ -365,7 +365,7 @@ serde_yaml = "0.9.34"
 serial_test = "4.0.1"
 shaq = { version = "5.0.0" }
 shuttle = "0.9.3"
-signal-hook = "0.4.4"
+signal-hook = "0.4.5"
 slab = "0.4.12"
 slotmap = "1.0.7"
 smallvec = { version = "1.16.2", default-features = false, features = ["union"] }
