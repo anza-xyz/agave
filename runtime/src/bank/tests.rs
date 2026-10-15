@@ -5452,7 +5452,6 @@ fn test_bank_hash_consistency() {
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
     let feature_set = FeatureSet::all_enabled();
-
     let (mut bank, _bank_forks) = Bank::new_from_genesis(
         &genesis_config,
         Arc::new(RuntimeConfig::default()),
@@ -5543,14 +5542,14 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "2cZPDxSwRoohpRQ9v6U6jkLVsdq4pGAvhrrGmwkLgETe",
+                "8LtbxAW7FG3s6kVBTRUNswhcqhryNLiv8qEeqeBLSPqv",
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "EwSi5Y5VX6w3WZph6aVdwELkiDHGLmBymLmKrhGj9yYt",
+                "52ETLNaAvEorMWrbVjt2JRyrLcxyHpEYHvZpC2iYEMU6",
             );
             break;
         }
@@ -5859,7 +5858,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "DGbFgR84WQwKCxcUaD2ycoVdCFrCqyv96KmNVK15U2BY",
+        "GNLDTJaxe3AQXCSMwb6HxCETyt35Sc5HjHTN3pMegv41",
     );
 }
 
@@ -6984,6 +6983,15 @@ fn test_double_disinflation_rate_epoch_transition() {
     let feature_id = feature_set::double_disinflation_rate::id();
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
     genesis_config.accounts.remove(&feature_id).unwrap();
+    genesis_config.inflation = Inflation::full();
+    activate_feature(
+        &mut genesis_config,
+        feature_set::full_inflation::devnet_and_testnet::id(),
+    );
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     assert!(
@@ -6991,7 +6999,7 @@ fn test_double_disinflation_rate_epoch_transition() {
         "feature should be inactive before activation"
     );
 
-    // Advance an epoch so the re-anchor happens at a non-zero `year`.
+    // Activate SIMD-0550 after SIMD-0607, at a nonzero inflation year.
     goto_end_of_slot(bank.clone());
     bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
 
@@ -7013,99 +7021,19 @@ fn test_double_disinflation_rate_epoch_transition() {
         "feature should be active after epoch transition"
     );
 
-    // The re-anchor must not leak through the fork-shared inflation lock: the
-    // parent keeps the pre-activation schedule, and a sibling boundary bank
-    // must anchor off the pre-activation schedule, not the first child's.
-    let parent_inflation = *parent.inflation.read().unwrap();
-    assert_eq!(
-        parent_inflation.taper.to_bits(),
-        old_inflation.taper.to_bits()
-    );
-    assert_eq!(
-        parent_inflation.initial.to_bits(),
-        old_inflation.initial.to_bits()
-    );
+    // The taper update must not leak through the fork-shared inflation lock.
+    assert_eq!(parent.inflation(), old_inflation);
     let sibling = Bank::new_from_parent(parent, SlotLeader::default(), bank.slot() + 1);
-    let sibling_inflation = *sibling.inflation.read().unwrap();
-    let bank_inflation = *bank.inflation.read().unwrap();
-    assert_eq!(
-        sibling_inflation.taper.to_bits(),
-        bank_inflation.taper.to_bits()
-    );
-    assert_eq!(
-        sibling_inflation.initial.to_bits(),
-        bank_inflation.initial.to_bits()
-    );
+    let inflation = bank.inflation();
+    assert_eq!(sibling.inflation(), inflation);
+    let mut expected_inflation = old_inflation;
+    expected_inflation.taper = feature_set::double_disinflation_rate::TAPER;
+    assert_eq!(inflation, expected_inflation);
 
-    let year = bank.slot_in_year_for_inflation();
-    assert!(year > 0.0);
-    let taper = feature_set::double_disinflation_rate::TAPER;
-    let anchor_rate = old_inflation.total(year);
-    let inflation = *bank.inflation.read().unwrap();
-    assert_eq!(inflation.taper.to_bits(), taper.to_bits());
-    assert_eq!(
-        inflation.initial.to_bits(),
-        (anchor_rate / (1.0 - taper).powf(year)).to_bits(),
-        "initial should be re-anchored so the curve passes through the old rate"
-    );
-    assert_eq!(
-        inflation.terminal.to_bits(),
-        old_inflation.terminal.to_bits()
-    );
-    assert_eq!(
-        inflation.foundation.to_bits(),
-        old_inflation.foundation.to_bits()
-    );
-    assert_eq!(
-        inflation.foundation_term.to_bits(),
-        old_inflation.foundation_term.to_bits()
-    );
-
-    // The re-anchored curve matches the old rate at the activation boundary
-    // (up to f64 division/multiplication round-trip) and decays faster after.
-    assert!((inflation.total(year) - anchor_rate).abs() <= anchor_rate * f64::EPSILON);
-    assert!(inflation.total(year + 1.0) < old_inflation.total(year + 1.0));
-
-    // The re-anchored schedule survives crossing another epoch boundary.
+    // The updated taper survives crossing another epoch boundary.
     goto_end_of_slot(bank.clone());
     let bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
-    let later_inflation = *bank.inflation.read().unwrap();
-    assert_eq!(later_inflation.taper.to_bits(), inflation.taper.to_bits());
-    assert_eq!(
-        later_inflation.initial.to_bits(),
-        inflation.initial.to_bits()
-    );
-}
-
-#[test]
-fn test_double_disinflation_re_anchor_conformance() {
-    let taper = feature_set::double_disinflation_rate::TAPER;
-    let old = Inflation::full();
-    for year in [0.5, 2.0, 5.5, 8.0] {
-        let anchor = old.total(year);
-        let mut re_anchored = old;
-        re_anchored.taper = taper;
-        re_anchored.initial = anchor / (1.0 - taper).powf(year);
-        // Continuous at the boundary (up to f64 divide/multiply round-trip),
-        // strictly faster decay beyond it, never below the terminal floor.
-        assert!((re_anchored.total(year) - anchor).abs() <= anchor * f64::EPSILON);
-        assert!(re_anchored.total(year + 1.0) < old.total(year + 1.0));
-        assert!(re_anchored.total(year + 1.0) >= old.terminal);
-    }
-
-    // Activation after the old schedule has already reached the terminal
-    // floor: the re-anchored curve must stay at the floor.
-    let year = 50.0;
-    let anchor = old.total(year);
-    assert_eq!(anchor.to_bits(), old.terminal.to_bits());
-    let mut re_anchored = old;
-    re_anchored.taper = taper;
-    re_anchored.initial = anchor / (1.0 - taper).powf(year);
-    assert!((re_anchored.total(year) - old.terminal).abs() <= old.terminal * f64::EPSILON);
-    assert_eq!(
-        re_anchored.total(year + 1.0).to_bits(),
-        old.terminal.to_bits()
-    );
+    assert_eq!(bank.inflation(), inflation);
 }
 
 #[test]
@@ -7119,18 +7047,10 @@ fn test_double_disinflation_rate_active_at_genesis() {
             .is_active(&feature_set::double_disinflation_rate::id())
     );
 
-    // The doubled taper applies from genesis; `year` is zero there, so the
-    // re-anchor leaves `initial` at the genesis rate.
-    let inflation = bank.inflation();
-    assert_eq!(
-        inflation.taper.to_bits(),
-        feature_set::double_disinflation_rate::TAPER.to_bits()
-    );
-    assert_eq!(inflation.initial.to_bits(), old_inflation.initial.to_bits());
-    assert_eq!(
-        inflation.terminal.to_bits(),
-        old_inflation.terminal.to_bits()
-    );
+    // The doubled taper applies from genesis without changing `initial`.
+    let mut expected_inflation = old_inflation;
+    expected_inflation.taper = feature_set::double_disinflation_rate::TAPER;
+    assert_eq!(bank.inflation(), expected_inflation);
 }
 
 #[test]
@@ -8358,6 +8278,10 @@ fn test_get_inflation_num_slots_with_activations() {
     } = create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
     let slots_per_epoch = 32;
     genesis_config.epoch_schedule = EpochSchedule::new(slots_per_epoch);
+    // This test replays the pico-to-full inflation transition before SIMD-0607.
+    genesis_config
+        .accounts
+        .remove(&feature_set::remove_runtime_float_ops::id());
     genesis_config
         .accounts
         .remove(&feature_set::pico_inflation::id())

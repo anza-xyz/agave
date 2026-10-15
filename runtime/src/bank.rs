@@ -83,6 +83,7 @@ use {
     accounts_lt_hash::AccountsLtHashAsyncProgress,
     agave_bls_cert_verify::cert_verify::{self, Error as CertVerifyError},
     agave_feature_set::{self as feature_set, FeatureSet},
+    agave_math_utils::inflation,
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
@@ -257,6 +258,8 @@ mod sysvar_cache;
 pub(crate) mod tests;
 
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
+const INITIAL_RATE: u64 = 80_000_000_000_000;
+const TERMINAL_RATE: u64 = 15_000_000_000_000;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
@@ -3081,6 +3084,67 @@ impl Bank {
         self.slot_range_duration_in_years(inflation_start_slot, inflation_start_slot + num_slots)
     }
 
+    /// Applies integer decay over `start_slot..end_slot`, splitting the range
+    /// at each slot-time transition.
+    fn integer_inflation_rate_between(
+        &self,
+        anchor_rate: u64,
+        start_slot: Slot,
+        end_slot: Slot,
+        taper_percent: u32,
+    ) -> Option<u64> {
+        if start_slot > end_slot {
+            return None;
+        }
+        let mut rate = anchor_rate;
+        let mut cursor = start_slot;
+        for (transition_slot, _) in self.slot_params.param_transitions() {
+            if transition_slot <= start_slot {
+                continue;
+            }
+            if transition_slot >= end_slot {
+                break;
+            }
+
+            let slots = transition_slot.checked_sub(cursor)?;
+            let ns_per_slot = self.slot_params_at_slot(cursor).ns_per_slot();
+            rate = inflation::decayed_rate(rate, taper_percent, 100, ns_per_slot, slots)?;
+            cursor = transition_slot;
+        }
+        if cursor < end_slot {
+            let slots = end_slot.checked_sub(cursor)?;
+            let ns_per_slot = self.slot_params_at_slot(cursor).ns_per_slot();
+            rate = inflation::decayed_rate(rate, taper_percent, 100, ns_per_slot, slots)?;
+        }
+        Some(rate)
+    }
+
+    /// Decays `INITIAL_RATE` across slot-time regimes, switching from a 15% to
+    /// a 30% taper when SIMD-0550 activates. Returns the annual validator rate
+    /// at the start of this bank's epoch, scaled by `inflation::RATE_SCALE` and
+    /// clamped to `TERMINAL_RATE`.
+    /// Returns `None` if a slot range or fixed-point calculation is invalid.
+    fn integer_inflation_rate(&self) -> Option<u64> {
+        let start_slot = self.inflation_start_slot_aligned_to_rewards();
+        let end_slot = self.epoch_schedule().get_first_slot_in_epoch(self.epoch());
+        if let Some(double_disinflation_activation_slot) = self
+            .feature_set
+            .activated_slot(&feature_set::double_disinflation_rate::id())
+        {
+            // SIMD-0607 is active before SIMD-0550, so its anchor uses the
+            // preceding 15% integer schedule.
+            let anchor_slot = double_disinflation_activation_slot.min(end_slot);
+            let anchor_rate = self
+                .integer_inflation_rate_between(INITIAL_RATE, start_slot, anchor_slot, 15)?
+                .max(TERMINAL_RATE);
+            self.integer_inflation_rate_between(anchor_rate, anchor_slot, end_slot, 30)
+                .map(|rate| rate.max(TERMINAL_RATE))
+        } else {
+            self.integer_inflation_rate_between(INITIAL_RATE, start_slot, end_slot, 15)
+                .map(|rate| rate.max(TERMINAL_RATE))
+        }
+    }
+
     /// For a given `capitalization` (total_supply in lamports) and `epoch`, returns the
     /// `epoch inflation rewards` in lamports.
     pub(crate) fn calculate_epoch_inflation_rewards(
@@ -3088,6 +3152,24 @@ impl Bank {
         capitalization: u64,
         epoch: Epoch,
     ) -> u64 {
+        if self.feature_set.snapshot().remove_runtime_float_ops {
+            let rate = self
+                .integer_inflation_rate()
+                .expect("inflation rate calculation failed");
+            let first_slot = self.epoch_schedule().get_first_slot_in_epoch(epoch);
+            let ns_per_slot = self.slot_params_at_slot(first_slot).ns_per_slot();
+            let reward = inflation::epoch_reward(
+                capitalization,
+                rate,
+                self.epoch_schedule().get_slots_in_epoch(epoch),
+                ns_per_slot,
+            )
+            .expect("epoch reward calculation failed");
+            capitalization
+                .checked_add(reward)
+                .expect("capitalization overflow");
+            return reward;
+        }
         let slot_in_year = self.slot_in_year_for_inflation();
         let validator_rate = self.inflation.read().unwrap().validator(slot_in_year);
         let epoch_duration_in_years = self.epoch_duration_in_years(epoch);
@@ -6150,9 +6232,14 @@ impl Bank {
             );
         }
 
-        // Apply the doubled disinflation rate if it's active at genesis (the
-        // re-anchor is a no-op for `initial` at year zero). Not needed on
+        // Apply inflation feature changes active at genesis. Not needed on
         // snapshot restore: the serialized bank fields carry the result.
+        if self
+            .feature_set
+            .is_active(&feature_set::remove_runtime_float_ops::id())
+        {
+            self.apply_integer_inflation_initial_rate();
+        }
         if self
             .feature_set
             .is_active(&feature_set::double_disinflation_rate::id())
@@ -6166,18 +6253,19 @@ impl Bank {
         self.apply_activated_features();
     }
 
-    /// SIMD-0550: double the taper, re-anchoring `initial` so the inflation
-    /// rate stays continuous at the point of activation.
-    fn apply_double_disinflation_rate(&mut self) {
-        let year = self.slot_in_year_for_inflation();
+    /// Align the stored governor's initial rate with SIMD-0607's fixed 8% rate.
+    fn apply_integer_inflation_initial_rate(&mut self) {
         let mut inflation = *self.inflation.read().unwrap();
-        let anchor_rate = inflation.total(year);
-        let taper = feature_set::double_disinflation_rate::TAPER;
-        inflation.taper = taper;
-        inflation.initial = anchor_rate / (1.0 - taper).powf(year);
-        // The lock is shared with parent and sibling banks; replace it instead
-        // of writing through it so every boundary bank anchors off the
-        // pre-activation schedule and other forks never observe the change.
+        inflation.initial = 0.08;
+        self.inflation = Arc::new(RwLock::new(inflation));
+    }
+
+    /// SIMD-0550: update the stored taper. Integer rewards use an activation
+    /// anchor calculated from the preceding 15% schedule.
+    fn apply_double_disinflation_rate(&mut self) {
+        let mut inflation = *self.inflation.read().unwrap();
+        inflation.taper = feature_set::double_disinflation_rate::TAPER;
+        // The lock is shared with parent and sibling banks, so replace it.
         self.inflation = Arc::new(RwLock::new(inflation));
     }
 
@@ -6273,6 +6361,10 @@ impl Bank {
         {
             *self.inflation.write().unwrap() = Inflation::full();
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
+        }
+
+        if new_feature_activations.contains(&feature_set::remove_runtime_float_ops::id()) {
+            self.apply_integer_inflation_initial_rate();
         }
 
         if new_feature_activations.contains(&feature_set::double_disinflation_rate::id()) {

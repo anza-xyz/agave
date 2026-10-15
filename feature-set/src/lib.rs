@@ -82,6 +82,7 @@ pub struct FeatureSnapshot {
     pub loader_v3_allow_prefunded_programdata: bool,
     pub core_bpf_hash_validation: bool,
     pub loader_v3_remove_extend_program: bool,
+    pub remove_runtime_float_ops: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -187,6 +188,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
             loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
+            remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
         }
     }
 }
@@ -1575,6 +1577,10 @@ pub mod loader_v3_remove_extend_program {
     solana_pubkey::declare_id!("5Ach9H8V5NCNDQg7Md6HnJmVttF3tzHwiWWucnnFd4jz");
 }
 
+pub mod remove_runtime_float_ops {
+    solana_pubkey::declare_id!("7AzqUCKQjoCKhWDDHgEYkTY8iRwWtuuxHogcmx1UJzR8");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2700,6 +2706,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loader_v3_remove_extend_program::id(),
             "SIMD-0685: Loader V3 Remove ExtendProgram",
+        ),
+        (
+            remove_runtime_float_ops::id(),
+            "SIMD-0607: Remove floating point from runtime inflation",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
