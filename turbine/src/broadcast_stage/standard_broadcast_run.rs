@@ -992,12 +992,12 @@ mod test {
         assert!(run.completed);
 
         // Set up the slot to be interrupted
-        let next_shred_index = 10;
+        let next_shred_index = 32;
         let slot = 1;
         let parent = 0;
         run.chained_merkle_root = Hash::new_from_array(rand::rng().random());
         run.next_shred_index = next_shred_index;
-        run.next_code_index = 17;
+        run.next_code_index = next_shred_index;
         run.slot = slot;
         run.parent = parent;
         run.completed = false;
