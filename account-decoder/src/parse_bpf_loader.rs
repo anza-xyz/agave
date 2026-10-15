@@ -43,17 +43,18 @@ pub fn parse_bpf_upgradeable_loader(
             slot,
             upgrade_authority_address,
         } => {
-            let offset = if upgrade_authority_address.is_some() {
-                UpgradeableLoaderState::size_of_programdata_metadata()
-            } else {
-                UpgradeableLoaderState::size_of_programdata_metadata()
-                    - wincode::serialized_size(&Pubkey::default()).unwrap() as usize
-            };
+            // The loader keeps the program after the full metadata, even after
+            // the upgrade authority is removed
+            let program = data
+                .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
+                .ok_or(ParseAccountError::AccountNotParsable(
+                    ParsableAccount::BpfUpgradeableLoader,
+                ))?;
             BpfUpgradeableLoaderAccountType::ProgramData(UiProgramData {
                 slot,
                 authority: upgrade_authority_address.map(|pubkey| pubkey.to_string()),
                 data: UiAccountData::Binary(
-                    BASE64_STANDARD.encode(&data[offset..]),
+                    BASE64_STANDARD.encode(program),
                     UiAccountEncoding::Base64,
                 ),
             })
@@ -94,7 +95,11 @@ pub struct UiProgramData {
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_pubkey::Pubkey, wincode::serialize};
+    use {
+        super::*,
+        solana_pubkey::Pubkey,
+        wincode::{serialize, serialize_into},
+    };
 
     #[test]
     fn test_parse_bpf_upgradeable_loader_accounts() {
@@ -174,12 +179,13 @@ mod test {
             })
         );
 
+        // Like the loader, only rewrite the metadata: the old authority bytes
+        // stay in place and the program still starts after the full metadata
         let bpf_loader_state = UpgradeableLoaderState::ProgramData {
             slot,
             upgrade_authority_address: None,
         };
-        let mut account_data = serialize(&bpf_loader_state).unwrap();
-        account_data.extend_from_slice(&program);
+        serialize_into(&mut account_data[..], &bpf_loader_state).unwrap();
         assert_eq!(
             parse_bpf_upgradeable_loader(&account_data).unwrap(),
             BpfUpgradeableLoaderAccountType::ProgramData(UiProgramData {
@@ -191,5 +197,8 @@ mod test {
                 ),
             })
         );
+
+        let account_data = serialize(&bpf_loader_state).unwrap();
+        assert!(parse_bpf_upgradeable_loader(&account_data).is_err());
     }
 }
