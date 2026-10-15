@@ -1,15 +1,24 @@
 #![cfg(target_os = "linux")]
 
 use {
-    libc::{iovec, msghdr, sockaddr_storage, socklen_t},
+    libc::{iovec, msghdr, sockaddr_in, sockaddr_in6, socklen_t},
     std::{
         mem::{MaybeUninit, zeroed},
         ptr,
     },
 };
 
+/// An IPv4 or IPv6 socket address, the only kinds UDP sockets send to and receive
+/// from: 28 bytes, against 128 for `sockaddr_storage`, which fits every address family.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) union SockAddrInet {
+    pub(crate) v4: sockaddr_in,
+    pub(crate) v6: sockaddr_in6,
+}
+
 pub(crate) fn create_msghdr(
-    msg_name: &mut MaybeUninit<sockaddr_storage>,
+    msg_name: &mut MaybeUninit<SockAddrInet>,
     msg_namelen: socklen_t,
     iov: &mut MaybeUninit<iovec>,
 ) -> msghdr {
