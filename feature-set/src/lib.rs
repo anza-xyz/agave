@@ -81,6 +81,7 @@ pub struct FeatureSnapshot {
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
+    pub enable_get_leader_syscall: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -183,6 +184,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             early_instruction_trace_overflow_detection: is_active(
                 &early_instruction_trace_overflow_detection::ID,
             ),
+            enable_get_leader_syscall: is_active(&enable_get_leader_syscall::ID),
         }
     }
 }
@@ -345,6 +347,7 @@ impl FeatureSet {
                 .loader_v3_set_program_data_to_elf_length,
             early_instruction_trace_overflow_detection: snapshot
                 .early_instruction_trace_overflow_detection,
+            enable_get_leader_syscall: snapshot.enable_get_leader_syscall,
         }
     }
 }
@@ -1546,6 +1549,10 @@ pub mod early_instruction_trace_overflow_detection {
     solana_pubkey::declare_id!("HeqqMQXVqavmiJsGTEXgCMydzMEWiiQTAgbs9KVKJVww");
 }
 
+pub mod enable_get_leader_syscall {
+    solana_pubkey::declare_id!("CrFqZvFQLu4V7XEDNRxAgKJFChCVn5WDFbFfCLZe4Lxk");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1571,6 +1578,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             require_custodian_for_locked_stake_authorize::id(),
             "require custodian to authorize withdrawer change for locked stake",
         ),
+        (enable_get_leader_syscall::id(), "enable get leader syscall"),
         (
             spl_token_v2_self_transfer_fix::id(),
             "spl-token self-transfer fix",

@@ -68,6 +68,7 @@ members = [
     "rust/spoof1",
     "rust/spoof1_system",
     "rust/syscall-get-epoch-stake",
+    "rust/syscall-get-leader",
     "rust/sysvar",
     "rust/upgradeable",
     "rust/upgraded",

@@ -59,7 +59,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_leader_schedule::{NUM_CONSECUTIVE_LEADER_SLOTS, SlotLeader},
+    solana_leader_schedule::{NUM_CONSECUTIVE_LEADER_SLOTS, SlotLeaders},
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, UpdateParentReceiver},
         blockstore_meta::BlockLocation,
@@ -3064,13 +3064,13 @@ impl ReplayStage {
         }
         trace!("{my_pubkey} poh_slot {poh_slot} parent_slot {parent_slot}");
 
-        if let Some(next_leader) = leader_schedule_cache.slot_leader_at(poh_slot, Some(&parent)) {
+        if let Some(leaders) = leader_schedule_cache.slot_leaders_at(poh_slot, Some(&parent)) {
             if !has_new_vote_been_rooted {
                 info!("Haven't landed a vote, so skipping my leader slot");
                 return None;
             }
 
-            let next_leader_id = &next_leader.id;
+            let next_leader_id = &leaders.leader.id;
             trace!("{my_pubkey} leader {next_leader_id} at poh slot: {poh_slot}");
 
             // I guess I missed my slot
@@ -3132,7 +3132,7 @@ impl ReplayStage {
                 parent.clone(),
                 poh_slot,
                 root_slot,
-                next_leader,
+                leaders,
                 rpc_subscriptions,
                 slot_status_notifier,
                 NewBankOptions { vote_only_bank },
@@ -5527,14 +5527,16 @@ impl ReplayStage {
 
                 debug_assert!(!progress.contains_key(&child_slot));
 
-                let leader = leader_schedule_cache
-                    .slot_leader_at(child_slot, Some(parent_bank))
+                let leaders = leader_schedule_cache
+                    .slot_leaders_at(child_slot, Some(parent_bank))
                     .unwrap();
 
                 // We don't create the bank here for live leader banks, as that is handled by BCL
                 // and BankingStage. However, a full block may need to be replayed after a
                 // SwitchBank event or after repairing a block following a improper set-identity command.
-                if Self::leader_is_me(&leader.id, my_pubkey) && !blockstore.is_full(child_slot) {
+                if Self::leader_is_me(&leaders.leader.id, my_pubkey)
+                    && !blockstore.is_full(child_slot)
+                {
                     trace!("skipping replay bank creation for own leader slot {child_slot}");
                     continue;
                 }
@@ -5563,7 +5565,7 @@ impl ReplayStage {
                     parent_bank.clone(),
                     child_slot,
                     root,
-                    leader,
+                    leaders,
                     rpc_subscriptions,
                     slot_status_notifier,
                     options,
@@ -5574,7 +5576,7 @@ impl ReplayStage {
                 Self::update_fork_propagated_threshold_from_votes(
                     progress,
                     empty,
-                    vec![leader.id],
+                    vec![leaders.leader.id],
                     parent_bank.slot(),
                     &bank_forks.read().unwrap(),
                 );
@@ -5631,7 +5633,7 @@ impl ReplayStage {
         parent: Arc<Bank>,
         slot: u64,
         root_slot: u64,
-        leader: SlotLeader,
+        leader: impl Into<SlotLeaders>,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         new_bank_options: NewBankOptions,
