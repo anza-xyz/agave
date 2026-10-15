@@ -71,11 +71,6 @@ pub enum InvalidCacheEntryReason {
 type StakeAccount = stake_account::StakeAccount<Delegation>;
 pub(crate) type DelegatedStakes = ImblHashMap<Pubkey, u64>;
 
-/// Maximum number of inert delegations evicted from StakesCache at epoch
-/// boundaries. This number is chosen to cover normal deactivation pressure
-/// while not imposing undue cost in event of a backlog.
-const MAX_INERT_STAKES_REMOVED_PER_EPOCH: usize = 10_000;
-
 /// StakeStateV2::Stake, a stake with a delegation.
 const STAKE_STATE_STAKE_TAG: [u8; 4] = 2u32.to_le_bytes();
 
@@ -85,15 +80,6 @@ fn stakes_cache_account_shared_data(account: &AccountSharedData) -> AccountShare
     } else {
         account.clone()
     }
-}
-
-/// Results of [`Stakes::calculate_activated_stake`] at the epoch boundary.
-pub(crate) struct EpochBoundaryStakes {
-    pub(crate) stake_history: StakeHistory,
-    pub(crate) vote_accounts: VoteAccounts,
-    pub(crate) delegated_stakes: DelegatedStakes,
-    pub(crate) reward_epoch_delegated_stakes: RewardEpochDelegatedStakes,
-    pub(crate) inert_stake_delegations: Vec<Pubkey>,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -175,12 +161,15 @@ impl StakesCache {
                     *pubkey,
                     stake_account,
                     new_rate_activation_epoch,
-                    in_epoch_rewards_period,
-                    remove_inactive_stakes,
+                    use_fixed_point_stake_math,
                 );
             } else {
                 let mut stakes = self.0.write().unwrap();
-                stakes.remove_stake_delegation(pubkey, new_rate_activation_epoch);
+                stakes.remove_stake_delegation(
+                    pubkey,
+                    new_rate_activation_epoch,
+                    use_fixed_point_stake_math,
+                );
             }
         }
     }
