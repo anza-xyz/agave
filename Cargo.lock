@@ -11071,7 +11071,6 @@ name = "solana-system-program"
 version = "4.5.0-alpha.2"
 dependencies = [
  "assert_matches",
- "bincode",
  "criterion",
  "log",
  "solana-account",

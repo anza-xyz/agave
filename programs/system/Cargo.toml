@@ -23,7 +23,6 @@ name = "solana_system_program"
 agave-unstable-api = []
 
 [dependencies]
-bincode = { workspace = true }
 log = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
@@ -37,7 +36,7 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["sha2"] }
 solana-sdk-ids = { workspace = true }
 solana-svm-log-collector = { workspace = true }
-solana-system-interface = { workspace = true, features = ["serde"] }
+solana-system-interface = { workspace = true, features = ["serde", "wincode"] }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["wincode"] }
 
