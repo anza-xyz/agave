@@ -6304,14 +6304,13 @@ impl Bank {
         let feature_set = self.compute_active_feature_set(false).0;
         self.feature_set = Arc::new(feature_set);
 
-        // Apply rent deprecation feature if it's active at genesis
-        // After feature cleanup, assert that rent exemption threshold is 1.0
-        if self
-            .feature_set
-            .snapshot()
-            .deprecate_rent_exemption_threshold
+        // New genesis configurations must use the already deprecated threshold.
+        #[allow(deprecated)]
         {
-            self.rent_collector.deprecate_rent_exemption_threshold();
+            assert_eq!(
+                self.rent_collector.rent.exemption_threshold,
+                1.0f64.to_le_bytes()
+            );
         }
 
         // Apply the doubled disinflation rate if it's active at genesis (the
@@ -6383,12 +6382,6 @@ impl Bank {
             reserved_keys.update_active_set(&self.feature_set);
             Arc::new(reserved_keys)
         };
-
-        if new_feature_activations.contains(&feature_set::deprecate_rent_exemption_threshold::id())
-        {
-            self.rent_collector.deprecate_rent_exemption_threshold();
-            self.update_rent();
-        }
 
         // SIMD-0437 feature gates: all assume rent exemption threshold has been deprecated
         // (SIMD-0194), so rent.lamports_per_byte can be set directly. These gates are

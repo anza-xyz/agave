@@ -105,7 +105,7 @@ use {
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
-    solana_rent::{DEFAULT_LAMPORTS_PER_BYTE, Rent},
+    solana_rent::Rent,
     solana_reward_info::RewardType,
     solana_sdk_ids::{ed25519_program, incinerator, native_loader, secp256k1_program},
     solana_seed_derivable::SeedDerivable,
@@ -320,8 +320,7 @@ fn test_bank_new() {
     );
 
     genesis_config.rent = Rent {
-        lamports_per_byte: 5,
-        exemption_threshold: 1.2f64.to_le_bytes(),
+        lamports_per_byte: 6,
         ..Rent::default()
     };
 
@@ -5363,10 +5362,8 @@ fn test_fuzz_instructions() {
 // new feature that affects the bank hash, you should update this test to use a
 // test matrix that tests the bank hash calculation with and without your
 // added feature.
-#[allow(deprecated)]
-#[test_case(false ; "legacy")]
-#[test_case(true ; "deprecate rent exemption threshold")]
-fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
+#[test]
+fn test_bank_hash_consistency() {
     const VALIDATOR_STAKE_LAMPORTS: u64 = 100 * LAMPORTS_PER_SOL;
 
     let mut genesis_config = GenesisConfig {
@@ -5379,9 +5376,6 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
         cluster_type: ClusterType::MainnetBeta,
         ..GenesisConfig::default()
     };
-
-    genesis_config.rent.lamports_per_byte = DEFAULT_LAMPORTS_PER_BYTE / 2;
-    genesis_config.rent.exemption_threshold = 2.0f64.to_le_bytes();
 
     // Include a deterministic vote and stake account in the genesis bank.
     let validator_keypairs = (0..2)
@@ -5417,11 +5411,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
-    let mut feature_set = FeatureSet::all_enabled();
-
-    if !deprecate_rent_exemption_threshold {
-        feature_set.deactivate(&feature_set::deprecate_rent_exemption_threshold::id());
-    }
+    let feature_set = FeatureSet::all_enabled();
 
     let (mut bank, _bank_forks) = Bank::new_from_genesis(
         &genesis_config,
@@ -5505,11 +5495,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "G1rANcscD2mdoaAwdXn29ERibx3o7Ks1Nk7h1C6Sfhk2"
-                } else {
-                    "6gnFRPMgyQ1fj2xLKoQFwHqMCQ6HPPYLG7TUZFmuCen9"
-                },
+                "2d4i4L5xnbVpUi3QQJ63iewXhSikxG2XtvCj7N2eARWy",
             );
         }
 
@@ -5517,22 +5503,14 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "TDnXLFxaMVtN4KFKmdSc28zTfQjd2sPVazrVkfUFv3G"
-                } else {
-                    "9HL7PKa6Xt6CPqJFmdM4zWziH2YZzA7U92cbhLvTuubF"
-                },
+                "6ywzk1X9xXC7Fjyzidm8wmBq2Zo68UoNtjnPd7mZTNac",
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "G8mgrJ1vGXTfjRS8mmjYeHzkGwRLN5jvyirpApzB6Box"
-                } else {
-                    "6wrhEo1vT3P6bH8SuJrs7orouw7ivBkWs2XetuneH3hT"
-                },
+                "7mvN7U6inSg5setMw5S6w6LEsMz8Avmgqg3u5Tama3J1",
             );
             break;
         }
@@ -11937,28 +11915,8 @@ fn test_startup_from_snapshot_after_precompile_transition() {
 }
 
 #[test]
-fn test_genesis_deprecate_rent_exemption_enabled() {
+fn test_genesis_rent_sysvar() {
     let GenesisConfigInfo { genesis_config, .. } = genesis_utils::create_genesis_config(100_000);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-    let rent_account = bank.get_account(&Rent::id()).unwrap();
-    let accounts_db_rent: Rent = rent_account.state().unwrap();
-    let rent_collector_rent = bank.rent_collector.rent.clone();
-    let tx_processor_rent = bank
-        .transaction_processor
-        .sysvar_cache()
-        .get_rent()
-        .unwrap()
-        .as_ref()
-        .clone();
-
-    assert_eq!(accounts_db_rent, tx_processor_rent);
-    assert_eq!(accounts_db_rent, rent_collector_rent);
-}
-
-#[test]
-fn test_genesis_deprecate_rent_exemption_disabled() {
-    let (genesis_config, ..) = create_genesis_config(100_000);
 
     let bank = Bank::new_for_tests(&genesis_config);
     let rent_account = bank.get_account(&Rent::id()).unwrap();
