@@ -7,7 +7,7 @@ use {
         },
         compute_budget::{
             ComputeUnitConfig, UpdateComputeUnitLimitResult, WithComputeUnitConfig,
-            simulate_and_update_compute_unit_limit,
+            simulate_and_update_compute_unit_limit_versioned,
         },
         feature::{CliFeatureStatus, status_from_account},
     },
@@ -3191,7 +3191,7 @@ async fn send_deploy_messages(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig<'_>,
     initial_message: Option<VersionedMessage>,
-    write_messages: Vec<VersionedMessage>,
+    mut write_messages: Vec<VersionedMessage>,
     final_message: Option<VersionedMessage>,
     fee_payer_signer: &dyn Signer,
     initial_signer: Option<&dyn Signer>,
@@ -3201,38 +3201,31 @@ async fn send_deploy_messages(
     use_rpc: bool,
     compute_unit_limit: &ComputeUnitLimit,
 ) -> Result<Option<Signature>, Box<dyn std::error::Error>> {
-    let into_legacy = |message| match message {
-        VersionedMessage::Legacy(message) => message,
-        _ => unreachable!("program deployment constructs legacy messages"),
-    };
-    let initial_message = initial_message.map(into_legacy);
-    let mut write_messages = write_messages
-        .into_iter()
-        .map(into_legacy)
-        .collect::<Vec<_>>();
-    let final_message = final_message.map(into_legacy);
     if let Some(mut message) = initial_message {
         if let Some(initial_signer) = initial_signer {
             trace!("Preparing the required accounts");
-            simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
-                .await?;
-            let mut initial_transaction = Transaction::new_unsigned(message.clone());
-            let blockhash = rpc_client.get_latest_blockhash().await?;
+            simulate_and_update_compute_unit_limit_versioned(
+                compute_unit_limit,
+                &rpc_client,
+                &mut message,
+            )
+            .await?;
 
             // Most of the initial_transaction combinations require both the fee-payer and new program
             // account to sign the transaction. One (transfer) only requires the fee-payer signature.
             // This check is to ensure signing does not fail on a KeypairPubkeyMismatch error from an
             // extraneous signature.
-            if message.header.num_required_signatures == 3 {
-                initial_transaction.try_sign(
-                    &[fee_payer_signer, initial_signer, write_signer.unwrap()],
-                    blockhash,
-                )?;
-            } else if message.header.num_required_signatures == 2 {
-                initial_transaction.try_sign(&[fee_payer_signer, initial_signer], blockhash)?;
-            } else {
-                initial_transaction.try_sign(&[fee_payer_signer], blockhash)?;
-            }
+            let num_required_signatures = message.header().num_required_signatures;
+            let signers = match num_required_signatures {
+                3 => vec![fee_payer_signer, initial_signer, write_signer.unwrap()],
+                2 => vec![fee_payer_signer, initial_signer],
+                1 => vec![fee_payer_signer],
+                _ => unreachable!("Initial message must require between one and three signatures"),
+            };
+            let blockhash = rpc_client.get_latest_blockhash().await?;
+            message.set_recent_blockhash(blockhash);
+            let initial_transaction = VersionedTransaction::try_new(message, &signers)?;
+
             let result = rpc_client
                 .send_and_confirm_transaction_with_spinner_and_config(
                     &initial_transaction,
@@ -3257,25 +3250,57 @@ async fn send_deploy_messages(
         // write messages.
         {
             let mut message = write_messages[0].clone();
-            if let UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) =
-                simulate_and_update_compute_unit_limit(
-                    compute_unit_limit,
-                    &rpc_client,
-                    &mut message,
-                )
-                .await?
+            match simulate_and_update_compute_unit_limit_versioned(
+                compute_unit_limit,
+                &rpc_client,
+                &mut message,
+            )
+            .await?
             {
-                for msg in &mut write_messages {
-                    // Write messages are all assumed to be identical except
-                    // the program data being written. But just in case that
-                    // assumption is broken, assert that we are only ever
-                    // changing the instruction data for a compute budget
-                    // instruction.
-                    assert_eq!(msg.program_id(ix_index), Some(&compute_budget::id()));
-                    msg.instructions[ix_index]
-                        .data
-                        .clone_from(&message.instructions[ix_index].data);
+                UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) => {
+                    for msg in &mut write_messages {
+                        let (instructions, account_keys) = match msg {
+                            VersionedMessage::Legacy(message) => {
+                                Some((&mut message.instructions, &message.account_keys))
+                            }
+                            VersionedMessage::V0(message) => {
+                                Some((&mut message.instructions, &message.account_keys))
+                            }
+                            VersionedMessage::V1(_) => None,
+                        }
+                        .unwrap();
+                        // Write messages are all assumed to be identical except
+                        // the program data being written. But just in case that
+                        // assumption is broken, assert that we are only ever
+                        // changing the instruction data for a compute budget
+                        // instruction.
+                        let instruction = &mut instructions[ix_index];
+                        assert_eq!(
+                            account_keys.get(usize::from(instruction.program_id_index)),
+                            Some(&compute_budget::id())
+                        );
+                        instruction
+                            .data
+                            .clone_from(&message.instructions()[ix_index].data);
+                    }
                 }
+                UpdateComputeUnitLimitResult::UpdatedTransactionConfig => {
+                    let message = match &message {
+                        VersionedMessage::V1(message) => Some(message),
+                        _ => None,
+                    }
+                    .unwrap();
+                    for msg in &mut write_messages {
+                        let msg = match msg {
+                            VersionedMessage::V1(msg) => Some(msg),
+                            _ => None,
+                        }
+                        .unwrap();
+                        msg.config.compute_unit_limit = message.config.compute_unit_limit;
+                    }
+                }
+                UpdateComputeUnitLimitResult::NoComputeUnitLimitFound
+                | UpdateComputeUnitLimitResult::SimulationNotConfigured => {}
             }
 
             let cancel_token = CancellationToken::new();
@@ -3310,12 +3335,10 @@ async fn send_deploy_messages(
                 )
             };
 
-            let versioned_write_messages = write_messages.into_iter().map(VersionedMessage::Legacy);
-
             let transaction_errors_result = send_and_confirm_transactions_in_parallel_v3(
                 rpc_client.clone(),
                 transport,
-                versioned_write_messages,
+                write_messages,
                 &dedup_signers(&[fee_payer_signer, write_signer]),
                 SendAndConfirmConfigV3 {
                     with_spinner: true,
@@ -3356,13 +3379,20 @@ async fn send_deploy_messages(
     {
         trace!("Deploying program");
 
-        simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
-            .await?;
-        let mut final_tx = Transaction::new_unsigned(message);
+        simulate_and_update_compute_unit_limit_versioned(
+            compute_unit_limit,
+            &rpc_client,
+            &mut message,
+        )
+        .await?;
         let blockhash = rpc_client.get_latest_blockhash().await?;
+        message.set_recent_blockhash(blockhash);
         let mut signers = final_signers.to_vec();
         signers.push(fee_payer_signer);
-        final_tx.try_sign(&signers, blockhash)?;
+        // Deduplicate shared payer/authority keys to avoid TooManySigners with
+        // VersionedTransaction::try_new, including V1 transactions.
+        let signers = dedup_signers(&signers);
+        let final_tx = VersionedTransaction::try_new(message, &signers)?;
         let result = rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &final_tx,
