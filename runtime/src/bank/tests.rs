@@ -6979,6 +6979,196 @@ fn test_rent_feature_gates_epoch_transition() {
 }
 
 #[test]
+fn test_simd_0607_historical_slot_time_decay() {
+    const SLOTS_PER_EPOCH: Slot = 32;
+    const TRANSITION_SLOT: Slot = SLOTS_PER_EPOCH;
+    const END_SLOT: Slot = 2 * SLOTS_PER_EPOCH;
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
+    genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    let mut feature_set = FeatureSet::default();
+    feature_set.activate(&feature_set::reduce_slot_time_to_200ms::id(), 1);
+    bank.feature_set = Arc::new(feature_set);
+    bank.refresh_slot_params();
+
+    // The feature activates at slot 1, but 200 ms slots begin at the next
+    // epoch boundary. Decay before that boundary uses the legacy slot time.
+    assert_eq!(
+        bank.slot_params_at_slot(TRANSITION_SLOT - 1),
+        LEGACY_SLOT_PARAMS
+    );
+    assert_eq!(bank.slot_params_at_slot(TRANSITION_SLOT), SLOT_PARAMS_200MS);
+
+    let rate_at_transition = inflation::decayed_rate(
+        INITIAL_RATE,
+        15,
+        100,
+        LEGACY_SLOT_PARAMS.ns_per_slot(),
+        TRANSITION_SLOT,
+    )
+    .unwrap();
+    let expected_rate = inflation::decayed_rate(
+        rate_at_transition,
+        15,
+        100,
+        SLOT_PARAMS_200MS.ns_per_slot(),
+        END_SLOT - TRANSITION_SLOT,
+    );
+    assert_eq!(
+        bank.integer_inflation_rate_between(INITIAL_RATE, 0, END_SLOT, 15),
+        expected_rate
+    );
+    assert_eq!(
+        bank.integer_inflation_rate_between(INITIAL_RATE, 0, 0, 15),
+        Some(INITIAL_RATE)
+    );
+}
+
+#[test]
+fn test_simd_0607_activation_and_double_disinflation_anchor() {
+    let (mut genesis_config, _) = solana_genesis_config::create_genesis_config(1_000_000_000);
+    genesis_config.inflation = Inflation::full();
+    activate_feature(
+        &mut genesis_config,
+        feature_set::full_inflation::devnet_and_testnet::id(),
+    );
+    let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let capitalization = 1_000_000_000_000_000;
+
+    let legacy_reward = bank.calculate_epoch_inflation_rewards(capitalization, 0);
+    let legacy_expected = (bank
+        .inflation()
+        .validator(bank.slot_in_year_for_inflation())
+        * capitalization as f64
+        * bank.epoch_duration_in_years(0)) as u64;
+    assert_eq!(legacy_reward, legacy_expected);
+
+    let balance = genesis_config
+        .rent
+        .minimum_balance(Feature::size_of())
+        .max(1);
+    let feature_id = feature_set::remove_runtime_float_ops::id();
+    bank.store_account(
+        &feature_id,
+        &feature::create_account(&Feature { activated_at: None }, balance),
+    );
+
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::remove_runtime_float_ops::id())
+    );
+    let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(bank.epoch());
+    let anchor = inflation::decayed_rate(
+        INITIAL_RATE,
+        15,
+        100,
+        bank.ns_per_slot_at_slot(0),
+        first_slot,
+    )
+    .unwrap()
+    .max(TERMINAL_RATE);
+    assert_eq!(bank.integer_inflation_rate(), Some(anchor));
+    assert_eq!(
+        bank.calculate_epoch_inflation_rewards(capitalization, 0),
+        inflation::epoch_reward(
+            capitalization,
+            anchor,
+            bank.epoch_schedule().get_slots_in_epoch(0),
+            bank.ns_per_slot_at_slot(0),
+        )
+        .unwrap()
+    );
+
+    let feature_id = feature_set::double_disinflation_rate::id();
+    bank.store_account(
+        &feature_id,
+        &feature::create_account(&Feature { activated_at: None }, balance),
+    );
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    let double_disinflation_activation_slot =
+        bank.epoch_schedule().get_first_slot_in_epoch(bank.epoch());
+    let anchor = inflation::decayed_rate(
+        INITIAL_RATE,
+        15,
+        100,
+        bank.ns_per_slot_at_slot(0),
+        double_disinflation_activation_slot,
+    )
+    .unwrap()
+    .max(TERMINAL_RATE);
+    assert_eq!(bank.integer_inflation_rate(), Some(anchor));
+
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    let expected = inflation::decayed_rate(
+        anchor,
+        30,
+        100,
+        bank.ns_per_slot_at_slot(double_disinflation_activation_slot),
+        bank.epoch_schedule().get_slots_in_epoch(2),
+    )
+    .map(|rate| rate.max(TERMINAL_RATE));
+    assert_eq!(bank.integer_inflation_rate(), expected);
+}
+
+#[test]
+#[should_panic(expected = "capitalization overflow")]
+fn test_simd_0607_capitalization_overflow() {
+    let (mut genesis_config, _) = create_genesis_config(1_000_000);
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
+    let bank = Bank::new_for_tests(&genesis_config);
+    bank.calculate_epoch_inflation_rewards(u64::MAX, 0);
+}
+
+#[test]
+fn test_simd_0607_uses_specified_initial_rate_on_testnet() {
+    let (mut genesis_config, _) = solana_genesis_config::create_genesis_config(1_000_000);
+    genesis_config.cluster_type = ClusterType::Testnet;
+    genesis_config.inflation = Inflation::full();
+    genesis_config.inflation.initial = 0.15;
+    activate_feature(
+        &mut genesis_config,
+        feature_set::full_inflation::devnet_and_testnet::id(),
+    );
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    assert_eq!(bank.inflation().initial, 0.15);
+
+    let feature_id = feature_set::remove_runtime_float_ops::id();
+    let balance = genesis_config
+        .rent
+        .minimum_balance(Feature::size_of())
+        .max(1);
+    bank.store_account(
+        &feature_id,
+        &feature::create_account(&Feature { activated_at: None }, balance),
+    );
+    goto_end_of_slot(bank.clone());
+    let activated_bank = new_from_parent_next_epoch(bank.clone(), &bank_forks, 1);
+
+    assert_eq!(bank.inflation().initial, 0.15);
+    assert_eq!(activated_bank.inflation().initial, 0.08);
+    let elapsed_slots = activated_bank
+        .epoch_schedule()
+        .get_first_slot_in_epoch(activated_bank.epoch());
+    let expected_rate = inflation::decayed_rate(
+        INITIAL_RATE,
+        15,
+        100,
+        activated_bank.ns_per_slot_at_slot(0),
+        elapsed_slots,
+    )
+    .unwrap()
+    .max(TERMINAL_RATE);
+    assert_eq!(activated_bank.integer_inflation_rate(), Some(expected_rate));
+}
+
+#[test]
 fn test_double_disinflation_rate_epoch_transition() {
     let feature_id = feature_set::double_disinflation_rate::id();
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
@@ -8273,27 +8463,9 @@ fn test_get_inflation_start_slot_mainnet() {
 
 #[test]
 fn test_get_inflation_num_slots_with_activations() {
-    let GenesisConfigInfo {
-        mut genesis_config, ..
-    } = create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
+    let (mut genesis_config, _) = solana_genesis_config::create_genesis_config(42);
     let slots_per_epoch = 32;
     genesis_config.epoch_schedule = EpochSchedule::new(slots_per_epoch);
-    // This test replays the pico-to-full inflation transition before SIMD-0607.
-    genesis_config
-        .accounts
-        .remove(&feature_set::remove_runtime_float_ops::id());
-    genesis_config
-        .accounts
-        .remove(&feature_set::pico_inflation::id())
-        .unwrap();
-    genesis_config
-        .accounts
-        .remove(&feature_set::full_inflation::devnet_and_testnet::id())
-        .unwrap();
-    for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-        genesis_config.accounts.remove(&pair.vote_id).unwrap();
-        genesis_config.accounts.remove(&pair.enable_id).unwrap();
-    }
 
     let (bank0, _bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
