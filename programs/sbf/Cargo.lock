@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "agave-banking-stage-ingress-types"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "crossbeam-channel",
  "solana-perf",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "agave-bls-cert-verify"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-votor-messages",
  "bitvec",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "agave-bls-sigverify"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-bls-cert-verify",
  "agave-math-utils",
@@ -111,14 +111,14 @@ dependencies = [
 
 [[package]]
 name = "agave-cpu-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "agave-feature-set"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "ahash 0.8.12",
  "solana-epoch-schedule",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "agave-fs"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-io-uring",
  "io-uring",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "agave-io-uring"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "io-uring",
  "libc",
@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "agave-logger"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "env_logger",
  "libc",
@@ -185,14 +185,14 @@ dependencies = [
 
 [[package]]
 name = "agave-math-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "num-traits",
 ]
 
 [[package]]
 name = "agave-precompiles"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -211,14 +211,14 @@ dependencies = [
 
 [[package]]
 name = "agave-random"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "rand 0.9.4",
 ]
 
 [[package]]
 name = "agave-reserved-account-keys"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "solana-pubkey 4.3.0",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "agave-scheduling-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "agave-scheduler-bindings",
@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "agave-snapshots"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-fs",
  "bincode",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "agave-validator"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-cpu-utils",
  "agave-feature-set",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "agave-votor"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-bls-sigverify",
  "agave-logger",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "agave-votor-messages"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "bitvec",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "agave-votor-transport"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "anza-quinn",
  "arrayvec",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "agave-xdp"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-cpu-utils",
  "agave-xdp-ebpf",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "agave-xdp-ebpf"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "aya-ebpf",
 ]
@@ -5703,7 +5703,7 @@ dependencies = [
 
 [[package]]
 name = "solana-account-decoder"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "Inflector",
  "base64 0.23.1",
@@ -5747,7 +5747,7 @@ dependencies = [
 
 [[package]]
 name = "solana-account-decoder-client-types"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "base64 0.23.1",
  "bs58",
@@ -5783,7 +5783,7 @@ dependencies = [
 
 [[package]]
 name = "solana-accounts-db"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-fs",
  "ahash 0.8.12",
@@ -5900,7 +5900,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-client"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "borsh",
  "futures 0.3.34",
@@ -5927,7 +5927,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-interface"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "serde",
  "solana-account",
@@ -5945,7 +5945,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-server"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bincode",
  "crossbeam-channel",
@@ -6001,7 +6001,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bloom"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bv",
  "fnv",
@@ -6077,7 +6077,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bpf-loader-program"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bincode",
  "qualifier_attr",
@@ -6103,7 +6103,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bucket-map"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "ahash 0.8.12",
  "bv",
@@ -6121,7 +6121,7 @@ dependencies = [
 
 [[package]]
 name = "solana-builtins"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "solana-bpf-loader-program",
@@ -6138,7 +6138,7 @@ dependencies = [
 
 [[package]]
 name = "solana-builtins-default-costs"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
@@ -6148,7 +6148,7 @@ dependencies = [
 
 [[package]]
 name = "solana-clap-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bip39",
  "bs58",
@@ -6178,7 +6178,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cli-config"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "dirs-next",
  "serde",
@@ -6189,7 +6189,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cli-output"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
@@ -6234,7 +6234,7 @@ dependencies = [
 
 [[package]]
 name = "solana-client"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "async-trait",
  "bincode",
@@ -6336,7 +6336,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-fee-structure",
  "solana-program-runtime",
@@ -6344,7 +6344,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget-instruction"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "solana-borsh",
@@ -6372,7 +6372,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget-program"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-program-runtime",
 ]
@@ -6395,7 +6395,7 @@ dependencies = [
 
 [[package]]
 name = "solana-connection-cache"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
@@ -6413,7 +6413,7 @@ dependencies = [
 
 [[package]]
 name = "solana-core"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
@@ -6553,7 +6553,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cost-model"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
@@ -6629,7 +6629,7 @@ dependencies = [
 
 [[package]]
 name = "solana-download-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-snapshots",
  "log",
@@ -6673,7 +6673,7 @@ dependencies = [
 
 [[package]]
 name = "solana-entry"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-transaction-view",
  "agave-votor-messages",
@@ -6783,7 +6783,7 @@ dependencies = [
 
 [[package]]
 name = "solana-faucet"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -6826,7 +6826,7 @@ dependencies = [
 
 [[package]]
 name = "solana-fee"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-fee-structure",
  "solana-svm-transaction",
@@ -6897,7 +6897,7 @@ dependencies = [
 
 [[package]]
 name = "solana-genesis-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-snapshots",
  "log",
@@ -6921,7 +6921,7 @@ dependencies = [
 
 [[package]]
 name = "solana-geyser-plugin-manager"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-geyser-plugin-interface",
  "arc-swap",
@@ -6957,7 +6957,7 @@ dependencies = [
 
 [[package]]
 name = "solana-gossip"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-logger",
  "agave-random",
@@ -7201,7 +7201,7 @@ dependencies = [
 
 [[package]]
 name = "solana-lattice-hash"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "base64 0.23.1",
  "blake3",
@@ -7211,7 +7211,7 @@ dependencies = [
 
 [[package]]
 name = "solana-leader-schedule"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-random",
  "itertools 0.15.0",
@@ -7223,7 +7223,7 @@ dependencies = [
 
 [[package]]
 name = "solana-ledger"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
@@ -7362,11 +7362,11 @@ dependencies = [
 
 [[package]]
 name = "solana-measure"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 
 [[package]]
 name = "solana-merkle-tree"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-hash",
  "solana-sha256-hasher",
@@ -7393,7 +7393,7 @@ dependencies = [
 
 [[package]]
 name = "solana-metrics"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "crossbeam-channel",
  "gethostname",
@@ -7422,7 +7422,7 @@ checksum = "ae8dd4c280dca9d046139eb5b7a5ac9ad10403fbd64964c7d7571214950d758f"
 
 [[package]]
 name = "solana-net-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-xdp",
  "anza-quinn",
@@ -7518,7 +7518,7 @@ dependencies = [
 
 [[package]]
 name = "solana-perf"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-transaction-view",
  "ahash 0.8.12",
@@ -7557,7 +7557,7 @@ dependencies = [
 
 [[package]]
 name = "solana-poh"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-cpu-utils",
  "agave-votor-messages",
@@ -7669,7 +7669,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-binaries"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bincode",
  "solana-account",
@@ -7729,7 +7729,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-runtime"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "base64 0.23.1",
  "bincode",
@@ -7776,7 +7776,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-test"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -7859,7 +7859,7 @@ dependencies = [
 
 [[package]]
 name = "solana-pubsub-client"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "crossbeam-channel",
  "futures-util",
@@ -7881,7 +7881,7 @@ dependencies = [
 
 [[package]]
 name = "solana-quic-client"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "anza-quinn",
  "async-lock",
@@ -7905,7 +7905,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rayon-threadlimit"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "log",
  "num_cpus",
@@ -7913,7 +7913,7 @@ dependencies = [
 
 [[package]]
 name = "solana-remote-wallet"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "console 0.16.4",
  "dialoguer",
@@ -7960,7 +7960,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
@@ -8043,7 +8043,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-votor-messages",
  "async-trait",
@@ -8085,7 +8085,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-api"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
@@ -8103,7 +8103,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-nonce-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account",
  "solana-commitment-config",
@@ -8119,7 +8119,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-types"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "base64 0.23.1",
  "bs58",
@@ -8142,7 +8142,7 @@ dependencies = [
 
 [[package]]
 name = "solana-runtime"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-bls-cert-verify",
  "agave-feature-set",
@@ -8274,7 +8274,7 @@ dependencies = [
 
 [[package]]
 name = "solana-runtime-transaction"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
@@ -8302,7 +8302,7 @@ checksum = "dcf09694a0fc14e5ffb18f9b7b7c0f15ecb6eac5b5610bf76a1853459d19daf9"
 
 [[package]]
 name = "solana-sbf-programs"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
@@ -8357,7 +8357,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-128bit"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-program-entrypoint",
  "solana-sbf-rust-128bit-dep",
@@ -8365,11 +8365,11 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-128bit-dep"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 
 [[package]]
 name = "solana-sbf-rust-account-mem"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-program-entrypoint",
@@ -8380,7 +8380,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-account-mem-deprecated"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-program",
@@ -8391,7 +8391,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-alloc"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-msg",
  "solana-program",
@@ -8400,7 +8400,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-alt-bn128"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-bn254",
  "solana-msg",
@@ -8409,7 +8409,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-alt-bn128-compression"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-bn254",
  "solana-msg",
@@ -8418,7 +8418,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-big-mod-exp"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "array-bytes",
  "solana-big-mod-exp",
@@ -8428,7 +8428,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-call-args"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "borsh",
  "solana-account-info",
@@ -8440,7 +8440,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-call-depth"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-msg",
  "solana-program",
@@ -8449,7 +8449,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-caller-access"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8462,7 +8462,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-curve25519"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-curve25519",
  "solana-msg",
@@ -8471,7 +8471,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-custom-heap"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -8482,7 +8482,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-dep-crate"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "byteorder",
  "solana-program-entrypoint",
@@ -8490,7 +8490,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-deprecated-loader"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8505,7 +8505,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-direct-account-pointers"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-account-view",
@@ -8517,7 +8517,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-divide-by-zero"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-program-entrypoint",
@@ -8527,7 +8527,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-dup-accounts"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8540,7 +8540,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-error-handling"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "num-derive 0.5.1",
  "num-traits",
@@ -8554,7 +8554,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-external-spend"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-program-entrypoint",
@@ -8564,7 +8564,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-inner_instruction_alignment_check"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8577,7 +8577,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-instruction-introspection"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8591,7 +8591,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-invoke"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8610,7 +8610,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-invoke-and-error"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8622,7 +8622,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-invoke-and-ok"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8634,7 +8634,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-invoke-and-return"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8646,11 +8646,11 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-invoke-dep"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 
 [[package]]
 name = "solana-sbf-rust-invoked"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -8665,7 +8665,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-invoked-dep"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-instruction 4.0.0",
  "solana-pubkey 4.3.0",
@@ -8673,7 +8673,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-iter"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-program",
  "solana-program-entrypoint",
@@ -8681,7 +8681,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-log-data"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-program",
@@ -8692,7 +8692,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-many-args"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-msg",
  "solana-program",
@@ -8702,7 +8702,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-many-args-dep"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-msg",
  "solana-program",
@@ -8710,7 +8710,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-mem"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-program-entrypoint",
@@ -8722,11 +8722,11 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-mem-dep"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 
 [[package]]
 name = "solana-sbf-rust-membuiltins"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-program-entrypoint",
  "solana-sbf-rust-mem-dep",
@@ -8734,7 +8734,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-noop"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-program-entrypoint",
@@ -8744,7 +8744,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-panic"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -8755,7 +8755,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-param-passing"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-program",
  "solana-program-entrypoint",
@@ -8764,11 +8764,11 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-param-passing-dep"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 
 [[package]]
 name = "solana-sbf-rust-poseidon"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-msg",
  "solana-poseidon",
@@ -8777,7 +8777,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-r2-instruction-data-pointer"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-cpi",
  "solana-program-entrypoint",
@@ -8785,7 +8785,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-rand"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -8796,7 +8796,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-realloc"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -8810,7 +8810,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-realloc-dep"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-instruction 4.0.0",
  "solana-pubkey 4.3.0",
@@ -8818,7 +8818,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-realloc-invoke"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8834,11 +8834,11 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-realloc-invoke-dep"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 
 [[package]]
 name = "solana-sbf-rust-remaining-compute-units"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -8850,7 +8850,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-ro-account_modify"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8863,7 +8863,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-ro-modify"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -8876,7 +8876,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-sanity"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -8889,7 +8889,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-secp256k1-recover"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "libsecp256k1",
  "solana-hash",
@@ -8901,7 +8901,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-sha"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "blake3",
  "solana-blake3-hasher",
@@ -8914,7 +8914,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-sibling-inner-instructions"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8926,7 +8926,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-sibling-instructions"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8939,7 +8939,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-simulation"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-clock 3.2.1",
@@ -8953,7 +8953,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-spoof1"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction 4.0.0",
@@ -8967,7 +8967,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-spoof1-system"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-program-entrypoint",
@@ -8977,7 +8977,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-sysvar"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-define-syscall 3.0.0",
@@ -8996,7 +8996,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-upgradeable"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -9008,7 +9008,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-upgraded"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -9020,7 +9020,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-syscall-get-epoch-stake"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account-info",
  "solana-msg",
@@ -9127,7 +9127,7 @@ dependencies = [
 
 [[package]]
 name = "solana-send-transaction-service"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "crossbeam-channel",
  "itertools 0.15.0",
@@ -9384,7 +9384,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-bigtable"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-reserved-account-keys",
  "base64 0.23.1",
@@ -9422,7 +9422,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-proto"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bs58",
  "prost",
@@ -9447,7 +9447,7 @@ dependencies = [
 
 [[package]]
 name = "solana-streamer"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "anza-quinn",
  "bytes",
@@ -9481,7 +9481,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
@@ -9535,7 +9535,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-callback"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-account",
  "solana-clock 4.0.0",
@@ -9545,22 +9545,22 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-feature-set"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 
 [[package]]
 name = "solana-svm-log-collector"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "solana-svm-measure"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 
 [[package]]
 name = "solana-svm-timings"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "eager",
  "enum-iterator",
@@ -9583,14 +9583,14 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-type-overrides"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "rand 0.9.4",
 ]
 
 [[package]]
 name = "solana-syscalls"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bincode",
  "libsecp256k1",
@@ -9648,7 +9648,7 @@ dependencies = [
 
 [[package]]
 name = "solana-system-program"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bincode",
  "log",
@@ -9768,7 +9768,7 @@ dependencies = [
 
 [[package]]
 name = "solana-test-validator"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
@@ -9830,7 +9830,7 @@ checksum = "0ced92c60aa76ec4780a9d93f3bd64dfa916e1b998eacc6f1c110f3f444f02c9"
 
 [[package]]
 name = "solana-tls-utils"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "anza-quinn",
  "rustls",
@@ -9842,7 +9842,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tpu-client"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "futures-util",
  "indicatif",
@@ -9870,7 +9870,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tpu-client-next"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "anza-quinn",
  "async-trait",
@@ -9923,7 +9923,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-context"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bincode",
  "qualifier_attr",
@@ -9954,7 +9954,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-status"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
@@ -9997,7 +9997,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-status-client-types"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "base64 0.23.1",
  "bincode",
@@ -10020,7 +10020,7 @@ dependencies = [
 
 [[package]]
 name = "solana-turbine"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "agave-votor",
@@ -10066,7 +10066,7 @@ dependencies = [
 
 [[package]]
 name = "solana-udp-client"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "async-trait",
  "solana-connection-cache",
@@ -10078,7 +10078,7 @@ dependencies = [
 
 [[package]]
 name = "solana-unified-scheduler-logic"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "assert_matches",
  "solana-clock 4.0.0",
@@ -10091,7 +10091,7 @@ dependencies = [
 
 [[package]]
 name = "solana-unified-scheduler-pool"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "assert_matches",
@@ -10123,7 +10123,7 @@ checksum = "c5d2face763df5afeaa9509b9019968860e69cc1531ec8b4a2e6c7b702204d5a"
 
 [[package]]
 name = "solana-version"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "rand 0.9.4",
@@ -10137,7 +10137,7 @@ dependencies = [
 
 [[package]]
 name = "solana-vote"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bincode",
  "log",
@@ -10212,7 +10212,7 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-program"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -10291,7 +10291,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-elgamal-proof-program"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "bytemuck",
  "solana-instruction 4.0.0",
@@ -10352,7 +10352,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-token-proof-program"
-version = "4.4.0-beta.1"
+version = "4.4.0-rc.0"
 dependencies = [
  "solana-program-runtime",
 ]
