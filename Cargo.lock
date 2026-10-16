@@ -9422,6 +9422,7 @@ checksum = "993f9d2969eaffcaaa017d5de6d282d584ad3def7a0718185a3660a4cca3c2c6"
 dependencies = [
  "bitflags 2.13.2",
  "solana-pubkey 4.4.0",
+ "wincode",
 ]
 
 [[package]]
@@ -11641,7 +11642,6 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "solana-account",
- "solana-bincode",
  "solana-bls-signatures",
  "solana-clock",
  "solana-frozen-abi",
@@ -11673,7 +11673,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e91bf90031e7387f9a57f8c4203d433a3ca08b9c1f24d95424e9bab38d5b2620"
 dependencies = [
  "arbitrary",
- "bincode",
  "cfg_eval",
  "num-derive 0.4.2",
  "num-traits",
@@ -11710,7 +11709,6 @@ dependencies = [
  "qualifier_attr",
  "rand 0.9.4",
  "solana-account",
- "solana-bincode",
  "solana-bls-signatures",
  "solana-clock",
  "solana-epoch-schedule",

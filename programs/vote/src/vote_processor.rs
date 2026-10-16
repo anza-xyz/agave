@@ -3,8 +3,8 @@
 use {
     crate::vote_state::{self, handler::VoteStateTargetVersion},
     log::*,
-    solana_bincode::limited_deserialize,
     solana_instruction_error::InstructionError,
+    solana_packet::PACKET_DATA_WINCODE_CONFIG,
     solana_program_runtime::{
         declare_process_instruction, invoke_context::InvokeContext,
         sysvar_cache::get_sysvar_with_account_check,
@@ -110,7 +110,10 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             .consume_checked(BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS)
             .map_err(|_| InstructionError::ComputationalBudgetExceeded)
     };
-    match limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)? {
+    let instruction: VoteInstruction =
+        wincode::config::deserialize(data, PACKET_DATA_WINCODE_CONFIG)
+            .map_err(|_| InstructionError::InvalidInstructionData)?;
+    match instruction {
         VoteInstruction::InitializeAccount(vote_init) => {
             let rent =
                 get_sysvar_with_account_check::rent(invoke_context, &instruction_context, 1)?;
