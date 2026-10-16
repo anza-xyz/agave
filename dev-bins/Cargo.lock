@@ -562,7 +562,7 @@ dependencies = [
  "solana-tls-utils",
  "thiserror 2.0.21",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
 ]
 
 [[package]]
@@ -2368,7 +2368,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2805,7 +2805,7 @@ dependencies = [
  "indexmap",
  "slab",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
  "tracing",
 ]
 
@@ -4085,7 +4085,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4700,7 +4700,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -4740,7 +4740,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -5224,7 +5224,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5282,7 +5282,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6538,7 +6538,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tikv-jemalloc-ctl",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
  "trees",
  "wincode",
 ]
@@ -7851,7 +7851,7 @@ dependencies = [
  "stream-cancel",
  "thiserror 2.0.21",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
  "wincode",
 ]
 
@@ -8228,7 +8228,7 @@ dependencies = [
  "solana-tls-utils",
  "solana-tpu-client-next",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
 ]
 
 [[package]]
@@ -8526,7 +8526,7 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.21",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
 ]
 
 [[package]]
@@ -8881,7 +8881,7 @@ dependencies = [
  "solana-tls-utils",
  "thiserror 2.0.21",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
 ]
 
 [[package]]
@@ -9706,7 +9706,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9981,9 +9981,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.19"
+version = "0.7.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
+checksum = "e464cf451ba96ebfc6f9b6542f17ee8b8956e33f1e40d9690624e59d7a7f8a4b"
 dependencies = [
  "bytes",
  "futures-core",
@@ -10113,7 +10113,7 @@ dependencies = [
  "slab",
  "sync_wrapper",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -10136,7 +10136,7 @@ dependencies = [
  "iri-string",
  "pin-project-lite",
  "tokio",
- "tokio-util 0.7.19",
+ "tokio-util 0.7.20",
  "tower",
  "tower-layer",
  "tower-service",
@@ -10633,7 +10633,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
