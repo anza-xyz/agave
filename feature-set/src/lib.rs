@@ -72,6 +72,7 @@ pub struct FeatureSnapshot {
     pub set_lamports_per_byte_to_1322: bool,
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
+    pub prohibit_vote_self_withdrawals: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub upgrade_bpf_stake_program_to_v5: bool,
     pub enable_sha512_syscall: bool,
@@ -169,6 +170,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             set_lamports_per_byte_to_1322: is_active(&set_lamports_per_byte_to_1322::ID),
             block_revenue_sharing: is_active(&block_revenue_sharing::ID),
             vote_account_initialize_v2: is_active(&vote_account_initialize_v2::ID),
+            prohibit_vote_self_withdrawals: is_active(&prohibit_vote_self_withdrawals::ID),
             direct_account_pointers_in_program_input: is_active(
                 &direct_account_pointers_in_program_input::ID,
             ),
@@ -337,6 +339,7 @@ impl FeatureSet {
             enable_bls12_381_syscall: snapshot.enable_bls12_381_syscall,
             block_revenue_sharing: snapshot.block_revenue_sharing,
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
+            prohibit_vote_self_withdrawals: snapshot.prohibit_vote_self_withdrawals,
             direct_account_pointers_in_program_input: snapshot
                 .direct_account_pointers_in_program_input,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
@@ -1451,6 +1454,10 @@ pub mod block_revenue_sharing {
 
 pub mod vote_account_initialize_v2 {
     solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
+}
+
+pub mod prohibit_vote_self_withdrawals {
+    solana_pubkey::declare_id!("BKpWUczLmRmHMDaTw6ZEFGEsAhto4PfmNiR5dfyuZtHj");
 }
 
 pub mod validate_chained_block_id {
@@ -2584,6 +2591,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             vote_account_initialize_v2::id(),
             "SIMD-0464: Vote Account Initialize V2",
+        ),
+        (
+            prohibit_vote_self_withdrawals::id(),
+            "SIMD-0609: Prohibit Vote Account Self-Withdrawals",
         ),
         (
             validate_chained_block_id::id(),

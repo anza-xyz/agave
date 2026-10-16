@@ -282,6 +282,9 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 .environment_config
                 .sysvar_cache()
                 .get_clock()?;
+            let reject_self_withdrawal = invoke_context
+                .get_feature_set()
+                .prohibit_vote_self_withdrawals;
 
             drop(me);
             vote_state::withdraw(
@@ -293,6 +296,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
                 &rent_sysvar,
                 &clock_sysvar,
+                reject_self_withdrawal,
             )
         }
         VoteInstruction::AuthorizeChecked(vote_authorize) => {
@@ -497,6 +501,7 @@ mod tests {
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
+        prohibit_vote_self_withdrawals: bool,
         alpenglow_migration_succeeded: bool,
     }
 
@@ -508,6 +513,7 @@ mod tests {
                 custom_commission_collector: true,
                 block_revenue_sharing: true,
                 vote_account_initialize_v2: true,
+                prohibit_vote_self_withdrawals: true,
                 alpenglow_migration_succeeded: false,
             }
         }
@@ -544,6 +550,7 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            prohibit_vote_self_withdrawals,
             alpenglow_migration_succeeded,
         } = features;
         let cu_consumed = RefCell::new(0u64);
@@ -575,6 +582,7 @@ mod tests {
                 custom_commission_collector,
                 block_revenue_sharing,
                 vote_account_initialize_v2,
+                prohibit_vote_self_withdrawals,
                 ..SVMFeatureSet::all_enabled()
             },
         );
@@ -954,6 +962,7 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            prohibit_vote_self_withdrawals: false,
             alpenglow_migration_succeeded: false,
         };
 
@@ -1086,6 +1095,7 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            prohibit_vote_self_withdrawals: false,
             alpenglow_migration_succeeded: false,
         };
 
@@ -5386,5 +5396,106 @@ mod tests {
         assert_eq!(accounts[0].lamports(), 0);
         assert_eq!(accounts[0].data(), vec![0; VoteStateV4::size_of()]);
         assert_eq!(accounts[1].lamports(), vote_account_lamports);
+    }
+
+    #[test]
+    fn test_withdraw_self_withdrawal_rejected() {
+        let rent_sysvar = Rent::default();
+        let rent_minimum_balance = rent_sysvar.minimum_balance(VoteStateV4::size_of());
+
+        // The authorized withdrawer is the vote account itself, so the
+        // withdrawer signature requirement is satisfiable while the
+        // destination resolves to the same address.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let mut vote_account =
+            create_test_account_with_provided_authorized(&vote_pubkey, &vote_pubkey);
+        let vote_account_lamports = rent_minimum_balance + 1_000_000;
+        vote_account.set_lamports(vote_account_lamports);
+
+        let features = VoteProgramFeatures::all_enabled();
+
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+        ];
+
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account.clone()),
+            (sysvar::clock::id(), create_default_clock_account()),
+            (sysvar::rent::id(), create_sysvar_account(&rent_sysvar)),
+        ];
+
+        // SIMD-0609: partial self-withdrawal.
+        process_instruction(
+            features,
+            &serialize(&VoteInstruction::Withdraw(1_000)).unwrap(),
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidArgument),
+        );
+
+        // SIMD-0609: full-balance self-withdrawal.
+        process_instruction(
+            features,
+            &serialize(&VoteInstruction::Withdraw(vote_account_lamports)).unwrap(),
+            transaction_accounts.clone(),
+            instruction_accounts,
+            Err(InstructionError::InvalidArgument),
+        );
+    }
+
+    #[test]
+    fn test_withdraw_self_withdrawal_allowed_when_feature_disabled() {
+        let rent_sysvar = Rent::default();
+        let rent_minimum_balance = rent_sysvar.minimum_balance(VoteStateV4::size_of());
+
+        let vote_pubkey = solana_pubkey::new_rand();
+        let mut vote_account =
+            create_test_account_with_provided_authorized(&vote_pubkey, &vote_pubkey);
+        let vote_account_lamports = rent_minimum_balance + 1_000_000;
+        vote_account.set_lamports(vote_account_lamports);
+
+        let features = VoteProgramFeatures {
+            prohibit_vote_self_withdrawals: false,
+            ..VoteProgramFeatures::all_enabled()
+        };
+
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+        ];
+
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account.clone()),
+            (sysvar::clock::id(), create_default_clock_account()),
+            (sysvar::rent::id(), create_sysvar_account(&rent_sysvar)),
+        ];
+
+        // Before the feature activates, a partial self-withdrawal is a
+        // no-op that succeeds.
+        let accounts = process_instruction(
+            features,
+            &serialize(&VoteInstruction::Withdraw(1_000)).unwrap(),
+            transaction_accounts,
+            instruction_accounts,
+            Ok(()),
+        );
+        assert_eq!(accounts[0].lamports(), vote_account_lamports);
     }
 }

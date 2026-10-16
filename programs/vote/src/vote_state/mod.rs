@@ -1080,12 +1080,21 @@ pub fn withdraw<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     rent_sysvar: &Rent,
     clock: &Clock,
+    reject_self_withdrawal: bool,
 ) -> Result<(), InstructionError> {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
     let vote_state = get_vote_state_handler_checked(&vote_account, target_version)?;
 
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
+
+    // SIMD-0609: reject self-withdrawals.
+    if reject_self_withdrawal
+        && *instruction_context.get_key_of_instruction_account(vote_account_index)?
+            == *instruction_context.get_key_of_instruction_account(to_account_index)?
+    {
+        return Err(InstructionError::InvalidArgument);
+    }
 
     let remaining_balance = vote_account
         .get_lamports()
@@ -5742,7 +5751,7 @@ mod tests {
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             assert_eq!(
-                withdraw(&ix, 0, target_version, 1, 1, &signers, &rent, &clock),
+                withdraw(&ix, 0, target_version, 1, 1, &signers, &rent, &clock, false),
                 Err(InstructionError::InsufficientFunds)
             );
         }
@@ -5762,6 +5771,7 @@ mod tests {
                 &signers,
                 &rent,
                 &clock,
+                false,
             )
             .unwrap();
         }
@@ -5772,7 +5782,18 @@ mod tests {
             acct.set_data_from_slice(&serialized);
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
-            withdraw(&ix, 0, target_version, 100, 1, &signers, &rent, &clock).unwrap();
+            withdraw(
+                &ix,
+                0,
+                target_version,
+                100,
+                1,
+                &signers,
+                &rent,
+                &clock,
+                false,
+            )
+            .unwrap();
         }
 
         // Account at rent_exempt + 100: withdraw 101 fails.
@@ -5782,7 +5803,17 @@ mod tests {
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             assert_eq!(
-                withdraw(&ix, 0, target_version, 101, 1, &signers, &rent, &clock),
+                withdraw(
+                    &ix,
+                    0,
+                    target_version,
+                    101,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock,
+                    false
+                ),
                 Err(InstructionError::InsufficientFunds)
             );
         }
@@ -5837,7 +5868,8 @@ mod tests {
                     1,
                     &signers,
                     &rent,
-                    &clock
+                    &clock,
+                    false
                 ),
                 Err(InstructionError::InsufficientFunds)
             );
@@ -5861,6 +5893,7 @@ mod tests {
                 &signers,
                 &rent,
                 &clock,
+                false,
             )
             .unwrap();
         }
@@ -5882,7 +5915,8 @@ mod tests {
                     1,
                     &signers,
                     &rent,
-                    &clock
+                    &clock,
+                    false
                 ),
                 Err(InstructionError::InsufficientFunds)
             );
@@ -5906,7 +5940,8 @@ mod tests {
                     1,
                     &signers,
                     &rent,
-                    &clock
+                    &clock,
+                    false
                 ),
                 Err(InstructionError::InsufficientFunds)
             );
@@ -5930,6 +5965,7 @@ mod tests {
                 &signers,
                 &rent,
                 &clock,
+                false,
             )
             .unwrap();
         }
