@@ -10,7 +10,7 @@ use {
         self, AcctState, BlockContext as ProtoBlockContext, BlockEffects as ProtoBlockEffects,
         PrevVoteAccount as ProtoPrevVoteAccount,
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{accounts_hash::AccountsLtHash, ancestors::Ancestors},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, Epoch},
     solana_cost_model::cost_model::CostModel,
@@ -499,9 +499,7 @@ fn synthesize_vote_account(pva: &ProtoPrevVoteAccount) -> (Pubkey, u64, VoteAcco
         }),
     };
 
-    let serialized = bincode::serialize(&versioned).unwrap();
-    let mut account = AccountSharedData::new(1, serialized.len(), &solana_sdk_ids::vote::id());
-    account.set_data_from_slice(&serialized);
+    let account = AccountSharedData::new_data(1, &versioned, &solana_sdk_ids::vote::id()).unwrap();
 
     let vote_account = VoteAccount::try_from(account).unwrap();
     (vote_pubkey, pva.stake, vote_account)
@@ -870,16 +868,7 @@ mod tests {
                 sysvar::recent_blockhashes::id(),
                 &RecentBlockhashes::default(),
             ),
-            input_account(
-                sysvar::stake_history::id(),
-                Account {
-                    lamports: 1,
-                    data: bincode::serialize(&StakeHistory::default()).unwrap(),
-                    owner: sysvar::id(),
-                    executable: false,
-                    rent_epoch: u64::MAX,
-                },
-            ),
+            sysvar_account(sysvar::stake_history::id(), &StakeHistory::default()),
             sysvar_account(sysvar::last_restart_slot::id(), &LastRestartSlot::default()),
             sysvar_account(sysvar::slot_history::id(), &slot_history),
         ]
