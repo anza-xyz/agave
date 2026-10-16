@@ -198,7 +198,7 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
 mod test {
     use {
         super::*,
-        crate::common::MAX_NOTAR_FALLBACK_BLOCKS,
+        agave_bls_sigverify::vote_pool::MAX_NOTAR_FALLBACK_ENTRIES,
         agave_votor_messages::{consensus_message::Block, vote::Vote},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -222,7 +222,7 @@ mod test {
         assert!(slots.is_multiple_of(leader_window_size));
 
         let num_leader_windows = slots / leader_window_size;
-        let nf_parent_occurrences = MAX_NOTAR_FALLBACK_BLOCKS
+        let nf_parent_occurrences = MAX_NOTAR_FALLBACK_ENTRIES
             * (leader_window_size * num_leader_windows * (num_leader_windows + 1) / 2
                 - num_leader_windows);
         // The root parent is present at each leader-window start and in the
@@ -241,7 +241,7 @@ mod test {
 
     #[test]
     fn test_vote_history_preallocation_limit_supports_30k_fallback_slots() {
-        assert_eq!(MAX_NOTAR_FALLBACK_BLOCKS, 4);
+        assert_eq!(MAX_NOTAR_FALLBACK_ENTRIES, 3);
         assert_eq!(SERIALIZED_BLOCK_SIZE, 40);
         assert_eq!(wincode::serialized_size(&Block::default()).unwrap(), 40);
 

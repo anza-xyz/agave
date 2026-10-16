@@ -14,4 +14,4 @@ pub mod stats;
 pub mod unverified_votes_batch;
 mod utils;
 pub mod verified_batch;
-mod vote_pool;
+pub mod vote_pool;
