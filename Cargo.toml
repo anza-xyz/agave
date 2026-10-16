@@ -485,7 +485,7 @@ solana-quic-client = { path = "quic-client", version = "=4.5.0-alpha.2", feature
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-remote-wallet = { path = "remote-wallet", version = "=4.5.0-alpha.2", default-features = false, features = ["agave-unstable-api"] }
 solana-rent = "4.5.0"
-solana-reward-info = "7.0.0"
+solana-reward-info = { git = "https://github.com/joncinque/solana-sdk", branch = "block-reward" }
 solana-rpc = { path = "rpc", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-rpc-client = { path = "rpc-client", version = "=4.5.0-alpha.2", default-features = false }
 solana-rpc-client-api = { path = "rpc-client-api", version = "=4.5.0-alpha.2" }
@@ -651,3 +651,4 @@ blstrs = { git = "https://github.com/anza-xyz/blstrs", rev = "a1faffa3420bdaf410
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "5ee1c6ec671d94db14ed9238eb99e59a84555aad" }
 librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
 rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
+solana-reward-info = { git = "https://github.com/joncinque/solana-sdk", branch = "block-reward" }
