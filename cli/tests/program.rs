@@ -29,7 +29,7 @@ use {
         },
         state::UpgradeableLoaderState,
     },
-    solana_message::{Message, VersionedMessage},
+    solana_message::{Message, VersionedMessage, v1},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -45,7 +45,7 @@ use {
     solana_signer::{Signer, null_signer::NullSigner},
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_test_validator::{TestValidator, TestValidatorGenesis},
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
@@ -131,16 +131,17 @@ async fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_be
     );
 }
 
-async fn fetch_and_decode_transaction(
+async fn fetch_and_decode_versioned_transaction(
     rpc_client: &RpcClient,
     signature: &Signature,
-) -> Transaction {
+) -> VersionedTransaction {
     rpc_client
         .get_transaction_with_config(
             signature,
             RpcTransactionConfig {
                 encoding: Some(UiTransactionEncoding::Base64),
                 commitment: Some(CommitmentConfig::confirmed()),
+                max_supported_transaction_version: Some(1),
                 ..RpcTransactionConfig::default()
             },
         )
@@ -149,8 +150,6 @@ async fn fetch_and_decode_transaction(
         .transaction
         .transaction
         .decode()
-        .unwrap()
-        .into_legacy_transaction()
         .unwrap()
 }
 
@@ -213,6 +212,7 @@ async fn setup_extend_program_test<'a>(
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -294,6 +294,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -344,6 +345,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -405,6 +407,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -433,6 +436,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -513,6 +517,7 @@ async fn test_cli_program_deploy_no_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -544,6 +549,7 @@ async fn test_cli_program_deploy_no_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -629,6 +635,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -661,6 +668,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
             max_sign_attempts: 5,
             auto_extend: true,
             use_rpc: false,
+            use_legacy_tx: false,
             skip_feature_verification: true,
         });
 
@@ -777,6 +785,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -929,6 +938,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -962,6 +972,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: false,
     });
 
@@ -994,6 +1005,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: false,
     });
 
@@ -1073,6 +1085,7 @@ async fn test_cli_program_deploy_sbpf_v0(disable_sbpf_v0_v1_v2_deployment_enable
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1170,6 +1183,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1226,6 +1240,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1273,6 +1288,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1352,6 +1368,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1435,6 +1452,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -1461,6 +1479,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1597,6 +1616,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1622,6 +1642,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: false, // --no-auto-extend flag is present
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     if set_programdata_to_elf_length {
@@ -1652,6 +1673,7 @@ async fn test_cli_program_upgrade_auto_extend(
             max_sign_attempts: 5,
             auto_extend: false, // --no-auto-extend flag is present
             use_rpc: false,
+            use_legacy_tx: false,
             skip_feature_verification: true,
         });
         process_command(&config).await.unwrap();
@@ -1662,30 +1684,12 @@ async fn test_cli_program_upgrade_auto_extend(
         );
 
         wait_n_slots(&rpc_client, 1).await;
-    } else if skip_preflight {
+    } else {
+        // V1 estimates compute units before submission, even when preflight is skipped.
         expect_command_failure(
             &config,
             "Cannot upgrade a program when ELF does not fit into the allocated data account",
-            "Deploying program failed: Error processing Instruction 0: account data too small for \
-             instruction",
-        )
-        .await;
-    } else {
-        #[rustfmt::skip]
-        let expected_error =
-            "Deploying program failed: \
-             RPC response error -32002: \
-             Transaction simulation failed: \
-             Error processing Instruction 0: \
-             account data too small for instruction; 3 log messages:\n  \
-             Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]\n  \
-             ProgramData account not large enough\n  \
-             Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small \
-             for instruction\n";
-        expect_command_failure(
-            &config,
-            "Can not upgrade a program when ELF does not fit into the allocated data account",
-            expected_error,
+            "Error processing Instruction 0: account data too small for instruction",
         )
         .await;
     }
@@ -1708,6 +1712,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: true, // --no-auto-extend flag is absent
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1756,9 +1761,10 @@ async fn test_cli_program_upgrade_auto_extend(
     };
     let mut extends = 0;
     for signature in &signatures {
-        let tx = fetch_and_decode_transaction(&rpc_client, signature).await;
-        for instruction in &tx.message.instructions {
-            if instruction.program_id(&tx.message.account_keys) == &bpf_loader_upgradeable::id()
+        let tx = fetch_and_decode_versioned_transaction(&rpc_client, signature).await;
+        for instruction in tx.message.instructions() {
+            if instruction.program_id(tx.message.static_account_keys())
+                == &bpf_loader_upgradeable::id()
                 && matches!(
                     wincode::deserialize(&instruction.data),
                     Ok(UpgradeableLoaderInstruction::ExtendProgram { .. })
@@ -1841,6 +1847,7 @@ async fn test_cli_program_close_program() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1975,24 +1982,15 @@ async fn test_cli_program_extend_program() {
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
 
-    #[rustfmt::skip]
-    let expected_error =
-        "Deploying program failed: \
-         RPC response error -32002: \
-         Transaction simulation failed: \
-         Error processing Instruction 0: \
-         account data too small for instruction; 3 log messages:\n  \
-         Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]\n  \
-         ProgramData account not large enough\n  \
-         Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for \
-         instruction\n";
+    // V1 rejects the upgrade during compute-unit estimation.
     expect_command_failure(
         &config,
         "Program upgrade must fail, as the buffer is 1 byte too short",
-        expected_error,
+        "Error processing Instruction 0: account data too small for instruction",
     )
     .await;
 
@@ -2030,6 +2028,7 @@ async fn test_cli_program_extend_program() {
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2587,6 +2586,7 @@ async fn test_cli_program_write_buffer() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2831,6 +2831,7 @@ async fn test_cli_program_set_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2892,6 +2893,7 @@ async fn test_cli_program_set_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2988,6 +2990,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -3018,6 +3021,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -3110,6 +3114,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3390,6 +3395,7 @@ async fn test_cli_program_show() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        use_legacy_tx: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3639,10 +3645,19 @@ async fn create_buffer_with_offline_authority<'a>(
 
 #[allow(clippy::assertions_on_constants)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-#[test_case(None, false; "default")]
-#[test_case(Some(10), false; "with_compute_unit_price")]
-#[test_case(None, true; "use_rpc")]
-async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: bool) {
+#[test_case(None, false, false; "default")]
+#[test_case(Some(10), false, false; "with_compute_unit_price")]
+#[test_case(None, true, false; "use_rpc")]
+#[test_case(Some(10), true, false; "v1_rpc_compute_unit_price")]
+#[test_case(None, false, true; "legacy_tpu")]
+#[test_case(Some(10), false, true; "legacy_tpu_compute_unit_price")]
+#[test_case(None, true, true; "legacy_rpc")]
+#[test_case(Some(10), true, true; "legacy_rpc_compute_unit_price")]
+async fn test_cli_program_deploy_with_args(
+    compute_unit_price: Option<u64>,
+    use_rpc: bool,
+    use_legacy_tx: bool,
+) {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
     noop_path.push("fixtures");
@@ -3712,6 +3727,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc,
+        use_legacy_tx,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3759,9 +3775,64 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     };
 
     assert!(signatures.len() >= 4);
-    let initial_tx = fetch_and_decode_transaction(&rpc_client, &signatures[1]).await;
-    let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]).await;
-    let final_tx = fetch_and_decode_transaction(&rpc_client, &deploy_signature).await;
+    let initial_tx = fetch_and_decode_versioned_transaction(&rpc_client, &signatures[1]).await;
+    let write_tx = fetch_and_decode_versioned_transaction(&rpc_client, &signatures[2]).await;
+    let final_tx = fetch_and_decode_versioned_transaction(&rpc_client, &deploy_signature).await;
+
+    if !use_legacy_tx {
+        for tx in [&initial_tx, &write_tx, &final_tx] {
+            let VersionedMessage::V1(message) = &tx.message else {
+                panic!("Expected V1 deployment transactions");
+            };
+            let limit = message.config.compute_unit_limit.unwrap();
+            assert!(limit > 0);
+            assert_eq!(
+                message.config.priority_fee.unwrap_or_default(),
+                compute_unit_price
+                    .map(|price| (u128::from(price) * u128::from(limit)).div_ceil(1_000_000) as u64)
+                    .unwrap_or_default()
+            );
+            assert!(!message.account_keys.contains(&compute_budget::id()));
+        }
+        // Writes can land out of order, so this may be the shorter final chunk.
+        assert!(wincode::serialized_size(&write_tx).unwrap() as usize <= v1::MAX_TRANSACTION_SIZE);
+
+        wait_n_slots(&rpc_client, 1).await;
+        if let CliCommand::Program(ProgramCliCommand::Deploy { is_final, .. }) = &mut config.command
+        {
+            *is_final = true;
+        }
+        let response = process_command(&config).await.unwrap();
+        let json: Value = serde_json::from_str(&response).unwrap();
+        let upgrade_signature = Signature::from_str(json["signature"].as_str().unwrap()).unwrap();
+        let upgrade_tx =
+            fetch_and_decode_versioned_transaction(&rpc_client, &upgrade_signature).await;
+        assert!(matches!(upgrade_tx.message, VersionedMessage::V1(_)));
+
+        let programdata_address = get_program_data_address(&program_keypair.pubkey());
+        let programdata_account = rpc_client.get_account(&programdata_address).await.unwrap();
+        assert_matches!(
+            programdata_account.state(),
+            Ok(UpgradeableLoaderState::ProgramData {
+                upgrade_authority_address: None,
+                ..
+            })
+        );
+        let signatures = rpc_client
+            .get_signatures_for_address(&programdata_address)
+            .await
+            .unwrap();
+        let finalize_signature = Signature::from_str(&signatures[0].signature).unwrap();
+        assert_ne!(finalize_signature, upgrade_signature);
+        let finalize_tx =
+            fetch_and_decode_versioned_transaction(&rpc_client, &finalize_signature).await;
+        assert!(matches!(finalize_tx.message, VersionedMessage::V1(_)));
+        return;
+    }
+
+    let initial_tx = initial_tx.into_legacy_transaction().unwrap();
+    let write_tx = write_tx.into_legacy_transaction().unwrap();
+    let final_tx = final_tx.into_legacy_transaction().unwrap();
 
     if let Some(compute_unit_price) = compute_unit_price {
         for tx in [&initial_tx, &write_tx, &final_tx] {

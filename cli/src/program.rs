@@ -49,7 +49,11 @@ use {
     solana_net_utils::bind_to_unspecified,
     solana_packet::PACKET_DATA_SIZE,
     solana_program_runtime::{
-        deploy::morph_into_deployment_environment, execution_budget::SVMTransactionExecutionBudget,
+        deploy::morph_into_deployment_environment,
+        execution_budget::{
+            MAX_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            SVMTransactionExecutionBudget,
+        },
         invoke_context::InvokeContext,
     },
     solana_pubkey::Pubkey,
@@ -124,6 +128,7 @@ pub enum ProgramCliCommand {
         max_sign_attempts: usize,
         auto_extend: bool,
         use_rpc: bool,
+        use_legacy_tx: bool,
         skip_feature_verification: bool,
     },
     Upgrade {
@@ -305,6 +310,11 @@ impl ProgramSubCommands for App<'_, '_> {
                             "Send write transactions to the configured RPC instead of validator \
                              TPUs",
                         ))
+                        .arg(
+                            Arg::with_name("use_legacy_tx")
+                                .long("use-legacy-tx")
+                                .help("Use legacy transactions instead of V1 transactions"),
+                        )
                         .arg(compute_unit_price_arg())
                         .arg(
                             Arg::with_name("no_auto_extend")
@@ -779,6 +789,7 @@ pub fn parse_program_subcommand(
                     compute_unit_price,
                     max_sign_attempts,
                     use_rpc: matches.is_present("use_rpc"),
+                    use_legacy_tx: matches.is_present("use_legacy_tx"),
                     auto_extend,
                     skip_feature_verification: skip_feature_verify,
                 }),
@@ -1077,6 +1088,7 @@ pub async fn process_program_subcommand(
             max_sign_attempts,
             auto_extend,
             use_rpc,
+            use_legacy_tx,
             skip_feature_verification,
         } => {
             process_program_deploy(
@@ -1096,6 +1108,7 @@ pub async fn process_program_subcommand(
                 *max_sign_attempts,
                 *auto_extend,
                 *use_rpc,
+                *use_legacy_tx,
                 *skip_feature_verification,
             )
             .await
@@ -1169,6 +1182,7 @@ pub async fn process_program_subcommand(
                 false,
                 false,
                 &BlockhashQuery::default(),
+                true,
             )
             .await
         }
@@ -1190,6 +1204,7 @@ pub async fn process_program_subcommand(
                 *sign_only,
                 *dump_transaction_message,
                 blockhash_query,
+                true,
             )
             .await
         }
@@ -1309,6 +1324,7 @@ async fn process_program_deploy(
     max_sign_attempts: usize,
     auto_extend: bool,
     use_rpc: bool,
+    use_legacy_tx: bool,
     skip_feature_verification: bool,
 ) -> ProcessResult {
     let fee_payer_signer = config.signers[fee_payer_signer_index];
@@ -1486,6 +1502,7 @@ async fn process_program_deploy(
             compute_unit_price,
             max_sign_attempts,
             use_rpc,
+            use_legacy_tx,
         )
         .await
     } else {
@@ -1506,6 +1523,7 @@ async fn process_program_deploy(
             max_sign_attempts,
             auto_extend,
             use_rpc,
+            use_legacy_tx,
         )
         .await
     };
@@ -1520,6 +1538,7 @@ async fn process_program_deploy(
             false,
             false,
             &BlockhashQuery::default(),
+            use_legacy_tx,
         )
         .await?;
     }
@@ -1775,6 +1794,7 @@ async fn process_write_buffer(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_set_authority(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
@@ -1785,6 +1805,7 @@ async fn process_set_authority(
     sign_only: bool,
     dump_transaction_message: bool,
     blockhash_query: &BlockhashQuery,
+    use_legacy_tx: bool,
 ) -> ProcessResult {
     let authority_signer = if let Some(index) = authority {
         config.signers[index]
@@ -1835,7 +1856,29 @@ async fn process_set_authority(
             },
         )
     } else {
-        tx.try_sign(signers, blockhash)?;
+        let tx = if use_legacy_tx {
+            tx.try_sign(signers, blockhash)?;
+            VersionedTransaction::from(tx)
+        } else {
+            let compute_unit_limit = ComputeUnitLimit::Simulated;
+            let mut message = VersionedMessage::V1(v1::Message::new(
+                tx.message.header,
+                v1_transaction_config(ComputeUnitConfig {
+                    compute_unit_price: None,
+                    compute_unit_limit,
+                }),
+                blockhash,
+                tx.message.account_keys,
+                tx.message.instructions,
+            ));
+            simulate_and_update_compute_unit_limit_versioned(
+                &compute_unit_limit,
+                rpc_client,
+                &mut message,
+            )
+            .await?;
+            VersionedTransaction::try_new(message, &dedup_signers(signers))?
+        };
         rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
@@ -2589,20 +2632,22 @@ async fn do_process_program_deploy(
     compute_unit_price: Option<u64>,
     max_sign_attempts: usize,
     use_rpc: bool,
+    use_legacy_tx: bool,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let compute_unit_limit = ComputeUnitLimit::Simulated;
 
-    let message_factory = DeployMessageFactory {
-        fee_payer: fee_payer_signer.pubkey(),
+    let message_factory = DeployMessageFactory::new(
+        fee_payer_signer.pubkey(),
         blockhash,
-        message_config: DeployMessageConfig::Legacy(ComputeUnitConfig {
+        use_legacy_tx,
+        ComputeUnitConfig {
             compute_unit_price,
             compute_unit_limit,
-        }),
-        buffer_pubkey: *buffer_pubkey,
-        buffer_authority: buffer_authority_signer.pubkey(),
-    };
+        },
+        *buffer_pubkey,
+        buffer_authority_signer.pubkey(),
+    );
 
     let (initial_message, balance_needed, buffer_program_data) =
         if let Some(buffer_program_data) = buffer_program_data {
@@ -2667,6 +2712,7 @@ async fn do_process_program_deploy(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
+        compute_unit_price,
     )
     .await?;
 
@@ -2679,7 +2725,6 @@ async fn do_process_program_deploy(
 
 enum DeployMessageConfig {
     Legacy(ComputeUnitConfig),
-    #[allow(dead_code)]
     V1(v1::TransactionConfig),
 }
 
@@ -2716,6 +2761,28 @@ struct DeployMessageFactory {
 }
 
 impl DeployMessageFactory {
+    fn new(
+        fee_payer: Pubkey,
+        blockhash: solana_hash::Hash,
+        use_legacy_tx: bool,
+        compute_unit_config: ComputeUnitConfig,
+        buffer_pubkey: Pubkey,
+        buffer_authority: Pubkey,
+    ) -> Self {
+        let message_config = if use_legacy_tx {
+            DeployMessageConfig::Legacy(compute_unit_config)
+        } else {
+            DeployMessageConfig::V1(v1_transaction_config(compute_unit_config))
+        };
+
+        DeployMessageFactory {
+            fee_payer,
+            blockhash,
+            message_config,
+            buffer_pubkey,
+            buffer_authority,
+        }
+    }
     fn compile_message(
         &self,
         instructions: Vec<Instruction>,
@@ -2818,6 +2885,38 @@ impl DeployMessageFactory {
     }
 }
 
+fn v1_transaction_config(compute_unit_config: ComputeUnitConfig) -> v1::TransactionConfig {
+    let compute_unit_limit = match compute_unit_config.compute_unit_limit {
+        ComputeUnitLimit::Static(limit) => limit,
+        ComputeUnitLimit::Default
+        | ComputeUnitLimit::Simulated
+        | ComputeUnitLimit::SimulatedWithExtraPercentage(_) => MAX_COMPUTE_UNIT_LIMIT,
+    };
+    let mut config = v1::TransactionConfig::empty()
+        .with_compute_unit_limit(compute_unit_limit)
+        .with_loaded_accounts_data_size_limit(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
+    config.priority_fee = compute_unit_config
+        .compute_unit_price
+        .map(|price| calculate_priority_fee(price, compute_unit_limit));
+    config
+}
+
+fn calculate_priority_fee(compute_unit_price: u64, compute_unit_limit: u32) -> u64 {
+    let micro_lamports =
+        u128::from(compute_unit_price).saturating_mul(u128::from(compute_unit_limit));
+    u64::try_from(micro_lamports.div_ceil(1_000_000)).unwrap_or(u64::MAX)
+}
+
+fn update_v1_priority_fee(message: &mut VersionedMessage, compute_unit_price: Option<u64>) {
+    // V1 stores a total fee, so recalculate it after simulation changes the CU limit.
+    if let (VersionedMessage::V1(message), Some(price)) = (message, compute_unit_price) {
+        message.config.priority_fee = Some(calculate_priority_fee(
+            price,
+            message.config.compute_unit_limit.unwrap_or_default(),
+        ));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn do_process_write_buffer(
     rpc_client: Arc<RpcClient>,
@@ -2901,6 +3000,7 @@ async fn do_process_write_buffer(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
+        compute_unit_price,
     )
     .await?;
 
@@ -2928,19 +3028,21 @@ async fn do_process_program_upgrade(
     max_sign_attempts: usize,
     auto_extend: bool,
     use_rpc: bool,
+    use_legacy_tx: bool,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let compute_unit_limit = ComputeUnitLimit::Simulated;
-    let message_factory = DeployMessageFactory {
-        fee_payer: fee_payer_signer.pubkey(),
+    let message_factory = DeployMessageFactory::new(
+        fee_payer_signer.pubkey(),
         blockhash,
-        message_config: DeployMessageConfig::Legacy(ComputeUnitConfig {
+        use_legacy_tx,
+        ComputeUnitConfig {
             compute_unit_price,
             compute_unit_limit,
-        }),
-        buffer_pubkey: *buffer_pubkey,
-        buffer_authority: upgrade_authority.pubkey(),
-    };
+        },
+        *buffer_pubkey,
+        upgrade_authority.pubkey(),
+    );
 
     let (initial_message, write_messages, balance_needed) = if buffer_signer.is_some() {
         let mut initial_actions = Vec::with_capacity(2);
@@ -3020,6 +3122,7 @@ async fn do_process_program_upgrade(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
+        compute_unit_price,
     )
     .await?;
 
@@ -3250,6 +3353,7 @@ async fn send_deploy_messages(
     max_sign_attempts: usize,
     use_rpc: bool,
     compute_unit_limit: &ComputeUnitLimit,
+    compute_unit_price: Option<u64>,
 ) -> Result<Option<Signature>, Box<dyn std::error::Error>> {
     if let Some(mut message) = initial_message {
         if let Some(initial_signer) = initial_signer {
@@ -3260,6 +3364,7 @@ async fn send_deploy_messages(
                 &mut message,
             )
             .await?;
+            update_v1_priority_fee(&mut message, compute_unit_price);
 
             // Most of the initial_transaction combinations require both the fee-payer and new program
             // account to sign the transaction. One (transfer) only requires the fee-payer signature.
@@ -3300,13 +3405,14 @@ async fn send_deploy_messages(
         // write messages.
         {
             let mut message = write_messages[0].clone();
-            match simulate_and_update_compute_unit_limit_versioned(
+            let result = simulate_and_update_compute_unit_limit_versioned(
                 compute_unit_limit,
                 &rpc_client,
                 &mut message,
             )
-            .await?
-            {
+            .await?;
+            update_v1_priority_fee(&mut message, compute_unit_price);
+            match result {
                 UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) => {
                     for msg in &mut write_messages {
                         let (instructions, account_keys) = match msg {
@@ -3347,6 +3453,7 @@ async fn send_deploy_messages(
                         }
                         .unwrap();
                         msg.config.compute_unit_limit = message.config.compute_unit_limit;
+                        msg.config.priority_fee = message.config.priority_fee;
                     }
                 }
                 UpdateComputeUnitLimitResult::NoComputeUnitLimitFound
@@ -3435,6 +3542,7 @@ async fn send_deploy_messages(
             &mut message,
         )
         .await?;
+        update_v1_priority_fee(&mut message, compute_unit_price);
         let blockhash = rpc_client.get_latest_blockhash().await?;
         message.set_recent_blockhash(blockhash);
         let mut signers = final_signers.to_vec();
@@ -3531,13 +3639,17 @@ mod tests {
             .with_compute_unit_limit(100_000)
             .with_loaded_accounts_data_size_limit(64 * 1024 * 1024)
             .with_priority_fee(123);
-        let factory = DeployMessageFactory {
-            fee_payer: payer.pubkey(),
+        let factory = DeployMessageFactory::new(
+            payer.pubkey(),
             blockhash,
-            message_config: DeployMessageConfig::V1(transaction_config),
-            buffer_pubkey: buffer.pubkey(),
-            buffer_authority: authority.pubkey(),
-        };
+            false,
+            ComputeUnitConfig {
+                compute_unit_price: Some(1_230),
+                compute_unit_limit: ComputeUnitLimit::Static(100_000),
+            },
+            buffer.pubkey(),
+            authority.pubkey(),
+        );
 
         let initial_message = factory
             .initial_message(&[InitialMessageAction::CreateBuffer {
@@ -3612,6 +3724,23 @@ mod tests {
         write_keypair_file(&default_keypair, &keypair_file).unwrap();
         let default_signer = DefaultSigner::new("", &keypair_file);
 
+        let legacy_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "deploy",
+            "/Users/test/program.so",
+            "--use-legacy-tx",
+        ]);
+        assert!(matches!(
+            parse_command(&legacy_command, &default_signer, &mut None)
+                .unwrap()
+                .command,
+            CliCommand::Program(ProgramCliCommand::Deploy {
+                use_legacy_tx: true,
+                ..
+            })
+        ));
+
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
             "program",
@@ -3636,6 +3765,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3668,6 +3798,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3702,6 +3833,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![
@@ -3738,6 +3870,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3773,6 +3906,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![
@@ -3811,6 +3945,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![
@@ -3845,6 +3980,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3877,6 +4013,7 @@ mod tests {
                     max_sign_attempts: 1,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3908,6 +4045,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: true,
+                    use_legacy_tx: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3939,6 +4077,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    use_legacy_tx: false,
                     skip_feature_verification: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -4783,6 +4922,7 @@ mod tests {
                 max_sign_attempts: 5,
                 auto_extend: true,
                 use_rpc: false,
+                use_legacy_tx: true,
                 skip_feature_verification: true,
             }),
             signers: vec![&default_keypair],
