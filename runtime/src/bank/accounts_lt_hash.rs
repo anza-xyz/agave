@@ -454,7 +454,7 @@ impl AccountsLtHashManager {
                 let num_banks_waiting = Arc::clone(&num_banks_waiting);
                 move || {
                     let thread_pool = accounts_hasher_thread_pool();
-                    let mut deduplicated_updates = ahash::HashMap::default();
+                    let mut banks_updates = BanksUpdates::default();
                     loop {
                         // poll the queue for up to DEDUP_INTERVAL
                         let start_time = Instant::now();
@@ -470,7 +470,7 @@ impl AccountsLtHashManager {
                                     queue_was_empty = true;
                                     break;
                                 };
-                                Self::deduplicate_update(&mut deduplicated_updates, queued_update);
+                                banks_updates.insert(queued_update);
                             }
 
                             // If there are banks actively waiting (i.e. freezing), and updates
@@ -478,7 +478,7 @@ impl AccountsLtHashManager {
                             //
                             // Do not check the remaining time until after this `if` block.
                             // It lets us skip doing an unnecessary Instant::now().
-                            if !deduplicated_updates.is_empty()
+                            if !banks_updates.is_empty()
                                 && num_banks_waiting.load(Ordering::Relaxed) > 0
                             {
                                 break;
@@ -501,13 +501,7 @@ impl AccountsLtHashManager {
                         }
 
                         // spawn updates into thread pool for processing
-                        for (_, queued_update) in deduplicated_updates.drain() {
-                            let QueuedAccountsLtHashUpdate {
-                                async_progress,
-                                inner: account_update,
-                            } = queued_update;
-                            async_progress.spawn(thread_pool, account_update);
-                        }
+                        banks_updates.spawn_all(thread_pool);
                     }
                 }
             })
@@ -518,25 +512,49 @@ impl AccountsLtHashManager {
             num_banks_waiting,
         }
     }
+}
 
-    /// Deduplicates account updates.
+/// Queued updates, deduplicated per bank by account address.
+#[derive(Default)]
+struct BanksUpdates {
+    banks: Vec<BankUpdates>,
+    /// Drained maps, kept to reuse their capacity for the next flush.
+    dedup_map_freelist: Vec<ahash::HashMap<Pubkey, QueuedAccountsLtHashUpdate>>,
+}
+
+/// One bank's updates, keyed by account address.
+struct BankUpdates {
+    async_progress: Arc<AccountsLtHashAsyncProgress>,
+    /// Each update keeps its own `Arc`, so spawning moves it rather than cloning.
+    dedup_map: ahash::HashMap<Pubkey, QueuedAccountsLtHashUpdate>,
+}
+
+impl BanksUpdates {
+    fn is_empty(&self) -> bool {
+        self.banks.is_empty()
+    }
+
+    /// Adds `queued_update` to its bank's dedup map.
     ///
-    /// Given an account update, `queued_updated`, check `deduplicated_updates`
-    /// if this account already has a pending update.
-    /// If yes, deduplicate the update by merging the two: retain the existing
-    /// update's 'previous' version, and use `queued_update`'s 'current' version.
-    /// If no, insert `queued_update` into `deduplicated_updates`.
-    fn deduplicate_update(
-        deduplicated_updates: &mut ahash::HashMap<UpdateKey, QueuedAccountsLtHashUpdate>,
-        queued_update: QueuedAccountsLtHashUpdate,
-    ) {
-        // Include the AsyncProgress instance in the hashmap key as a proxy for the Bank.
-        // Since updates for the same address can apply to different banks/forks.
-        let key = (
-            Arc::as_ptr(&queued_update.async_progress) as usize,
-            queued_update.inner.address,
-        );
-        match deduplicated_updates.entry(key) {
+    /// If the bank already holds an update for the same account, merges the two:
+    /// keeps the held update's 'previous' version and takes `queued_update`'s
+    /// 'current' version.
+    fn insert(&mut self, queued_update: QueuedAccountsLtHashUpdate) {
+        let bank = match self
+            .banks
+            .iter_mut()
+            .find(|bank| Arc::ptr_eq(&bank.async_progress, &queued_update.async_progress))
+        {
+            Some(bank) => bank,
+            None => {
+                self.banks.push(BankUpdates {
+                    async_progress: Arc::clone(&queued_update.async_progress),
+                    dedup_map: self.dedup_map_freelist.pop().unwrap_or_default(),
+                });
+                self.banks.last_mut().expect("just pushed")
+            }
+        };
+        match bank.dedup_map.entry(queued_update.inner.address) {
             Entry::Vacant(entry) => {
                 entry.insert(queued_update);
             }
@@ -550,13 +568,21 @@ impl AccountsLtHashManager {
             }
         }
     }
-}
 
-/// Keys a queued update: its progress instance and the account address.
-///
-/// The instance is keyed by pointer. The entry's lifetime keeps that pointer
-/// valid.
-type UpdateKey = (usize, Pubkey);
+    /// Spawns each update as its own job and empties every bank.
+    fn spawn_all(&mut self, thread_pool: &'static ThreadPool) {
+        for BankUpdates { mut dedup_map, .. } in self.banks.drain(..) {
+            for (_, queued_update) in dedup_map.drain() {
+                let QueuedAccountsLtHashUpdate {
+                    async_progress,
+                    inner: account_update,
+                } = queued_update;
+                async_progress.spawn(thread_pool, account_update);
+            }
+            self.dedup_map_freelist.push(dedup_map);
+        }
+    }
+}
 
 /// An account update, queued to the manager.
 struct QueuedAccountsLtHashUpdate {
@@ -1252,7 +1278,7 @@ mod tests {
         let address = Pubkey::new_unique();
         let async_progress1 = Arc::new(AccountsLtHashAsyncProgress::new());
         let async_progress2 = Arc::new(AccountsLtHashAsyncProgress::new());
-        let mut deduplicated_updates = ahash::HashMap::default();
+        let mut banks_updates = BanksUpdates::default();
 
         async_progress1
             .num_jobs_pending
@@ -1261,46 +1287,42 @@ mod tests {
             .num_jobs_pending
             .fetch_add(1, Ordering::Relaxed);
 
-        AccountsLtHashManager::deduplicate_update(
-            &mut deduplicated_updates,
-            QueuedAccountsLtHashUpdate {
-                async_progress: Arc::clone(&async_progress1),
-                inner: AccountsLtHashUpdate {
-                    address,
-                    prev_account: Some(AccountSharedData::new(11, 0, &Pubkey::default())),
-                    curr_account: Some(AccountSharedData::new(12, 0, &Pubkey::default())),
-                },
+        banks_updates.insert(QueuedAccountsLtHashUpdate {
+            async_progress: Arc::clone(&async_progress1),
+            inner: AccountsLtHashUpdate {
+                address,
+                prev_account: Some(AccountSharedData::new(11, 0, &Pubkey::default())),
+                curr_account: Some(AccountSharedData::new(12, 0, &Pubkey::default())),
             },
-        );
+        });
         // An update for the same account; should be deduplicated.
-        AccountsLtHashManager::deduplicate_update(
-            &mut deduplicated_updates,
-            QueuedAccountsLtHashUpdate {
-                async_progress: Arc::clone(&async_progress1),
-                inner: AccountsLtHashUpdate {
-                    address,
-                    prev_account: Some(AccountSharedData::new(12, 0, &Pubkey::default())),
-                    curr_account: Some(AccountSharedData::new(13, 0, &Pubkey::default())),
-                },
+        banks_updates.insert(QueuedAccountsLtHashUpdate {
+            async_progress: Arc::clone(&async_progress1),
+            inner: AccountsLtHashUpdate {
+                address,
+                prev_account: Some(AccountSharedData::new(12, 0, &Pubkey::default())),
+                curr_account: Some(AccountSharedData::new(13, 0, &Pubkey::default())),
             },
-        );
+        });
         // An update for the same account, but in a different slot/bank;
         // should *NOT* be deduplicated.
-        AccountsLtHashManager::deduplicate_update(
-            &mut deduplicated_updates,
-            QueuedAccountsLtHashUpdate {
-                async_progress: Arc::clone(&async_progress2),
-                inner: AccountsLtHashUpdate {
-                    address,
-                    prev_account: Some(AccountSharedData::new(21, 0, &Pubkey::default())),
-                    curr_account: Some(AccountSharedData::new(22, 0, &Pubkey::default())),
-                },
+        banks_updates.insert(QueuedAccountsLtHashUpdate {
+            async_progress: Arc::clone(&async_progress2),
+            inner: AccountsLtHashUpdate {
+                address,
+                prev_account: Some(AccountSharedData::new(21, 0, &Pubkey::default())),
+                curr_account: Some(AccountSharedData::new(22, 0, &Pubkey::default())),
             },
-        );
+        });
 
-        assert_eq!(deduplicated_updates.len(), 2);
-        let key = (Arc::as_ptr(&async_progress1) as usize, address);
-        let update = deduplicated_updates.get(&key).unwrap();
+        assert_eq!(banks_updates.banks.len(), 2);
+        let bank1 = banks_updates
+            .banks
+            .iter()
+            .find(|bank| Arc::ptr_eq(&bank.async_progress, &async_progress1))
+            .unwrap();
+        assert_eq!(bank1.dedup_map.len(), 1);
+        let update = &bank1.dedup_map[&address];
         assert_eq!(update.inner.prev_account.as_ref().unwrap().lamports(), 11);
         assert_eq!(update.inner.curr_account.as_ref().unwrap().lamports(), 13);
 
