@@ -21,6 +21,7 @@ use {
     bytes::Bytes,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
+    indexmap::IndexSet,
     itertools::Itertools,
     log::*,
     rayon::ThreadPool,
@@ -74,7 +75,7 @@ use {
         path::PathBuf,
         result,
         sync::{
-            Arc, OnceLock, RwLock,
+            Arc, OnceLock, RwLock, Weak,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::{Duration, Instant},
@@ -111,6 +112,34 @@ fn transaction_hash_verify_thread_pool() -> &'static ThreadPool {
             .build()
             .expect("new transaction hash verify rayon threadpool")
     })
+}
+
+struct SpeculativeJitJob {
+    bank: Weak<Bank>,
+    program_candidates: IndexSet<Pubkey>,
+}
+
+impl WorkerJob for SpeculativeJitJob {
+    fn run(self) {
+        let Self {
+            bank,
+            program_candidates,
+        } = self;
+        let bank = bank
+            .upgrade()
+            .expect("failed to upgrade a weak reference to the bank in a speculative JIT job");
+        bank.get_transaction_processor()
+            .precompile_programs(bank.as_ref(), program_candidates.iter());
+    }
+}
+
+fn speculative_jit_worker_pool() -> &'static WorkerPool<SpeculativeJitJob> {
+    // A single worker bounds the CPU cost of best-effort compilation while transaction execution
+    // is already consuming the replay scheduler's workers. Programs are queued in first-use order,
+    // maximizing the chance that the next cold program is ready before execution reaches it.
+    static SPECULATIVE_JIT_WORKER_POOL: OnceLock<WorkerPool<SpeculativeJitJob>> = OnceLock::new();
+    SPECULATIVE_JIT_WORKER_POOL
+        .get_or_init(|| WorkerPool::new("solSpecJit", 1, MAX_FEC_SETS_PER_SLOT as usize))
 }
 
 #[derive(Default)]
@@ -1720,26 +1749,25 @@ fn confirm_slot_entries(
 
     let mut replay_timer = Measure::start("replay_elapsed");
     let is_vote_only_bank = bank.vote_only_bank();
+    let mut program_candidates = IndexSet::new();
     let replay_entries: Vec<_> = entries
         .into_iter()
         .zip(entry_tx_starting_indexes)
         .map(|(entry, tx_starting_index)| {
-            if !is_vote_only_bank {
-                return Ok(ReplayEntry {
-                    entry,
-                    starting_index: tx_starting_index,
-                });
-            }
-
-            // If bank is in vote-only mode, validate that entries contain only vote transactions
-            if let EntryType::Transactions(ref transactions) = entry
-                && transactions
-                    .iter()
-                    .any(|tx| !is_valid_vote_only_transaction(tx))
-            {
-                return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
-                    bank.slot(),
-                ));
+            if let EntryType::Transactions(ref transactions) = entry {
+                for tx in transactions {
+                    // If bank is in vote-only mode, validate that entries contain only vote
+                    // transactions.
+                    if is_vote_only_bank && !is_valid_vote_only_transaction(tx) {
+                        return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
+                            bank.slot(),
+                        ));
+                    }
+                    // `tx.program_instructions_iter()` would give us only top-level instruction
+                    // program IDs. We want CPI program IDs as well, and the only reliable way to
+                    // retrieve them is to retrieve all account keys.
+                    program_candidates.extend(tx.account_keys().iter().copied());
+                }
             }
             Ok(ReplayEntry {
                 entry,
@@ -1747,6 +1775,19 @@ fn confirm_slot_entries(
             })
         })
         .collect::<result::Result<Vec<_>, _>>()?;
+
+    if !program_candidates.is_empty() {
+        let bank: Weak<Bank> = Arc::downgrade(&bank.clone_without_scheduler());
+        if let Err(err) = speculative_jit_worker_pool().try_send(SpeculativeJitJob {
+            bank,
+            program_candidates,
+        }) {
+            warn!(
+                "Failed to schedule a speculative JIT job at slot {slot}, programs are not going \
+                 to be precompiled: {err}"
+            );
+        }
+    }
 
     let process_result =
         process_entries(bank, replay_entries).map_err(BlockstoreProcessorError::from);

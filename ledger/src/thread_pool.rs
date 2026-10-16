@@ -1,5 +1,6 @@
 use {
     agave_wake_channel::{Sender, bounded},
+    crossbeam_channel::TrySendError,
     log::error,
     std::{
         mem,
@@ -50,6 +51,10 @@ impl<J: WorkerJob> WorkerPool<J> {
             .expect("worker threads exited unexpectedly");
     }
 
+    pub(crate) fn try_send(&self, job: J) -> Result<(), TrySendError<J>> {
+        self.job_sender.try_send(job)
+    }
+
     pub(crate) fn num_workers(&self) -> usize {
         self.worker_handles.len()
     }
@@ -65,5 +70,56 @@ impl<J: WorkerJob> Drop for WorkerPool<J> {
                 error!("worker thread failed: {err:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::sync::{Arc, Barrier, mpsc},
+    };
+
+    struct TestJob {
+        started_sender: Option<mpsc::Sender<()>>,
+        release: Option<Arc<Barrier>>,
+    }
+
+    impl WorkerJob for TestJob {
+        fn run(self) {
+            if let Some(started_sender) = self.started_sender {
+                started_sender.send(()).unwrap();
+            }
+            if let Some(release) = self.release {
+                release.wait();
+            }
+        }
+    }
+
+    #[test]
+    fn test_try_send_returns_error_when_queue_is_full() {
+        let pool = WorkerPool::new("testWorker", 1, 1);
+        let (started_sender, started_receiver) = mpsc::channel();
+        let release = Arc::new(Barrier::new(2));
+        pool.send(TestJob {
+            started_sender: Some(started_sender),
+            release: Some(Arc::clone(&release)),
+        });
+        started_receiver.recv().unwrap();
+
+        pool.try_send(TestJob {
+            started_sender: None,
+            release: None,
+        })
+        .unwrap();
+        assert!(matches!(
+            pool.try_send(TestJob {
+                started_sender: None,
+                release: None,
+            }),
+            Err(TrySendError::Full(_))
+        ));
+
+        release.wait();
     }
 }

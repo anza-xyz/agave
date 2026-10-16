@@ -27,7 +27,7 @@ use shuttle::sync::atomic::AtomicUsize;
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::atomic::AtomicUsize;
 use {
-    crossbeam_channel::{RecvError, SendError, TryRecvError},
+    crossbeam_channel::{RecvError, SendError, TryRecvError, TrySendError},
     crossbeam_utils::Backoff,
     std::{
         mem,
@@ -121,6 +121,12 @@ pub struct Sender<T> {
 impl<T> Sender<T> {
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         self.inner.send(value)?;
+        self.shared.wake_event.wake_one();
+        Ok(())
+    }
+
+    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+        self.inner.try_send(value)?;
         self.shared.wake_event.wake_one();
         Ok(())
     }
@@ -227,6 +233,14 @@ mod tests {
         let waiter = event.register_waiter();
         event.wake_one();
         waiter.wait();
+    }
+
+    #[test]
+    fn test_try_send_does_not_block_when_full() {
+        let (sender, receiver) = bounded(1);
+        assert_eq!(sender.try_send(1), Ok(()));
+        assert_eq!(sender.try_send(2), Err(TrySendError::Full(2)));
+        assert_eq!(receiver.recv(), Ok(1));
     }
 
     #[test]

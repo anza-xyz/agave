@@ -8995,6 +8995,7 @@ dependencies = [
  "dashmap",
  "eager",
  "futures 0.3.34",
+ "indexmap 2.14.2",
  "itertools 0.15.0",
  "lazy-lru",
  "log",
