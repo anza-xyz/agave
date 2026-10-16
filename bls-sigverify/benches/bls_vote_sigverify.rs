@@ -17,7 +17,6 @@ use {
     },
     solana_genesis_config::GenesisConfig,
     solana_keypair::Keypair,
-    solana_pubkey::Pubkey,
     solana_runtime::bank::{Bank, SlotLeader},
     solana_signer::Signer,
     std::{hint::black_box, num::NonZero},
@@ -36,12 +35,12 @@ fn get_thread_pool() -> ThreadPool {
 fn generate_test_data(
     shred_version: u16,
     batch_size: usize,
-) -> (VotePayloadToSign, Vec<UnverifiedVotePayload>, Vec<Pubkey>) {
+) -> (VotePayloadToSign, Vec<UnverifiedVotePayload>) {
     // Pre-calculate the payloads to ensure exact distinctness
     let slot = 100;
     let vote = Vote::new_unique_notar(slot);
     let payload = get_vote_payload_to_sign(vote, shred_version);
-    let (unverified_votes, sender_vote_account_pubkeys) = (0..batch_size)
+    let unverified_votes = (0..batch_size)
         .map(|_| {
             let bls_keypair = BLSKeypair::new();
             let signature = bls_keypair.sign(&payload);
@@ -50,22 +49,20 @@ fn generate_test_data(
                 signature: signature.into(),
                 shred_version,
             };
-            (
-                UnverifiedVotePayload {
-                    vote_message,
-                    sender_bls_pubkey: bls_keypair.public,
-                    sender_identity_pubkey: Keypair::new().pubkey(),
-                    rank: 0,
-                    stake: NonZero::new(1234).unwrap(),
-                },
-                Keypair::new().pubkey(),
-            )
+            let sender_vote_account_pubkey = Keypair::new().pubkey();
+            UnverifiedVotePayload {
+                vote_message,
+                sender_bls_pubkey: bls_keypair.public,
+                sender_identity_pubkey: Keypair::new().pubkey(),
+                sender_vote_account_pubkey,
+                rank: 0,
+                stake: NonZero::new(1234).unwrap(),
+            }
         })
-        .unzip();
+        .collect();
     (
         VotePayloadToSign::new_from_vote(vote, shred_version),
         unverified_votes,
-        sender_vote_account_pubkeys,
     )
 }
 
@@ -123,7 +120,7 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
 
     for &batch_size in BATCH_SIZES {
         // Distinctness doesn't affect the cost of N individual verifications.
-        let (vote_payload_to_sign, unverified_votes, sender_vote_account_pubkeys) =
+        let (vote_payload_to_sign, unverified_votes) =
             generate_test_data(shred_version, batch_size);
         let label = format!("batch_{batch_size}");
 
@@ -136,19 +133,13 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
                         .bls_pubkey_to_rank_map();
                     let serialized_vote = wincode::serialize(&vote_payload_to_sign).unwrap();
                     let hashed_msg = HashedMessage::new(&serialized_vote);
-                    (
-                        unverified_votes.clone(),
-                        sender_vote_account_pubkeys.clone(),
-                        hashed_msg,
-                        rank_map.len(),
-                    )
+                    (unverified_votes.clone(), hashed_msg, rank_map.len())
                 },
-                |(votes, sender_vote_account_pubkeys, hashed_msg, max_validators)| {
+                |(votes, hashed_msg, max_validators)| {
                     let res = verify_individual_votes(
                         Vote::from(vote_payload_to_sign),
                         max_validators,
                         black_box(&votes),
-                        black_box(sender_vote_account_pubkeys),
                         black_box(&hashed_msg),
                         &thread_pool,
                     );
