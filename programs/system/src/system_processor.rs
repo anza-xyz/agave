@@ -4,9 +4,9 @@ use {
         withdraw_nonce_account,
     },
     log::*,
-    solana_bincode::limited_deserialize,
     solana_instruction_error::InstructionError,
     solana_nonce as nonce,
+    solana_packet::PACKET_DATA_WINCODE_CONFIG,
     solana_program_runtime::{
         declare_process_instruction, invoke_context::InvokeContext,
         sysvar_cache::get_sysvar_with_account_check,
@@ -320,8 +320,9 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
-    let instruction =
-        limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?;
+    let instruction: SystemInstruction =
+        wincode::config::deserialize(instruction_data, PACKET_DATA_WINCODE_CONFIG)
+            .map_err(|_| InstructionError::InvalidInstructionData)?;
 
     trace!("process_instruction: {instruction:?}");
 

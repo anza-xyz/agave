@@ -9422,6 +9422,7 @@ checksum = "993f9d2969eaffcaaa017d5de6d282d584ad3def7a0718185a3660a4cca3c2c6"
 dependencies = [
  "bitflags 2.13.2",
  "solana-pubkey 4.4.0",
+ "wincode",
 ]
 
 [[package]]
@@ -11074,7 +11075,6 @@ dependencies = [
  "criterion",
  "log",
  "solana-account",
- "solana-bincode",
  "solana-fee-calculator",
  "solana-hash",
  "solana-instruction 4.0.0",

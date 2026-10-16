@@ -25,20 +25,20 @@ agave-unstable-api = []
 [dependencies]
 log = { workspace = true }
 solana-account = { workspace = true }
-solana-bincode = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
-solana-nonce = { workspace = true, features = ["serde", "wincode"] }
+solana-nonce = { workspace = true, features = ["wincode"] }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
-solana-packet = { workspace = true }
+solana-packet = { workspace = true, features = ["wincode"] }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["sha2"] }
 solana-sdk-ids = { workspace = true }
 solana-svm-log-collector = { workspace = true }
-solana-system-interface = { workspace = true, features = ["serde", "wincode"] }
+solana-system-interface = { workspace = true, features = ["wincode"] }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["wincode"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -55,7 +55,6 @@ solana-system-program = { path = ".", features = ["agave-unstable-api"] }
 solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils", "wincode"] }
-wincode = { workspace = true }
 
 [[bench]]
 name = "system"
