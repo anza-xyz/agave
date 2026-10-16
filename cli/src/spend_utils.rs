@@ -105,6 +105,43 @@ pub async fn resolve_spend_tx_and_check_account_balances<F>(
 where
     F: Fn(u64) -> Message,
 {
+    resolve_spend_tx_and_check_account_balances_with_reserve(
+        rpc_client,
+        sign_only,
+        amount,
+        0,
+        0,
+        blockhash,
+        from_pubkey,
+        fee_pubkey,
+        compute_unit_limit,
+        build_message,
+        commitment,
+    )
+    .await
+}
+
+/// Resolves a spend while retaining `additional_balance_to_reserve` on top of
+/// the greater of the account's rent-exempt minimum and
+/// `minimum_rent_exempt_balance_to_reserve` when `amount` is
+/// [`SpendAmount::RentExempt`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_spend_tx_and_check_account_balances_with_reserve<F>(
+    rpc_client: &RpcClient,
+    sign_only: bool,
+    amount: SpendAmount,
+    minimum_rent_exempt_balance_to_reserve: u64,
+    additional_balance_to_reserve: u64,
+    blockhash: &Hash,
+    from_pubkey: &Pubkey,
+    fee_pubkey: &Pubkey,
+    compute_unit_limit: ComputeUnitLimit,
+    build_message: F,
+    commitment: CommitmentConfig,
+) -> Result<(Message, u64), CliError>
+where
+    F: Fn(u64) -> Message,
+{
     if sign_only {
         let (message, SpendAndFee { spend, fee: _ }) = resolve_spend_message(
             rpc_client,
@@ -127,7 +164,7 @@ where
             .unwrap_or_default();
         let mut from_balance = account.lamports;
         let from_rent_exempt_minimum =
-            if amount == SpendAmount::RentExempt || amount == SpendAmount::Available {
+            if matches!(amount, SpendAmount::RentExempt | SpendAmount::Available) {
                 rpc_client
                     .get_minimum_balance_for_rent_exemption(account.data.len())
                     .await?
@@ -165,6 +202,13 @@ where
                 from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
             }
         }
+        let from_minimum_balance = if amount == SpendAmount::RentExempt {
+            from_rent_exempt_minimum
+                .max(minimum_rent_exempt_balance_to_reserve)
+                .saturating_add(additional_balance_to_reserve)
+        } else {
+            from_rent_exempt_minimum
+        };
         let (message, SpendAndFee { spend, fee }) = resolve_spend_message(
             rpc_client,
             amount,
@@ -172,7 +216,7 @@ where
             from_balance,
             from_pubkey,
             fee_pubkey,
-            from_rent_exempt_minimum,
+            from_minimum_balance,
             compute_unit_limit,
             build_message,
         )
@@ -212,7 +256,7 @@ async fn resolve_spend_message<F>(
     from_account_transferable_balance: u64,
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
-    from_rent_exempt_minimum: u64,
+    from_minimum_balance: u64,
     compute_unit_limit: ComputeUnitLimit,
     build_message: F,
 ) -> Result<(Message, SpendAndFee), CliError>
@@ -246,7 +290,7 @@ where
                     | SpendAmount::All
                     | SpendAmount::Available => from_account_transferable_balance,
                     SpendAmount::RentExempt => {
-                        from_account_transferable_balance.saturating_sub(from_rent_exempt_minimum)
+                        from_account_transferable_balance.saturating_sub(from_minimum_balance)
                     }
                 }
             };
@@ -303,7 +347,7 @@ where
             } else {
                 from_account_transferable_balance
             };
-            lamports = lamports.saturating_sub(from_rent_exempt_minimum);
+            lamports = lamports.saturating_sub(from_minimum_balance);
             (
                 build_message(lamports),
                 SpendAndFee {
@@ -353,9 +397,14 @@ mod tests {
         }
     }
 
-    /// Resolves the amount that `withdraw-from-vote-account ALL` withdraws from
-    /// `vote_account`, with the fee paid by another account.
-    async fn resolve_rent_exempt_spend(vote_account: Account, rent_exempt_minimum: u64) -> u64 {
+    /// Resolves the safe amount that `withdraw-from-vote-account ALL` withdraws
+    /// from `vote_account`, with the fee paid by another account.
+    async fn resolve_rent_exempt_spend(
+        vote_account: Account,
+        rent_exempt_minimum: u64,
+        minimum_rent_exempt_balance_to_reserve: u64,
+        additional_balance_to_reserve: u64,
+    ) -> u64 {
         let vote_account_pubkey = Pubkey::new_unique();
         let account_response = json!(Response {
             context: RpcResponseContext {
@@ -381,10 +430,12 @@ mod tests {
         let withdraw_authority = Pubkey::new_unique();
         let destination_pubkey = Pubkey::new_unique();
         let fee_payer = Pubkey::new_unique();
-        let (_message, spend) = resolve_spend_tx_and_check_account_balances(
+        let (_message, spend) = resolve_spend_tx_and_check_account_balances_with_reserve(
             &rpc_client,
             false,
             SpendAmount::RentExempt,
+            minimum_rent_exempt_balance_to_reserve,
+            additional_balance_to_reserve,
             &Hash::default(),
             &vote_account_pubkey,
             &fee_payer,
@@ -408,20 +459,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rent_exempt_spend_reserves_pending_delegator_rewards() {
+    async fn test_rent_exempt_spend_reserves_vat_and_pending_delegator_rewards() {
         const RENT_EXEMPT_MINIMUM: u64 = 27_000_000;
         const PENDING_DELEGATOR_REWARDS: u64 = 5_000_000;
+        const VAT_TO_RESERVE: u64 = 800_000_000;
         const WITHDRAWABLE: u64 = 1_000_000;
-        const RESERVED_BALANCE: u64 = RENT_EXEMPT_MINIMUM + PENDING_DELEGATOR_REWARDS;
+        const RESERVED_BALANCE: u64 =
+            RENT_EXEMPT_MINIMUM + VAT_TO_RESERVE + PENDING_DELEGATOR_REWARDS;
         const BALANCE: u64 = RESERVED_BALANCE + WITHDRAWABLE;
-        const BALANCE_WITHOUT_PENDING_REWARDS: u64 = RENT_EXEMPT_MINIMUM + WITHDRAWABLE;
+        const BALANCE_WITHOUT_PENDING_REWARDS: u64 =
+            RENT_EXEMPT_MINIMUM + VAT_TO_RESERVE + WITHDRAWABLE;
 
-        // Without pending rewards, everything in excess of the rent-exempt
-        // minimum is withdrawable.
+        // Without pending rewards, everything in excess of rent and VAT is
+        // withdrawable.
         assert_eq!(
             resolve_rent_exempt_spend(
                 vote_account(BALANCE_WITHOUT_PENDING_REWARDS, 0),
                 RENT_EXEMPT_MINIMUM,
+                RENT_EXEMPT_MINIMUM,
+                VAT_TO_RESERVE,
             )
             .await,
             WITHDRAWABLE
@@ -433,6 +489,8 @@ mod tests {
             resolve_rent_exempt_spend(
                 vote_account(BALANCE, PENDING_DELEGATOR_REWARDS),
                 RENT_EXEMPT_MINIMUM,
+                RENT_EXEMPT_MINIMUM,
+                VAT_TO_RESERVE,
             )
             .await,
             WITHDRAWABLE
@@ -443,9 +501,28 @@ mod tests {
             resolve_rent_exempt_spend(
                 vote_account(RESERVED_BALANCE, PENDING_DELEGATOR_REWARDS),
                 RENT_EXEMPT_MINIMUM,
+                RENT_EXEMPT_MINIMUM,
+                VAT_TO_RESERVE,
             )
             .await,
             0
+        );
+
+        // An account with a larger actual rent requirement must retain that
+        // larger rent amount in addition to the VAT reserve.
+        const OVERSIZED_ACCOUNT_RENT_EXEMPT_MINIMUM: u64 = 30_000_000;
+        assert_eq!(
+            resolve_rent_exempt_spend(
+                vote_account(
+                    OVERSIZED_ACCOUNT_RENT_EXEMPT_MINIMUM + VAT_TO_RESERVE + WITHDRAWABLE,
+                    0,
+                ),
+                OVERSIZED_ACCOUNT_RENT_EXEMPT_MINIMUM,
+                RENT_EXEMPT_MINIMUM,
+                VAT_TO_RESERVE,
+            )
+            .await,
+            WITHDRAWABLE
         );
     }
 }

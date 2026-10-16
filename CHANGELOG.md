@@ -56,6 +56,9 @@ Release channels have their own copy of this changelog:
 
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
+* `withdraw-from-vote-account --sign-only` now requires
+  `--allow-vat-withdrawal`, because the vote account balance and VAT reserve cannot be
+  checked offline.
 
 #### Changes
 
@@ -64,6 +67,10 @@ Release channels have their own copy of this changelog:
 * `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
   no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
 * `solana-genesis` now activates Alpenglow consensus at genesis by default.
+* `withdraw-from-vote-account` now preserves 0.8 SOL for the next Validator Admission Ticket (VAT)
+  burn when Alpenglow is active, in addition to the rent-exempt minimum and any rewards pending
+  distribution to delegators. Pass `--allow-vat-withdrawal` to include the VAT reserve in the
+  withdrawable balance; the flag is required with `--sign-only`.
 
 ### Geyser
 
