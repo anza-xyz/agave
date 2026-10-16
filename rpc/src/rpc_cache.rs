@@ -3,74 +3,41 @@ use {
     solana_clock::Epoch,
     solana_rpc_client_api::{
         config::RpcLargestAccountsFilter,
-        response::{RpcAccountBalance, RpcRankMap, RpcRankMapEntry},
-    },
-    solana_runtime::{
-        bank::MAX_LEADER_SCHEDULE_STAKES,
-        epoch_stakes::{BLSPubkeyStakeEntry, VersionedEpochStakes},
+        response::{RpcAccountBalance, RpcVatActiveSetRankMap},
     },
     std::{
         collections::HashMap,
         num::NonZeroUsize,
-        sync::Arc,
+        sync::{Arc, Mutex},
         time::{Duration, SystemTime},
     },
     tokio::sync::OnceCell,
 };
 
-type RankMapCell = Arc<OnceCell<Arc<RpcRankMap>>>;
+type RankMapCell = Arc<OnceCell<Arc<RpcVatActiveSetRankMap>>>;
 
 pub struct RankMapCache {
-    // Only maps from finalized banks may be inserted.
-    entries: LruCache<Epoch, RankMapCell>,
-}
-
-impl Default for RankMapCache {
-    fn default() -> Self {
-        Self {
-            entries: LruCache::new(
-                NonZeroUsize::new(MAX_LEADER_SCHEDULE_STAKES as usize)
-                    .expect("at least one epoch's stakes are retained"),
-            ),
-        }
-    }
+    // Only maps from finalized banks may be inserted. The bank's retained epoch stakes
+    // determine availability; a miss here is rebuilt from those stakes, including after restart.
+    entries: Mutex<LruCache<Epoch, RankMapCell>>,
 }
 
 impl RankMapCache {
-    pub(crate) fn get_or_insert(&mut self, epoch: Epoch) -> RankMapCell {
+    pub(crate) fn new(capacity: NonZeroUsize) -> Self {
+        Self {
+            entries: Mutex::new(LruCache::new(capacity)),
+        }
+    }
+
+    // Return an owned cell so the cache lock is released before initialization or waiting.
+    pub(crate) fn get_or_insert(&self, epoch: Epoch) -> RankMapCell {
         Arc::clone(
             self.entries
+                .lock()
+                .unwrap()
                 .get_or_insert(epoch, || Arc::new(OnceCell::new())),
         )
     }
-}
-
-pub(crate) fn rank_map_response(epoch: Epoch, stakes: &VersionedEpochStakes) -> Arc<RpcRankMap> {
-    let rank_map = stakes.bls_pubkey_to_rank_map();
-    let validators = rank_map
-        .iter()
-        .map(|(rank, entry)| {
-            // Keep the wire format explicit, and require a decision when the runtime adds fields.
-            let BLSPubkeyStakeEntry {
-                vote_account_pubkey,
-                node_pubkey,
-                bls_pubkey,
-                stake,
-            } = entry;
-            RpcRankMapEntry {
-                rank,
-                vote_pubkey: vote_account_pubkey.to_string(),
-                node_pubkey: node_pubkey.to_string(),
-                bls_pubkey_compressed: bs58::encode(bls_pubkey.to_bytes_compressed()).into_string(),
-                stake: *stake,
-            }
-        })
-        .collect();
-    Arc::new(RpcRankMap {
-        epoch,
-        total_stake: rank_map.total_stake(),
-        validators,
-    })
 }
 
 #[derive(Debug, Clone)]
@@ -131,27 +98,27 @@ pub mod test {
 
     #[test]
     fn test_rank_map_cache_epochs_and_eviction() {
-        let mut cache = RankMapCache::default();
+        let cache = RankMapCache::new(NonZeroUsize::new(5).unwrap());
         let first = cache.get_or_insert(0);
         assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
         let second = cache.get_or_insert(1);
         assert!(!Arc::ptr_eq(&first, &second));
-        for epoch in 2..MAX_LEADER_SCHEDULE_STAKES {
+        for epoch in 2..5 {
             cache.get_or_insert(epoch);
         }
         // A hit keeps the first map resident while the least recently used epoch is evicted.
         assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
-        cache.get_or_insert(MAX_LEADER_SCHEDULE_STAKES);
-        assert_eq!(cache.entries.len(), MAX_LEADER_SCHEDULE_STAKES as usize);
-        assert!(!cache.entries.contains(&1));
+        cache.get_or_insert(5);
+        assert_eq!(cache.entries.lock().unwrap().len(), 5);
+        assert!(!cache.entries.lock().unwrap().contains(&1));
         assert!(Arc::ptr_eq(&first, &cache.get_or_insert(0)));
     }
 
     #[tokio::test]
     async fn test_rank_map_cache_initializes_once() {
-        let mut cache = RankMapCache::default();
+        let cache = RankMapCache::new(NonZeroUsize::new(5).unwrap());
         let cell = cache.get_or_insert(0);
-        let response = Arc::new(RpcRankMap {
+        let response = Arc::new(RpcVatActiveSetRankMap {
             epoch: 0,
             total_stake: 1.try_into().unwrap(),
             validators: Vec::new(),
@@ -170,6 +137,69 @@ pub mod test {
                 .await,
             &response,
         ));
+    }
+
+    #[tokio::test]
+    async fn test_rank_map_cache_initializes_epochs_independently() {
+        let cache = RankMapCache::new(NonZeroUsize::new(2).unwrap());
+        let first = cache.get_or_insert(0);
+        let (started, wait_for_start) = tokio::sync::oneshot::channel();
+        let (release, wait_for_release) = tokio::sync::oneshot::channel();
+
+        let initialize_first = first.get_or_init(|| async {
+            started.send(()).unwrap();
+            wait_for_release.await.unwrap();
+            Arc::new(RpcVatActiveSetRankMap {
+                epoch: 0,
+                total_stake: 1.try_into().unwrap(),
+                validators: Vec::new(),
+            })
+        });
+        let initialize_second = async {
+            wait_for_start.await.unwrap();
+            assert!(cache.entries.try_lock().is_ok());
+            let second = cache.get_or_insert(1);
+            let response = second
+                .get_or_init(|| async {
+                    Arc::new(RpcVatActiveSetRankMap {
+                        epoch: 1,
+                        total_stake: 1.try_into().unwrap(),
+                        validators: Vec::new(),
+                    })
+                })
+                .await;
+            assert_eq!(response.epoch, 1);
+            assert!(first.get().is_none());
+            release.send(()).unwrap();
+        };
+        let (response, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(initialize_first, initialize_second)
+        })
+        .await
+        .unwrap();
+        assert_eq!(response.epoch, 0);
+    }
+
+    #[tokio::test]
+    async fn test_rank_map_cache_retries_failed_initialization() {
+        let cache = RankMapCache::new(NonZeroUsize::new(1).unwrap());
+        let cell = cache.get_or_insert(0);
+        assert_eq!(cell.get_or_try_init(|| async { Err(()) }).await, Err(()));
+        assert!(cell.get().is_none());
+
+        let retry = cache.get_or_insert(0);
+        assert!(Arc::ptr_eq(&cell, &retry));
+        let response = retry
+            .get_or_try_init(|| async {
+                Ok::<_, ()>(Arc::new(RpcVatActiveSetRankMap {
+                    epoch: 0,
+                    total_stake: 1.try_into().unwrap(),
+                    validators: Vec::new(),
+                }))
+            })
+            .await
+            .unwrap();
+        assert_eq!(response.epoch, 0);
     }
 
     #[test]
