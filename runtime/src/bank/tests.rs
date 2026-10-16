@@ -7115,6 +7115,74 @@ fn test_simd_0607_activation_and_double_disinflation_anchor() {
 }
 
 #[test]
+fn test_simd_0607_snapshot_replay_bank_hash() {
+    let (mut genesis_config, _) = create_genesis_config(1_000_000_000);
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    while !bank.is_complete() {
+        bank.register_default_tick_for_test();
+    }
+    bank.set_block_id(Some(BlockId::from(Hash::from([7u8; 32]))));
+    let leader = *bank.leader();
+
+    let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+    let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+    let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+    let snapshot_config = SnapshotConfig {
+        bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+        full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.path().to_path_buf(),
+        use_direct_io: false,
+        use_registered_io_uring_buffers: false,
+        ..SnapshotConfig::default()
+    };
+    let archive = bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
+    let (_accounts_tempdir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+    let restored = bank_from_snapshot_archives(
+        &[accounts_dir],
+        &archive,
+        None,
+        &snapshot_config,
+        &genesis_config,
+        &RuntimeConfig::default(),
+        None,
+        Some(leader),
+        None,
+        false,
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        None,
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(bank.hash(), restored.hash());
+    assert_eq!(
+        bank.integer_inflation_rate(),
+        restored.integer_inflation_rate()
+    );
+
+    let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(1);
+    let direct =
+        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), first_slot);
+    let (restored, restored_forks) = restored.wrap_with_bank_forks_for_tests();
+    let replayed = Bank::new_from_parent_with_bank_forks(
+        &restored_forks,
+        restored,
+        SlotLeader::default(),
+        first_slot,
+    );
+    assert_eq!(
+        direct.integer_inflation_rate(),
+        replayed.integer_inflation_rate()
+    );
+    goto_end_of_slot(direct.clone());
+    goto_end_of_slot(replayed.clone());
+    assert_eq!(direct.hash(), replayed.hash());
+}
+
+#[test]
 #[should_panic(expected = "capitalization overflow")]
 fn test_simd_0607_capitalization_overflow() {
     let (mut genesis_config, _) = create_genesis_config(1_000_000);
