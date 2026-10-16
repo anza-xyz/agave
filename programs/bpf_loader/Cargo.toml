@@ -36,12 +36,11 @@ svm-internal = []
 qualifier_attr = { workspace = true }
 shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true }
-solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["serde", "wincode"] }
-solana-packet = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
+solana-packet = { workspace = true, features = ["wincode"] }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }

@@ -7452,7 +7452,6 @@ dependencies = [
  "rand 0.9.4",
  "shuttle",
  "solana-account",
- "solana-bincode",
  "solana-bpf-loader-program",
  "solana-clock",
  "solana-epoch-rewards",
