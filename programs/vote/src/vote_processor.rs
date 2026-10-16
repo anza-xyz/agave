@@ -413,7 +413,6 @@ mod tests {
                 handler::VoteStateHandler,
             },
         },
-        bincode::serialize,
         solana_account::{
             Account, AccountSharedData, ReadableAccount, WritableAccount,
             state_traits::StateMutWincode as _,
@@ -443,6 +442,7 @@ mod tests {
         },
         std::{cell::RefCell, collections::HashSet, str::FromStr, sync::Arc},
         test_case::test_matrix,
+        wincode::serialize,
     };
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
@@ -3292,7 +3292,7 @@ mod tests {
 
         // Create an uninitialized V3: discriminant 2, empty authorized_voters.
         let uninitialized_v3 = VoteStateVersions::V3(Box::default());
-        let serialized = bincode::serialize(&uninitialized_v3).unwrap();
+        let serialized = wincode::serialize(&uninitialized_v3).unwrap();
         let target_len = vote_state_size_of();
         let mut data = vec![0u8; target_len];
         data[..serialized.len()].copy_from_slice(&serialized);

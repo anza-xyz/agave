@@ -11705,7 +11705,6 @@ dependencies = [
  "agave-logger",
  "arbitrary",
  "assert_matches",
- "bincode",
  "criterion",
  "log",
  "qualifier_attr",

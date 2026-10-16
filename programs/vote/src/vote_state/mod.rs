@@ -1451,8 +1451,8 @@ mod tests {
         }
     }
 
-    /// Checks that the inline wincode decoders match bincode and the hand-written
-    /// `VoteStateVersions::deserialize` on `data`.
+    /// Checks that the inline wincode decoders match the boxed `VoteStateVersions` wincode decoder
+    /// and the hand-written `VoteStateVersions::deserialize` on `data`.
     fn assert_vote_state_decoders_agree(data: &[u8]) {
         let inline = wincode::config::deserialize::<VoteStateVersionsInline, _>(
             data,
@@ -1462,7 +1462,11 @@ mod tests {
         .map(boxed);
         assert_eq!(
             inline,
-            bincode::deserialize::<VoteStateVersions>(data).ok(),
+            wincode::config::deserialize::<VoteStateVersions, _>(
+                data,
+                solana_account::WINCODE_CONFIG,
+            )
+            .ok(),
             "data: {data:?}",
         );
         assert_eq!(
@@ -1495,7 +1499,7 @@ mod tests {
                 VoteStateVersions::new_v3(vote_state_v3),
                 VoteStateVersions::new_v4(vote_state_v4),
             ] {
-                let encoded = bincode::serialize(&versions).unwrap();
+                let encoded = wincode::serialize(&versions).unwrap();
                 let mut trailing = encoded.clone();
                 trailing.extend_from_slice(&[0xff; 16]);
                 assert_vote_state_decoders_agree(&trailing);
@@ -1609,7 +1613,7 @@ mod tests {
             }
         };
         let version1_14_11_serialized =
-            bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(vote_state_v1_14_11)))
+            wincode::serialize(&VoteStateVersions::V1_14_11(Box::new(vote_state_v1_14_11)))
                 .unwrap();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(version1_14_11_serialized.len());
@@ -4814,7 +4818,7 @@ mod tests {
 
             let v4_size = VoteStateV4::size_of();
             let mut account_data = vec![0u8; v4_size];
-            bincode::serialize_into(&mut account_data[..], &VoteStateVersions::V3(Box::new(v3)))
+            wincode::serialize_into(&mut account_data[..], &VoteStateVersions::V3(Box::new(v3)))
                 .unwrap();
             let v3_vote_account = AccountSharedData::new_with_data(
                 rent.minimum_balance(v4_size),
@@ -5980,9 +5984,9 @@ mod tests {
         // Serialize V3 into a fixed-size account buffer.
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
-        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let v3_serialized_len = wincode::serialized_size(&v3_versioned).unwrap() as usize;
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         // Drive V3 to V4 conversion through the program handler.
         let rent = Rent::default();
@@ -6007,7 +6011,7 @@ mod tests {
         let account_data = borrowed.get_data();
         let v4_serialized_len = {
             let v4 = VoteStateV4::deserialize(account_data, &vote_pubkey).unwrap();
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4)).unwrap() as usize
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4)).unwrap() as usize
         };
         assert!(
             v4_serialized_len < v3_serialized_len,
@@ -6080,9 +6084,9 @@ mod tests {
         // Step 1: Populate V3 account and record V3 serialized size.
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
-        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let v3_serialized_len = wincode::serialized_size(&v3_versioned).unwrap() as usize;
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
@@ -6103,7 +6107,7 @@ mod tests {
 
         let v4_after_convert = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
         let v4_serialized_len =
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4_after_convert.clone())).unwrap()
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4_after_convert.clone())).unwrap()
                 as usize;
 
         assert!(
@@ -6136,7 +6140,7 @@ mod tests {
         let mut v4_empty_votes = v4_after_convert.clone();
         v4_empty_votes.votes.clear();
         let v4_empty_serialized_len =
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4_empty_votes.clone())).unwrap()
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4_empty_votes.clone())).unwrap()
                 as usize;
         assert!(
             v4_empty_serialized_len < v4_serialized_len,
@@ -6203,7 +6207,7 @@ mod tests {
                 .set_state(&VoteStateVersions::new_v4(v4_regrowing.clone()))
                 .unwrap();
             let current_serialized_len =
-                bincode::serialized_size(&VoteStateVersions::new_v4(v4_regrowing.clone())).unwrap()
+                wincode::serialized_size(&VoteStateVersions::new_v4(v4_regrowing.clone())).unwrap()
                     as usize;
             let current_trailing = buf_size - current_serialized_len;
             assert!(
@@ -6258,7 +6262,7 @@ mod tests {
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;

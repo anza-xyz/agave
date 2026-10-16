@@ -9190,7 +9190,6 @@ dependencies = [
 name = "solana-vote-program"
 version = "4.5.0-alpha.2"
 dependencies = [
- "bincode",
  "log",
  "solana-account",
  "solana-bincode",

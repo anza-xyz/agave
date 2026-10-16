@@ -29,7 +29,6 @@ stable-abi = [
 ]
 
 [dependencies]
-bincode = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 solana-account = { workspace = true }
