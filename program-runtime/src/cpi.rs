@@ -108,8 +108,20 @@ struct SolAccountInfo {
 #[repr(C)]
 struct SolAccountMetaV2 {
     pub account_index: u16,
-    pub is_writable: bool,
-    pub is_signer: bool,
+    pub is_writable: u8,
+    pub is_signer: u8,
+}
+
+impl SolAccountMetaV2 {
+    #[inline(always)]
+    pub fn is_writable(&self) -> bool {
+        self.is_writable != 0
+    }
+
+    #[inline(always)]
+    pub fn is_signer(&self) -> bool {
+        self.is_signer != 0
+    }
 }
 
 mod stable {
@@ -906,7 +918,7 @@ pub fn translate_instruction_v2(
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
-    let mut total_cu_translation_cost: u64 = (data.len() as u64)
+    let instruction_data_translation_cost: u64 = (data.len() as u64)
         .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
         .unwrap_or(u64::MAX);
 
@@ -920,10 +932,9 @@ pub fn translate_instruction_v2(
     .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
     .unwrap_or(u64::MAX);
 
-    total_cu_translation_cost =
-        total_cu_translation_cost.saturating_add(account_meta_translation_cost);
-
-    invoke_context.consume_checked(total_cu_translation_cost)?;
+    invoke_context.consume_checked(
+        instruction_data_translation_cost.saturating_add(account_meta_translation_cost),
+    )?;
 
     let instruction_context = invoke_context
         .transaction_context
@@ -952,8 +963,8 @@ pub fn translate_instruction_v2(
             pubkey: *invoke_context
                 .transaction_context
                 .get_key_of_account_at_index(instruction_account.get_index_in_transaction())?,
-            is_signer: account_meta.is_signer,
-            is_writable: account_meta.is_writable,
+            is_signer: account_meta.is_signer(),
+            is_writable: account_meta.is_writable(),
         });
     }
 
@@ -1808,8 +1819,8 @@ mod tests {
 
             let mut account_metas = vec![SolAccountMetaV2 {
                 account_index: 0,
-                is_writable: true,
-                is_signer: false,
+                is_writable: 1, // true
+                is_signer: 0,   // false
             }];
             let account_metas_size = mem::size_of_val(account_metas.as_slice());
             let account_metas_memory = unsafe {
