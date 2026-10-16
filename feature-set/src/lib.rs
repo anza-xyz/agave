@@ -82,6 +82,7 @@ pub struct FeatureSnapshot {
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
+    pub pass_input_metadata_in_vm_r3_r5: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -185,6 +186,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &early_instruction_trace_overflow_detection::ID,
             ),
             unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
+            pass_input_metadata_in_vm_r3_r5: is_active(&pass_input_metadata_in_vm_r3_r5::ID),
         }
     }
 }
@@ -348,6 +350,7 @@ impl FeatureSet {
             early_instruction_trace_overflow_detection: snapshot
                 .early_instruction_trace_overflow_detection,
             unbound_loader_v3_instruction_data: snapshot.unbound_loader_v3_instruction_data,
+            pass_input_metadata_in_vm_r3_r5: snapshot.pass_input_metadata_in_vm_r3_r5,
         }
     }
 }
@@ -1553,6 +1556,10 @@ pub mod unbound_loader_v3_instruction_data {
     solana_pubkey::declare_id!("UPbPFtaUVoKZuMEJsDxLfvCNuKavoVapghnzepr1e26");
 }
 
+pub mod pass_input_metadata_in_vm_r3_r5 {
+    solana_pubkey::declare_id!("r3r5hXFhEZLB2VCDXmUysuDZj4oMbtW8JRVUqvQSgqE");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2654,6 +2661,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             unbound_loader_v3_instruction_data::id(),
             "SIMD-0648: Unbound LoaderV3 Instruction Data",
+        ),
+        (
+            pass_input_metadata_in_vm_r3_r5::id(),
+            "SIMD-0683: Pass ABIv1 input metadata via registers r3-r5",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

@@ -8544,6 +8544,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sbf-rust-input-metadata-r3-r5"
+version = "4.5.0-alpha.2"
+dependencies = [
+ "solana-account-info",
+ "solana-account-view",
+ "solana-address 2.9.0",
+ "solana-cpi",
+ "solana-program-entrypoint",
+ "solana-program-error",
+]
+
+[[package]]
 name = "solana-sbf-rust-instruction-introspection"
 version = "4.5.0-alpha.2"
 dependencies = [

@@ -34,6 +34,7 @@ members = [
     "rust/error_handling",
     "rust/external_spend",
     "rust/inner_instruction_alignment_check",
+    "rust/input_metadata_r3_r5",
     "rust/instruction_introspection",
     "rust/invoke",
     "rust/invoke_and_error",
