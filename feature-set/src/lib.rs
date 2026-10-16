@@ -70,7 +70,6 @@ pub struct FeatureSnapshot {
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
-    pub upgrade_bpf_stake_program_to_v5: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub relax_fee_payer_constraint: bool,
@@ -165,7 +164,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             direct_account_pointers_in_program_input: is_active(
                 &direct_account_pointers_in_program_input::ID,
             ),
-            upgrade_bpf_stake_program_to_v5: is_active(&upgrade_bpf_stake_program_to_v5::ID),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
@@ -1464,10 +1462,6 @@ pub mod loader_v3_minimum_extend_program_size {
 
 pub mod upgrade_bpf_stake_program_to_v5 {
     solana_pubkey::declare_id!("STk5Xj8hdAx3sTzmtJ3QysKkq6X2A3yj73JtxttiRyk");
-
-    pub mod buffer {
-        solana_pubkey::declare_id!("4EBQBjw1kqF1dqUBb6fc5Ji4tCEQgNf9ESGGX3smwXwh");
-    }
 }
 
 pub mod enable_sha512_syscall {

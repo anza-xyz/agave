@@ -3382,9 +3382,7 @@ fn test_bank_cloned_stake_delegations() {
         let rent = &bank.rent_collector().rent;
         let vote_rent_exempt_reserve = rent.minimum_balance(VoteStateV4::size_of());
         let stake_rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
-        let minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
-        );
+        let minimum_delegation = stake_utils::get_minimum_delegation();
         (
             vote_rent_exempt_reserve,
             stake_rent_exempt_reserve + minimum_delegation,
