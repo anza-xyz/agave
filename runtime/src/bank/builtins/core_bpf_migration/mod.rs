@@ -392,12 +392,16 @@ impl Bank {
     /// }
     /// ```
     /// The `source_buffer_address` must point to a Loader v3 buffer account
-    /// (state equal to [`UpgradeableLoaderState::Buffer`]).
-    #[cfg_attr(not(test), expect(dead_code))] // Only used when an upgrade is configured.
+    /// (state equal to [`UpgradeableLoaderState::Buffer`]) and its ELF must
+    /// hash to `expected_build_hash`.
+    //
+    // Only used when an upgrade is configured.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
         &self,
         loader_v2_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
+        expected_build_hash: Hash,
         allow_prefunded: bool,
         datapoint_name: &'static str,
     ) -> Result<(), CoreBpfMigrationError> {
@@ -405,7 +409,11 @@ impl Bank {
 
         let target =
             TargetBpfV2::new_checked(self, loader_v2_bpf_program_address, allow_prefunded)?;
-        let source = SourceBuffer::new_checked(self, source_buffer_address)?;
+        let source = SourceBuffer::new_checked_with_verified_build_hash(
+            self,
+            source_buffer_address,
+            expected_build_hash,
+        )?;
 
         // Attempt serialization first before modifying the bank.
         let new_target_program_account =
@@ -2004,6 +2012,7 @@ pub(crate) mod tests {
         );
         let TestContext {
             source_buffer_address,
+            ref elf,
             ..
         } = test_context;
 
@@ -2013,11 +2022,15 @@ pub(crate) mod tests {
         ) = test_context
             .calculate_post_migration_capitalization_and_accounts_data_size_delta_off_chain(&bank);
 
+        let end_offset = elf.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
+        let expected_hash: [u8; 32] = solana_sha256_hasher::hash(&elf[..end_offset]).to_bytes();
+
         // Perform the upgrade.
         let upgrade_slot = bank.slot();
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            expected_hash.into(),
             true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
@@ -2078,10 +2091,10 @@ pub(crate) mod tests {
             );
         };
 
+        let elf = test_elf();
         // Set up the source buffer with a valid authority, but the migration
         // config will define the upgrade authority to be `None`.
         {
-            let elf = test_elf();
             let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
             let space = buffer_metadata_size + elf.len();
             let lamports = bank.get_minimum_balance_for_rent_exemption(space);
@@ -2099,16 +2112,73 @@ pub(crate) mod tests {
             bank.store_account_and_update_capitalization(&source_buffer_address, &account);
         }
 
+        let end_offset = elf.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
+        let expected_hash: [u8; 32] = solana_sha256_hasher::hash(&elf[..end_offset]).to_bytes();
+
         // Try to perform the upgrade.
         assert_matches!(
             bank.upgrade_loader_v2_program_with_loader_v3_program(
                 &bpf_loader_v2_program_address,
                 &source_buffer_address,
+                expected_hash.into(),
                 true,
                 "test_upgrade_loader_v2_program_with_loader_v3_program",
             )
             .unwrap_err(),
             CoreBpfMigrationError::InvalidBufferAccount(_)
+        )
+    }
+
+    #[test]
+    fn test_upgrade_loader_v2_program_with_loader_v3_program_fail_invalid_hash() {
+        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+
+        let bpf_loader_v2_program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+
+        {
+            let program_account = {
+                let elf = [4u8; 200]; // Mock ELF to start.
+                let space = elf.len();
+                let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+                let owner = &bpf_loader::id();
+
+                let mut account = AccountSharedData::new(lamports, space, owner);
+                account.set_executable(true);
+                account.data_as_mut_slice().copy_from_slice(&elf);
+                bank.store_account_and_update_capitalization(
+                    &bpf_loader_v2_program_address,
+                    &account,
+                );
+                account
+            };
+
+            assert_eq!(
+                &bank.get_account(&bpf_loader_v2_program_address).unwrap(),
+                &program_account
+            );
+        };
+
+        let _ = TestContext::new(
+            &bank,
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            None,
+        );
+
+        let invalid_hash: [u8; 32] = solana_sha256_hasher::hash(&[0; 32]).to_bytes();
+
+        // Try to perform the upgrade.
+        assert_matches!(
+            bank.upgrade_loader_v2_program_with_loader_v3_program(
+                &bpf_loader_v2_program_address,
+                &source_buffer_address,
+                invalid_hash.into(),
+                true,
+                "test_upgrade_loader_v2_program_with_loader_v3_program",
+            )
+            .unwrap_err(),
+            CoreBpfMigrationError::BuildHashMismatch(_, _)
         )
     }
 }

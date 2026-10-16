@@ -58,7 +58,10 @@ impl SourceBuffer {
         let data = buffer.buffer_account.data();
 
         let offset = UpgradeableLoaderState::size_of_buffer_metadata();
-        let end_offset = data.iter().rposition(|&x| x != 0).map_or(offset, |i| i + 1);
+        let end_offset = data[offset..]
+            .iter()
+            .rposition(|&x| x != 0)
+            .map_or(offset, |i| offset + i + 1);
         let buffer_program_data = &data[offset..end_offset];
         let hash = solana_sha256_hasher::hash(buffer_program_data);
 
