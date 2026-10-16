@@ -170,7 +170,7 @@ solana-vote-interface = "7.2.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.5.0-alpha.2" }
 test-case = "3.4.0"
 thiserror = "2.0"
-wincode = { version = "0.6.2", default-features = false }
+wincode = { version = "0.6.3", default-features = false }
 
 [features]
 sbf_c = []
@@ -187,7 +187,7 @@ agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 borsh = { workspace = true }
-solana-account = { version = "5.1.0", features = ["wincode"] }
+solana-account = { version = "5.1.1", features = ["wincode"] }
 solana-account-info = "3.1.0"
 solana-client-traits = "5.0.0"
 solana-clock = { workspace = true }

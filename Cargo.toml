@@ -372,7 +372,7 @@ smallvec = { version = "1.16.2", default-features = false, features = ["union"] 
 smpl_jwt = "0.9.0"
 socket2 = "0.6.5"
 soketto = "0.8"
-solana-account = "5.1.0"
+solana-account = "5.1.1"
 solana-account-decoder = { path = "account-decoder", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.1"
@@ -596,7 +596,7 @@ ur-registry = { version = "1.0.8", default-features = false, features = ["std"] 
 uriparse = "0.6.4"
 url = "2.5.8"
 winapi = "0.3.8"
-wincode = { version = "0.6.2", features = ["derive"] }
+wincode = { version = "0.6.3", features = ["derive"] }
 winreg = "0.55"
 xxhash-rust = "0.8.5"
 zstd = "0.14.0"
@@ -646,6 +646,7 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
+blstrs = { git = "https://github.com/anza-xyz/blstrs", rev = "a1faffa3420bdaf4102425c43f00cdd815d4f145" }
 # for details, see https://github.com/anza-xyz/crossbeam/commit/5ee1c6ec671d94db14ed9238eb99e59a84555aad
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "5ee1c6ec671d94db14ed9238eb99e59a84555aad" }
 librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
