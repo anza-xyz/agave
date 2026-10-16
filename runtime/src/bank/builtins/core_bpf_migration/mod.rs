@@ -311,6 +311,7 @@ impl Bank {
     ///     self.upgrade_core_bpf_program(
     ///        &core_bpf_program_address,
     ///        &source_buffer_address,
+    ///        verified_build_hash,
     ///        "test_upgrade_core_bpf_program",
     ///     );
     /// }
@@ -320,12 +321,21 @@ impl Bank {
         &self,
         core_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
+        verified_build_hash: Hash,
         datapoint_name: &'static str,
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(datapoint_name, ("slot", self.slot, i64));
 
         let target = TargetCoreBpf::new_checked(self, core_bpf_program_address)?;
-        let source = SourceBuffer::new_checked(self, source_buffer_address)?;
+        let source = if self.feature_set.snapshot().core_bpf_hash_validation {
+            SourceBuffer::new_checked_with_verified_build_hash(
+                self,
+                source_buffer_address,
+                verified_build_hash,
+            )?
+        } else {
+            SourceBuffer::new_checked(self, source_buffer_address)?
+        };
 
         // Attempt serialization first before modifying the bank.
         let new_target_program_data_account =
@@ -1232,7 +1242,7 @@ pub(crate) mod tests {
     #[test_case(Some(Pubkey::new_unique()); "with_upgrade_authority")]
     #[test_case(None; "without_upgrade_authority")]
     fn test_upgrade_core_bpf_program(upgrade_authority_address: Option<Pubkey>) {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let core_bpf_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1261,6 +1271,7 @@ pub(crate) mod tests {
         bank.upgrade_core_bpf_program(
             &core_bpf_program_address,
             &source_buffer_address,
+            TEST_ELF_HASH,
             "test_upgrade_core_bpf_program",
         )
         .unwrap();
@@ -1285,7 +1296,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_fail_authority_mismatch() {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1305,6 +1316,7 @@ pub(crate) mod tests {
             bank.upgrade_core_bpf_program(
                 &program_address,
                 &source_buffer_address,
+                TEST_ELF_HASH,
                 "test_upgrade_core_bpf_program"
             )
             .unwrap_err(),
@@ -1312,9 +1324,46 @@ pub(crate) mod tests {
         )
     }
 
+    #[test_case(true; "hash_validation_active")]
+    #[test_case(false; "hash_validation_inactive")]
+    fn test_upgrade_verified_build_mismatch(migration_hash_validation: bool) {
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures {
+            migration_hash_validation,
+        });
+
+        let program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+
+        let upgrade_authority_address = Some(Pubkey::new_unique());
+
+        set_up_test_core_bpf_program(&bank, &program_address, upgrade_authority_address);
+
+        let _test_context = TestContext::new(
+            &bank,
+            &program_address,
+            &source_buffer_address,
+            upgrade_authority_address,
+        );
+
+        let result = bank.upgrade_core_bpf_program(
+            &program_address,
+            &source_buffer_address,
+            Hash::default(),
+            "test_upgrade_core_bpf_program",
+        );
+        if migration_hash_validation {
+            assert_matches!(
+                result.unwrap_err(),
+                CoreBpfMigrationError::BuildHashMismatch(_, _)
+            );
+        } else {
+            assert!(result.is_ok());
+        }
+    }
+
     #[test]
     fn test_upgrade_none_authority_with_some_buffer_authority() {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -1331,6 +1380,7 @@ pub(crate) mod tests {
         bank.upgrade_core_bpf_program(
             &program_address,
             &source_buffer_address,
+            TEST_ELF_HASH,
             "test_upgrade_core_bpf_program",
         )
         .unwrap();
