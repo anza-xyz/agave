@@ -856,7 +856,7 @@ fn handle_chunks(
     let packet_size = packet.meta().size;
     let total_latency = accum.start_time.elapsed();
     if total_latency > rtt.mul_f32(LATE_REASSEMBLY_THRESHOLD) {
-        debug!("Stream reassembly dealyed {}", total_latency.as_millis());
+        debug!("Stream reassembly delayed {}", total_latency.as_millis());
         stats
             .reassembly_delayed_streams
             .fetch_add(1, Ordering::Relaxed);
