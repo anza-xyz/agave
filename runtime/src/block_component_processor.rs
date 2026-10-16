@@ -642,19 +642,14 @@ impl BlockComponentProcessor {
             }
         };
 
-<<<<<<< HEAD
-        Self::update_bank_with_footer_fields(
-            &bank,
-=======
         // We need to wait for any in progress execution before modifying account state
         if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
             execute_timings.accumulate(&execute_time);
             result?;
         }
 
-        let _ = Self::update_bank_with_footer_fields(
+        Self::update_bank_with_footer_fields(
             bank,
->>>>>>> de6861a (bcp: allow tx execution during footer verification (#16048))
             block_producer_time_nanos,
             Some(bank_hash),
             reward_cert,
