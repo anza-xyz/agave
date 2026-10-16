@@ -150,7 +150,7 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
          instruction_accounts: Vec<AccountMeta>,
          expected_result: Result<(), InstructionError>| {
             let instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+                wincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
             process_instruction_with_setup(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,
@@ -320,7 +320,7 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         &elf_new,
     );
     *instruction_accounts.get_mut(1).unwrap() = instruction_accounts.get(2).unwrap().clone();
-    let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+    let instruction_data = wincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
 
     process_instruction_with_setup(
         &bpf_loader_upgradeable::id(),
@@ -806,7 +806,7 @@ fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
          instruction_accounts: Vec<AccountMeta>,
          expected_result: Result<(), InstructionError>| {
             let instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+                wincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
             process_instruction_with_setup(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,

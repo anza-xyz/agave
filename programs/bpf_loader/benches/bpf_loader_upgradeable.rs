@@ -78,7 +78,7 @@ mod bench {
                 is_writable: false,
             });
             self.instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
+                wincode::serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
         }
 
         fn prep_write(&mut self) {
@@ -95,7 +95,7 @@ mod bench {
                 })
                 .unwrap();
 
-            self.instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+            self.instruction_data = wincode::serialize(&UpgradeableLoaderInstruction::Write {
                 offset: 0,
                 bytes: vec![64; PROGRAM_BUFFER_SIZE],
             })
@@ -131,7 +131,7 @@ mod bench {
             } else {
                 UpgradeableLoaderInstruction::SetAuthority
             };
-            self.instruction_data = bincode::serialize(&instruction).unwrap();
+            self.instruction_data = wincode::serialize(&instruction).unwrap();
         }
 
         fn prep_close(&mut self) {
@@ -150,7 +150,7 @@ mod bench {
             self.transaction_accounts
                 .push(self.transaction_accounts[1].clone());
             self.instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+                wincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
         }
 
         fn run(&self) {

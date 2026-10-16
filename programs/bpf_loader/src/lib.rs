@@ -1211,7 +1211,7 @@ mod tests {
         let UpgradeableLoaderInstruction::Write { offset, bytes } = &instruction else {
             unreachable!()
         };
-        let serialized = bincode::serialize(&instruction).unwrap();
+        let serialized = wincode::serialize(&instruction).unwrap();
         assert!(serialized.starts_with(&WRITE_INSTRUCTION_TAG));
         assert_eq!(
             parse_write_instruction(&serialized, unbound_loader_v3_instruction_data).unwrap(),

@@ -146,7 +146,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len() {
         expected_result: Result<(), InstructionError>,
     ) -> Vec<AccountSharedData> {
         let instruction_data =
-            bincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
+            wincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
                 max_data_len,
             })
             .unwrap();

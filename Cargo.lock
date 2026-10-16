@@ -7447,7 +7447,6 @@ name = "solana-bpf-loader-program"
 version = "4.5.0-alpha.4"
 dependencies = [
  "assert_matches",
- "bincode",
  "criterion",
  "qualifier_attr",
  "rand 0.9.4",
