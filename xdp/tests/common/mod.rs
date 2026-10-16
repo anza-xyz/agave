@@ -6,6 +6,7 @@ use {
     agave_xdp::netlink::MacAddress,
     std::{
         ffi::{CString, OsString},
+        fmt,
         os::unix::ffi::OsStringExt,
         path::{Path, PathBuf},
         process::{Command, Output},
@@ -119,19 +120,29 @@ pub fn delete_route(destination: &str) {
     run_ip(&["route", "del", destination]);
 }
 
-pub fn replace_neighbor(ip: std::net::Ipv4Addr, mac: MacAddress, dev: &str) {
+/// Linux Neighbor Unreachability Detection (NUD) state.
+pub enum NudState {
+    Permanent,
+    Reachable,
+    Stale,
+}
+
+impl fmt::Display for NudState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Permanent => "permanent",
+            Self::Reachable => "reachable",
+            Self::Stale => "stale",
+        })
+    }
+}
+
+pub fn replace_neighbor(ip: std::net::Ipv4Addr, mac: MacAddress, dev: &str, state: NudState) {
     let ip = ip.to_string();
     let mac = mac.to_string();
+    let state = state.to_string();
     run_ip(&[
-        "neigh",
-        "replace",
-        &ip,
-        "lladdr",
-        &mac,
-        "dev",
-        dev,
-        "nud",
-        "permanent",
+        "neigh", "replace", &ip, "lladdr", &mac, "dev", dev, "nud", &state,
     ]);
 }
 
