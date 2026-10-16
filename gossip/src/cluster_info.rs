@@ -637,29 +637,33 @@ impl ClusterInfo {
         let now = timestamp();
         let my_pubkey = self.id();
         let nodes: Vec<_> = self
-            .all_peers()
-            .into_iter()
-            .filter_map(|(node, last_updated)| {
-                let node_rpc = node
-                    .rpc()
-                    .filter(|addr| self.socket_addr_space.check(addr))?;
-                let rpc_addr = node_rpc.ip();
-                Some(format!(
-                    format_string!(),
-                    rpc_addr.to_string(),
-                    if node.pubkey() == &my_pubkey {
-                        "me"
-                    } else {
-                        ""
-                    },
-                    now.saturating_sub(last_updated),
-                    node.pubkey().to_string(),
-                    node.version().to_string(),
-                    self.addr_to_string(&Some(rpc_addr), &node.rpc()),
-                    self.addr_to_string(&Some(rpc_addr), &node.rpc_pubsub()),
+            .collect_contact_infos(|node| {
+                (
+                    *node.pubkey(),
+                    node.version().clone(),
                     node.shred_version(),
-                ))
+                    node.rpc(),
+                    node.rpc_pubsub(),
+                )
             })
+            .into_iter()
+            .filter_map(
+                |((pubkey, version, shred_version, rpc, rpc_pubsub), last_updated)| {
+                    let node_rpc = rpc.filter(|addr| self.socket_addr_space.check(addr))?;
+                    let rpc_addr = node_rpc.ip();
+                    Some(format!(
+                        format_string!(),
+                        rpc_addr.to_string(),
+                        if pubkey == my_pubkey { "me" } else { "" },
+                        now.saturating_sub(last_updated),
+                        pubkey.to_string(),
+                        version.to_string(),
+                        self.addr_to_string(&Some(rpc_addr), &rpc),
+                        self.addr_to_string(&Some(rpc_addr), &rpc_pubsub),
+                        shred_version,
+                    ))
+                },
+            )
             .collect();
 
         format!(
@@ -711,42 +715,65 @@ impl ClusterInfo {
         let mut total_spy_nodes = 0usize;
         let my_pubkey = self.id();
         let nodes: Vec<_> = self
-            .all_peers()
-            .into_iter()
-            .map(|(node, last_updated)| {
-                let is_spy_node = Self::is_spy_node(&node, &self.socket_addr_space);
-                if is_spy_node {
-                    total_spy_nodes = total_spy_nodes.saturating_add(1);
-                }
-
-                let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
-                format!(
-                    format_string!(),
-                    node.gossip()
-                        .filter(|addr| self.socket_addr_space.check(addr))
-                        .as_ref()
-                        .map(SocketAddr::ip)
-                        .as_ref()
-                        .map(IpAddr::to_string)
-                        .unwrap_or_else(|| String::from("none")),
-                    if node.pubkey() == &my_pubkey {
-                        "me"
-                    } else {
-                        ""
-                    },
-                    now.saturating_sub(last_updated),
-                    node.pubkey().to_string(),
-                    node.version().to_string(),
-                    self.addr_to_string(&ip_addr, &node.gossip()),
-                    self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
-                    self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::QUIC)),
-                    self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.alpenglow()),
+            .collect_contact_infos(|node| {
+                (
+                    *node.pubkey(),
+                    node.version().clone(),
                     node.shred_version(),
+                    [
+                        node.gossip(),
+                        node.tpu_vote(contact_info::Protocol::UDP),
+                        node.tpu(contact_info::Protocol::QUIC),
+                        node.tpu_forwards(contact_info::Protocol::QUIC),
+                        node.tvu(contact_info::Protocol::UDP),
+                        node.serve_repair(contact_info::Protocol::UDP),
+                        node.alpenglow(),
+                    ],
                 )
             })
+            .into_iter()
+            .map(
+                |((pubkey, version, shred_version, sockets), last_updated)| {
+                    let [
+                        gossip,
+                        tpu_vote,
+                        tpu,
+                        tpu_forwards,
+                        tvu,
+                        serve_repair,
+                        alpenglow,
+                    ] = sockets;
+                    let is_spy_node =
+                        Self::is_spy_node([tpu, gossip, tvu], &self.socket_addr_space);
+                    if is_spy_node {
+                        total_spy_nodes = total_spy_nodes.saturating_add(1);
+                    }
+
+                    let ip_addr = gossip.as_ref().map(SocketAddr::ip);
+                    format!(
+                        format_string!(),
+                        gossip
+                            .filter(|addr| self.socket_addr_space.check(addr))
+                            .as_ref()
+                            .map(SocketAddr::ip)
+                            .as_ref()
+                            .map(IpAddr::to_string)
+                            .unwrap_or_else(|| String::from("none")),
+                        if pubkey == my_pubkey { "me" } else { "" },
+                        now.saturating_sub(last_updated),
+                        pubkey.to_string(),
+                        version.to_string(),
+                        self.addr_to_string(&ip_addr, &gossip),
+                        self.addr_to_string(&ip_addr, &tpu_vote),
+                        self.addr_to_string(&ip_addr, &tpu),
+                        self.addr_to_string(&ip_addr, &tpu_forwards),
+                        self.addr_to_string(&ip_addr, &tvu),
+                        self.addr_to_string(&ip_addr, &serve_repair),
+                        self.addr_to_string(&ip_addr, &alpenglow),
+                        shred_version,
+                    )
+                },
+            )
             .collect();
 
         format!(
@@ -1145,6 +1172,19 @@ impl ClusterInfo {
         })
     }
 
+    /// Extracts fields from all contact infos, including spy nodes, together
+    /// with the last time each node was heard from.
+    ///
+    /// Reads use bounded batches and may observe different table versions. A
+    /// node read more than once is returned only once, using its latest read.
+    /// `query` runs under the read lock and should only extract the fields the
+    /// caller needs. Filter addresses and format output after this returns.
+    pub fn collect_contact_infos<R>(&self, query: impl ContactInfoQuery<R>) -> Vec<(R, u64)> {
+        self.collect_nodes(|_, value| {
+            Some((query(value.value.contact_info()?), value.local_timestamp))
+        })
+    }
+
     pub fn gossip_peers(&self) -> Vec<ContactInfo> {
         let me = self.id();
         self.collect_nodes(|_, value| {
@@ -1191,14 +1231,8 @@ impl ClusterInfo {
         })
     }
 
-    fn is_spy_node(node: &ContactInfo, socket_addr_space: &SocketAddrSpace) -> bool {
-        ![
-            node.tpu(contact_info::Protocol::QUIC),
-            node.gossip(),
-            node.tvu(contact_info::Protocol::UDP),
-        ]
-        .into_iter()
-        .all(|addr| {
+    fn is_spy_node(sockets: [Option<SocketAddr>; 3], socket_addr_space: &SocketAddrSpace) -> bool {
+        !sockets.into_iter().all(|addr| {
             addr.map(|addr| socket_addr_space.check(&addr))
                 .unwrap_or_default()
         })
@@ -2780,13 +2814,21 @@ mod tests {
         //check that a gossip nodes always show up as spies
         let (node, _, _) = ClusterInfo::spy_node(solana_pubkey::new_rand(), 0);
         assert!(ClusterInfo::is_spy_node(
-            &node,
+            [
+                node.tpu(contact_info::Protocol::QUIC),
+                node.gossip(),
+                node.tvu(contact_info::Protocol::UDP)
+            ],
             &SocketAddrSpace::Unspecified
         ));
         let (node, _, _) =
             ClusterInfo::gossip_node(solana_pubkey::new_rand(), &"1.1.1.1:0".parse().unwrap(), 0);
         assert!(ClusterInfo::is_spy_node(
-            &node,
+            [
+                node.tpu(contact_info::Protocol::QUIC),
+                node.gossip(),
+                node.tvu(contact_info::Protocol::UDP)
+            ],
             &SocketAddrSpace::Unspecified
         ));
     }
