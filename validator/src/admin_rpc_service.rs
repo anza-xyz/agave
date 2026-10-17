@@ -173,6 +173,25 @@ impl Display for AdminRpcContactInfo {
 impl solana_cli_output::VerboseDisplay for AdminRpcContactInfo {}
 impl solana_cli_output::QuietDisplay for AdminRpcContactInfo {}
 
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AdminRpcSlotInfo {
+    pub processed: Slot,
+    pub confirmed: Slot,
+    pub finalized: Slot,
+    pub root: Slot,
+}
+
+impl Display for AdminRpcSlotInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Processed Slot: {}", self.processed)?;
+        writeln!(f, "Confirmed Slot: {}", self.confirmed)?;
+        writeln!(f, "Finalized Slot: {}", self.finalized)?;
+        writeln!(f, "Root Slot: {}", self.root)
+    }
+}
+impl solana_cli_output::VerboseDisplay for AdminRpcSlotInfo {}
+impl solana_cli_output::QuietDisplay for AdminRpcSlotInfo {}
+
 impl Display for AdminRpcRepairWhitelist {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Repair whitelist: {:?}", self.whitelist)
@@ -314,6 +333,9 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "blockstorePurge")]
     fn blockstore_purge(&self, meta: Self::Metadata, maximum_purge_slot: Slot) -> Result<()>;
+
+    #[rpc(meta, name = "slotInfo")]
+    fn slot_info(&self, meta: Self::Metadata) -> Result<AdminRpcSlotInfo>;
 }
 
 pub struct AdminRpcImpl;
@@ -925,6 +947,26 @@ impl AdminRpc for AdminRpcImpl {
                 })
         })
     }
+
+    fn slot_info(&self, meta: Self::Metadata) -> Result<AdminRpcSlotInfo> {
+        meta.with_post_init(|post_init| {
+            let root = post_init.bank_forks.read().unwrap().root();
+            let (processed, confirmed, finalized) = {
+                let cache = post_init.block_commitment_cache.read().unwrap();
+                (
+                    cache.slot(),
+                    cache.highest_confirmed_slot(),
+                    cache.highest_super_majority_root(),
+                )
+            };
+            Ok(AdminRpcSlotInfo {
+                processed,
+                confirmed,
+                finalized,
+                root,
+            })
+        })
+    }
 }
 
 impl AdminRpcImpl {
@@ -1215,6 +1257,7 @@ mod tests {
         solana_runtime::{
             bank::{Bank, BankTestConfig},
             bank_forks::BankForks,
+            commitment::BlockCommitmentCache,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
@@ -1288,6 +1331,7 @@ mod tests {
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
                     cluster_info,
                     bank_forks,
+                    block_commitment_cache: Arc::new(RwLock::new(BlockCommitmentCache::default())),
                     vote_account,
                     repair_whitelist,
                     notifies: Arc::new(RwLock::new(KeyUpdaters::default())),
@@ -1658,6 +1702,41 @@ mod tests {
         assert!(result["result"].is_boolean());
         // Verify that snapshots are being generated since the test setup includes a snapshot controller
         assert!(result["result"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_slot_info() {
+        let RpcHandler { io, meta, .. } = RpcHandler::start_with_config(TestConfig::default());
+        {
+            let post_init = meta.post_init.read().unwrap();
+            let mut cache = post_init
+                .as_ref()
+                .unwrap()
+                .block_commitment_cache
+                .write()
+                .unwrap();
+            cache.set_slot(7);
+            cache.set_highest_confirmed_slot(5);
+            cache.set_highest_super_majority_root(3);
+        }
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"slotInfo","params":[]}"#;
+        let response = io.handle_request_sync(request, meta.clone());
+        let result: Value = serde_json::from_str(&response.expect("actual response"))
+            .expect("actual response deserialization");
+        let slot_info: AdminRpcSlotInfo =
+            serde_json::from_value(result["result"].clone()).expect("slot info");
+
+        // The test bank forks hold only the genesis bank, so the root is 0.
+        assert_eq!(
+            slot_info,
+            AdminRpcSlotInfo {
+                processed: 7,
+                confirmed: 5,
+                finalized: 3,
+                root: 0,
+            }
+        );
     }
 
     #[test]
