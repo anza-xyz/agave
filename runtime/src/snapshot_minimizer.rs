@@ -139,6 +139,8 @@ impl<'a> SnapshotMinimizer<'a> {
         self.minimized_account_set.insert(*VOTE_REWARD_ACCOUNT_ADDR);
         self.minimized_account_set
             .insert(*REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT);
+        self.minimized_account_set
+            .insert(*crate::bank::NANOSECOND_CLOCK_ACCOUNT);
     }
 
     /// Used to get reserved accounts in `minimize`
@@ -458,6 +460,27 @@ mod tests {
         for stake_pubkey in expected_stake_accounts {
             assert!(minimizer.minimized_account_set.contains(&stake_pubkey));
         }
+    }
+
+    #[test]
+    fn test_minimization_get_static_runtime_accounts() {
+        agave_logger::setup();
+
+        let (genesis_config, _) = create_genesis_config(1_000_000);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let minimizer = SnapshotMinimizer {
+            bank: &bank,
+            starting_slot: 0,
+            minimized_account_set: DashSet::new(),
+        };
+        minimizer.get_static_runtime_accounts();
+
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&*crate::bank::NANOSECOND_CLOCK_ACCOUNT)
+        );
     }
 
     #[test]
