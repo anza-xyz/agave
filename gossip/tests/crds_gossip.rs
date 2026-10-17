@@ -377,7 +377,7 @@ fn network_run_push(
                 (node_pubkey, messages)
             })
             .collect();
-        let transfered: Vec<_> = requests
+        let transferred: Vec<_> = requests
             .into_par_iter()
             .map(|(from, push_messages)| {
                 let mut bytes: usize = 0;
@@ -439,7 +439,7 @@ fn network_run_push(
             })
             .collect();
 
-        for (b, d, m, p) in transfered {
+        for (b, d, m, p) in transferred {
             bytes += b;
             delivered += d;
             num_msgs += m;
@@ -554,7 +554,7 @@ fn network_run_pull(
                 })
                 .collect()
         };
-        let transfered: Vec<_> = requests
+        let transferred: Vec<_> = requests
             .into_iter()
             .map(|(to, filters, caller_info)| {
                 let mut bytes: usize = 0;
@@ -620,7 +620,7 @@ fn network_run_pull(
                 (bytes, msgs, overhead)
             })
             .collect();
-        for (b, m, o) in transfered {
+        for (b, m, o) in transferred {
             bytes += b;
             msgs += m;
             overhead += o;
