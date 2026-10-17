@@ -2999,16 +2999,15 @@ impl AccountsDb {
             // already.
             let mut scan_storages_elapsed = Measure::start("scan_storages_elapsed");
             let mut stored_keys = ahash::HashSet::new();
-            if let Some(storage) = self
+            let storage = self
                 .storage
-                .get_slot_storage_entry_shrinking_in_progress_ok(remove_slot)
-            {
-                storage
-                    .scan_accounts_without_data(|_offset, account| {
-                        stored_keys.insert((*account.pubkey(), remove_slot));
-                    })
-                    .expect("must scan accounts storage");
-            }
+                .get_slot_storage_entry(remove_slot)
+                .expect("minimizer only purges slots with storages");
+            storage
+                .scan_accounts_without_data(|_offset, account| {
+                    stored_keys.insert((*account.pubkey(), remove_slot));
+                })
+                .expect("must scan accounts storage");
             scan_storages_elapsed.stop();
             purge_stats
                 .scan_storages_elapsed
@@ -3036,11 +3035,7 @@ impl AccountsDb {
                     self.handle_reclaims(reclaims.iter(), purge_stats, MarkAccountsObsolete::No);
                 // Ensure the expected slot is marked dead
                 assert_eq!(dead_slots, IntSet::from_iter(iter::once(remove_slot)));
-            } else if self
-                .storage
-                .get_slot_storage_entry(remove_slot)
-                .is_some_and(|store| store.has_only_tombstones())
-            {
+            } else if storage.has_only_tombstones() {
                 // A tombstone-only storage has no index entries to reclaim, so purge it directly
                 self.purge_dead_slots_from_storage(iter::once(&remove_slot), purge_stats);
             }
