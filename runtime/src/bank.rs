@@ -4665,7 +4665,8 @@ impl Bank {
         Self::create_commit_results(processing_results)
     }
 
-    fn create_commit_results(
+    /// Convert execution results to commit results without changing bank state.
+    pub fn create_commit_results(
         processing_results: Vec<TransactionProcessingResult>,
     ) -> Vec<TransactionCommitResult> {
         processing_results

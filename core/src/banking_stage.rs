@@ -558,7 +558,6 @@ impl BankingStage {
         for (index, work_receiver) in work_receivers.into_iter().enumerate() {
             let id = index as u32;
             let consume_worker = ConsumeWorker::new(
-                id,
                 exit.clone(),
                 work_receiver,
                 Consumer::new(
@@ -712,8 +711,11 @@ mod external {
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
             // Spawn the external consumer workers.
-            let mut threads = Vec::with_capacity(workers.len() + check_workers.len() + 2);
-            let mut worker_metrics = Vec::with_capacity(workers.len());
+            let simulation_worker_count = 0;
+            let mut threads = Vec::with_capacity(
+                workers.len() + simulation_worker_count + check_workers.len() + 2,
+            );
+            let mut worker_metrics = Vec::with_capacity(workers.len() + simulation_worker_count);
             for (
                 index,
                 AgaveWorkerSession {
@@ -725,14 +727,12 @@ mod external {
             {
                 let id = index as u32;
                 let consume_worker = ExternalWorker::new(
-                    id,
                     self.worker_exit_signal.clone(),
                     Consumer::new(
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
                         self.log_messages_bytes_limit,
                     ),
-                    worker_to_pack,
                     allocator,
                     self.poh_recorder.read().unwrap().shared_leader_state(),
                 );
@@ -742,12 +742,49 @@ mod external {
                     Builder::new()
                         .name(format!("solECoWorker{id:02}"))
                         .spawn(move || {
-                            if let Err(err) = consume_worker.run(pack_to_worker) {
+                            if let Err(err) =
+                                consume_worker.run_execution_worker(pack_to_worker, worker_to_pack)
+                            {
                                 error!("External consume worker error; err={err}");
                             }
                         })
                         .unwrap(),
                 );
+            }
+
+            // The simulation queues will come from the handshake once it exposes them.
+            if simulation_worker_count > 0 {
+                let (_pack_to_simulation, simulation_receiver) = shaq::mpmc::pair(16).unwrap();
+                let (simulation_sender, _simulation_to_pack) = shaq::mpmc::pair(16).unwrap();
+
+                for id in 0..simulation_worker_count {
+                    let consume_worker = ExternalWorker::new(
+                        self.worker_exit_signal.clone(),
+                        Consumer::new(
+                            self.committer.clone(),
+                            self.transaction_recorder.clone(),
+                            self.log_messages_bytes_limit,
+                        ),
+                        rts_alloc::Allocator::join_from_existing(&tpu_to_pack.allocator).unwrap(),
+                        self.poh_recorder.read().unwrap().shared_leader_state(),
+                    );
+
+                    worker_metrics.push(consume_worker.metrics_handle());
+                    let receiver = simulation_receiver.clone();
+                    let sender = simulation_sender.clone();
+                    threads.push(
+                        Builder::new()
+                            .name(format!("solESimWorker{id:02}"))
+                            .spawn(move || {
+                                if let Err(err) =
+                                    consume_worker.run_simulation_worker(receiver, sender)
+                                {
+                                    error!("External simulation worker error; err={err}");
+                                }
+                            })
+                            .unwrap(),
+                    );
+                }
             }
 
             for (
