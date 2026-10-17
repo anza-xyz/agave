@@ -12164,6 +12164,8 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.rent_collector.rent = wrong_rent.clone();
     bank.set_block_id(Some(BlockId::default()));
+    // Snapshots are taken of rooted banks
+    bank.squash();
 
     // Serialize bank to snapshot
     let mut buf = vec![];
@@ -12214,6 +12216,8 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
     let bank = Bank::new_for_tests(&genesis_config);
     bank.set_hashes_per_tick(Some(LEGACY_HASHES_PER_TICK));
     bank.set_block_id(Some(BlockId::default()));
+    // Snapshots are taken of rooted banks
+    bank.squash();
 
     let mut buf = vec![];
     crate::serde_snapshot::bank_to_stream(

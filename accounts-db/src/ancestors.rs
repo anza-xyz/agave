@@ -48,6 +48,10 @@ impl Ancestors {
         self.ancestors.iter().map(|(slot, _bank_id)| *slot)
     }
 
+    pub fn bank_ids(&self) -> impl DoubleEndedIterator<Item = BankId> + '_ {
+        self.ancestors.iter().map(|(_slot, bank_id)| *bank_id)
+    }
+
     /// Removes the entry with the highest slot, returning that slot
     pub fn remove_max_slot(&mut self) -> Option<Slot> {
         self.ancestors.pop().map(|(slot, _bank_id)| slot)

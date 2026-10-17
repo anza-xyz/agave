@@ -12,6 +12,9 @@ impl BankId {
     }
 }
 
+/// Hashes as its one `u64`
+impl solana_nohash_hasher::IsEnabled for BankId {}
+
 impl From<BankId> for u64 {
     fn from(bank_id: BankId) -> Self {
         bank_id.0
