@@ -314,6 +314,7 @@ pub fn load_and_process_ledger(
             let transaction_status_service = TransactionStatusService::new(
                 transaction_status_receiver,
                 Arc::default(),
+                Arc::default(),
                 enable_rpc_transaction_history,
                 transaction_notifier,
                 write_blockstore.clone(),
