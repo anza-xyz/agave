@@ -7197,7 +7197,10 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29c09d0da218d985406ed11c1c84169fc9e02e61a5a0012398026b329b9af608"
 dependencies = [
+ "bincode",
  "bytemuck",
+ "serde",
+ "serde_derive",
  "solana-clock",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
@@ -9719,6 +9722,7 @@ dependencies = [
  "solana-account-info",
  "solana-accounts-db",
  "solana-address 2.9.0",
+ "solana-address-lookup-table-interface",
  "solana-banks-client",
  "solana-banks-interface",
  "solana-banks-server",

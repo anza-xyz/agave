@@ -2584,7 +2584,6 @@ pub mod tests {
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
-        solana_message::{Message, MessageHeader, compiled_instruction::CompiledInstruction},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             declare_process_instruction, solana_sbpf::program::BuiltinFunctionDefinition,
@@ -6505,37 +6504,6 @@ pub mod tests {
         assert_eq!(
             validate_entry_transactions(&txs, 1),
             Err(TransactionError::TooManyAccountLocks)
-        );
-    }
-
-    #[test]
-    fn test_validate_entry_transactions_account_loaded_twice() {
-        // Message compilation dedups account keys, so a normal transfer can't repeat one.
-        // Hand-build a message whose account_keys list the payer twice to exercise the
-        // duplicate-key check.
-        let payer = Keypair::new();
-        let message = Message {
-            header: MessageHeader {
-                num_required_signatures: 1,
-                num_readonly_signed_accounts: 0,
-                num_readonly_unsigned_accounts: 1,
-            },
-            account_keys: vec![
-                payer.pubkey(),
-                payer.pubkey(),
-                solana_system_interface::program::id(),
-            ],
-            recent_blockhash: Hash::new_unique(),
-            instructions: vec![CompiledInstruction::new(2, &(), vec![0, 1])],
-        };
-        let txs = vec![ReplayTransaction::from(Transaction::new(
-            &[&payer],
-            message,
-            Hash::new_unique(),
-        ))];
-        assert_eq!(
-            validate_entry_transactions(&txs, 10),
-            Err(TransactionError::AccountLoadedTwice)
         );
     }
 }

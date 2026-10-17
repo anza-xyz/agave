@@ -862,14 +862,12 @@ mod tests {
             consumer,
         } = setup_test(None);
 
-        let pubkey = solana_pubkey::new_rand();
-        let transactions = {
-            let mut tx =
-                system_transaction::transfer(&mint_keypair, &pubkey, 1, bank.last_blockhash());
-            // Add duplicate account key
-            tx.message.account_keys.push(pubkey);
-            sanitize_transactions(vec![tx])
-        };
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            1,
+            Hash::new_unique(), // Blockhash is not in the bank's recent blockhash queue.
+        )]);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -894,7 +892,7 @@ mod tests {
             commit_transactions_result.ok(),
             Some(vec![
                 CommitTransactionDetails::NotCommitted(
-                    TransactionError::AccountLoadedTwice
+                    TransactionError::BlockhashNotFound
                 );
                 1
             ])

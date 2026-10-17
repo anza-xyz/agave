@@ -5084,11 +5084,11 @@ fn test_duplicate_account_key() {
 fn test_process_transaction_with_too_many_account_locks() {
     agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(500);
-    let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
-        &genesis_config,
-        solana_vote_program::id(),
-        MockBuiltin::register,
-    );
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::register);
+    // Exercise the lock limit with a transaction that still fits the wire-size limit.
+    bank.transaction_account_lock_limit = Some(4);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let from_pubkey = solana_pubkey::new_rand();
     let to_pubkey = solana_pubkey::new_rand();
