@@ -21,7 +21,7 @@ use {
         StaticMessageWithMeta, TransactionWithMeta,
     },
     solana_svm::{
-        account_loader::{TransactionCheckResult, validate_fee_payer},
+        account_loader::{TransactionCheckResult, fee_payer_load_filter, validate_fee_payer},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
@@ -536,8 +536,8 @@ impl Consumer {
             bank.fee_features(),
         );
         let mut fee_payer_account = bank
-            .get_account_with_fixed_root(fee_payer)
-            .ok_or(TransactionError::AccountNotFound)?;
+            .get_account_with_fixed_root_if(fee_payer, fee_payer_load_filter)
+            .ok_or(TransactionError::InvalidAccountForFee)?;
 
         validate_fee_payer(
             &mut fee_payer_account,
@@ -1067,7 +1067,7 @@ mod tests {
         assert_eq!(
             commit_transactions_result.ok(),
             Some(vec![CommitTransactionDetails::NotCommitted(
-                TransactionError::AccountNotFound
+                TransactionError::InvalidAccountForFee
             )])
         );
 

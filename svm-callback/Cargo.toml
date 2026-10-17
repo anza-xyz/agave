@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 
 [dependencies]
 solana-account = { workspace = true }
