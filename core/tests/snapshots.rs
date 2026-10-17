@@ -20,7 +20,8 @@ use {
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
-            PrunedBanksRequestHandler, SendDroppedBankCallback, SnapshotRequestHandler,
+            PrunedBanksRequestHandler, ROOTED_SLOTS_TO_KEEP_IN_CACHE, SendDroppedBankCallback,
+            SnapshotRequestHandler,
         },
         bank::Bank,
         bank_forks::BankForks,
@@ -202,7 +203,7 @@ where
                 .write()
                 .unwrap()
                 .set_root(bank.slot(), Some(&snapshot_controller), None);
-            snapshot_request_handler.handle_snapshot_requests(0);
+            snapshot_request_handler.handle_snapshot_requests(0, bank.slot());
         }
     }
 
@@ -448,7 +449,7 @@ fn test_bank_forks_incremental_snapshot() {
                 .write()
                 .unwrap()
                 .set_root(bank.slot(), Some(&snapshot_controller), None);
-            snapshot_request_handler.handle_snapshot_requests(0);
+            snapshot_request_handler.handle_snapshot_requests(0, bank.slot());
         }
 
         // Since AccountsBackgroundService isn't running, manually make a full snapshot archive
@@ -643,8 +644,12 @@ fn test_snapshots_with_background_services() {
 
     let mut latest_full_snapshot_slot = None;
     let mut latest_incremental_snapshot_slot = None;
+    // Held past the extra roots below, which prune it from bank_forks
+    let mut last_snapshot_bank = None;
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
-    for slot in 1..=LAST_SLOT {
+    // A snapshot request is handled once the root is ROOTED_SLOTS_TO_KEEP_IN_CACHE past it, so run
+    // that many extra slots and wait for each snapshot that far behind the current slot.
+    for slot in 1..=LAST_SLOT + ROOTED_SLOTS_TO_KEEP_IN_CACHE {
         // Make a new bank and process some transactions
         {
             let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
@@ -665,6 +670,9 @@ fn test_snapshots_with_background_services() {
 
             bank.fill_bank_with_ticks_for_tests();
             bank.set_block_id(Some(BlockId::default()));
+            if slot == LAST_SLOT {
+                last_snapshot_bank = Some(bank);
+            }
         }
 
         // Call `BankForks::set_root()` to cause snapshots to be taken
@@ -675,24 +683,29 @@ fn test_snapshots_with_background_services() {
                 .set_root(slot, Some(&snapshot_controller), None);
         }
 
-        // If a snapshot should be taken this slot, wait for it to complete
-        if slot % FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS == 0 {
+        // ABS handles a snapshot request once the root is ROOTED_SLOTS_TO_KEEP_IN_CACHE past it, so
+        // wait for any snapshot requested that many slots ago
+        if slot <= ROOTED_SLOTS_TO_KEEP_IN_CACHE {
+            continue;
+        }
+        let snapshot_slot = slot - ROOTED_SLOTS_TO_KEEP_IN_CACHE;
+        if snapshot_slot.is_multiple_of(FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS) {
             let timer = Instant::now();
             while snapshot_paths::get_highest_full_snapshot_archive_slot(
                 &snapshot_test_config
                     .snapshot_config
                     .full_snapshot_archives_dir,
-            ) != Some(slot)
+            ) != Some(snapshot_slot)
             {
                 assert!(
                     timer.elapsed() < MAX_WAIT_DURATION,
-                    "Waiting for full snapshot {slot} exceeded the {MAX_WAIT_DURATION:?} maximum \
-                     wait duration!",
+                    "Waiting for full snapshot {snapshot_slot} exceeded the {MAX_WAIT_DURATION:?} \
+                     maximum wait duration!",
                 );
                 std::thread::sleep(Duration::from_secs(1));
             }
-            latest_full_snapshot_slot = Some(slot);
-        } else if slot % INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS == 0
+            latest_full_snapshot_slot = Some(snapshot_slot);
+        } else if snapshot_slot.is_multiple_of(INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS)
             && latest_full_snapshot_slot.is_some()
         {
             let timer = Instant::now();
@@ -701,16 +714,16 @@ fn test_snapshots_with_background_services() {
                     .snapshot_config
                     .incremental_snapshot_archives_dir,
                 latest_full_snapshot_slot.unwrap(),
-            ) != Some(slot)
+            ) != Some(snapshot_slot)
             {
                 assert!(
                     timer.elapsed() < MAX_WAIT_DURATION,
-                    "Waiting for incremental snapshot {slot} exceeded the {MAX_WAIT_DURATION:?} \
-                     maximum wait duration!",
+                    "Waiting for incremental snapshot {snapshot_slot} exceeded the \
+                     {MAX_WAIT_DURATION:?} maximum wait duration!",
                 );
                 std::thread::sleep(Duration::from_secs(1));
             }
-            latest_incremental_snapshot_slot = Some(slot);
+            latest_incremental_snapshot_slot = Some(snapshot_slot);
         }
     }
 
@@ -735,15 +748,7 @@ fn test_snapshots_with_background_services() {
         deserialized_bank.slot(),
         latest_incremental_snapshot_slot.unwrap()
     );
-    assert_eq!(
-        &deserialized_bank,
-        bank_forks
-            .read()
-            .unwrap()
-            .get(deserialized_bank.slot())
-            .unwrap()
-            .as_ref()
-    );
+    assert_eq!(&deserialized_bank, last_snapshot_bank.unwrap().as_ref());
 
     // Stop the background services, ignore any errors
     info!("Shutting down background services...");
