@@ -13,7 +13,8 @@
 //! a block with parent `b` in slot `s` will have their block finalized.
 
 use {
-    crate::{common::MAX_NOTAR_FALLBACK_BLOCKS, event::VotorEvent},
+    crate::event::VotorEvent,
+    agave_bls_sigverify::vote_pool::MAX_NOTAR_FALLBACK_ENTRIES,
     agave_votor_messages::consensus_message::Block,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -140,7 +141,7 @@ impl ParentReadyTracker {
             self.cluster_info.id()
         );
         status.notar_fallbacks.push(block);
-        assert!(status.notar_fallbacks.len() <= MAX_NOTAR_FALLBACK_BLOCKS);
+        assert!(status.notar_fallbacks.len() <= MAX_NOTAR_FALLBACK_ENTRIES);
 
         // Add this block as valid parent to skip connected future blocks
         for s in block.slot.saturating_add(1).. {
@@ -336,7 +337,7 @@ mod tests {
         let mut tracker = new_tracker(cluster_info, Block::default());
         let mut events = vec![];
 
-        for _ in 0..=MAX_NOTAR_FALLBACK_BLOCKS {
+        for _ in 0..=MAX_NOTAR_FALLBACK_ENTRIES {
             tracker.add_new_notar_fallback_or_stronger(Block::new_unique(1), &mut events);
         }
     }

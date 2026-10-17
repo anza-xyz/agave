@@ -1,11 +1,8 @@
 use {
-    crate::{
-        common::{
-            SAFE_TO_NOTAR_MIN_NOTARIZE_AND_SKIP, SAFE_TO_NOTAR_MIN_NOTARIZE_FOR_NOTARIZE_OR_SKIP,
-            SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY, SAFE_TO_SKIP_THRESHOLD, Stake,
-        },
-        consensus_pool::stats::ConsensusPoolStats,
-        event::VotorEvent,
+    crate::{common::Stake, consensus_pool::stats::ConsensusPoolStats, event::VotorEvent},
+    agave_bls_sigverify::vote_pool::{
+        SAFE_TO_NOTAR_COMBINED_NOTAR_AND_SKIP, SAFE_TO_NOTAR_COMBINED_NOTAR_ONLY,
+        SAFE_TO_NOTAR_NOTAR_ONLY, SAFE_TO_SKIP,
     },
     agave_votor_messages::{
         consensus_message::{Block, BlockId},
@@ -134,10 +131,10 @@ impl SlotStakeCounters {
             self.skip_total.checked_add(*stake).unwrap(),
             self.total_stake,
         );
-        notarized_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY
+        notarized_ratio >= SAFE_TO_NOTAR_NOTAR_ONLY
             // Check if the block fits condition (ii) 20% notarized, and 60% notarized or skip
-            || (notarized_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_FOR_NOTARIZE_OR_SKIP
-                && notarized_plus_skip_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_AND_SKIP)
+            || (notarized_ratio >= SAFE_TO_NOTAR_COMBINED_NOTAR_ONLY
+                && notarized_plus_skip_ratio >= SAFE_TO_NOTAR_COMBINED_NOTAR_AND_SKIP)
     }
 
     fn is_safe_to_skip(&self) -> bool {
@@ -158,7 +155,7 @@ impl SlotStakeCounters {
                 .skip_total
                 .saturating_add(self.notarize_total.saturating_sub(self.top_notarized_stake));
 
-            Fraction::new(num_stake, self.total_stake) >= SAFE_TO_SKIP_THRESHOLD
+            Fraction::new(num_stake, self.total_stake) >= SAFE_TO_SKIP
         } else {
             false
         }

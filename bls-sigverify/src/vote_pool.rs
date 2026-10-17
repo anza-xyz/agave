@@ -1,6 +1,6 @@
 use {
     agave_votor_messages::{
-        consensus_message::BlockId, reward_certificate::NUM_SLOTS_FOR_REWARD,
+        consensus_message::BlockId, fraction::Fraction, reward_certificate::NUM_SLOTS_FOR_REWARD,
         unverified_vote_message::UnverifiedVoteMessage, vote::Vote,
     },
     bitvec::vec::BitVec,
@@ -9,7 +9,11 @@ use {
     std::collections::HashMap,
 };
 
-const MAX_NOTAR_FALLBACK_ENTRIES: usize = 3;
+pub const MAX_NOTAR_FALLBACK_ENTRIES: usize = 3;
+pub const SAFE_TO_SKIP: Fraction = Fraction::from_percentage(40);
+pub const SAFE_TO_NOTAR_NOTAR_ONLY: Fraction = Fraction::from_percentage(40);
+pub const SAFE_TO_NOTAR_COMBINED_NOTAR_AND_SKIP: Fraction = Fraction::from_percentage(60);
+pub const SAFE_TO_NOTAR_COMBINED_NOTAR_ONLY: Fraction = Fraction::from_percentage(20);
 
 pub(crate) enum VotePoolError {
     Invalid,
