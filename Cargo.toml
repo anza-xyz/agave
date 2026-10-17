@@ -470,7 +470,7 @@ solana-offchain-message = "4.0.0"
 solana-packet = "4.4.0"
 solana-perf = { path = "perf", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-poh-config = "3.1.0"
+solana-poh-config = "3.1.1"
 solana-poseidon = "5.0.1"
 solana-precompile-error = "3.0.0"
 solana-presigner = "4.0.0"
