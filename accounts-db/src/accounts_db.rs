@@ -3070,7 +3070,7 @@ impl AccountsDb {
         {
             // Store only while `slot` is the newest version in the index, under the entry's lock;
             // the read cache removals in `store_accounts_for_flush`, `store_accounts_for_squash`
-            // and `purge_slot_storage` rely on this.
+            // and `purge_slots_for_snapshot_minimizer` rely on this.
             self.accounts_index.get_and_then(pubkey, |entry| {
                 if let Some(entry) = entry {
                     let slot_list = entry.slot_list_read_lock();
@@ -3172,21 +3172,19 @@ impl AccountsDb {
     /// Purges each slot in `removed_slots` from the write cache, and defers any pubkeys that
     /// were fully removed from the write cache to clean to handle removal from the secondary
     /// index. Slots no longer present in the cache are skipped. This never touches backing
-    /// storage, so it cannot delete a flushed slot's data. Returns whether any slot was actually
-    /// removed from the cache. This allows the snapshot minimizer to determine whether
-    /// it should purge the storage as well
+    /// storage, so it cannot delete a flushed slot's data.
     fn purge_slots_from_cache<'a>(
         &self,
         removed_slots: impl Iterator<Item = &'a Slot>,
         purge_stats: &PurgeStats,
-    ) -> bool {
+    ) {
         let mut remove_cache_elapsed_across_slots = 0;
         let mut num_cached_slots_removed = 0;
         let mut total_removed_cached_bytes = 0;
         for remove_slot in removed_slots {
             // This function runs in parallel with the ABS operations (flush, shrink, clean) and
             // must be safe with respect to them. ABS operations will not operate on this slot as
-            // it is unrooted (unless the snapshot minimizer is being used).
+            // it is unrooted.
             let mut remove_cache_elapsed = Measure::start("remove_cache_elapsed");
             if let Some(slot_cache) = self.accounts_cache.slot_cache(*remove_slot) {
                 num_cached_slots_removed += 1;
@@ -3211,8 +3209,6 @@ impl AccountsDb {
         purge_stats
             .total_removed_cached_bytes
             .fetch_add(total_removed_cached_bytes, Ordering::Relaxed);
-
-        num_cached_slots_removed > 0
     }
 
     /// Add any keys that were removed from the cache and need follow-up work by clean
@@ -3243,26 +3239,6 @@ impl AccountsDb {
             // Write through any pubkey that hasn't been re-added to the cache in the meantime
             pubkeys.retain(|pubkey| !self.accounts_cache.contains_pubkey(pubkey));
             self.accounts_index.write_through_pubkeys(pubkeys);
-        }
-    }
-
-    /// Purges every slot in `removed_slots` from both the cache and storage. This includes
-    /// entries in the accounts index, cache entries, and any backing storage entries.
-    ///
-    /// This fn is to only be called by snapshot minimizer
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn purge_slots_for_snapshot_minimizer<'a>(
-        &self,
-        removed_slots: impl Iterator<Item = &'a Slot>,
-    ) {
-        let purge_stats = PurgeStats::default();
-        for remove_slot in removed_slots {
-            // Unlike the consensus purge paths, minimization may purge slots that have already
-            // been flushed to storage, so fall back to purging storage for any slot that is no
-            // longer in the cache.
-            if !self.purge_slots_from_cache(iter::once(remove_slot), &purge_stats) {
-                self.purge_slot_storage(*remove_slot, &purge_stats);
-            }
         }
     }
 
@@ -3310,71 +3286,74 @@ impl AccountsDb {
             .fetch_add(num_stored_slots_removed as u64, Ordering::Relaxed);
     }
 
+    /// Purges every slot in `removed_slots` from storage and the accounts index. The minimizer
+    /// only purges slots that have storages, so none of them are in the cache.
     #[cfg(feature = "dev-context-only-utils")]
-    fn purge_slot_storage(&self, remove_slot: Slot, purge_stats: &PurgeStats) {
-        // Because AccountsBackgroundService synchronously flushes from the accounts cache
-        // and handles all Bank::drop() (the cleanup function that leads to this
-        // function call), then we don't need to worry above an overlapping cache flush
-        // with this function call. This means, if we get into this case, we can be
-        // confident that the entire state for this slot has been flushed to the storage
-        // already.
-        let mut scan_storages_elapsed = Measure::start("scan_storages_elapsed");
-        let mut stored_keys = ahash::HashSet::new();
-        if let Some(storage) = self
-            .storage
-            .get_slot_storage_entry_shrinking_in_progress_ok(remove_slot)
-        {
+    pub fn purge_slots_for_snapshot_minimizer<'a>(
+        &self,
+        removed_slots: impl Iterator<Item = &'a Slot>,
+    ) {
+        let purge_stats = &PurgeStats::default();
+        for &remove_slot in removed_slots {
+            // Because AccountsBackgroundService synchronously flushes from the accounts cache
+            // and handles all Bank::drop() (the cleanup function that leads to this
+            // function call), then we don't need to worry above an overlapping cache flush
+            // with this function call. This means, if we get into this case, we can be
+            // confident that the entire state for this slot has been flushed to the storage
+            // already.
+            let mut scan_storages_elapsed = Measure::start("scan_storages_elapsed");
+            let mut stored_keys = ahash::HashSet::new();
+            let storage = self
+                .storage
+                .get_slot_storage_entry(remove_slot)
+                .expect("minimizer only purges slots with storages");
             storage
                 .scan_accounts_without_data(|_offset, account| {
                     stored_keys.insert((*account.pubkey(), remove_slot));
                 })
                 .expect("must scan accounts storage");
-        }
-        scan_storages_elapsed.stop();
-        purge_stats
-            .scan_storages_elapsed
-            .fetch_add(scan_storages_elapsed.as_us(), Ordering::Relaxed);
+            scan_storages_elapsed.stop();
+            purge_stats
+                .scan_storages_elapsed
+                .fetch_add(scan_storages_elapsed.as_us(), Ordering::Relaxed);
 
-        let mut purge_accounts_index_elapsed = Measure::start("purge_accounts_index_elapsed");
-        // Purge this slot from the accounts index
-        let reclaims = self.purge_keys_exact(stored_keys.iter().copied());
-        // The read cache is checked before the index, so drop the purged keys from it too
-        for (pubkey, _slot) in &stored_keys {
-            self.read_only_accounts_cache
-                .remove_assume_not_present(pubkey);
-        }
-        purge_accounts_index_elapsed.stop();
-        purge_stats
-            .purge_accounts_index_elapsed
-            .fetch_add(purge_accounts_index_elapsed.as_us(), Ordering::Relaxed);
+            let mut purge_accounts_index_elapsed = Measure::start("purge_accounts_index_elapsed");
+            // Purge this slot from the accounts index
+            let reclaims = self.purge_keys_exact(stored_keys.iter().copied());
+            // The read cache is checked before the index, so drop the purged keys from it too
+            for (pubkey, _slot) in &stored_keys {
+                self.read_only_accounts_cache
+                    .remove_assume_not_present(pubkey);
+            }
+            purge_accounts_index_elapsed.stop();
+            purge_stats
+                .purge_accounts_index_elapsed
+                .fetch_add(purge_accounts_index_elapsed.as_us(), Ordering::Relaxed);
 
-        // `handle_reclaims()` should remove all the account index entries and
-        // storage entries
-        let mut handle_reclaims_elapsed = Measure::start("handle_reclaims_elapsed");
-        // There is no reason to mark accounts obsolete as the slot storage is being purged
-        if !reclaims.is_empty() {
-            let dead_slots =
-                self.handle_reclaims(reclaims.iter(), purge_stats, MarkAccountsObsolete::No);
-            // Ensure the expected slot is marked dead
-            assert_eq!(dead_slots, IntSet::from_iter(iter::once(remove_slot)));
-        } else if self
-            .storage
-            .get_slot_storage_entry(remove_slot)
-            .is_some_and(|store| store.has_only_tombstones())
-        {
-            // A tombstone-only storage has no index entries to reclaim, so purge it directly
-            self.purge_dead_slots_from_storage(iter::once(&remove_slot), purge_stats);
+            // `handle_reclaims()` should remove all the account index entries and
+            // storage entries
+            let mut handle_reclaims_elapsed = Measure::start("handle_reclaims_elapsed");
+            // There is no reason to mark accounts obsolete as the slot storage is being purged
+            if !reclaims.is_empty() {
+                let dead_slots =
+                    self.handle_reclaims(reclaims.iter(), purge_stats, MarkAccountsObsolete::No);
+                // Ensure the expected slot is marked dead
+                assert_eq!(dead_slots, IntSet::from_iter(iter::once(remove_slot)));
+            } else if storage.has_only_tombstones() {
+                // A tombstone-only storage has no index entries to reclaim, so purge it directly
+                self.purge_dead_slots_from_storage(iter::once(&remove_slot), purge_stats);
+            }
+            handle_reclaims_elapsed.stop();
+            purge_stats
+                .handle_reclaims_elapsed
+                .fetch_add(handle_reclaims_elapsed.as_us(), Ordering::Relaxed);
+            // After handling the reclaimed entries, this slot's
+            // storage entries should be purged from self.storage
+            assert!(
+                self.storage.get_slot_storage_entry(remove_slot).is_none(),
+                "slot {remove_slot} is not none"
+            );
         }
-        handle_reclaims_elapsed.stop();
-        purge_stats
-            .handle_reclaims_elapsed
-            .fetch_add(handle_reclaims_elapsed.as_us(), Ordering::Relaxed);
-        // After handling the reclaimed entries, this slot's
-        // storage entries should be purged from self.storage
-        assert!(
-            self.storage.get_slot_storage_entry(remove_slot).is_none(),
-            "slot {remove_slot} is not none"
-        );
     }
 
     fn purge_slots<'a>(&self, slots: impl Iterator<Item = &'a Slot> + Clone) {

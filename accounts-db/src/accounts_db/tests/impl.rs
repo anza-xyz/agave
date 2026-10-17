@@ -864,7 +864,6 @@ fn test_remove_slot_snapshot_minimizer() {
     // Purge the slot
     db.purge_slots_for_snapshot_minimizer([(&rooted_slot)].into_iter());
     assert!(db.do_load_for_tests(&ancestors, &key).is_none());
-    assert!(db.accounts_cache.slot_cache(rooted_slot).is_none());
     assert!(db.storage.get_slot_storage_entry(rooted_slot).is_none());
     assert!(!db.contains(&key));
 }
