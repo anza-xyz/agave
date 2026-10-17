@@ -535,19 +535,19 @@ pub enum RepairProtocol {
     ParentAndFecSetCount {
         header: RepairRequestHeader,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     },
     FecSetRoot {
         header: RepairRequestHeader,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
     },
     WindowIndexForBlockId {
         header: RepairRequestHeader,
         slot: Slot,
         shred_index: u32,
-        block_id: Hash,
+        block_id: BlockId,
     },
 }
 
@@ -589,19 +589,19 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
             12 => RepairProtocol::ParentAndFecSetCount {
                 header: rng.random(),
                 slot: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
             },
             13 => RepairProtocol::FecSetRoot {
                 header: rng.random(),
                 slot: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
                 fec_set_index: rng.random(),
             },
             14 => RepairProtocol::WindowIndexForBlockId {
                 header: rng.random(),
                 slot: rng.random(),
                 shred_index: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
             },
             _ => unreachable!(),
         }
@@ -1081,9 +1081,12 @@ impl ServeRepair {
                 } => {
                     stats.parent += 1;
                     let response = if self.migration_status.should_allow_block_markers(*slot) {
-                        let response = self
-                            .repair_handler
-                            .run_parent_fec_set_count(from_addr, *slot, *block_id, *nonce);
+                        let response = self.repair_handler.run_parent_fec_set_count(
+                            from_addr,
+                            *slot,
+                            block_id.to_hash(),
+                            *nonce,
+                        );
                         if response.is_none() {
                             stats.parent_misses += 1;
                         }
@@ -1104,7 +1107,7 @@ impl ServeRepair {
                         let response = self.repair_handler.run_fec_set_root(
                             from_addr,
                             *slot,
-                            *block_id,
+                            block_id.to_hash(),
                             *fec_set_index,
                             *nonce,
                         );
@@ -1129,7 +1132,7 @@ impl ServeRepair {
                             from_addr,
                             *slot,
                             u64::from(*shred_index),
-                            *block_id,
+                            block_id.to_hash(),
                             *nonce,
                         );
                         if batch.is_none() {
@@ -1997,7 +2000,7 @@ impl ServeRepair {
                 header,
                 slot: *slot,
                 shred_index: *index,
-                block_id: block_id.to_hash(),
+                block_id: *block_id,
             },
         };
         Self::repair_proto_to_bytes(&request_proto, identity_keypair)
@@ -2023,7 +2026,7 @@ impl ServeRepair {
                 RepairProtocol::ParentAndFecSetCount {
                     header,
                     slot: *slot,
-                    block_id: *block_id,
+                    block_id: BlockId::from(*block_id),
                 }
             }
             BlockIdRepairType::FecSetRoot {
@@ -2034,7 +2037,7 @@ impl ServeRepair {
             } => RepairProtocol::FecSetRoot {
                 header,
                 slot: *slot,
-                block_id: *block_id,
+                block_id: BlockId::from(*block_id),
                 fec_set_index: *fec_set_index,
             },
         };
@@ -2231,7 +2234,7 @@ mod tests {
             REPAIR_PING_CACHE_CAPACITY,
         );
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let header = |nonce| {
             RepairRequestHeader::new(
                 remote_keypair.pubkey(),
