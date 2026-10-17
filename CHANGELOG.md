@@ -160,6 +160,8 @@ Release channels have their own copy of this changelog:
   burn, in addition to the rent-exempt minimum and any rewards pending distribution to delegators.
   Pass `--allow-vat-withdrawal` to include the VAT reserve in the withdrawable balance; the flag is
   required with `--sign-only`.
+* `inflation` no longer shows the foundation percentage 100 times too small: the default inflation
+  schedule now shows `5.00%` instead of `0.05%`.
 
 ### Geyser
 
