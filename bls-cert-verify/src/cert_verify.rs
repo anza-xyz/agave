@@ -4,7 +4,7 @@ use {
         unverified_vote_message::UnverifiedCertificate,
     },
     bitvec::vec::BitVec,
-    rayon::iter::IntoParallelRefIterator,
+    rayon::{ThreadPool, iter::IntoParallelRefIterator},
     solana_bls_signatures::{
         BlsError, PubkeyProjective, Signature as BlsSignature, SignatureProjective,
         VerifySignature,
@@ -24,10 +24,6 @@ use {
     solana_bls_signatures::Keypair as BLSKeypair,
     solana_signer_store::{encode_base2, encode_base3},
 };
-
-/// Minimum size of the rayon thread pool required for this crate to use the thread pool.
-///  Otherwise, the operations will be done sequentially on the current thread.
-const THREAD_POOL_THRESHOLD: usize = 4;
 
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum Error {
@@ -79,6 +75,7 @@ pub fn verify_certificate(
     max_validators: usize,
     total_stake: NonZero<u64>,
     mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)>,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<Certificate, Error> {
     let mut aggregate_stake = 0u64;
 
@@ -100,6 +97,7 @@ pub fn verify_certificate(
             &cert.bitmap,
             max_validators,
             accumulating_rank_map,
+            thread_pool,
         )
     } else {
         verify_base2(
@@ -108,6 +106,7 @@ pub fn verify_certificate(
             &cert.bitmap,
             max_validators,
             accumulating_rank_map,
+            thread_pool,
         )
     }?;
     verify_stake(&cert, aggregate_stake, total_stake)?;
@@ -147,13 +146,14 @@ pub fn verify_base2<S: AsSignatureAffine>(
     ranks: &[u8],
     max_validators: usize,
     rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<(), Error> {
     let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
     let ranks = match ranks {
         Decoded::Base2(ranks) => ranks,
         Decoded::Base3(_, _) => return Err(Error::WrongEncoding),
     };
-    verify_single_vote_signature(payload, signature, &ranks, rank_map)
+    verify_single_vote_signature(payload, signature, &ranks, rank_map, thread_pool)
 }
 
 fn verify_single_vote_signature<S: AsSignatureAffine>(
@@ -161,9 +161,10 @@ fn verify_single_vote_signature<S: AsSignatureAffine>(
     signature: &S,
     ranks: &BitVec<u8>,
     rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<(), Error> {
     let pubkeys = collect_pubkeys(ranks, rank_map)?;
-    let agg_pubkey = aggregate_pubkeys(&pubkeys)?;
+    let agg_pubkey = aggregate_pubkeys(&pubkeys, thread_pool)?;
     Ok(agg_pubkey.verify_signature(signature, payload)?)
 }
 
@@ -180,10 +181,13 @@ fn verify_base3(
     ranks: &[u8],
     max_validators: usize,
     mut rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<(), Error> {
     let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
     match ranks {
-        Decoded::Base2(ranks) => verify_single_vote_signature(payload, signature, &ranks, rank_map),
+        Decoded::Base2(ranks) => {
+            verify_single_vote_signature(payload, signature, &ranks, rank_map, thread_pool)
+        }
         Decoded::Base3(ranks, fallback_ranks) => {
             check_disjoint(&ranks, &fallback_ranks)?;
 
@@ -194,14 +198,14 @@ fn verify_base3(
             let fallback_pubkeys = collect_pubkeys(&fallback_ranks, rank_map)?;
 
             if primary_pubkeys.is_empty() {
-                let agg_pubkey = aggregate_pubkeys(&fallback_pubkeys)?;
+                let agg_pubkey = aggregate_pubkeys(&fallback_pubkeys, thread_pool)?;
                 Ok(agg_pubkey.verify_signature(signature, fallback_payload)?)
             } else if fallback_pubkeys.is_empty() {
-                let agg_pubkey = aggregate_pubkeys(&primary_pubkeys)?;
+                let agg_pubkey = aggregate_pubkeys(&primary_pubkeys, thread_pool)?;
                 Ok(agg_pubkey.verify_signature(signature, payload)?)
             } else {
-                let agg_primary = aggregate_pubkeys(&primary_pubkeys)?;
-                let agg_fallback = aggregate_pubkeys(&fallback_pubkeys)?;
+                let agg_primary = aggregate_pubkeys(&primary_pubkeys, thread_pool)?;
+                let agg_fallback = aggregate_pubkeys(&fallback_pubkeys, thread_pool)?;
 
                 // SAFETY: `aggregate_pubkeys` strictly requires `PopVerified` public keys
                 // as input. Because every constituent key has already proven possession,
@@ -215,17 +219,19 @@ fn verify_base3(
 
                 let all_messages = [payload, fallback_payload];
 
-                if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
+                if let Some(thread_pool) = thread_pool {
+                    thread_pool.install(|| {
+                        Ok(SignatureProjective::par_verify_distinct_aggregated(
+                            &all_pubkeys,
+                            signature,
+                            &all_messages,
+                        )?)
+                    })
+                } else {
                     Ok(SignatureProjective::verify_distinct_aggregated(
                         all_pubkeys.iter(),
                         signature,
                         all_messages.into_iter(),
-                    )?)
-                } else {
-                    Ok(SignatureProjective::par_verify_distinct_aggregated(
-                        &all_pubkeys,
-                        signature,
-                        &all_messages,
                     )?)
                 }
             }
@@ -237,11 +243,14 @@ fn verify_base3(
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn aggregate_pubkeys(
     pubkeys: &[PopVerified<BlsPubkeyAffine>],
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<AggregatePubkey<PubkeyProjective>, Error> {
-    if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
-        PubkeyProjective::aggregate(pubkeys.iter()).map_err(Error::VerifySig)
+    if let Some(thread_pool) = thread_pool {
+        thread_pool.install(|| {
+            PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
+        })
     } else {
-        PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
+        PubkeyProjective::aggregate(pubkeys.iter()).map_err(Error::VerifySig)
     }
 }
 
@@ -456,11 +465,17 @@ mod test {
             cert_type,
             &(0..6).collect::<Vec<_>>(),
         );
-        verify_certificate(cert, 10, NonZero::new(600).unwrap(), |rank| {
-            bls_keypairs
-                .get(rank)
-                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-        })
+        verify_certificate(
+            cert,
+            10,
+            NonZero::new(600).unwrap(),
+            |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+            },
+            None,
+        )
         .unwrap();
     }
 
@@ -480,11 +495,17 @@ mod test {
             cert_type,
             &(0..6).collect::<Vec<_>>(),
         );
-        verify_certificate(cert, 10, total_stake, |rank| {
-            bls_keypairs
-                .get(rank)
-                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-        })
+        verify_certificate(
+            cert,
+            10,
+            total_stake,
+            |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+            },
+            None,
+        )
         .unwrap();
 
         // not enough stake, should fail.
@@ -494,11 +515,17 @@ mod test {
             cert_type,
             &(0..5).collect::<Vec<_>>(),
         );
-        let Err(err) = verify_certificate(cert, 10, total_stake, |rank| {
-            bls_keypairs
-                .get(rank)
-                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-        }) else {
+        let Err(err) = verify_certificate(
+            cert,
+            10,
+            total_stake,
+            |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+            },
+            None,
+        ) else {
             panic!("should fail");
         };
         match err {
@@ -529,11 +556,17 @@ mod test {
             &primary_ranks,
             &fallback_ranks,
         );
-        verify_certificate(cert, 10, NonZero::new(700).unwrap(), |rank| {
-            bls_keypairs
-                .get(rank)
-                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-        })
+        verify_certificate(
+            cert,
+            10,
+            NonZero::new(700).unwrap(),
+            |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+            },
+            None,
+        )
         .unwrap();
     }
 
@@ -558,11 +591,17 @@ mod test {
             shred_version,
         };
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(1000).unwrap(), |rank| {
-                bls_keypairs
-                    .get(rank)
-                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-            })
+            verify_certificate(
+                cert,
+                10,
+                NonZero::new(1000).unwrap(),
+                |rank| {
+                    bls_keypairs
+                        .get(rank)
+                        .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+                },
+                None
+            )
             .unwrap_err(),
             Error::VerifySig(BlsError::PointConversion)
         );
@@ -598,6 +637,7 @@ mod test {
                     .get(rank)
                     .map(|kp| (NonZero::new(per_validator_stake).unwrap(), kp.public))
             },
+            None,
         )
         .unwrap();
     }
@@ -715,8 +755,14 @@ mod test {
         // Must fail at the signature stage (not via a decode / missing-rank path),
         // proving the extra validator cannot be smuggled in.
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -740,8 +786,14 @@ mod test {
         cert.bitmap = encoded_base2_bitmap(&[0, 1, 2, 3, 4], 6);
 
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -768,8 +820,14 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                forged,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -788,8 +846,14 @@ mod test {
 
         // An empty signer set cannot produce a valid aggregate signature.
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::EmptyAggregation)
         );
     }
@@ -805,8 +869,14 @@ mod test {
         let cert = unsigned_cert(CertificateType::new_unique_notar(10), bitmap, shred_version);
 
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::WrongEncoding
         );
     }
@@ -827,15 +897,21 @@ mod test {
         );
 
         // rank_map returns None for rank 3, simulating an unknown/unstaked validator.
-        let result = verify_certificate(cert, 10, NonZero::new(10).unwrap(), |rank| {
-            if rank == 3 {
-                None
-            } else {
-                keypairs
-                    .get(rank)
-                    .map(|kp| (STAKE_PER_VALIDATOR, kp.public))
-            }
-        });
+        let result = verify_certificate(
+            cert,
+            10,
+            NonZero::new(10).unwrap(),
+            |rank| {
+                if rank == 3 {
+                    None
+                } else {
+                    keypairs
+                        .get(rank)
+                        .map(|kp| (STAKE_PER_VALIDATOR, kp.public))
+                }
+            },
+            None,
+        );
 
         assert_eq!(result.unwrap_err(), Error::MissingRank);
     }
@@ -854,8 +930,14 @@ mod test {
         );
 
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::Decode(DecodeError::CorruptDataPayload)
         );
     }
@@ -874,8 +956,14 @@ mod test {
             let cert = unsigned_cert(CertificateType::new_unique_notar(10), bitmap, shred_version);
             // Must return (Ok/Err) without panicking; a zero signature can never
             // produce a valid certificate, so the result must be an error.
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err();
+            verify_certificate(
+                cert,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None,
+            )
+            .unwrap_err();
         }
     }
 
@@ -905,8 +993,14 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                forged,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -935,8 +1029,14 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                forged,
+                10,
+                NonZero::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }

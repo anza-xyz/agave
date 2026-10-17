@@ -245,11 +245,11 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
             first_epoch_slot,
         ));
 
-        let rewards_steps = bank
+        let epoch_rewards: EpochRewards = bank
             .get_account(&epoch_rewards::id())
-            .and_then(|account| wincode::deserialize::<EpochRewards>(account.data()).ok())
-            .unwrap()
-            .num_partitions;
+            .and_then(|account| account.state().ok())
+            .unwrap();
+        let rewards_steps = epoch_rewards.num_partitions;
 
         let final_rewards_slot = first_epoch_slot + rewards_steps;
 

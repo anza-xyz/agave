@@ -1,6 +1,6 @@
 use {
     crate::bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_sdk_ids::system_program,
@@ -104,8 +104,7 @@ impl RewardEpochDelegatedStakes {
         let data = wincode::serialize(&delegated_stakes_account).unwrap();
         let lamports = bank
             .get_minimum_balance_for_rent_exemption(RewardEpochDelegatedStakesAccount::max_size());
-        let mut account = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
 
         bank.store_account_and_update_capitalization(
             &REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT,
@@ -116,7 +115,8 @@ impl RewardEpochDelegatedStakes {
     pub(crate) fn get(bank: &Bank) -> Option<Self> {
         let account = bank.get_account(&REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT)?;
         (!account.data().is_empty()).then(|| {
-            let account: RewardEpochDelegatedStakesAccount = wincode::deserialize(account.data())
+            let account: RewardEpochDelegatedStakesAccount = account
+                .state()
                 .expect("Couldn't deserialize reward epoch delegated stakes");
             assert!(
                 account.delegated_stakes.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS,

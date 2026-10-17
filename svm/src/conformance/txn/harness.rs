@@ -210,7 +210,7 @@ mod tests {
             setup::{sanitized_message_from_versioned_message, sysvar_cache_from_accounts},
         },
         agave_feature_set::FeatureSet,
-        solana_account::ReadableAccount,
+        solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
         solana_instruction_error::InstructionError,
@@ -388,17 +388,15 @@ mod tests {
             (payer, Account::new(5_000_000, 0, &system_program::id())),
             (
                 clock_pubkey,
-                Account {
-                    lamports: 1,
-                    data: wincode::serialize(&Clock {
+                Account::new_data(
+                    1,
+                    &Clock {
                         slot: 1,
                         ..Clock::default()
-                    })
-                    .unwrap(),
-                    owner: sysvar::id(),
-                    executable: false,
-                    rent_epoch: 0,
-                },
+                    },
+                    &sysvar::id(),
+                )
+                .unwrap(),
             ),
         ]);
         let message =

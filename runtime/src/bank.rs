@@ -108,6 +108,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
+        state_traits::StateMutWincode as _,
     },
     solana_accounts_db::{
         account_locks::validate_account_locks,
@@ -190,7 +191,7 @@ use {
     },
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_syscalls::create_program_runtime_environment,
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot},
@@ -638,7 +639,7 @@ pub struct BankFieldsToSerialize {
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: AccountsLtHash,
-    pub block_id: Hash,
+    pub block_id: BlockId,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -800,7 +801,7 @@ impl BankFieldsToSerialize {
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
             accounts_lt_hash: AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS])),
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
         }
     }
 }
@@ -2727,7 +2728,9 @@ impl Bank {
 
     pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
     where
-        T: wincode::Serialize<Src = T> + SysvarId,
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
     {
         self.update_sysvar_account(&T::id(), |account| {
             create_account(
@@ -2743,9 +2746,9 @@ impl Bank {
 
     fn update_slot_history(&self) {
         self.update_sysvar_account(&sysvar::slot_history::id(), |account| {
-            let mut slot_history = account
+            let mut slot_history: SlotHistory = account
                 .as_ref()
-                .map(|account| wincode::deserialize::<SlotHistory>(account.data()).unwrap())
+                .map(|account| account.state().unwrap())
                 .unwrap_or_default();
             slot_history.add(self.slot());
             create_account(
@@ -2757,9 +2760,9 @@ impl Bank {
 
     fn update_slot_hashes(&self) {
         self.update_sysvar_account(&sysvar::slot_hashes::id(), |account| {
-            let mut slot_hashes = account
+            let mut slot_hashes: SlotHashes = account
                 .as_ref()
-                .map(|account| wincode::deserialize::<SlotHashes>(account.data()).unwrap())
+                .map(|account| account.state().unwrap())
                 .unwrap_or_default();
             slot_hashes.add(self.parent_slot, self.parent_hash);
             create_account(
@@ -2770,8 +2773,7 @@ impl Bank {
     }
 
     pub fn get_slot_history(&self) -> Option<SlotHistory> {
-        wincode::deserialize::<SlotHistory>(self.get_account(&sysvar::slot_history::id())?.data())
-            .ok()
+        self.get_account(&sysvar::slot_history::id())?.state().ok()
     }
 
     fn update_epoch_stakes(
@@ -3546,7 +3548,7 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            let nonce_address = SVMMessage::get_durable_nonce(message)?;
+            let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
             let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
             verify_nonce_account(&nonce_account, message.recent_blockhash())
                 .map(|nonce_data| nonce_data.get_lamports_per_signature())
@@ -3586,7 +3588,8 @@ impl Bank {
             // The address is known in advance, so the account could already exist if it was prefunded.
             // However this account cannot be written to except by us in `set_alpenglow_genesis_certificate`,
             // so this deserialize is safe if the account is non-empty
-            let cert: WireBlockCertMessage = wincode::deserialize(acct.data())
+            let cert: WireBlockCertMessage = acct
+                .state()
                 .expect("Programmer error deserializing genesis certificate");
             GenesisCert {
                 block: cert.block,
@@ -3617,8 +3620,7 @@ impl Bank {
         };
         let data = wincode::serialize(&cert).unwrap();
         let lamports = Rent::default().minimum_balance(data.len());
-        let mut cert_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        cert_acct.set_data_from_slice(&data);
+        let cert_acct = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
 
         self.store_account_and_update_capitalization(&GENESIS_CERTIFICATE_ACCOUNT, &cert_acct);
         self.set_is_alpenglow();
@@ -3667,8 +3669,7 @@ impl Bank {
         // Update Alpenglow clock
         let data = wincode::serialize(&unix_timestamp_nanos).unwrap();
         let lamports = Rent::default().minimum_balance(data.len());
-        let mut alpenclock_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        alpenclock_acct.set_data_from_slice(&data);
+        let alpenclock_acct = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
 
         self.store_account_and_update_capitalization(&NANOSECOND_CLOCK_ACCOUNT, &alpenclock_acct);
 
@@ -3683,7 +3684,7 @@ impl Bank {
         (!acct.data().is_empty()).then(|| {
             // This address is known in advance, so the account could already exist if it was prefunded.
             // The deserialize is only safe when the account is non-empty
-            wincode::deserialize(acct.data())
+            acct.state()
                 .expect("Couldn't deserialize nanosecond resolution clock")
         })
     }
@@ -3868,7 +3869,7 @@ impl Bank {
     /// an entry. Used for tests only.
     pub fn prepare_entry_batch(
         &self,
-        txs: Vec<VersionedTransaction>,
+        txs: impl IntoIterator<Item = VersionedTransaction>,
     ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
         let sanitized_txs = txs
             .into_iter()
@@ -4167,9 +4168,9 @@ impl Bank {
         let slot_history_id = sysvar::slot_history::id();
         if account_keys.iter().any(|pubkey| *pubkey == slot_history_id) {
             let current_account = self.get_account_with_fixed_root(&slot_history_id);
-            let slot_history = current_account
+            let slot_history: SlotHistory = current_account
                 .as_ref()
-                .map(|account| wincode::deserialize::<SlotHistory>(account.data()).unwrap())
+                .map(|account| account.state().unwrap())
                 .unwrap_or_default();
             if slot_history.check(self.slot()) == Check::Found {
                 let mut ancestors = self.ancestors.clone();
@@ -4755,7 +4756,7 @@ impl Bank {
             .rc
             .accounts
             .accounts_db
-            .get_pubkey_account_for_slot(self.slot());
+            .get_pubkey_account_for_slot(self.slot(), self.bank_id());
         // Sort the accounts by pubkey to make diff deterministic.
         accounts.sort_unstable_by_key(|a| a.0);
         accounts
@@ -4868,8 +4869,7 @@ impl Bank {
         &self,
         tx: impl Into<VersionedTransaction>,
     ) -> Result<CommittedTransaction> {
-        let txs = vec![tx.into()];
-        let batch = self.prepare_entry_batch(txs)?;
+        let batch = self.prepare_entry_batch(std::iter::once(tx.into()))?;
 
         let (mut commit_results, ..) = self.load_execute_and_commit_transactions(
             &batch,
@@ -4892,17 +4892,14 @@ impl Bank {
         &self,
         txs: impl Iterator<Item = &'a Transaction>,
     ) -> Result<Vec<Result<()>>> {
-        let txs = txs
-            .map(|tx| VersionedTransaction::from(tx.clone()))
-            .collect();
-        self.try_process_entry_transactions(txs)
+        self.try_process_entry_transactions(txs.map(|tx| VersionedTransaction::from(tx.clone())))
     }
 
     /// Process multiple transaction in a single batch. This is used for benches and unit tests.
     /// Short circuits if any of the transactions do not pass sanitization checks.
     pub fn try_process_entry_transactions(
         &self,
-        txs: Vec<VersionedTransaction>,
+        txs: impl IntoIterator<Item = VersionedTransaction>,
     ) -> Result<Vec<Result<()>>> {
         let batch = self.prepare_entry_batch(txs)?;
         Ok(self.process_transaction_batch(&batch))
@@ -5416,7 +5413,7 @@ impl Bank {
     ) -> Vec<KeyedAccountSharedData> {
         self.rc
             .accounts
-            .load_by_program_slot(self.slot(), Some(program_id))
+            .load_by_program_slot(self.slot(), self.bank_id(), Some(program_id))
     }
 
     pub fn get_transaction_logs(
@@ -5431,7 +5428,9 @@ impl Bank {
 
     /// Returns all the accounts stored in this slot
     pub fn get_all_accounts_modified_since_parent(&self) -> Vec<KeyedAccountSharedData> {
-        self.rc.accounts.load_by_program_slot(self.slot(), None)
+        self.rc
+            .accounts
+            .load_by_program_slot(self.slot(), self.bank_id(), None)
     }
 
     // if you want get_account_modified_since_parent without fixed_root, please define so...
@@ -6038,6 +6037,7 @@ impl Bank {
     pub fn verify_certificate(
         &self,
         cert: UnverifiedCertificate,
+        thread_pool: Option<&ThreadPool>,
     ) -> std::result::Result<Certificate, CertVerifyError> {
         let slot = cert.cert_type.slot();
         let epoch_stakes = self
@@ -6046,12 +6046,17 @@ impl Bank {
         let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
         let total_stake = key_to_rank_map.total_stake();
 
-        let cert =
-            cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {
+        let cert = cert_verify::verify_certificate(
+            cert,
+            key_to_rank_map.len(),
+            total_stake,
+            |rank| {
                 key_to_rank_map
                     .get_pubkey_stake_entry(rank)
                     .map(|entry| (entry.stake, entry.bls_pubkey))
-            })?;
+            },
+            thread_pool,
+        )?;
 
         Ok(cert)
     }
@@ -6094,16 +6099,6 @@ impl Bank {
             .stakes()
             .vote_accounts()
             .as_ref()
-    }
-
-    /// Get the fixed authorized voter for the given vote account for the
-    /// current epoch
-    pub fn epoch_authorized_voter(&self, vote_account: &Pubkey) -> Option<&Pubkey> {
-        self.epoch_stakes
-            .get(&self.epoch)
-            .expect("Epoch stakes for bank's own epoch must exist")
-            .epoch_authorized_voters()
-            .get(vote_account)
     }
 
     /// Get the fixed set of vote accounts for the given node id for the
@@ -6460,22 +6455,6 @@ impl Bank {
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 
-        if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id())
-            && let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
-                &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
-                &feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
-                self.feature_set
-                    .snapshot()
-                    .relax_programdata_account_check_migration,
-                "replace_spl_token_with_p_token",
-            )
-        {
-            warn!(
-                "Failed to replace SPL Token with p-token buffer '{}': {e}",
-                feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
-            );
-        }
-
         if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5::id())
             && let Err(e) = self.upgrade_core_bpf_program(
                 &solana_sdk_ids::stake::id(),
@@ -6740,18 +6719,18 @@ impl Bank {
         &self.fee_structure
     }
 
-    pub fn parent_block_id(&self) -> Option<Hash> {
+    pub fn parent_block_id(&self) -> Option<BlockId> {
         self.parent().and_then(|p| p.block_id())
     }
 
-    pub fn block_id(&self) -> Option<Hash> {
-        self.block_id.read().unwrap().map(|b| b.to_hash())
+    pub fn block_id(&self) -> Option<BlockId> {
+        self.block_id.read().unwrap().map(|b| b)
     }
 
-    pub fn set_block_id(&self, block_id: Option<Hash>) {
+    pub fn set_block_id(&self, block_id: Option<BlockId>) {
         let mut block_id_w = self.block_id.write().unwrap();
-        debug_assert!(block_id_w.is_none() || block_id_w.map(|b| b.to_hash()) == block_id);
-        *block_id_w = block_id.map(BlockId::from)
+        debug_assert!(block_id_w.is_none() || *block_id_w == block_id);
+        *block_id_w = block_id
     }
 
     pub fn compute_budget(&self) -> Option<ComputeBudget> {
@@ -6874,7 +6853,7 @@ impl Bank {
             // as parent's block id is not available for the calculation below.
             // Must freeze() to ensure bank hash has been calculated.
             bank.freeze();
-            bank.set_block_id(Some(bank.hash()));
+            bank.set_block_id(Some(BlockId::from(bank.hash())));
             return;
         };
 
@@ -6886,8 +6865,10 @@ impl Bank {
 
         // must freeze() to ensure bank hash has been calculated
         bank.freeze();
-        let block_id =
-            solana_sha256_hasher::hashv(&[parent_block_id.as_ref(), bank.hash().as_ref()]);
+        let block_id = BlockId::from(solana_sha256_hasher::hashv(&[
+            parent_block_id.as_bytes(),
+            bank.hash().as_ref(),
+        ]));
         bank.set_block_id(Some(block_id));
     }
 
@@ -7106,6 +7087,10 @@ impl Bank {
             accounts_data_size_initial,
         );
 
+        if bank.get_alpenglow_genesis_certificate().is_some() {
+            bank.set_is_alpenglow();
+        }
+
         bank.apply_activated_features();
         if bank.feature_set.snapshot().remove_inactive_stakes {
             bank.stakes_cache.remove_inert_stake_delegations(
@@ -7132,6 +7117,26 @@ impl Bank {
             bank.block_height.saturating_sub(1),
             null_tracer(),
         );
+
+        // The Alpenglow clock update detects an epoch boundary through the
+        // parent bank, which this bank does not have: apply the boundary
+        // rule (the epoch starts at the parent's footer timestamp) here.
+        if bank.is_alpenglow() && parent_epoch != bank.epoch() {
+            let clock = bank.clock();
+            let clock = sysvar::clock::Clock {
+                epoch_start_timestamp: clock.unix_timestamp,
+                ..clock
+            };
+            bank.update_sysvar_account(&sysvar::clock::id(), |account| {
+                create_account(
+                    &clock,
+                    bank.inherit_specially_retained_account_fields(account),
+                )
+            });
+            bank.transaction_processor.reset_sysvar_cache();
+            bank.transaction_processor
+                .fill_missing_sysvar_cache_entries(&bank);
+        }
 
         bank
     }

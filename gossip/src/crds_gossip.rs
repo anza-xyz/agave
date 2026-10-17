@@ -7,7 +7,7 @@
 use {
     crate::{
         cluster_info_metrics::GossipStats,
-        crds::{Crds, GossipRoute, LOCK_CHUNK_SIZE, NodesCursor},
+        crds::{Crds, GossipRoute, NodesCursor},
         crds_data::CrdsData,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -335,18 +335,14 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     let active_cutoff = now.saturating_sub(ACTIVE_TIMEOUT.as_millis() as u64);
     // Copy out the needed fields one chunk of nodes per read lock, and apply the
     // other filters outside the lock.
-    let mut cursor = NodesCursor::new(crds.read());
-    while !cursor.is_done() {
-        cursor.read_chunk(&crds.read(), LOCK_CHUNK_SIZE, |value| {
-            let node = value.value.contact_info()?;
-            if !verify_shred_version(node.shred_version()) {
-                return None;
-            }
-            Some((node.gossip()?, value.local_timestamp))
-        });
-    }
-    cursor
-        .into_unique()
+    let nodes = NodesCursor::collect(crds, |_, value| {
+        let node = value.value.contact_info()?;
+        if !verify_shred_version(node.shred_version()) {
+            return None;
+        }
+        Some((node.gossip()?, value.local_timestamp))
+    });
+    nodes
         .filter_map(|(node_pubkey, (gossip, local_timestamp))| {
             if !socket_addr_space.check(&gossip)
                 || &node_pubkey == pubkey
@@ -405,6 +401,7 @@ mod test {
         crate::{
             cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
             contact_info::ContactInfo,
+            crds::LOCK_CHUNK_SIZE,
         },
         solana_sha256_hasher::hash,
         solana_time_utils::timestamp,

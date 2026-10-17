@@ -74,7 +74,6 @@ pub struct FeatureSnapshot {
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub upgrade_bpf_stake_program_to_v5: bool,
-    pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
@@ -82,6 +81,7 @@ pub struct FeatureSnapshot {
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
+    pub unbound_loader_v3_instruction_data: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -173,9 +173,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &direct_account_pointers_in_program_input::ID,
             ),
             upgrade_bpf_stake_program_to_v5: is_active(&upgrade_bpf_stake_program_to_v5::ID),
-            loader_v3_minimum_extend_program_size: is_active(
-                &loader_v3_minimum_extend_program_size::ID,
-            ),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
@@ -187,6 +184,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             early_instruction_trace_overflow_detection: is_active(
                 &early_instruction_trace_overflow_detection::ID,
             ),
+            unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
         }
     }
 }
@@ -341,7 +339,6 @@ impl FeatureSet {
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot
                 .direct_account_pointers_in_program_input,
-            loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
@@ -350,6 +347,7 @@ impl FeatureSet {
                 .loader_v3_set_program_data_to_elf_length,
             early_instruction_trace_overflow_detection: snapshot
                 .early_instruction_trace_overflow_detection,
+            unbound_loader_v3_instruction_data: snapshot.unbound_loader_v3_instruction_data,
         }
     }
 }
@@ -1551,6 +1549,10 @@ pub mod early_instruction_trace_overflow_detection {
     solana_pubkey::declare_id!("HeqqMQXVqavmiJsGTEXgCMydzMEWiiQTAgbs9KVKJVww");
 }
 
+pub mod unbound_loader_v3_instruction_data {
+    solana_pubkey::declare_id!("UPbPFtaUVoKZuMEJsDxLfvCNuKavoVapghnzepr1e26");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2648,6 +2650,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             early_instruction_trace_overflow_detection::id(),
             "SIMD-582: Early detection of instruction trace overflow",
+        ),
+        (
+            unbound_loader_v3_instruction_data::id(),
+            "SIMD-0648: Unbound LoaderV3 Instruction Data",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

@@ -108,7 +108,6 @@ agave-logger = { path = "../../logger", version = "=4.5.0-alpha.2" }
 agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=4.5.0-alpha.2" }
 agave-validator = { path = "../../validator", version = "=4.5.0-alpha.2" }
 array-bytes = "9.3.0"
-bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
 borsh = "1.5.1"
 byteorder = "1.3.2"
@@ -135,7 +134,7 @@ solana-instruction = "4.0.0"
 solana-instructions-sysvar = "=5.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
 solana-msg = "=3.1.0"
-solana-poseidon = "=5.0.0"
+solana-poseidon = "=5.0.1"
 solana-program = "=5.1.0"
 solana-program-binaries = { path = "../../program-binaries", version = "=4.5.0-alpha.2" }
 solana-program-entrypoint = "=3.1.1"
@@ -160,7 +159,7 @@ solana-stake-history = { version = "2.1.0", features = ["serde", "sysvar", "winc
 solana-svm = { path = "../../svm", version = "=4.5.0-alpha.2" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.5.0-alpha.2" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.5.0-alpha.2" }
-solana-svm-transaction = "6.0.0"
+solana-svm-transaction = "7.0.0"
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.5.0-alpha.2" }
 solana-system-interface = { version = "=3.3.0", features = ["bincode"] }
 solana-sysvar = "=5.0.0"
@@ -171,7 +170,7 @@ solana-vote-interface = "7.2.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.5.0-alpha.2" }
 test-case = "3.4.0"
 thiserror = "2.0"
-wincode = { version = "0.6.2", default-features = false }
+wincode = { version = "0.6.3", default-features = false }
 
 [features]
 sbf_c = []
@@ -187,9 +186,8 @@ agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
-bincode = { workspace = true }
 borsh = { workspace = true }
-solana-account = { version = "5.1.0", features = ["wincode"] }
+solana-account = { version = "5.1.1", features = ["wincode"] }
 solana-account-info = "3.1.0"
 solana-client-traits = "5.0.0"
 solana-clock = { workspace = true }
@@ -232,6 +230,7 @@ solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
 test-case = { workspace = true }
+wincode = { workspace = true }
 
 [profile.dev]
 debug = "line-tables-only"

@@ -54,6 +54,9 @@ pub(crate) fn create_client_config(
         res.max_idle_timeout(Some(timeout));
         res.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
         res.datagram_receive_buffer_size(None);
+        // We do not expect server to send anything to us
+        res.max_concurrent_uni_streams(0u32.into());
+        res.max_concurrent_bidi_streams(0u32.into());
         // Disable Quic send fairness.
         // When set to false, streams are still scheduled based on priority,
         // but once a chunk of a stream has been written out, quinn tries to complete

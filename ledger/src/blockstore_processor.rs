@@ -15,7 +15,9 @@ use {
     agave_transaction_view::{
         transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
     },
-    agave_votor_messages::{certificate::Certificate, migration::MigrationStatus},
+    agave_votor_messages::{
+        certificate::Certificate, consensus_message::BlockId, migration::MigrationStatus,
+    },
     bytes::Bytes,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
@@ -50,7 +52,10 @@ use {
         leader_schedule_utils::leader_slot_index,
         runtime_config::RuntimeConfig,
         snapshot_controller::SnapshotController,
-        transaction_execution::TransactionStatusSender,
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
+            TransactionStatusSenderError,
+        },
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::ReplayTransaction,
@@ -290,10 +295,25 @@ pub enum BlockstoreProcessorError {
     ChainedBlockIdFailure(Slot, Slot),
 
     #[error("block component processor error: {0}")]
-    BlockComponentProcessor(#[from] BlockComponentProcessorError),
+    BlockComponentProcessor(#[source] BlockComponentProcessorError),
 
     #[error("bank hash mismatch at slot {0}: expected {1}, got {2}")]
     BankHashMismatch(Slot, Hash, Hash),
+
+    #[error("failed to request transaction-history purge for slot {0}: {1}")]
+    FailedToRequestTransactionHistoryPurge(Slot, #[source] TransactionStatusSenderError),
+
+    #[error("failed to purge transaction history for slot {0}: {1}")]
+    FailedToPurgeTransactionHistory(Slot, #[source] BlockstoreError),
+}
+
+impl From<BlockComponentProcessorError> for BlockstoreProcessorError {
+    fn from(err: BlockComponentProcessorError) -> Self {
+        match err {
+            BlockComponentProcessorError::TransactionExecution(err) => err.into(),
+            err => Self::BlockComponentProcessor(err),
+        }
+    }
 }
 
 impl BlockstoreProcessorError {
@@ -1482,32 +1502,26 @@ pub fn confirm_slot(
                 let block_footer = match &marker {
                     VersionedBlockMarker::V1(marker) => marker.as_block_footer().cloned(),
                 };
-                if block_footer.is_some() {
-                    // The footer path mutates vote accounts directly to pay rewards.
-                    // All prior transactions must finish first so vote account view is deterministic.
-                    if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
-                        timing.batch_execute.totals.accumulate(&execute_time);
-                        result?;
-                    }
-                }
                 if let Some(parent_bank) = bank.parent() {
                     let allow_initial_update_parent =
                         replay_starts_at_update_parent && marker.is_update_parent();
                     processor
                         .on_marker(
-                            bank.clone_without_scheduler(),
+                            bank,
                             parent_bank,
                             shred_version,
                             marker,
                             allow_initial_update_parent,
                             finalization_cert_sender,
                             migration_status,
+                            &mut timing.batch_execute.totals,
                         )
                         .inspect_err(|err| {
                             if !matches!(
                                 err,
                                 BlockComponentProcessorError::AbandonedBank(_)
                                     | BlockComponentProcessorError::AlpenglowMigrationTransition
+                                    | BlockComponentProcessorError::TransactionExecution(_)
                             ) {
                                 warn!(
                                     "BlockComponentProcessor::on_marker() for slot {slot} failed \
@@ -1784,11 +1798,11 @@ fn process_bank_0(
         err @ BlockstoreProcessorError::InvalidTransaction(_) => panic!("{err}"),
         _ => BlockstoreProcessorError::FailedToReplayBank0,
     })?;
-    bank0.set_block_id(Some(
+    bank0.set_block_id(Some(BlockId::from(
         blockstore
             .get_block_id(bank0.slot(), migration_status)?
             .expect("block id for a full slot must exist"),
-    ));
+    )));
     bank0.freeze();
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
@@ -1829,6 +1843,7 @@ fn cleanup_and_populate_pending_from_alpenglow_genesis(
     leader_schedule_cache: &LeaderScheduleCache,
     pending_slots: &mut Vec<(SlotMeta, Bank, Hash)>,
     opts: &ProcessOptions,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     // The frontier is now out of date, as all banks were created as TowerBFT banks.
@@ -1867,14 +1882,15 @@ fn cleanup_and_populate_pending_from_alpenglow_genesis(
         leader_schedule_cache,
         pending_slots,
         opts,
+        transaction_status_sender,
         migration_status,
     )?;
 
     Ok(())
 }
 
-// Given a bank, add its children to the pending slots queue if those children slots are
-// complete
+// Given a bank, clear stale history for UpdateParent children and add complete children to the
+// pending slots queue.
 fn process_next_slots(
     bank: &Arc<Bank>,
     meta: &SlotMeta,
@@ -1882,6 +1898,7 @@ fn process_next_slots(
     leader_schedule_cache: &LeaderScheduleCache,
     pending_slots: &mut Vec<(SlotMeta, Bank, Hash)>,
     opts: &ProcessOptions,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     if meta.next_slots.is_empty() {
@@ -1908,6 +1925,32 @@ fn process_next_slots(
             })?
             .unwrap();
 
+        // Clear pre-UpdateParent transaction history before filtering out partial slots. Those
+        // slots resume from the UpdateParent boundary in ReplayStage and will not request another
+        // purge after restart. Wait here so startup cannot expose the slot before cleanup finishes.
+        if next_meta.has_update_parent() {
+            if let Some(transaction_status_sender) = transaction_status_sender {
+                transaction_status_sender
+                    .send_purge_transaction_history_for_slot(
+                        *next_slot,
+                        TransactionHistoryPurgeSource::StartupReplay,
+                        TransactionHistoryPurgeInput::ReplayStage,
+                        /*wait_until_finished:*/ true,
+                    )
+                    .map_err(|err| {
+                        BlockstoreProcessorError::FailedToRequestTransactionHistoryPurge(
+                            *next_slot, err,
+                        )
+                    })?;
+            } else if blockstore.is_primary_access() {
+                blockstore
+                    .purge_transaction_history_for_replay_slot_exact(*next_slot)
+                    .map_err(|err| {
+                        BlockstoreProcessorError::FailedToPurgeTransactionHistory(*next_slot, err)
+                    })?;
+            }
+        }
+
         // Only process full slots in blockstore_processor, replay_stage
         // handles any partials
         if next_meta.is_full() {
@@ -1915,7 +1958,7 @@ fn process_next_slots(
                 let parent_block_id = bank.block_id();
                 if migration_status.should_allow_block_markers(*next_slot)
                     && bank.slot() != 0
-                    && Some(next_meta.parent_block_id) != parent_block_id
+                    && parent_block_id != Some(BlockId::from(next_meta.parent_block_id))
                 {
                     warn!(
                         "startup replay deferring slot {next_slot}: parent {} has block id {:?}, \
@@ -2018,6 +2061,7 @@ fn load_frozen_forks(
         leader_schedule_cache,
         &mut pending_slots,
         opts,
+        transaction_status_sender,
         &migration_status,
     )?;
 
@@ -2109,6 +2153,7 @@ fn load_frozen_forks(
                         leader_schedule_cache,
                         &mut pending_slots,
                         opts,
+                        transaction_status_sender,
                         &migration_status,
                     )?;
                     continue;
@@ -2251,6 +2296,7 @@ fn load_frozen_forks(
                 leader_schedule_cache,
                 &mut pending_slots,
                 opts,
+                transaction_status_sender,
                 &migration_status,
             )?;
         }
@@ -2392,6 +2438,7 @@ pub fn process_single_slot(
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
+
     if !opts.skip_inter_slot_verification {
         match check_chained_block_id(blockstore, bank, migration_status) {
             ChainedBlockIdCheck::Inactive | ChainedBlockIdCheck::Pass => (),
@@ -2434,10 +2481,12 @@ pub fn process_single_slot(
         err
     })?;
 
-    let block_id = blockstore
-        .get_block_id(slot, migration_status)
-        .expect("Blockstore operations must succeed")
-        .expect("Full block must have block id");
+    let block_id = BlockId::from(
+        blockstore
+            .get_block_id(slot, migration_status)
+            .expect("Blockstore operations must succeed")
+            .expect("Full block must have block id"),
+    );
     bank.set_block_id(Some(block_id));
     let verify_result = bank.freeze_and_verify_bank_hash(); // all banks handled by this routine are created from complete slots
 
@@ -5106,13 +5155,16 @@ pub mod tests {
     ) -> result::Result<(), BlockstoreProcessorError> {
         let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
         let mut progress = ConfirmationProgress::new(prev_entry_hash);
-        confirm_slot_entries_with_pool_for_tests(
+        let result = confirm_slot_entries_with_pool_for_tests(
             &pool,
             bank,
             slot_entries,
             slot_full,
             &mut progress,
-        )
+        );
+        // Shut the pool down so its schedulers release `bank`
+        pool.uninstalled_from_bank_forks();
+        result
     }
 
     fn create_test_transactions(
@@ -5241,6 +5293,7 @@ pub mod tests {
                     indexes.extend_from_slice(&batch.transaction_indexes);
                 }
                 TransactionStatusMessage::Freeze(_) => {}
+                TransactionStatusMessage::PurgeTransactionHistory { .. } => unreachable!(),
             }
         }
         indexes.sort();
@@ -5739,7 +5792,7 @@ pub mod tests {
                 false,
                 Hash::default(),
                 next_shred_index,
-                0,
+                next_shred_index, // next_code_index
                 &mut ProcessShredsStats::default(),
             )
             .into_iter()
@@ -5757,7 +5810,7 @@ pub mod tests {
                     false,
                     Hash::default(),
                     next_shred_index,
-                    0,
+                    next_shred_index, // next_code_index
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()
@@ -5772,7 +5825,7 @@ pub mod tests {
                     true, // last in slot
                     Hash::default(),
                     next_shred_index,
-                    0,
+                    next_shred_index, // next_code_index
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()
@@ -5789,7 +5842,7 @@ pub mod tests {
                     false,
                     Hash::default(),
                     next_shred_index,
-                    0,
+                    next_shred_index, // next_code_index
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()
@@ -5804,7 +5857,7 @@ pub mod tests {
                     true, // last in slot
                     Hash::default(),
                     next_shred_index,
-                    0,
+                    next_shred_index, // next_code_index
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()
@@ -6136,6 +6189,7 @@ pub mod tests {
             &leader_schedule_cache,
             &mut pending_slots,
             &ProcessOptions::default(),
+            None,
             &MigrationStatus::post_migration_status(),
         )
         .unwrap();
@@ -6157,6 +6211,65 @@ pub mod tests {
             assert!(bank.get_account(&first_alpenglow_key).is_none());
             assert!(bank.get_account(&pending_key).is_none());
         }
+    }
+
+    #[test]
+    fn test_process_next_slots_purges_partial_update_parent_slot() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
+
+        let slot = 1;
+        let mut parent_meta = SlotMeta::new(0, None);
+        parent_meta.next_slots = smallvec::smallvec![slot];
+        let mut meta = SlotMeta::new(slot, Some(0));
+        meta.replay_fec_set_index = 32;
+        assert!(!meta.is_full());
+        blockstore.put_meta(slot, &meta).unwrap();
+
+        let (sender, receiver) = bounded(1);
+        let transaction_status_sender = TransactionStatusSender {
+            sender,
+            dependency_tracker: None,
+        };
+        let purge_responder = thread::spawn(move || {
+            let TransactionStatusMessage::PurgeTransactionHistory {
+                slot: purged_slot,
+                source,
+                purge_input,
+                done_sender,
+                ..
+            } = receiver.recv_timeout(Duration::from_secs(5)).unwrap()
+            else {
+                panic!("expected transaction-history purge");
+            };
+            assert_eq!(purged_slot, slot);
+            assert_eq!(source, TransactionHistoryPurgeSource::StartupReplay);
+            assert!(matches!(
+                purge_input,
+                TransactionHistoryPurgeInput::ReplayStage
+            ));
+            done_sender.unwrap().send(()).unwrap();
+        });
+
+        let mut pending_slots = Vec::new();
+        process_next_slots(
+            &bank0,
+            &parent_meta,
+            &blockstore,
+            &leader_schedule_cache,
+            &mut pending_slots,
+            &ProcessOptions::default(),
+            Some(&transaction_status_sender),
+            &MigrationStatus::post_migration_status(),
+        )
+        .unwrap();
+
+        purge_responder.join().unwrap();
+        assert!(pending_slots.is_empty());
     }
 
     #[test]
@@ -6192,6 +6305,7 @@ pub mod tests {
             &leader_schedule_cache,
             &mut pending_slots,
             &ProcessOptions::default(),
+            None,
             &migration_status,
         )
         .unwrap();
@@ -6300,19 +6414,19 @@ pub mod tests {
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         let parent_bank = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
         parent_bank.set_block_id(Some(parent_block_id));
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&parent_bank);
         let mut parent_meta = SlotMeta::new(1, Some(0));
         parent_meta.next_slots = smallvec::smallvec![2, 3];
 
-        for (slot, block_id) in [(2, Hash::new_unique()), (3, parent_block_id)] {
+        for (slot, block_id) in [(2, BlockId::new_unique()), (3, parent_block_id)] {
             let mut meta = SlotMeta::new(slot, Some(1));
             meta.consumed = 1;
             meta.received = 1;
             meta.last_index = Some(0);
-            meta.parent_block_id = block_id;
+            meta.parent_block_id = block_id.to_hash();
             meta.replay_fec_set_index = 32;
             blockstore.put_meta(slot, &meta).unwrap();
         }
@@ -6325,6 +6439,7 @@ pub mod tests {
             &leader_schedule_cache,
             &mut pending_slots,
             &ProcessOptions::default(),
+            None,
             &MigrationStatus::post_migration_status(),
         )
         .unwrap();
@@ -6332,7 +6447,7 @@ pub mod tests {
         assert_eq!(pending_slots.len(), 1);
         assert_eq!(pending_slots[0].1.slot(), 3);
 
-        let mut pending_slots = Vec::new();
+        pending_slots.clear();
         process_next_slots(
             &parent_bank,
             &parent_meta,
@@ -6343,6 +6458,7 @@ pub mod tests {
                 skip_inter_slot_verification: true,
                 ..ProcessOptions::default()
             },
+            None,
             &MigrationStatus::post_migration_status(),
         )
         .unwrap();

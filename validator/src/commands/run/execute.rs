@@ -31,7 +31,7 @@ use {
         },
         partitioned_rewards::PartitionedEpochRewardsConfig,
         utils::{
-            create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
+            create_all_accounts_run_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
         },
     },
@@ -106,6 +106,15 @@ pub fn execute(
     }
 
     let run_args = RunArgs::from_clap_arg_match(matches)?;
+    // Canonicalize ledger path to avoid issues with symlink creation
+    let ledger_path = create_and_canonicalize_directory(&run_args.ledger_path).map_err(|err| {
+        format!(
+            "failed to create and canonicalize ledger path '{}': {err}",
+            run_args.ledger_path.display(),
+        )
+    })?;
+    let mut ledger_lock = ledger_lockfile(&ledger_path);
+    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
     let cli::thread_args::NumThreadConfig {
         accounts_db_background_threads,
@@ -358,20 +367,17 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let (xdp_transmit_setup, report) = xdp_transmit_config
-            .clone()
-            .map(|xdp_config| {
-                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
-            })
-            .map_or((None, None), |(setup, report)| (Some(setup), Some(report)));
+        let xdp_transmit_setup_result = xdp_transmit_config.clone().map(|xdp_config| {
+            xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+        });
 
-        // we're done with caps needed to init xdp now. remove them from our process
+        // Drop temporary XDP capabilities before propagating any setup error.
         caps::set(None, CapSet::Effective, &retained_caps)
             .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        (xdp_transmit_setup, report)
+        xdp_transmit_setup_result.transpose()?.unzip()
     };
 
     #[cfg(not(target_os = "linux"))]
@@ -415,7 +421,6 @@ pub fn execute(
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");
 
-    let ledger_path = run_args.ledger_path;
     let blockstore_cleanup_strategy = BlockstoreCleanupStrategy::from_clap_arg_match(matches)?;
 
     let debug_keys: Option<Arc<HashSet<_>>> = if matches.is_present("debug_key") {
@@ -683,6 +688,7 @@ pub fn execute(
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         accounts_file_provider,
+        use_direct_io: !matches.is_present("no_accounts_db_snapshots_direct_io"),
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
@@ -712,9 +718,8 @@ pub fn execute(
         .map_err(|err| format!("unable to access account path: {err}"))?;
 
     // From now on, use run/ paths in the same way as the previous account_paths.
-    let (account_run_paths, account_snapshot_paths) =
-        create_all_accounts_run_and_snapshot_dirs(&account_paths)
-            .map_err(|err| format!("unable to create account directories: {err}"))?;
+    let account_run_paths = create_all_accounts_run_dirs(&account_paths)
+        .map_err(|err| format!("unable to create account directories: {err}"))?;
 
     let snapshot_config = new_snapshot_config(
         matches,
@@ -805,7 +810,6 @@ pub fn execute(
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
         account_paths: account_run_paths,
-        account_snapshot_paths,
         accounts_db_config,
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
@@ -901,9 +905,6 @@ pub fn execute(
                 .to_string())?;
         }
     }
-
-    let mut ledger_lock = ledger_lockfile(&ledger_path);
-    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
     let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
     let admin_service_post_init = Arc::new(RwLock::new(None));

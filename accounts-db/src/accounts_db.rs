@@ -32,10 +32,11 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            AccountStorage, AccountStoragesOrderer, ShrinkInProgress,
+            AccountStorage, AccountStoragesOrderer, NextItem, ShrinkInProgress,
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         account_storage_entry::AccountStorageEntry,
+        account_storage_reader::{ACCOUNT_STORAGE_MAX_BUFFER_SIZE, storage_file_buf_reader},
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
             AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
@@ -64,10 +65,14 @@ use {
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         utils::{self, create_account_shared_data},
     },
-    agave_fs::buffered_reader::RequiredLenBufFileRead,
+    agave_fs::{
+        buffered_reader::{FileBufRead as _, RequiredLenBufFileRead},
+        io_setup::IoSetupState,
+    },
     ahash::{HashMapExt as _, HashSetExt as _},
     bv::BitVec,
     dashmap::DashMap,
+    itertools::Itertools as _,
     log::*,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -733,10 +738,7 @@ pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<Path
 
     let paths: io::Result<Vec<_>> = temp_dirs
         .iter()
-        .map(|temp_dir| {
-            utils::create_accounts_run_and_snapshot_dirs(temp_dir)
-                .map(|(run_dir, _snapshot_dir)| run_dir)
-        })
+        .map(utils::create_accounts_run_dir)
         .collect();
     let paths = paths?;
     Ok((temp_dirs, paths))
@@ -847,6 +849,9 @@ pub struct AccountsDb {
 
     /// storage format to use for new storages
     accounts_file_provider: AccountsFileProvider,
+
+    /// read storages with direct I/O when generating the index
+    use_direct_io: bool,
 
     /// index scan filtering for shrinking
     scan_filter_for_shrinking: ScanFilter,
@@ -999,6 +1004,7 @@ impl AccountsDb {
             is_bank_drop_callback_enabled: AtomicBool::default(),
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
             accounts_file_provider: accounts_db_config.accounts_file_provider,
+            use_direct_io: accounts_db_config.use_direct_io,
             latest_full_snapshot_slot: SeqLock::new(None),
             last_swept_full_snapshot_slot: AtomicU64::new(0),
             max_cleaned_root: AtomicU64::new(0),
@@ -2635,6 +2641,7 @@ impl AccountsDb {
     pub(crate) fn scan_account_storage<R, B>(
         &self,
         slot: Slot,
+        bank_id: BankId,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
         storage_scan_func: impl for<'a, 'b, 'storage> Fn(
             &'b mut B,
@@ -2647,7 +2654,7 @@ impl AccountsDb {
         R: Send,
         B: Send + Default + Sync,
     {
-        self.scan_cache_storage_fallback(slot, cache_map_func, |retval, storage| {
+        self.scan_cache_storage_fallback(slot, bank_id, cache_map_func, |retval, storage| {
             match scan_account_storage_data {
                 ScanAccountStorageData::NoData => {
                     storage.scan_accounts_without_data(|_offset, account_without_data| {
@@ -2670,6 +2677,7 @@ impl AccountsDb {
     pub fn scan_cache_storage_fallback<R, B>(
         &self,
         slot: Slot,
+        bank_id: BankId,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
         storage_fallback_func: impl Fn(&mut B, &AccountStorageEntry) + Sync,
     ) -> ScanStorageResult<R, B>
@@ -2678,6 +2686,11 @@ impl AccountsDb {
         B: Send + Default + Sync,
     {
         if let Some(slot_cache) = self.accounts_cache.slot_cache(slot) {
+            debug_assert_eq!(
+                slot_cache.bank_id(),
+                bank_id,
+                "slot {slot} holds accounts stored by another bank"
+            );
             // If we see the slot in the cache, then all the account information
             // is in this cached slot
             ScanStorageResult::Cached(
@@ -4098,9 +4111,14 @@ impl AccountsDb {
     }
 
     /// Return all of the accounts for a given slot
-    pub fn get_pubkey_account_for_slot(&self, slot: Slot) -> Vec<(Pubkey, AccountSharedData)> {
+    pub fn get_pubkey_account_for_slot(
+        &self,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Vec<(Pubkey, AccountSharedData)> {
         let scan_result = self.scan_account_storage(
             slot,
+            bank_id,
             |loaded_account| {
                 // Cache only has one version per key, don't need to worry about versioning
                 Some((*loaded_account.pubkey(), loaded_account.take_account()))
@@ -4381,6 +4399,7 @@ impl AccountsDb {
     pub(crate) fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
+        bank_id: BankId,
         ancestors: &Ancestors,
     ) {
         // If all transactions in a batch are errored,
@@ -4392,7 +4411,7 @@ impl AccountsDb {
         // Store the accounts in the write cache
         let write_accounts_time = Measure::start("write_accounts");
         let (store_account, write_stats) =
-            self.write_accounts_to_cache(accounts.target_slot(), &accounts, ancestors);
+            self.write_accounts_to_cache(accounts.target_slot(), bank_id, &accounts, ancestors);
         let write_accounts_us = write_accounts_time.end_as_us();
 
         // Update the secondary index
@@ -4615,6 +4634,7 @@ impl AccountsDb {
     fn write_accounts_to_cache<'a, 'b>(
         &self,
         slot: Slot,
+        bank_id: BankId,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
         ancestors: &Ancestors,
     ) -> (BitVec, WriteAccountsToCacheStats) {
@@ -4652,7 +4672,8 @@ impl AccountsDb {
 
                 let account_shared_data = account.take_account();
                 let account_data_len = account_shared_data.data().len();
-                self.accounts_cache.store(slot, pubkey, account_shared_data);
+                self.accounts_cache
+                    .store(slot, bank_id, pubkey, account_shared_data);
                 store_account.set(index as u64, true);
                 stats.num_accounts_stored += 1;
                 stats.account_data_bytes_stored += account_data_len as u64;
@@ -4852,6 +4873,51 @@ impl AccountsDb {
             .store(slot, Ordering::Relaxed);
     }
 
+    /// Generates the index for `storages`, queuing each batch of files for read-ahead before
+    /// scanning it.
+    fn generate_index_for_storages<'a>(
+        &self,
+        storages: impl Iterator<Item = NextItem<'a>>,
+        files_per_batch: usize,
+        accum: &mut IndexGenerationAccumulator,
+        num_processed: &AtomicU64,
+    ) {
+        // Skipping the page cache reduces kernel memory reclaim during heavy index allocations.
+        let use_direct_io = self.use_direct_io;
+        let io_setup = IoSetupState::default().with_direct_io(use_direct_io);
+        let mut buf_reader =
+            storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, false, &io_setup)
+                .expect("create storage reader");
+        let mut open_files = Vec::with_capacity(files_per_batch);
+        for batch in &storages.chunks(files_per_batch) {
+            open_files.clear();
+            open_files.extend(batch.map(|item| {
+                let file = item.storage.accounts.open_file_for_bulk_read(use_direct_io);
+                (item, file.expect("open storage file"))
+            }));
+            // Re-binding scopes the reader's file borrows to this batch.
+            let mut reader = buf_reader.rebind().expect("rebind storage reader");
+            for (_, file) in &open_files {
+                let Some(file) = file else { continue };
+                let (file, read_limit) = (file.as_ref(), file.read_limit());
+                reader
+                    .add_file_to_prefetch(file, read_limit)
+                    .expect("prefetch storage file");
+            }
+            for (item, file) in &open_files {
+                // A split file without a data file has nothing to read through the reader.
+                if let Some(file) = file {
+                    let (file, read_limit) = (file.as_ref(), file.read_limit());
+                    reader.set_file(file, read_limit).expect("set storage file");
+                }
+                self.generate_index_for_slot(&mut reader, accum, item.original_index, item.storage);
+                num_processed.fetch_add(1, Ordering::Relaxed);
+            }
+            buf_reader = reader.rebind().expect("rebind storage reader");
+        }
+    }
+
+    /// Scans `storage` from the file already activated on `reader`.
     fn generate_index_for_slot<'a>(
         &self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
@@ -4889,7 +4955,7 @@ impl AccountsDb {
         // counter per account and use that for the write version.
         let mut write_version_for_geyser = 0;
         let num_obsolete_accounts_skipped = storage
-            .scan_accounts(reader, None, |offset, account| {
+            .scan_accounts_with(reader, None, |offset, account| {
                 let data_len = account.data.len();
                 stored_size_alive += storage.accounts.calculate_stored_size(data_len);
                 let is_account_zero_lamport = account.is_zero_lamport();
@@ -5022,6 +5088,10 @@ impl AccountsDb {
         let exit_logger = AtomicBool::new(false);
         let num_processed = AtomicU64::new(0);
         let num_threads = num_cpus::get();
+        // Bound the extra fds opened with direct I/O, but use smaller batches when there are few
+        // storages per thread, so the work still spreads across all threads.
+        const MAX_FILES_PER_BATCH: usize = 64;
+        let files_per_batch = (num_storages / (num_threads * 4)).clamp(1, MAX_FILES_PER_BATCH);
         let mut index_time = Measure::start("index");
         thread::scope(|s| {
             let thread_handles = (0..num_threads)
@@ -5030,17 +5100,12 @@ impl AccountsDb {
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
                             let mut thread_accum = IndexGenerationAccumulator::new();
-                            let mut reader = accounts_file::new_scan_accounts_reader();
-                            for next_item in storages_orderer.iter() {
-                                let storage = next_item.storage;
-                                self.generate_index_for_slot(
-                                    &mut reader,
-                                    &mut thread_accum,
-                                    next_item.original_index,
-                                    storage,
-                                );
-                                num_processed.fetch_add(1, Ordering::Relaxed);
-                            }
+                            self.generate_index_for_storages(
+                                storages_orderer.iter(),
+                                files_per_batch,
+                                &mut thread_accum,
+                                &num_processed,
+                            );
                             thread_accum
                         })
                 })
@@ -5653,10 +5718,15 @@ impl AccountsDb {
         }
 
         // Pre-populate new zero-lamport accounts with single-lamport placeholders.
-        self.store_accounts_unfrozen((slot, pre_populate_zero_lamport.as_slice()), &ancestors);
+        let bank_id = BankId::new(slot);
+        self.store_accounts_unfrozen(
+            (slot, pre_populate_zero_lamport.as_slice()),
+            bank_id,
+            &ancestors,
+        );
 
         // Then store the actual accounts provided by the caller.
-        self.store_accounts_unfrozen(accounts, &ancestors);
+        self.store_accounts_unfrozen(accounts, bank_id, &ancestors);
     }
 
     #[allow(clippy::needless_range_loop)]

@@ -2,7 +2,7 @@
 use {
     crate::program_cache_entry::ProgramCacheEntry,
     qualifier_attr::qualifiers,
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
     solana_epoch_schedule::EpochSchedule,
     solana_instruction::AccountMeta,
     solana_message::{LegacyMessage, Message, SanitizedMessage},
@@ -1049,8 +1049,13 @@ pub fn mock_process_instruction_with_feature_set<
         .iter()
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
     {
-        let mut account = AccountSharedData::new(1, solana_epoch_schedule::SIZE, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), &EpochSchedule::default()).unwrap();
+        let account = AccountSharedData::new_data_with_space(
+            1,
+            &EpochSchedule::default(),
+            solana_epoch_schedule::SIZE,
+            &sysvar::id(),
+        )
+        .unwrap();
         accounts.push((sysvar::epoch_schedule::id(), account));
     }
 

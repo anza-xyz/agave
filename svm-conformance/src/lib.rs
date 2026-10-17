@@ -13,3 +13,13 @@ pub mod serialization;
 pub mod syscall;
 #[cfg(feature = "ffi")]
 pub mod txn;
+
+/// No-op; required by Firedancer's conformance tooling.
+#[cfg(feature = "ffi")]
+#[unsafe(no_mangle)]
+pub extern "C" fn sol_compat_init(_log_level: i32) {}
+
+/// No-op; required by Firedancer's conformance tooling.
+#[cfg(feature = "ffi")]
+#[unsafe(no_mangle)]
+pub extern "C" fn sol_compat_fini() {}

@@ -134,7 +134,6 @@ impl BorrowedInstructionAccount<'_, '_> {
 
         let lamports_balance = (lamports as i128).saturating_sub(old_lamports as i128);
         self.transaction_context
-            .accounts
             .add_lamports_delta(lamports_balance)?;
 
         self.touch()?;
@@ -249,21 +248,30 @@ impl BorrowedInstructionAccount<'_, '_> {
     }
 
     /// Deserializes the account data into a state
-    #[cfg(feature = "bincode")]
-    pub fn get_state<T: serde::de::DeserializeOwned>(&self) -> Result<T, InstructionError> {
-        bincode::deserialize(self.account.data()).map_err(|_| InstructionError::InvalidAccountData)
+    #[cfg(feature = "wincode")]
+    pub fn get_state<T>(&self) -> Result<T, InstructionError>
+    where
+        T: for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>,
+    {
+        wincode::config::deserialize(self.account.data(), solana_account::WINCODE_CONFIG)
+            .map_err(|_| InstructionError::InvalidAccountData)
     }
 
     /// Serializes a state into the account data
-    #[cfg(feature = "bincode")]
-    pub fn set_state<T: serde::Serialize>(&mut self, state: &T) -> Result<(), InstructionError> {
+    #[cfg(feature = "wincode")]
+    pub fn set_state<T>(&mut self, state: &T) -> Result<(), InstructionError>
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>,
+    {
         let data = self.get_data_mut()?;
         let serialized_size =
-            bincode::serialized_size(state).map_err(|_| InstructionError::GenericError)?;
+            wincode::config::serialized_size(state, solana_account::WINCODE_CONFIG)
+                .map_err(|_| InstructionError::GenericError)?;
         if serialized_size > data.len() as u64 {
             return Err(InstructionError::AccountDataTooSmall);
         }
-        bincode::serialize_into(&mut *data, state).map_err(|_| InstructionError::GenericError)?;
+        wincode::config::serialize_into(&mut *data, state, solana_account::WINCODE_CONFIG)
+            .map_err(|_| InstructionError::GenericError)?;
         Ok(())
     }
 
@@ -378,5 +386,59 @@ fn is_zeroed(buf: &[u8]) -> bool {
     #[expect(clippy::indexing_slicing)]
     {
         chunks.iter().all(|chunk| chunk == &ZEROS[..]) && remainder == &ZEROS[..remainder.len()]
+    }
+}
+
+#[cfg(all(test, feature = "wincode"))]
+mod tests {
+    use {
+        super::*, crate::transaction::TransactionContext, solana_account::AccountSharedData,
+        solana_rent::Rent,
+    };
+
+    fn with_account<R>(data: Vec<u8>, f: impl FnOnce(&mut BorrowedInstructionAccount) -> R) -> R {
+        let program_id = Pubkey::new_unique();
+        let account = AccountSharedData::new_with_data(1, data, &program_id);
+        let mut transaction_context = TransactionContext::new(
+            vec![
+                (program_id, AccountSharedData::default()),
+                (Pubkey::new_unique(), account),
+            ],
+            Rent::default(),
+            1,
+            1,
+            1,
+        );
+        transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        transaction_context.push(true).unwrap();
+        let instruction_context = transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        f(&mut instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap())
+    }
+
+    #[test]
+    fn test_set_state_get_state() {
+        let state = (Some(Pubkey::new_unique()), vec![1u64, 2, 3]);
+        let len = wincode::serialized_size(&state).unwrap() as usize;
+        assert_eq!(
+            with_account(vec![0; len], |account| {
+                account.set_state(&state)?;
+                account.get_state()
+            }),
+            Ok(state.clone()),
+        );
+        assert_eq!(
+            with_account(vec![0; len - 1], |account| account.set_state(&state)),
+            Err(InstructionError::AccountDataTooSmall),
+        );
     }
 }

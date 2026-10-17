@@ -267,7 +267,7 @@ mod tests {
         };
         let mut rng = rand::rng();
         let shredder = Shredder::new(slot, slot - 1, 0, shred_version).unwrap();
-        let next_shred_index = 353;
+        let next_shred_index = 352;
         let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &my_keypair);
         let shredder1 = Shredder::new(slot + 1, slot, 0, shred_version).unwrap();
         let shred2 = match expected_error {
@@ -305,7 +305,7 @@ mod tests {
         let mut rng = rand::rng();
         let shredder = Shredder::new(slot, slot - 1, 0, shred_version).unwrap();
         let mut bad_proof_size_shred = || {
-            let shred = new_rand_shred(&mut rng, 353, &shredder, &keypair);
+            let shred = new_rand_shred(&mut rng, 352, &shredder, &keypair);
             let mut payload = shred.payload().to_vec();
             override_proof_size(&mut payload, 5);
             let mut shred = Shred::new_from_serialized_shred(payload).unwrap();

@@ -132,6 +132,8 @@ pub struct TransactionContext<'ix_data> {
     #[cfg(not(target_os = "solana"))]
     pub compute_meter: ComputeMeter,
     #[cfg(not(target_os = "solana"))]
+    pub(crate) lamports_delta: Cell<i128>,
+    #[cfg(not(target_os = "solana"))]
     pub(crate) rent: Rent,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
@@ -198,6 +200,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             transaction_frame,
             next_top_level_instruction_index: 0,
             compute_meter,
+            lamports_delta: Cell::new(0),
             rent,
             instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
             deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
@@ -236,6 +239,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .deconstruct_into_account_shared_data();
 
         Ok(accounts)
+    }
+
+    pub(crate) fn add_lamports_delta(&self, balance: i128) -> Result<(), InstructionError> {
+        let delta = self.lamports_delta.get();
+        self.lamports_delta.set(
+            delta
+                .checked_add(balance)
+                .ok_or(InstructionError::ArithmeticOverflow)?,
+        );
+        Ok(())
     }
 
     pub fn accounts(&self) -> &Rc<TransactionAccounts> {
@@ -528,7 +541,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Pushes the next instruction
     pub fn push(&mut self, detect_overflow_early: bool) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_stack_height();
-        if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
+        if !self.instruction_stack.is_empty() && self.lamports_delta.get() != 0 {
             return Err(InstructionError::UnbalancedInstruction);
         }
         {
@@ -619,7 +632,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                                 err
                             }
                         })?;
-                    Ok(self.accounts.get_lamports_delta() != 0)
+                    Ok(self.lamports_delta.get() != 0)
                 });
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();

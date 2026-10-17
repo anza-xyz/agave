@@ -7,7 +7,9 @@ use {
         recvmmsg::PacketBufferPool,
         sendmmsg::SendPktsError,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
+    crossbeam_channel::{
+        Receiver, RecvTimeoutError, SendError, Sender, TryRecvError, TrySendError,
+    },
     solana_measure::measure::Measure,
     solana_net_utils::{
         SocketAddrSpace,
@@ -36,7 +38,7 @@ use {
     std::os::fd::AsFd,
 };
 
-pub trait ChannelSend<T>: Send + 'static {
+pub trait ChannelSend<T>: Clone + Send + 'static {
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>>;
 
     fn is_empty(&self) -> bool;
@@ -61,6 +63,22 @@ where
     #[inline]
     fn len(&self) -> usize {
         self.len()
+    }
+}
+
+/// The receiving-side counterpart of [`ChannelSend`], for code that needs to pop from a channel it
+/// also sends to, such as [`crate::evicting_sender::EvictingSender`].
+pub trait ChannelTryRecv<T>: Clone + Send + 'static {
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError>;
+}
+
+impl<T> ChannelTryRecv<T> for Receiver<T>
+where
+    T: Send + 'static,
+{
+    #[inline]
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError> {
+        self.try_recv()
     }
 }
 
@@ -529,7 +547,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{BytesPacket, BytesPacketBatch, Meta, PACKET_DATA_SIZE, Packet},
+            packet::{BytesPacket, BytesPacketBatch, Meta, PACKET_DATA_SIZE},
             sendmmsg::batch_send,
             streamer::receiver,
         },
@@ -577,7 +595,6 @@ mod test {
 
     #[test]
     fn streamer_debug() {
-        write!(io::sink(), "{:?}", Packet::default()).unwrap();
         write!(io::sink(), "{:?}", BytesPacketBatch::default()).unwrap();
     }
     #[test]

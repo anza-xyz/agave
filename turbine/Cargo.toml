@@ -19,7 +19,6 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
-agave-feature-set = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
 agave-wake-channel = { workspace = true }

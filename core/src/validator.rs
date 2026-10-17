@@ -46,7 +46,7 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
-    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
+    solana_account::{ReadableAccount, WINCODE_CONFIG},
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -334,7 +334,6 @@ pub struct ValidatorConfig {
     pub expected_shred_version: Option<u16>,
     pub voting_disabled: bool,
     pub account_paths: Vec<PathBuf>,
-    pub account_snapshot_paths: Vec<PathBuf>,
     pub rpc_config: JsonRpcConfig,
     /// Specifies which plugins to start up with
     pub on_start_geyser_plugin_config_files: Option<Vec<PathBuf>>,
@@ -425,7 +424,6 @@ impl ValidatorConfig {
             blockstore_cleanup_strategy: BlockstoreCleanupStrategy::None,
             blockstore_options: BlockstoreOptions::default_for_tests(),
             account_paths: Vec::new(),
-            account_snapshot_paths: Vec::new(),
             rpc_config: JsonRpcConfig::default_for_test(),
             on_start_geyser_plugin_config_files: None,
             geyser_plugin_always_enabled: false,
@@ -1643,6 +1641,7 @@ impl Validator {
             banking_tracer: banking_tracer.clone(),
             slot_status_notifier: slot_status_notifier.clone(),
             entry_notification_sender: entry_notification_sender.clone(),
+            transaction_status_sender: transaction_status_sender.clone(),
             leader_window_info_receiver,
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
@@ -1760,7 +1759,7 @@ impl Validator {
             Some(snapshot_controller.clone()),
             banking_tracer,
             outstanding_repair_requests.clone(),
-            cluster_slots.clone(),
+            cluster_slots,
             slot_status_notifier,
             vote_connection_cache,
             AlpenglowInitializationState {
@@ -1889,7 +1888,6 @@ impl Validator {
             notifies: key_notifiers,
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
-            cluster_slots,
             node: Some(node_multihoming),
             banking_control_sender,
             snapshot_controller,
@@ -2131,7 +2129,10 @@ pub fn should_require_vote_history_file(
         return false;
     };
 
-    let Some(Ok(vote_state)) = bank.get_account(vote_account).map(|acct| acct.state()) else {
+    let Some(Ok(vote_state)) = bank
+        .get_account(vote_account)
+        .map(|acct| wincode::config::deserialize(acct.data(), WINCODE_CONFIG))
+    else {
         // Must have a vote account
         return false;
     };
@@ -3199,15 +3200,11 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {
     validate_account_paths_for_direct_io(
         config.snapshot_config.use_direct_io,
-        config
-            .account_paths
-            .iter()
-            .chain(&config.account_snapshot_paths)
-            .chain([
-                &config.snapshot_config.full_snapshot_archives_dir,
-                &config.snapshot_config.incremental_snapshot_archives_dir,
-                &config.snapshot_config.bank_snapshots_dir,
-            ]),
+        config.account_paths.iter().chain([
+            &config.snapshot_config.full_snapshot_archives_dir,
+            &config.snapshot_config.incremental_snapshot_archives_dir,
+            &config.snapshot_config.bank_snapshots_dir,
+        ]),
     )
 }
 
@@ -3238,6 +3235,7 @@ mod tests {
         super::*,
         agave_votor_messages::certificate::{CertSignature, GenesisCert},
         crossbeam_channel::{RecvTimeoutError, bounded},
+        solana_account::state_traits::StateMutWincode,
         solana_entry::entry,
         solana_genesis_config::create_genesis_config,
         solana_gossip::contact_info::ContactInfo,

@@ -7,6 +7,7 @@
 
 use {
     agave_feature_set::FeatureSet,
+    agave_transaction_view::transaction_version::TransactionVersion,
     agave_votor_messages::migration::MigrationStatus,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
@@ -173,7 +174,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         let _duplicate_proof = handle_duplicate_shred(
             &blockstore,
             duplicate,
-            false, // no_verify_chained_merkle_root: keep pre-Alpenglow validation
+            true, // no_verify_chained_merkle_root: Alpenglow relies on the block id instead
         )
         .expect("handle duplicate shred");
     };
@@ -192,9 +193,31 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     slots.sort_unstable();
     slots.dedup();
 
+    // Replay only reaches a slot whose parent chain is connected to the root
+    // through full slots; the other slots are held unverified.  FEC sets are
+    // completed and reported for every slot regardless.
+    let mut linkable: std::collections::HashSet<Slot> =
+        std::collections::HashSet::from([root_slot]);
+    let mut delivered: std::collections::HashSet<Slot> = std::collections::HashSet::new();
+    for &slot in &slots {
+        let Some(meta) = blockstore.meta(slot).ok().flatten() else {
+            continue;
+        };
+        let Some(parent) = meta.parent_slot else {
+            continue;
+        };
+        if !linkable.contains(&parent) {
+            continue;
+        }
+        delivered.insert(slot);
+        if meta.is_full() {
+            linkable.insert(slot);
+        }
+    }
+
     // Deshred + tick verify per slot (PoH intentionally not run).
     // FD: fd_sched_fec_ingest (PoH verify bypassed).
-    for &slot in &slots {
+    for &slot in slots.iter().filter(|slot| delivered.contains(slot)) {
         let Ok((entries, _num_shreds, is_full)) =
             blockstore.get_slot_entry_views_with_shred_info(slot, 0, false)
         else {
@@ -205,9 +228,14 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             continue;
         }
         // Mirror FD's fd_sched_parse_txn: reject non-sanitizable, duplicate-account, or over-MTU txns.
+        // The MTU depends on the transaction version, as in `Bank::verify_transaction`.
         let sanitize_config = sanitize_config();
         for tx in entries.iter().flat_map(|entry| &entry.transactions) {
-            let oversized = tx.data().len() > PACKET_DATA_SIZE;
+            let max_transaction_size = match tx.version() {
+                TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
+                _ => PACKET_DATA_SIZE,
+            };
+            let oversized = tx.data().len() > max_transaction_size;
             let bad_locks = validate_account_locks(
                 AccountKeys::new(tx.static_account_keys(), None),
                 MAX_TX_ACCOUNT_LOCKS,
@@ -235,16 +263,11 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         }
 
         // Mirror FD reasm: deliver the contiguous chain-validated prefix from index 0, rejecting at the first set that doesn't chain to its predecessor.
-        // FD rejects a slot that has a complete FEC set but no complete index-0 set, since the slot's first set must chain to the parent.
+        // Without a complete index-0 set nothing links to the parent: the sets stay orphaned and yield no result.
         let has_complete_set0 = by_fec
             .get(&0)
             .is_some_and(|group| group.len() == DATA_SHREDS_PER_FEC_BLOCK);
-        if !has_complete_set0
-            && by_fec
-                .values()
-                .any(|group| group.len() == DATA_SHREDS_PER_FEC_BLOCK)
-        {
-            effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
+        if !has_complete_set0 {
             continue;
         }
 

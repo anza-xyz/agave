@@ -238,7 +238,6 @@ pub struct TransactionAccounts {
     borrow_counters: Box<[BorrowCounter]>,
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
-    lamports_delta: Cell<i128>,
     _drop_on_bail_out: DropOnBailOut,
 }
 
@@ -283,7 +282,6 @@ impl TransactionAccounts {
             borrow_counters,
             touched_flags,
             resize_delta: Cell::new(0),
-            lamports_delta: Cell::new(0),
             _drop_on_bail_out: drop_on_bail_out,
         }
     }
@@ -412,20 +410,6 @@ impl TransactionAccounts {
             account,
             borrow_counter,
         })
-    }
-
-    pub(crate) fn add_lamports_delta(&self, balance: i128) -> Result<(), InstructionError> {
-        let delta = self.lamports_delta.get();
-        self.lamports_delta.set(
-            delta
-                .checked_add(balance)
-                .ok_or(InstructionError::ArithmeticOverflow)?,
-        );
-        Ok(())
-    }
-
-    pub(crate) fn get_lamports_delta(&self) -> i128 {
-        self.lamports_delta.get()
     }
 
     fn deconstruct_into_keyed_account_shared_data(&mut self) -> Vec<KeyedAccountSharedData> {

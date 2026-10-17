@@ -30,7 +30,7 @@ use {
 
 fn set_stake_history_sysvar_for_tests(bank: &Bank, stake_history: &StakeHistory) {
     let stake_history_account_size =
-        STAKE_HISTORY_ACCOUNT_SIZE.max(bincode::serialized_size(stake_history).unwrap() as usize);
+        STAKE_HISTORY_ACCOUNT_SIZE.max(wincode::serialized_size(stake_history).unwrap() as usize);
     let old_stake_history_account = bank.get_account(&stake_history::id()).unwrap();
     let lamports = old_stake_history_account
         .lamports()

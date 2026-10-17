@@ -579,8 +579,7 @@ mod tests {
     #[allow(deprecated)]
     use {
         solana_account::{
-            Account, AccountSharedData, ReadableAccount, WritableAccount,
-            state_traits::StateMutWincode as _,
+            Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
         },
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
@@ -604,19 +603,25 @@ mod tests {
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
     where
-        T: wincode::Serialize<Src = T> + SysvarId,
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
     {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+        let serialized_len = wincode::config::serialized_size(value, solana_account::WINCODE_CONFIG)
+            .unwrap() as usize;
         let canonical_data_len = match T::id() {
             sysvar::recent_blockhashes::ID => sysvar::recent_blockhashes::SIZE,
             sysvar::rent::ID => solana_rent::SIZE,
             id => panic!("unsupported sysvar: {id}"),
         };
         let required_data_len = canonical_data_len.max(serialized_len);
-        let mut account =
-            AccountSharedData::new(1, required_data_len, &solana_sdk_ids::sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
+        AccountSharedData::new_data_with_space(
+            1,
+            value,
+            required_data_len,
+            &solana_sdk_ids::sysvar::id(),
+        )
+        .unwrap()
     }
 
     impl From<Pubkey> for Address {

@@ -1,5 +1,5 @@
 #[cfg(feature = "dev-context-only-utils")]
-use solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs;
+use solana_accounts_db::utils::create_accounts_run_dir;
 use {
     crate::{
         bank::BankFieldsToDeserialize,
@@ -41,7 +41,7 @@ use {
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsFileId, AtomicAccountsFileId},
-        utils::{ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path_contents},
+        utils::{ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
     solana_clock::Slot,
     solana_measure::{measure::Measure, measure_time, measure_us},
@@ -1683,10 +1683,13 @@ pub enum VerifyBank {
 /// either legacy hardlink dirs (written by pre-3.0 validators during fastboot) or orphans
 /// from purged bank snapshots. Used by the legacy-hardlink migration path and the
 /// archive-load path to drop that leftover state.
+///
+/// Note, sibling `snapshot/` dirs are no longer created as of agave v4.5.
+/// This code can then be removed in agave v4.6.
 pub fn wipe_account_snapshot_dirs(account_run_paths: &[PathBuf]) {
     for account_run_path in account_run_paths {
         if let Some(parent) = account_run_path.parent() {
-            move_and_async_delete_path_contents(parent.join(ACCOUNTS_SNAPSHOT_DIR));
+            move_and_async_delete_path(parent.join(ACCOUNTS_SNAPSHOT_DIR));
         }
     }
 }
@@ -1779,7 +1782,7 @@ pub fn should_take_incremental_snapshot(
 #[cfg(feature = "dev-context-only-utils")]
 pub fn create_tmp_accounts_dir_for_tests() -> (TempDir, PathBuf) {
     let tmp_dir = tempfile::TempDir::new().unwrap();
-    let account_dir = create_accounts_run_and_snapshot_dirs(&tmp_dir).unwrap().0;
+    let account_dir = create_accounts_run_dir(&tmp_dir).unwrap();
     (tmp_dir, account_dir)
 }
 

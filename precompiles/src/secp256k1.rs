@@ -47,7 +47,7 @@ pub fn verify(
             .saturating_add(1);
         let end = start.saturating_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE);
 
-        let offsets: SecpSignatureOffsets = bincode::deserialize(&data[start..end])
+        let offsets: SecpSignatureOffsets = wincode::deserialize(&data[start..end])
             .map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out signature
@@ -140,8 +140,7 @@ pub mod tests {
     ) -> Result<(), PrecompileError> {
         let mut instruction_data = vec![0u8; DATA_START];
         instruction_data[0] = num_signatures;
-        let writer = std::io::Cursor::new(&mut instruction_data[1..]);
-        bincode::serialize_into(writer, &offsets).unwrap();
+        wincode::serialize_into(&mut instruction_data[1..], offsets).unwrap();
         let feature_set = FeatureSet::all_enabled();
         test_verify_with_alignment(verify, &instruction_data, &[&[0u8; 100]], &feature_set)
     }
@@ -153,8 +152,7 @@ pub mod tests {
         let mut instruction_data = vec![0u8; DATA_START];
         let offsets = SecpSignatureOffsets::default();
         instruction_data[0] = 1;
-        let writer = std::io::Cursor::new(&mut instruction_data[1..]);
-        bincode::serialize_into(writer, &offsets).unwrap();
+        wincode::serialize_into(&mut instruction_data[1..], &offsets).unwrap();
         instruction_data.truncate(instruction_data.len() - 1);
         let feature_set = FeatureSet::all_enabled();
 
@@ -283,8 +281,7 @@ pub mod tests {
         let mut instruction_data = vec![0u8; DATA_START];
         let offsets = SecpSignatureOffsets::default();
         instruction_data[0] = 0;
-        let writer = std::io::Cursor::new(&mut instruction_data[1..]);
-        bincode::serialize_into(writer, &offsets).unwrap();
+        wincode::serialize_into(&mut instruction_data[1..], &offsets).unwrap();
         let feature_set = FeatureSet::all_enabled();
 
         assert_eq!(
@@ -298,7 +295,7 @@ pub mod tests {
         agave_logger::setup();
         let offsets = SecpSignatureOffsets::default();
         assert_eq!(
-            bincode::serialized_size(&offsets).unwrap() as usize,
+            wincode::serialized_size(&offsets).unwrap() as usize,
             SIGNATURE_OFFSETS_SERIALIZED_SIZE
         );
 
@@ -397,7 +394,7 @@ pub mod tests {
         let mut instruction_data: Vec<u8> = vec![2];
 
         for offsets in both_offsets {
-            let offsets = bincode::serialize(&offsets).unwrap();
+            let offsets = wincode::serialize(&offsets).unwrap();
             instruction_data.extend(offsets);
         }
 

@@ -135,7 +135,7 @@ mod tests {
     fn test_try_new_zeroed() {
         let target_vote_state = VoteStateV4::default();
         let versioned = VoteStateVersions::new_v4(target_vote_state);
-        let mut bytes = bincode::serialize(&versioned).unwrap();
+        let mut bytes = wincode::serialize(&versioned).unwrap();
 
         for i in 0..bytes.len() {
             let vote_state_frame = VoteStateFrameV4::try_new(&bytes[..i]);
@@ -179,7 +179,7 @@ mod tests {
         };
 
         let versioned = VoteStateVersions::new_v4(target_vote_state);
-        let mut bytes = bincode::serialize(&versioned).unwrap();
+        let mut bytes = wincode::serialize(&versioned).unwrap();
 
         for i in 0..bytes.len() {
             let vote_state_frame = VoteStateFrameV4::try_new(&bytes[..i]);
@@ -285,7 +285,7 @@ mod tests {
             ..VoteStateV4::default()
         };
         let versioned = VoteStateVersions::new_v4(vote_state);
-        let mut bytes = bincode::serialize(&versioned).unwrap();
+        let mut bytes = wincode::serialize(&versioned).unwrap();
 
         // Append non-zero trailing garbage.
         bytes.extend_from_slice(&[0xFF; 42]);
@@ -344,7 +344,7 @@ mod tests {
             last_timestamp: last_timestamp.clone(),
         };
         let versioned = VoteStateVersions::new_v4(vote_state);
-        let bytes = bincode::serialize(&versioned).unwrap();
+        let bytes = wincode::serialize(&versioned).unwrap();
         let frame = VoteStateFrameV4::try_new(&bytes).unwrap();
 
         // node_pubkey

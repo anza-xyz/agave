@@ -9,7 +9,7 @@ use {
         snapshot_controller::SnapshotController,
     },
     agave_feature_set,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     arc_swap::ArcSwap,
     log::*,
     solana_clock::Slot,
@@ -270,7 +270,7 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
-    pub fn block_id(&self, slot: Slot) -> Option<Hash> {
+    pub fn block_id(&self, slot: Slot) -> Option<BlockId> {
         self.get(slot).and_then(|bank| bank.block_id())
     }
 

@@ -34,9 +34,28 @@ find "$fixtures_dir" -type f -name '*.fix' -print0 |
     'exec "$0" "$@" >"$(mktemp -p "$BATCH_LOGS")" 2>&1' "$harness" || true
 cat "$batch_logs"/* >"$log"
 
+print_failures() {
+  local word_diff=plain line
+  if [[ -t 1 || -n ${CI:-} ]]; then
+    word_diff=color
+  fi
+  while IFS= read -r line; do
+    case $line in
+      'Expected: '*) echo "${line#Expected: }" >"$batch_logs/expected" ;;
+      'Actual: '*)
+        echo "${line#Actual: }" >"$batch_logs/actual"
+        git --no-pager diff --no-index --word-diff="$word_diff" \
+          --word-diff-regex='[^][ ,{}()]+' \
+          "$batch_logs/expected" "$batch_logs/actual" | tail -n +6 || true
+        ;;
+      *) echo "$line" ;;
+    esac
+  done
+}
+
 passed=$(grep -c '^OK: ' "$log" || true)
 if ((passed != total)); then
-  grep -v '^OK: ' "$log" | head -n 2000 || true
+  grep -v '^OK: ' "$log" | head -n 2000 | print_failures || true
   echo "error: $bin passed $passed/$total fixtures in $fixtures_dir" >&2
   exit 1
 fi

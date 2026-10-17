@@ -233,14 +233,14 @@ pub struct OwnedUmem {
 }
 
 impl OwnedUmem {
-    pub fn new(memory: PageAlignedMemory, frame_size: u32) -> Result<Self, io::Error> {
+    pub fn new(memory: PageAlignedMemory, frame_size: u32) -> Self {
         debug_assert!(frame_size.is_power_of_two());
         let capacity = memory.len / frame_size as usize;
-        Ok(Self {
+        Self {
             memory,
             frame_size,
             available_frames: available_frames(capacity, frame_size),
-        })
+        }
     }
 }
 

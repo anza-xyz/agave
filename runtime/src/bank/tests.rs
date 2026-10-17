@@ -90,10 +90,6 @@ use {
     solana_instruction_error::InstructionError,
     solana_keypair::{Keypair, keypair_from_seed},
     solana_lattice_hash::lt_hash::LtHash,
-    solana_loader_v3_interface::{
-        get_program_data_address, instruction::UpgradeableLoaderInstruction,
-        state::UpgradeableLoaderState,
-    },
     solana_message::{
         Message, MessageHeader, SanitizedMessage, VersionedMessage,
         compiled_instruction::CompiledInstruction, v0, v1,
@@ -105,15 +101,13 @@ use {
     solana_program_runtime::{
         declare_process_instruction,
         execution_budget::{self, MAX_COMPUTE_UNIT_LIMIT},
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
+        program_cache_entry::ProgramCacheEntry,
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
     solana_rent::{DEFAULT_LAMPORTS_PER_BYTE, Rent},
     solana_reward_info::RewardType,
-    solana_sdk_ids::{
-        bpf_loader_upgradeable, ed25519_program, incinerator, native_loader, secp256k1_program,
-    },
+    solana_sdk_ids::{ed25519_program, incinerator, native_loader, secp256k1_program},
     solana_seed_derivable::SeedDerivable,
     solana_sha256_hasher::hash,
     solana_signature::Signature,
@@ -159,8 +153,7 @@ use {
     std::{
         collections::{BTreeMap, HashMap, HashSet},
         convert::TryInto,
-        fs::File,
-        io::{Cursor, Read},
+        io::Cursor,
         str::FromStr,
         sync::{
             Arc,
@@ -4743,8 +4736,8 @@ fn test_check_ro_durable_nonce_fails() {
         &[&custodian_keypair, &nonce_keypair],
         nonce_hash,
     );
-    // SanitizedMessage::get_durable_nonce returns None because nonce
-    // account is not writable. Durable nonce and blockhash domains are
+    // get_durable_nonce returns None because nonce account is not
+    // requested writable. Durable nonce and blockhash domains are
     // separate, so the recent_blockhash (== durable nonce) in the
     // transaction is not found in the hash queue.
     assert_eq!(
@@ -5745,7 +5738,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     while !bank0.is_complete() {
         bank0.register_default_tick_for_test();
     }
-    bank0.set_block_id(Some(Hash::from([7u8; 32])));
+    bank0.set_block_id(Some(BlockId::from(Hash::from([7u8; 32]))));
     let leader_for_snapshot_restore = *bank0.leader();
 
     let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -5837,7 +5830,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "wSbqZyqZ2KXJFf3j2qQNwqipBqJHN9U7pgMDZPJv1vH",
+        "2QFHtoeuJppafTn8LK2ciA7P7ApppbjXomZrooPypMPS",
     );
 }
 
@@ -6350,259 +6343,6 @@ fn test_reconfigure_token2_native_mint() {
     let native_mint_account = bank.get_account(&token::native_mint::id()).unwrap();
     assert_eq!(native_mint_account.data().len(), 82);
     assert_eq!(native_mint_account.owner(), &token::id());
-}
-
-#[test]
-fn test_bpf_loader_upgradeable_deploy_with_max_len() {
-    let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    let mut feature_set = FeatureSet::all_enabled();
-    feature_set.deactivate(&agave_feature_set::disable_sbpf_v0_v1_v2_deployment::id());
-    bank.feature_set = Arc::new(feature_set);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank.clone());
-
-    // Setup keypairs and addresses
-    let payer_keypair = Keypair::new();
-    let program_keypair = Keypair::new();
-    let buffer_address = Pubkey::new_unique();
-    let (programdata_address, _) = Pubkey::find_program_address(
-        &[program_keypair.pubkey().as_ref()],
-        &bpf_loader_upgradeable::id(),
-    );
-    let upgrade_authority_keypair = Keypair::new();
-
-    // Test nonexistent program invocation
-    let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
-    let invocation_message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let binding = mint_keypair.insecure_clone();
-    let transaction = Transaction::new(
-        &[&binding],
-        invocation_message.clone(),
-        bank.last_blockhash(),
-    );
-    assert_eq!(
-        bank.process_transaction(&transaction),
-        Err(TransactionError::ProgramAccountNotFound),
-    );
-    {
-        // Make sure it is not in the cache because the account owner is not a loader
-        let program_cache = bank
-            .transaction_processor
-            .global_program_cache
-            .read()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert!(slot_versions.is_empty());
-    }
-
-    // Advance bank to get a new last blockhash so that when we retry invocation
-    // after creating the program, the new transaction created below with the
-    // same `invocation_message` as above doesn't return `AlreadyProcessed` when
-    // processed.
-    goto_end_of_slot(bank);
-    let bank = bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeader::default())
-        .unwrap();
-
-    // Load program file
-    let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
-        .expect("file open failed");
-    let mut elf = Vec::new();
-    file.read_to_end(&mut elf).unwrap();
-
-    // Compute rent exempt balances
-    let program_len = elf.len();
-    let min_program_balance =
-        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
-    let min_buffer_balance = bank.get_minimum_balance_for_rent_exemption(
-        UpgradeableLoaderState::size_of_buffer(program_len),
-    );
-    let min_programdata_balance = bank.get_minimum_balance_for_rent_exemption(
-        UpgradeableLoaderState::size_of_programdata(program_len),
-    );
-
-    // Setup accounts
-    let buffer_account = {
-        let mut account = AccountSharedData::new(
-            min_buffer_balance,
-            UpgradeableLoaderState::size_of_buffer(elf.len()),
-            &bpf_loader_upgradeable::id(),
-        );
-        wincode::serialize_into(
-            account.data_as_mut_slice(),
-            &UpgradeableLoaderState::Buffer {
-                authority_address: Some(upgrade_authority_keypair.pubkey()),
-            },
-        )
-        .unwrap();
-        account
-            .data_as_mut_slice()
-            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-            .unwrap()
-            .copy_from_slice(&elf);
-        account
-    };
-    let program_account = AccountSharedData::new(
-        min_program_balance,
-        UpgradeableLoaderState::size_of_program(),
-        &bpf_loader_upgradeable::id(),
-    );
-
-    // Test uninitialized program invocation
-    bank.store_account(&program_keypair.pubkey(), &program_account);
-    let transaction = Transaction::new(
-        &[&binding],
-        invocation_message.clone(),
-        bank.last_blockhash(),
-    );
-    assert_eq!(
-        bank.process_transaction(&transaction),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::UnsupportedProgramId
-        )),
-    );
-    {
-        let program_cache = bank
-            .transaction_processor
-            .global_program_cache
-            .read()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert!(slot_versions.is_empty());
-    }
-
-    // Test buffer invocation
-    bank.store_account(&buffer_address, &buffer_account);
-    let instruction = Instruction::new_with_bytes(buffer_address, &[], Vec::new());
-    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
-    assert_eq!(
-        bank.process_transaction(&transaction),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::UnsupportedProgramId,
-        )),
-    );
-    {
-        let program_cache = bank
-            .transaction_processor
-            .global_program_cache
-            .read()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&buffer_address);
-        assert!(slot_versions.is_empty());
-    }
-
-    // Test successful deploy
-    let payer_base_balance = LAMPORTS_PER_SOL;
-    let deploy_fees = {
-        let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
-        3 * fee_calculator.lamports_per_signature
-    };
-    let min_payer_balance = min_program_balance
-        .saturating_add(min_programdata_balance)
-        .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
-    bank.store_account(
-        &payer_keypair.pubkey(),
-        &AccountSharedData::new(
-            payer_base_balance.saturating_add(min_payer_balance),
-            0,
-            &system_program::id(),
-        ),
-    );
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &payer_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&payer_keypair.pubkey()),
-    );
-    assert!(
-        bank_client
-            .send_and_confirm_message(
-                &[&payer_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .is_ok()
-    );
-    assert_eq!(
-        bank.get_balance(&payer_keypair.pubkey()),
-        payer_base_balance
-    );
-    assert_eq!(bank.get_balance(&buffer_address), 0);
-    assert_eq!(None, bank.get_account(&buffer_address));
-    let post_program_account = bank.get_account(&program_keypair.pubkey()).unwrap();
-    assert_eq!(post_program_account.lamports(), min_program_balance);
-    assert_eq!(post_program_account.owner(), &bpf_loader_upgradeable::id());
-    assert_eq!(
-        post_program_account.data().len(),
-        UpgradeableLoaderState::size_of_program()
-    );
-    let state: UpgradeableLoaderState = wincode::deserialize(post_program_account.data()).unwrap();
-    assert_eq!(
-        state,
-        UpgradeableLoaderState::Program {
-            programdata_address
-        }
-    );
-    let post_programdata_account = bank.get_account(&programdata_address).unwrap();
-    assert_eq!(post_programdata_account.lamports(), min_programdata_balance);
-    assert_eq!(
-        post_programdata_account.owner(),
-        &bpf_loader_upgradeable::id()
-    );
-    let state: UpgradeableLoaderState =
-        wincode::deserialize(post_programdata_account.data()).unwrap();
-    assert_eq!(
-        state,
-        UpgradeableLoaderState::ProgramData {
-            slot: bank_client.get_slot().unwrap(),
-            upgrade_authority_address: Some(upgrade_authority_keypair.pubkey())
-        }
-    );
-    for (i, byte) in post_programdata_account
-        .data()
-        .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
-        .unwrap()
-        .iter()
-        .enumerate()
-    {
-        assert_eq!(*elf.get(i).unwrap(), *byte);
-    }
-
-    // Advance the bank so that the program becomes effective
-    goto_end_of_slot(bank);
-    let bank = bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeader::default())
-        .unwrap();
-
-    // Invoke the deployed program
-    let transaction = Transaction::new(&[&binding], invocation_message, bank.last_blockhash());
-    assert!(bank.process_transaction(&transaction).is_ok());
-    {
-        let program_cache = bank
-            .transaction_processor
-            .global_program_cache
-            .read()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 1);
-        assert_eq!(slot_versions[0].deployment_slot, bank.slot() - 1);
-        assert_eq!(slot_versions[0].effective_slot(), bank.slot());
-        assert!(matches!(
-            slot_versions[0].program,
-            ProgramCacheEntryType::Loaded(_),
-        ));
-    }
 }
 
 #[test]
@@ -12202,7 +11942,7 @@ fn test_genesis_deprecate_rent_exemption_enabled() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     let rent_account = bank.get_account(&Rent::id()).unwrap();
-    let accounts_db_rent = wincode::deserialize::<Rent>(rent_account.data()).unwrap();
+    let accounts_db_rent: Rent = rent_account.state().unwrap();
     let rent_collector_rent = bank.rent_collector.rent.clone();
     let tx_processor_rent = bank
         .transaction_processor
@@ -12222,7 +11962,7 @@ fn test_genesis_deprecate_rent_exemption_disabled() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     let rent_account = bank.get_account(&Rent::id()).unwrap();
-    let accounts_db_rent = wincode::deserialize::<Rent>(rent_account.data()).unwrap();
+    let accounts_db_rent: Rent = rent_account.state().unwrap();
     let rent_collector_rent = bank.rent_collector.rent.clone();
     let tx_processor_rent = bank
         .transaction_processor
@@ -12242,152 +11982,13 @@ fn test_parent_block_id() {
     let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
     let parent_bank = Bank::new_for_tests(&genesis_config);
     let (parent_bank, _bank_forks) = parent_bank.wrap_with_bank_forks_for_tests();
-    let parent_block_id = Some(Hash::new_unique());
+    let parent_block_id = Some(BlockId::new_unique());
     parent_bank.set_block_id(parent_block_id);
 
     // Create child from parent and ensure parent block ID links back to the
     // expected value.
     let child_bank = Bank::new_from_parent(parent_bank, SlotLeader::new_unique(), 1);
     assert_eq!(parent_block_id, child_bank.parent_block_id());
-}
-
-#[test]
-fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
-    let (genesis_config, _mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let bank_client = BankClient::new_shared(bank.clone());
-
-    // Setup keypairs and addresses
-    let payer_keypair = Keypair::new();
-    let program_keypair = Keypair::new();
-    let buffer_address = Pubkey::new_unique();
-    let (programdata_address, _) = Pubkey::find_program_address(
-        &[program_keypair.pubkey().as_ref()],
-        &bpf_loader_upgradeable::id(),
-    );
-    let upgrade_authority_keypair = Keypair::new();
-
-    // Load program file
-    let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
-        .expect("file open failed");
-    let mut elf = Vec::new();
-    file.read_to_end(&mut elf).unwrap();
-
-    // Compute rent exempt balances
-    let program_len = elf.len();
-    let min_program_balance =
-        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
-    let min_buffer_balance = bank.get_minimum_balance_for_rent_exemption(
-        UpgradeableLoaderState::size_of_buffer(program_len),
-    );
-    let min_programdata_balance = bank.get_minimum_balance_for_rent_exemption(
-        UpgradeableLoaderState::size_of_programdata(program_len),
-    );
-
-    // Setup accounts
-    let buffer_account = {
-        let mut account = AccountSharedData::new(
-            min_buffer_balance,
-            UpgradeableLoaderState::size_of_buffer(elf.len()),
-            &bpf_loader_upgradeable::id(),
-        );
-        wincode::serialize_into(
-            account.data_as_mut_slice(),
-            &UpgradeableLoaderState::Buffer {
-                authority_address: Some(upgrade_authority_keypair.pubkey()),
-            },
-        )
-        .unwrap();
-        account
-            .data_as_mut_slice()
-            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-            .unwrap()
-            .copy_from_slice(&elf);
-        account
-    };
-
-    // Test successful deploy
-    let payer_base_balance = LAMPORTS_PER_SOL;
-    let deploy_fees = {
-        let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
-        3 * fee_calculator.lamports_per_signature
-    };
-    let min_payer_balance = min_program_balance
-        .saturating_add(min_programdata_balance)
-        .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
-    bank.store_account(
-        &payer_keypair.pubkey(),
-        &AccountSharedData::new(
-            payer_base_balance.saturating_add(min_payer_balance),
-            0,
-            &system_program::id(),
-        ),
-    );
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    bank.store_account(&buffer_address, &buffer_account);
-
-    fn deploy_with_max_program_len(
-        payer_address: &Pubkey,
-        program_address: &Pubkey,
-        buffer_address: &Pubkey,
-        upgrade_authority_address: &Pubkey,
-        program_lamports: u64,
-        max_data_len: usize,
-    ) -> std::result::Result<Vec<Instruction>, InstructionError> {
-        let programdata_address = get_program_data_address(program_address);
-        let dummy_pubkey = Pubkey::new_unique();
-        let mut deploy_ix_accounts = vec![
-            AccountMeta::new(*payer_address, true),
-            AccountMeta::new(programdata_address, false),
-            AccountMeta::new(*program_address, false),
-            AccountMeta::new(*buffer_address, false),
-            AccountMeta::new_readonly(sysvar::rent::id(), false),
-            AccountMeta::new_readonly(sysvar::clock::id(), false),
-            AccountMeta::new_readonly(dummy_pubkey, false),
-            AccountMeta::new_readonly(*upgrade_authority_address, true),
-        ];
-        while deploy_ix_accounts.len() < 256 {
-            deploy_ix_accounts.push(AccountMeta::new_readonly(dummy_pubkey, false));
-        }
-
-        Ok(vec![
-            system_instruction::create_account(
-                payer_address,
-                program_address,
-                program_lamports,
-                UpgradeableLoaderState::size_of_program() as u64,
-                &bpf_loader_upgradeable::id(),
-            ),
-            Instruction::new_with_wincode(
-                bpf_loader_upgradeable::id(),
-                &UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len },
-                deploy_ix_accounts,
-            ),
-        ])
-    }
-
-    let message = Message::new(
-        &deploy_with_max_program_len(
-            &payer_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&payer_keypair.pubkey()),
-    );
-    assert!(
-        bank_client
-            .send_and_confirm_message(
-                &[&payer_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .is_err()
-    );
 }
 
 #[test]
@@ -12562,7 +12163,7 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
 
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.rent_collector.rent = wrong_rent.clone();
-    bank.set_block_id(Some(Hash::default()));
+    bank.set_block_id(Some(BlockId::default()));
 
     // Serialize bank to snapshot
     let mut buf = vec![];
@@ -12612,7 +12213,7 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     bank.set_hashes_per_tick(Some(LEGACY_HASHES_PER_TICK));
-    bank.set_block_id(Some(Hash::default()));
+    bank.set_block_id(Some(BlockId::default()));
 
     let mut buf = vec![];
     crate::serde_snapshot::bank_to_stream(
@@ -12657,7 +12258,7 @@ fn test_calculate_and_set_block_id_for_dcou() {
     // scenario 1: block id already set
     {
         let bank = create_simple_test_bank(123);
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         bank.set_block_id(Some(block_id));
         Bank::calculate_and_set_block_id_for_dcou(&bank);
         assert_eq!(bank.block_id(), Some(block_id));
@@ -12667,7 +12268,7 @@ fn test_calculate_and_set_block_id_for_dcou() {
     {
         let (genesis_config, _) = create_genesis_config(123);
         let (bank1, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let block_id1 = Hash::new_unique();
+        let block_id1 = BlockId::new_unique();
         // oldest ancestor must have block_id set
         bank1.set_block_id(Some(block_id1));
         bank1.fill_bank_with_ticks_for_tests();
@@ -12677,8 +12278,8 @@ fn test_calculate_and_set_block_id_for_dcou() {
 
         // ensure expected block_id is correct
         assert_eq!(
-            bank2.block_id(),
-            Some(hashv(&[block_id1.as_ref(), bank2.hash().as_ref()])),
+            bank2.block_id().unwrap().to_hash(),
+            hashv(&[block_id1.as_bytes(), bank2.hash().as_ref()]),
         );
     }
 
@@ -12687,7 +12288,7 @@ fn test_calculate_and_set_block_id_for_dcou() {
         let (genesis_config, _) = create_genesis_config(123);
         let (mut bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // oldest ancestor must have block id set
-        bank.set_block_id(Some(Hash::new_unique()));
+        bank.set_block_id(Some(BlockId::new_unique()));
         for _ in 0..7 {
             bank.fill_bank_with_ticks_for_tests();
             bank = Arc::new(new_from_parent(bank));
@@ -12698,11 +12299,11 @@ fn test_calculate_and_set_block_id_for_dcou() {
         // we don't calculate the expected parent block id
         // out-of-band, since scenario 2 covers that
         assert_eq!(
-            bank.block_id(),
-            Some(hashv(&[
-                bank.parent_block_id().unwrap().as_ref(),
+            bank.block_id().unwrap().to_hash(),
+            hashv(&[
+                bank.parent_block_id().unwrap().as_bytes(),
                 bank.hash().as_ref(),
-            ])),
+            ]),
         );
     }
 
@@ -12717,7 +12318,7 @@ fn test_calculate_and_set_block_id_for_dcou() {
         let expected_block_id = bank.hash();
 
         Bank::calculate_and_set_block_id_for_dcou(&bank);
-        assert_eq!(bank.block_id(), Some(expected_block_id));
+        assert_eq!(bank.block_id().unwrap().to_hash(), expected_block_id);
     }
 }
 
@@ -12749,11 +12350,8 @@ fn test_new_for_txn_tests_system_transfer() {
     };
     let rent = Rent::default();
 
-    let make_sysvar = |data: Vec<u8>| {
-        let mut acct = AccountSharedData::new(1, data.len(), &solana_sdk_ids::sysvar::id());
-        acct.set_data_from_slice(&data);
-        acct
-    };
+    let make_sysvar =
+        |data: Vec<u8>| AccountSharedData::new_with_data(1, data, &solana_sdk_ids::sysvar::id());
 
     let owned_accounts = [
         (
@@ -12883,11 +12481,8 @@ fn test_new_for_block_tests_with_vote_account() {
     let lamports_per_signature = 5000;
     let transfer_amount = 100_000;
 
-    let make_sysvar = |data: Vec<u8>| {
-        let mut acct = AccountSharedData::new(1, data.len(), &solana_sdk_ids::sysvar::id());
-        acct.set_data_from_slice(&data);
-        acct
-    };
+    let make_sysvar =
+        |data: Vec<u8>| AccountSharedData::new_with_data(1, data, &solana_sdk_ids::sysvar::id());
 
     let clock = solana_clock::Clock {
         slot,

@@ -214,13 +214,14 @@ impl Accounts {
     /// scans underlying accounts_db for this delta (slot) with a map function
     ///   from LoadedAccount to B
     /// returns only the latest/current version of B for this slot
-    pub fn scan_slot<F, B>(&self, slot: Slot, func: F) -> Vec<B>
+    pub fn scan_slot<F, B>(&self, slot: Slot, bank_id: BankId, func: F) -> Vec<B>
     where
         F: Fn(&LoadedAccount) -> Option<B> + Send + Sync,
         B: Sync + Send + Default + std::cmp::Eq,
     {
         let scan_result = self.accounts_db.scan_account_storage(
             slot,
+            bank_id,
             |loaded_account: &LoadedAccount| {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
@@ -251,9 +252,10 @@ impl Accounts {
     pub fn load_by_program_slot(
         &self,
         slot: Slot,
+        bank_id: BankId,
         program_id: Option<&Pubkey>,
     ) -> Vec<KeyedAccountSharedData> {
-        self.scan_slot(slot, |stored_account| {
+        self.scan_slot(slot, bank_id, |stored_account| {
             program_id
                 .map(|program_id| program_id == stored_account.owner())
                 .unwrap_or(true)
@@ -532,7 +534,7 @@ impl Accounts {
             }
         }
 
-        accounts_db.store_accounts_unfrozen(accounts, ancestors);
+        accounts_db.store_accounts_unfrozen(accounts, bank_id, ancestors);
     }
 
     /// Add a slot to root.  Root slots cannot be purged
@@ -739,11 +741,11 @@ mod tests {
         accounts.store_for_tests(0, &pubkey2, &account2);
         accounts.add_root_and_flush_write_cache(0);
 
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([2; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([2; 32])));
         assert_eq!(loaded.len(), 2);
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([3; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([3; 32])));
         assert_eq!(loaded, vec![(pubkey2, account2)]);
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([4; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([4; 32])));
         assert_eq!(loaded, vec![]);
     }
 

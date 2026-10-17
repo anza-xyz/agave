@@ -985,6 +985,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             count_hits_and_misses = false;
             let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
             let task_cookie = task_waiter.cookie();
+            let latest_root_slot = global_program_cache.latest_root_slot;
             // Unlock the global cache again.
             drop(global_program_cache);
 
@@ -998,6 +999,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     execute_timings,
                 )
                 .expect("called load_program_with_pubkey() with nonexistent account");
+                program.update_access_slot(self.slot.min(latest_root_slot));
                 (key, program)
             });
 
@@ -1051,14 +1053,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             // Program account was closed
             return;
         }
-        let program_to_load = {
+        let (program_to_load, latest_root_slot) = {
             let program_cache_guard = self.global_program_cache.read().unwrap();
-            program_cache_guard.extract(
-                &mut missing_programs,
-                &mut program_cache_for_tx_batch,
-                upcoming_environment,
-                false, // increment_usage_counter
-                false, // count_hits_and_misses
+            (
+                program_cache_guard.extract(
+                    &mut missing_programs,
+                    &mut program_cache_for_tx_batch,
+                    upcoming_environment,
+                    false, // increment_usage_counter
+                    false, // count_hits_and_misses
+                ),
+                program_cache_guard.latest_root_slot,
             )
             // Unlock again because load_program_with_pubkey() might take a while.
         };
@@ -1073,6 +1078,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 &mut ExecuteTimings::default(),
             )
             .expect("called load_program_with_pubkey() with nonexistent account");
+            recompiled.update_access_slot(self.slot.min(latest_root_slot));
             recompiled.stats.merge_from(stats_of_enqueued_program);
             // Lock the global cache as writable this time.
             let mut program_cache_guard = self.global_program_cache.write().unwrap();
@@ -1518,9 +1524,12 @@ mod tests {
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
     where
-        T: wincode::Serialize<Src = T> + SysvarId,
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
     {
-        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+        let serialized_len = wincode::config::serialized_size(value, solana_account::WINCODE_CONFIG)
+            .unwrap() as usize;
         let canonical_data_len = match T::id() {
             sysvar::clock::ID => solana_clock::SIZE,
             sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
@@ -1529,9 +1538,7 @@ mod tests {
             id => panic!("unsupported sysvar: {id}"),
         };
         let required_data_len = canonical_data_len.max(serialized_len);
-        let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-        account
+        AccountSharedData::new_data_with_space(1, value, required_data_len, &sysvar::id()).unwrap()
     }
 
     fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
@@ -2477,6 +2484,83 @@ mod tests {
             .unwrap()
             .insert(Pubkey::new_unique());
         batch_processor.new_from(1, 0);
+    }
+
+    #[test]
+    fn test_program_loads_record_rooted_access_slot() {
+        const ROOT_SLOT: Slot = 100;
+        const BANK_SLOT: Slot = 200;
+        const DEPLOYMENT_SLOT: Slot = 50;
+
+        struct SingleChainForkGraph;
+        impl ForkGraph for SingleChainForkGraph {
+            fn relationship(&self, a: Slot, b: Slot) -> BlockRelation {
+                if a == b {
+                    BlockRelation::Equal
+                } else if a < b {
+                    BlockRelation::Ancestor
+                } else {
+                    BlockRelation::Descendant
+                }
+            }
+        }
+
+        let fork_graph = Arc::new(RwLock::new(SingleChainForkGraph));
+        let processor =
+            TransactionBatchProcessor::new(BANK_SLOT, 0, Arc::downgrade(&fork_graph), None);
+        processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .latest_root_slot = ROOT_SLOT;
+
+        let callbacks = MockBankCallback::default();
+        let program_ids = [Pubkey::new_unique(), Pubkey::new_unique()];
+        for program_id in program_ids {
+            let programdata_id = Pubkey::new_unique();
+            callbacks
+                .account_shared_data
+                .write()
+                .unwrap()
+                .insert(program_id, loader_v3_program_account(programdata_id));
+            // Invalid ELF bytes, so the load produces a failed-verification tombstone.
+            callbacks.account_shared_data.write().unwrap().insert(
+                programdata_id,
+                loader_v3_programdata_account(DEPLOYMENT_SLOT, &[1, 2, 3, 4]),
+            );
+        }
+
+        let account_loader = AccountLoader::from(&callbacks);
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(BANK_SLOT);
+        let missing_programs = vec![ProgramToLoad {
+            program_id: &program_ids[0],
+            loader: ProgramCacheEntryOwner::LoaderV3,
+            deployment_slot: DEPLOYMENT_SLOT,
+        }];
+        processor.replenish_program_cache(
+            &account_loader,
+            missing_programs,
+            &processor.program_runtime_environment_for_epoch(0),
+            &mut program_cache_for_tx_batch,
+            &mut ExecuteTimings::default(),
+            false,
+            true,
+        );
+        processor.prepare_one_program_for_upcoming_feature_set(
+            &account_loader,
+            &processor.program_runtime_environment_for_epoch(0),
+            &program_ids[1],
+            &ProgramStatistics::default(),
+        );
+
+        let global_program_cache = processor.global_program_cache.read().unwrap();
+        for program_id in &program_ids {
+            let entry = global_program_cache
+                .get_slot_versions_for_tests(program_id)
+                .first()
+                .unwrap();
+            assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), ROOT_SLOT);
+        }
     }
 
     #[test]

@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use solana_vote_interface::state::{VoteStateV3, VoteStateV4, VoteStateVersions};
 use {
     self::{
         field_frames::{
@@ -16,11 +18,6 @@ use {
     solana_pubkey::Pubkey,
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, Lockout},
     std::sync::Arc,
-};
-#[cfg(feature = "dev-context-only-utils")]
-use {
-    bincode,
-    solana_vote_interface::state::{VoteStateV3, VoteStateV4, VoteStateVersions},
 };
 
 mod field_frames;
@@ -244,7 +241,7 @@ impl VoteStateView {
 #[cfg(feature = "dev-context-only-utils")]
 impl From<VoteStateV3> for VoteStateView {
     fn from(vote_state: VoteStateV3) -> Self {
-        let vote_account_data = bincode::serialize(&VoteStateVersions::new_v3(vote_state)).unwrap();
+        let vote_account_data = wincode::serialize(&VoteStateVersions::new_v3(vote_state)).unwrap();
         VoteStateView::try_new(Arc::new(vote_account_data)).unwrap()
     }
 }
@@ -252,7 +249,7 @@ impl From<VoteStateV3> for VoteStateView {
 #[cfg(feature = "dev-context-only-utils")]
 impl From<VoteStateV4> for VoteStateView {
     fn from(vote_state: VoteStateV4) -> Self {
-        let vote_account_data = bincode::serialize(&VoteStateVersions::new_v4(vote_state)).unwrap();
+        let vote_account_data = wincode::serialize(&VoteStateVersions::new_v4(vote_state)).unwrap();
         VoteStateView::try_new(Arc::new(vote_account_data)).unwrap()
     }
 }
@@ -426,7 +423,7 @@ mod tests {
     fn test_vote_state_view_v4() {
         let target_vote_state = new_test_vote_state_v4();
         let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
-        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
     }
@@ -435,7 +432,7 @@ mod tests {
     fn test_vote_state_view_v4_default() {
         let target_vote_state = VoteStateV4::default();
         let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
-        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
     }
@@ -459,7 +456,7 @@ mod tests {
             }
 
             let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
-            let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+            let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
             let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
             assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
         }
@@ -468,7 +465,7 @@ mod tests {
     fn test_vote_state_view_v3() {
         let target_vote_state = new_test_vote_state_v3();
         let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state.clone()));
-        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
     }
@@ -477,7 +474,7 @@ mod tests {
     fn test_vote_state_view_v3_default() {
         let target_vote_state = VoteStateV3::default();
         let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state.clone()));
-        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
     }
@@ -502,7 +499,7 @@ mod tests {
 
             let target_vote_state_versions =
                 VoteStateVersions::V3(Box::new(target_vote_state.clone()));
-            let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+            let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
             let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
             assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
         }
@@ -513,7 +510,7 @@ mod tests {
         let target_vote_state: VoteState1_14_11 = new_test_vote_state_v3().into();
         let target_vote_state_versions =
             VoteStateVersions::V1_14_11(Box::new(target_vote_state.clone()));
-        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_1_14_11(&vote_state_view, &target_vote_state);
     }
@@ -523,7 +520,7 @@ mod tests {
         let target_vote_state = VoteState1_14_11::default();
         let target_vote_state_versions =
             VoteStateVersions::V1_14_11(Box::new(target_vote_state.clone()));
-        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_1_14_11(&vote_state_view, &target_vote_state);
     }
@@ -553,7 +550,7 @@ mod tests {
 
             let target_vote_state_versions =
                 VoteStateVersions::V1_14_11(Box::new(target_vote_state.clone()));
-            let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+            let vote_state_buf = wincode::serialize(&target_vote_state_versions).unwrap();
             let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
             assert_eq_vote_state_1_14_11(&vote_state_view, &target_vote_state);
         }
@@ -778,7 +775,7 @@ mod tests {
                     ..Default::default()
                 };
                 let versioned = VoteStateVersions::V1_14_11(Box::new(state));
-                let buf = Arc::new(bincode::serialize(&versioned).unwrap());
+                let buf = Arc::new(wincode::serialize(&versioned).unwrap());
                 let view = VoteStateView::try_new(buf).unwrap();
                 assert_eq!(view.commission(), commission_pct);
                 assert_eq!(view.inflation_rewards_commission(), expected_bps);
@@ -796,7 +793,7 @@ mod tests {
                     &Clock::default(),
                 );
                 let versioned = VoteStateVersions::V3(Box::new(state));
-                let buf = Arc::new(bincode::serialize(&versioned).unwrap());
+                let buf = Arc::new(wincode::serialize(&versioned).unwrap());
                 let view = VoteStateView::try_new(buf).unwrap();
                 assert_eq!(view.commission(), commission_pct);
                 assert_eq!(view.inflation_rewards_commission(), expected_bps);
@@ -809,7 +806,7 @@ mod tests {
                     ..VoteStateV4::default()
                 };
                 let versioned = VoteStateVersions::new_v4(state);
-                let buf = Arc::new(bincode::serialize(&versioned).unwrap());
+                let buf = Arc::new(wincode::serialize(&versioned).unwrap());
                 let view = VoteStateView::try_new(buf).unwrap();
                 assert_eq!(
                     view.commission(),
@@ -836,7 +833,7 @@ mod tests {
                 ..VoteStateV4::default()
             };
             let versioned = VoteStateVersions::new_v4(state);
-            let buf = Arc::new(bincode::serialize(&versioned).unwrap());
+            let buf = Arc::new(wincode::serialize(&versioned).unwrap());
             let view = VoteStateView::try_new(buf).unwrap();
             assert_eq!(view.commission(), expected);
         }
@@ -848,7 +845,7 @@ mod tests {
         // VoteStateView accessor results.
         let target_vote_state = new_test_vote_state_v4();
         let versioned = VoteStateVersions::new_v4(target_vote_state.clone());
-        let mut buf = bincode::serialize(&versioned).unwrap();
+        let mut buf = wincode::serialize(&versioned).unwrap();
         buf.extend_from_slice(&[0xAB; 100]);
         let view = VoteStateView::try_new(Arc::new(buf)).unwrap();
         assert_eq_vote_state_v4(&view, &target_vote_state);
@@ -860,7 +857,7 @@ mod tests {
         // garbage — should produce identical accessor results.
         let target_vote_state = new_test_vote_state_v4();
         let versioned = VoteStateVersions::new_v4(target_vote_state);
-        let base = bincode::serialize(&versioned).unwrap();
+        let base = wincode::serialize(&versioned).unwrap();
 
         let mut buf_zero = base.clone();
         buf_zero.extend_from_slice(&[0x00; 100]);

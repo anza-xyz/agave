@@ -103,7 +103,7 @@ fn verify_cert_groups(
             .into_par_iter()
             .map(|(_, certs)| {
                 let num_certs = certs.len();
-                (num_certs, verify_cert_group(certs, root_bank))
+                (num_certs, verify_cert_group(certs, root_bank, thread_pool))
             })
             .collect::<Vec<_>>()
     });
@@ -137,11 +137,15 @@ fn verify_cert_groups(
     certs
 }
 
-fn verify_cert_group(certs: Vec<CertPayload>, root_bank: &Bank) -> CertVerifyOutcome {
+fn verify_cert_group(
+    certs: Vec<CertPayload>,
+    root_bank: &Bank,
+    thread_pool: &ThreadPool,
+) -> CertVerifyOutcome {
     let mut failures = Vec::new();
 
     for cert_payload in certs {
-        match verify_cert(cert_payload.cert, root_bank) {
+        match verify_cert(cert_payload.cert, root_bank, thread_pool) {
             Ok(cert) => {
                 return CertVerifyOutcome {
                     verified_cert: Some(cert),
@@ -161,9 +165,10 @@ fn verify_cert_group(certs: Vec<CertPayload>, root_bank: &Bank) -> CertVerifyOut
 fn verify_cert(
     cert: UnverifiedCertificate,
     root_bank: &Bank,
+    thread_pool: &ThreadPool,
 ) -> Result<Certificate, BlsCertVerifyError> {
     let cert_slot = cert.cert_type.slot();
     let root_slot = root_bank.slot();
     debug_assert!(cert_slot <= root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY));
-    root_bank.verify_certificate(cert)
+    root_bank.verify_certificate(cert, Some(thread_pool))
 }

@@ -1,9 +1,6 @@
 use {
     crate::{
-        commitment::{CommitmentType, update_commitment_cache},
-        common::nonblocking_send,
-        event_handler::PendingBlocks,
-        voting_utils::VotingContext,
+        common::nonblocking_send, event_handler::PendingBlocks, voting_utils::VotingContext,
         votor::SharedContext,
     },
     agave_votor_messages::consensus_message::{Block, BlockId},
@@ -66,13 +63,6 @@ pub(crate) fn set_root(
     ) {
         error!("failed to record optimistic slot in blockstore: slot={new_root_slot}: {e:?}");
     }
-
-    update_commitment_cache(
-        my_pubkey,
-        CommitmentType::Rooted,
-        new_root_slot,
-        &vctx.commitment_sender,
-    );
 
     // It is critical to send the OC notification in order to keep compatibility with
     // the RPC API. Additionally the PrioritizationFeeCache relies on this notification

@@ -1,6 +1,5 @@
 use {
     agave_feature_set as feature_set,
-    assert_matches::assert_matches,
     solana_account::{
         Account, AccountSharedData, WritableAccount, state_traits::StateMutWincode as _,
     },
@@ -12,11 +11,11 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_program_runtime::program_cache_entry::ProgramCacheEntryType,
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, test_utils::goto_end_of_slot},
         loader_utils::{create_buffer_with_elf, create_program_with_elf},
+        program_cache_utils::{EntryType, ExpectedEntry, assert_cache_contents, current_env},
     },
     solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
     solana_signer::Signer,
@@ -59,14 +58,12 @@ fn test_bank_load_program() {
         programdata_data_offset + elf.len(),
         &bpf_loader_upgradeable::id(),
     );
-    wincode::serialize_into(
-        programdata_account.data_as_mut_slice(),
-        &UpgradeableLoaderState::ProgramData {
+    programdata_account
+        .set_state(&UpgradeableLoaderState::ProgramData {
             slot: 42,
             upgrade_authority_address: None,
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     programdata_account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&elf);
     programdata_account.set_rent_epoch(1);
     bank.store_account(&program_key, &program_account);
@@ -78,17 +75,15 @@ fn test_bank_load_program() {
     let transaction = Transaction::new(&[&binding], invocation_message, bank.last_blockhash());
     assert!(bank.process_transaction(&transaction).is_ok());
 
-    {
-        let program_cache = bank
-            .get_transaction_processor()
-            .global_program_cache
-            .read()
-            .unwrap();
-        let [program] = program_cache.get_slot_versions_for_tests(&program_key) else {
-            panic!();
-        };
-        assert_matches!(program.program, ProgramCacheEntryType::Loaded(_));
-    }
+    assert_cache_contents(
+        &bank,
+        &program_key,
+        &[ExpectedEntry {
+            entry_type: EntryType::Loaded,
+            deployment_slot: 42,
+            environment: &current_env(&bank),
+        }],
+    );
 }
 
 #[test]
@@ -148,15 +143,15 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
 
     // Before the recompilation phase, only the original program is cached.
     goto_end_of_slot(bank.clone());
-    {
-        let program_cache = bank
-            .get_transaction_processor()
-            .global_program_cache
-            .read()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 1);
-    }
+    assert_cache_contents(
+        &bank,
+        &program_keypair.pubkey(),
+        &[ExpectedEntry {
+            entry_type: EntryType::Loaded,
+            deployment_slot: 0,
+            environment: &current_env(&bank),
+        }],
+    );
 
     // Advance the bank to middle of epoch to start the recompilation phase,
     // which recompiles the program in the same slot it starts.
@@ -177,23 +172,22 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
         .unwrap();
     assert!(*upcoming_env == *ebpp_env);
     assert_eq!(upcoming_env, ebpp_env); // `Arc::ptr_eq`
-    {
-        let program_cache = bank
-            .get_transaction_processor()
-            .global_program_cache
-            .write()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 2);
-        assert_eq!(
-            slot_versions[0].program.get_environment().unwrap(),
-            &current_env,
-        );
-        assert_eq!(
-            slot_versions[1].program.get_environment().unwrap(),
-            &upcoming_env,
-        );
-    }
+    assert_cache_contents(
+        &bank,
+        &program_keypair.pubkey(),
+        &[
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &current_env,
+            },
+            ExpectedEntry {
+                entry_type: EntryType::FailedVerification,
+                deployment_slot: 0,
+                environment: &upcoming_env,
+            },
+        ],
+    );
 
     // Advance the bank to cross the epoch boundary and activate the feature.
     goto_end_of_slot(bank.clone());
@@ -420,15 +414,15 @@ fn test_feature_activation_loaded_programs_late_activation() {
 
     // Before the recompilation phase, only the original program is cached.
     goto_end_of_slot(bank.clone());
-    {
-        let program_cache = bank
-            .get_transaction_processor()
-            .global_program_cache
-            .read()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 1);
-    }
+    assert_cache_contents(
+        &bank,
+        &program_keypair.pubkey(),
+        &[ExpectedEntry {
+            entry_type: EntryType::Loaded,
+            deployment_slot: 0,
+            environment: &current_env(&bank),
+        }],
+    );
 
     // Advance the bank to the middle of the epoch to start the recompilation
     // phase. We've seen no feature yet, so environments should match and cache
@@ -448,19 +442,15 @@ fn test_feature_activation_loaded_programs_late_activation() {
         .unwrap();
     assert!(*current_env == *upcoming_env);
     assert_eq!(current_env, upcoming_env);
-    {
-        let program_cache = bank
-            .get_transaction_processor()
-            .global_program_cache
-            .write()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 1);
-        assert_eq!(
-            slot_versions[0].program.get_environment().unwrap(),
-            &current_env,
-        );
-    }
+    assert_cache_contents(
+        &bank,
+        &program_keypair.pubkey(),
+        &[ExpectedEntry {
+            entry_type: EntryType::Loaded,
+            deployment_slot: 0,
+            environment: &current_env,
+        }],
+    );
     assert!(ebpp.upcoming_environment.is_none());
     assert!(ebpp.programs_to_recompile.is_empty());
     drop(ebpp);
@@ -499,23 +489,22 @@ fn test_feature_activation_loaded_programs_late_activation() {
     assert_ne!(current_env, upcoming_env);
     assert!(*ebpp_env == *upcoming_env);
     assert_eq!(ebpp_env, upcoming_env);
-    {
-        let program_cache = bank
-            .get_transaction_processor()
-            .global_program_cache
-            .write()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 2);
-        assert_eq!(
-            slot_versions[0].program.get_environment().unwrap(),
-            &current_env,
-        );
-        assert_eq!(
-            slot_versions[1].program.get_environment().unwrap(),
-            &upcoming_env, // <-- EBPP env
-        );
-    }
+    assert_cache_contents(
+        &bank,
+        &program_keypair.pubkey(),
+        &[
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &current_env,
+            },
+            ExpectedEntry {
+                entry_type: EntryType::FailedVerification,
+                deployment_slot: 0,
+                environment: &upcoming_env,
+            },
+        ],
+    );
 
     // Now cross the epoch boundary and activate the feature.
     goto_end_of_slot(bank.clone());
@@ -534,23 +523,22 @@ fn test_feature_activation_loaded_programs_late_activation() {
 
     // Cache contents should be unchanged. The program should have the new
     // environment.
-    {
-        let program_cache = bank
-            .get_transaction_processor()
-            .global_program_cache
-            .write()
-            .unwrap();
-        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 2);
-        assert_eq!(
-            slot_versions[0].program.get_environment().unwrap(),
-            &current_env,
-        );
-        assert_eq!(
-            slot_versions[1].program.get_environment().unwrap(),
-            &new_processor_env,
-        );
-    }
+    assert_cache_contents(
+        &bank,
+        &program_keypair.pubkey(),
+        &[
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &current_env,
+            },
+            ExpectedEntry {
+                entry_type: EntryType::FailedVerification,
+                deployment_slot: 0,
+                environment: &new_processor_env,
+            },
+        ],
+    );
 }
 
 #[test]
@@ -604,6 +592,7 @@ fn test_feature_activation_loaded_programs_fork_without_activation() {
         let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
         assert_eq!(bank.process_transaction(&transaction), Ok(()));
     }
+    let old_env = current_env(&bank);
 
     // Fork point at 10.
     goto_end_of_slot(bank.clone());
@@ -738,26 +727,29 @@ fn test_feature_activation_loaded_programs_fork_without_activation() {
     assert!(*new_processor_env == *ebpp_latch_env);
     assert_eq!(new_processor_env, ebpp_latch_env); // `Arc::ptr_eq`
 
-    {
-        let program_cache = with_feature
-            .get_transaction_processor()
-            .global_program_cache
-            .write()
-            .unwrap();
-        for program_id in program_keypairs.iter().filter_map(|program_keypair| {
-            let program_id = program_keypair.pubkey();
-            non_recompiled_programs
-                .iter()
-                .all(|(key, _)| *key != program_id)
-                .then_some(program_id)
-        }) {
-            let slot_versions = program_cache.get_slot_versions_for_tests(&program_id);
-            assert_eq!(slot_versions.len(), 2);
-            assert_eq!(
-                slot_versions[1].program.get_environment().unwrap(),
-                &new_processor_env,
-            );
-        }
+    for program_id in program_keypairs.iter().filter_map(|program_keypair| {
+        let program_id = program_keypair.pubkey();
+        non_recompiled_programs
+            .iter()
+            .all(|(key, _)| *key != program_id)
+            .then_some(program_id)
+    }) {
+        assert_cache_contents(
+            &with_feature,
+            &program_id,
+            &[
+                ExpectedEntry {
+                    entry_type: EntryType::Loaded,
+                    deployment_slot: 0,
+                    environment: &old_env,
+                },
+                ExpectedEntry {
+                    entry_type: EntryType::FailedVerification,
+                    deployment_slot: 0,
+                    environment: &new_processor_env,
+                },
+            ],
+        );
     }
 }
 
