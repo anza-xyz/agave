@@ -826,7 +826,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             .fetch_add(m.end_as_us(), Ordering::Relaxed);
     }
 
-    pub fn startup_update_duplicates_from_in_memory_only(&self, items: Vec<(Slot, Pubkey)>) {
+    pub fn startup_update_duplicates_from_in_memory_only(
+        &self,
+        items: impl IntoIterator<Item = (Slot, Pubkey)>,
+    ) {
         assert!(self.storage.get_startup());
         assert!(self.bucket.is_none());
 
@@ -854,6 +857,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 let (slot, account_info) = new_entry.into();
 
                 let slot_list = occupied.get().slot_list_read_lock();
+                debug_assert!(
+                    slot_list
+                        .iter()
+                        .all(|(existing_slot, _)| *existing_slot != slot),
+                    "Accounts may only be stored once per slot: {slot}"
+                );
 
                 // If there is only one entry in the slot list, it means that
                 // the previous entry inserted was a duplicate, which should be
