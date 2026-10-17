@@ -2868,21 +2868,19 @@ impl AccountsDb {
     /// Purges each slot in `removed_slots` from the write cache, and defers any pubkeys that
     /// were fully removed from the write cache to clean to handle removal from the secondary
     /// index. Slots no longer present in the cache are skipped. This never touches backing
-    /// storage, so it cannot delete a flushed slot's data. Returns whether any slot was actually
-    /// removed from the cache. This allows the snapshot minimizer to determine whether
-    /// it should purge the storage as well
+    /// storage, so it cannot delete a flushed slot's data.
     fn purge_slots_from_cache<'a>(
         &self,
         removed_slots: impl Iterator<Item = &'a Slot>,
         purge_stats: &PurgeStats,
-    ) -> bool {
+    ) {
         let mut remove_cache_elapsed_across_slots = 0;
         let mut num_cached_slots_removed = 0;
         let mut total_removed_cached_bytes = 0;
         for remove_slot in removed_slots {
             // This function runs in parallel with the ABS operations (flush, shrink, clean) and
             // must be safe with respect to them. ABS operations will not operate on this slot as
-            // it is unrooted (unless the snapshot minimizer is being used).
+            // it is unrooted.
             let mut remove_cache_elapsed = Measure::start("remove_cache_elapsed");
             if let Some(slot_cache) = self.accounts_cache.slot_cache(*remove_slot) {
                 num_cached_slots_removed += 1;
@@ -2907,8 +2905,6 @@ impl AccountsDb {
         purge_stats
             .total_removed_cached_bytes
             .fetch_add(total_removed_cached_bytes, Ordering::Relaxed);
-
-        num_cached_slots_removed > 0
     }
 
     /// Add any keys that were removed from the cache and need follow-up work by clean
@@ -2942,8 +2938,8 @@ impl AccountsDb {
         }
     }
 
-    /// Purges every slot in `removed_slots` from both the cache and storage. This includes
-    /// entries in the accounts index, cache entries, and any backing storage entries.
+    /// Purges every slot in `removed_slots` from storage and the accounts index. The minimizer
+    /// only purges slots that have storages, so none of them are in the cache.
     ///
     /// This fn is to only be called by snapshot minimizer
     #[cfg(feature = "dev-context-only-utils")]
@@ -2953,12 +2949,7 @@ impl AccountsDb {
     ) {
         let purge_stats = PurgeStats::default();
         for remove_slot in removed_slots {
-            // Unlike the consensus purge paths, minimization may purge slots that have already
-            // been flushed to storage, so fall back to purging storage for any slot that is no
-            // longer in the cache.
-            if !self.purge_slots_from_cache(iter::once(remove_slot), &purge_stats) {
-                self.purge_slot_storage(*remove_slot, &purge_stats);
-            }
+            self.purge_slot_storage(*remove_slot, &purge_stats);
         }
     }
 
