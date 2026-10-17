@@ -249,9 +249,8 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .long("program-id")
                                 .value_name("PROGRAM_ID"),
                             "Executable program; must be a signer for initial deploys, can be an \
-                             address for upgrades [default: address of keypair at \
-                             /path/to/program-keypair.json if present, otherwise a random \
-                             address]."
+                               address for upgrades [default: address of keypair at \
+                               /path/to/program-keypair.json]."
                         ))
                         .arg(
                             Arg::with_name("final")
@@ -1271,7 +1270,9 @@ pub async fn process_program_subcommand(
     }
 }
 
-fn get_default_program_keypair(program_location: &Option<String>) -> Keypair {
+fn get_default_program_keypair(
+    program_location: &Option<String>,
+) -> Result<Keypair, Box<dyn std::error::Error>> {
     if let Some(program_location) = program_location {
         let mut keypair_file = PathBuf::new();
         keypair_file.push(program_location);
@@ -1279,13 +1280,28 @@ fn get_default_program_keypair(program_location: &Option<String>) -> Keypair {
         filename.push("-keypair");
         keypair_file.set_file_name(filename);
         keypair_file.set_extension("json");
-        if let Ok(keypair) = read_keypair_file(keypair_file.to_str().unwrap()) {
-            keypair
-        } else {
-            Keypair::new()
+        eprintln!(
+            "No program pubkey or keypair file was provided with `--program-id`. Looking for a \
+             program keypair at the default location '{}'.",
+            keypair_file.display(),
+        );
+        match read_keypair_file(keypair_file.to_str().unwrap()) {
+            Ok(keypair) => Ok(keypair),
+            Err(err) => Err(format!(
+                "Unable to read the default program keypair file '{}': {err}\n\
+                 To create a new program keypair, run `solana-keygen new -o \
+                 path/to/keypair/file.json`. Update the program ID declared in your program code \
+                 and project configuration files, then rebuild your project. Finally, pass the \
+                 keypair file to `solana program deploy` with `--program-id \
+                 path/to/keypair/file.json`.\n\
+                 Did you mean to pass a program pubkey? Use `solana program deploy \
+                 path/to/program.so --program-id <PROGRAM_ID>`.",
+                keypair_file.display(),
+            )
+            .into()),
         }
     } else {
-        Keypair::new()
+        Ok(Keypair::new())
     }
 }
 
@@ -1326,14 +1342,19 @@ async fn process_program_deploy(
         )
     };
 
-    let default_program_keypair = get_default_program_keypair(program_location);
+    let default_program_keypair = if program_signer_index.is_none() && program_pubkey.is_none() {
+        Some(get_default_program_keypair(program_location)?)
+    } else {
+        None
+    };
     let (program_signer, program_pubkey) = if let Some(i) = program_signer_index {
         (Some(config.signers[i]), config.signers[i].pubkey())
     } else if let Some(program_pubkey) = program_pubkey {
         (None, program_pubkey)
     } else {
+        let default_program_keypair = default_program_keypair.as_ref().unwrap();
         (
-            Some(&default_program_keypair as &dyn Signer),
+            Some(default_program_keypair as &dyn Signer),
             default_program_keypair.pubkey(),
         )
     };
@@ -3455,6 +3476,21 @@ mod tests {
         let _ignored = std::fs::remove_file(&path);
 
         path
+    }
+
+    #[test]
+    fn test_missing_default_program_keypair() {
+        let program_location = Some(format!("{}.so", make_tmp_path("missing-program-keypair")));
+
+        let err = get_default_program_keypair(&program_location).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("Unable to read the default program keypair file"));
+        assert!(message.contains("solana-keygen new -o path/to/keypair/file.json"));
+        assert!(message.contains("Update the program ID declared in your program code"));
+        assert!(message.contains("project configuration files, then rebuild your project"));
+        assert!(message.contains("--program-id path/to/keypair/file.json"));
+        assert!(message.contains("Did you mean to pass a program pubkey?"));
+        assert!(message.contains("path/to/program.so --program-id <PROGRAM_ID>"));
     }
 
     #[test]
