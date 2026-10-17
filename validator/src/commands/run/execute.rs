@@ -1004,7 +1004,7 @@ pub fn execute(
     );
 
     if !cluster_entrypoints.is_empty() {
-        bootstrap::rpc_bootstrap(
+        bootstrap::try_rpc_bootstrap(
             &node,
             &identity_keypair,
             &ledger_path,
@@ -1020,7 +1020,7 @@ pub fn execute(
             minimal_snapshot_download_speed,
             maximum_snapshot_download_abort,
             run_args.socket_addr_space,
-        );
+        )?;
         *start_progress.write().unwrap() = ValidatorStartProgress::Initializing;
     }
 
