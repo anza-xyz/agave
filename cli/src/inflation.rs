@@ -121,6 +121,7 @@ async fn process_rewards(
         let (epoch_start_time, epoch_end_time) =
             crate::stake::get_epoch_boundary_timestamps(rpc_client, first_reward, &epoch_schedule)
                 .await?;
+        block_times.insert(first_reward.effective_slot, epoch_end_time);
         for (reward, address) in rewards.iter().zip(addresses) {
             let cli_reward = if let Some(reward) = reward {
                 let block_time = if let Some(block_time) = block_times.get(&reward.effective_slot) {
