@@ -73,7 +73,6 @@ pub struct FeatureSnapshot {
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
-    pub upgrade_bpf_stake_program_to_v5: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
@@ -82,6 +81,7 @@ pub struct FeatureSnapshot {
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
+    pub core_bpf_hash_validation: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -172,7 +172,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             direct_account_pointers_in_program_input: is_active(
                 &direct_account_pointers_in_program_input::ID,
             ),
-            upgrade_bpf_stake_program_to_v5: is_active(&upgrade_bpf_stake_program_to_v5::ID),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
@@ -185,6 +184,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &early_instruction_trace_overflow_detection::ID,
             ),
             unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
+            core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
         }
     }
 }
@@ -1475,10 +1475,6 @@ pub mod loader_v3_minimum_extend_program_size {
 
 pub mod upgrade_bpf_stake_program_to_v5 {
     solana_pubkey::declare_id!("STk5Xj8hdAx3sTzmtJ3QysKkq6X2A3yj73JtxttiRyk");
-
-    pub mod buffer {
-        solana_pubkey::declare_id!("4EBQBjw1kqF1dqUBb6fc5Ji4tCEQgNf9ESGGX3smwXwh");
-    }
 }
 
 pub mod enable_sha512_syscall {
@@ -1551,6 +1547,10 @@ pub mod early_instruction_trace_overflow_detection {
 
 pub mod unbound_loader_v3_instruction_data {
     solana_pubkey::declare_id!("UPbPFtaUVoKZuMEJsDxLfvCNuKavoVapghnzepr1e26");
+}
+
+pub mod core_bpf_hash_validation {
+    solana_pubkey::declare_id!("FCsQnd4V52NESBhVURWYSWBbmLFzgxEZVC2WngzHzp1u");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2654,6 +2654,11 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             unbound_loader_v3_instruction_data::id(),
             "SIMD-0648: Unbound LoaderV3 Instruction Data",
+        ),
+        (
+            core_bpf_hash_validation::id(),
+            "SIMD-0088, SIMD-0418, and SIMD-0495 Amendment: Hash validation in Core BPF \
+             migrations, upgrades",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
