@@ -3675,7 +3675,9 @@ pub mod rpc_full {
     use {
         super::*,
         solana_message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::{UiLoadedAddresses, parse_ui_inner_instructions},
+        solana_transaction_status::{
+            UiInnerInstructions, UiLoadedAddresses, parse_ui_inner_instructions,
+        },
     };
     #[rpc]
     pub trait Full {
@@ -4168,7 +4170,19 @@ pub mod rpc_full {
                 accounts: config_accounts,
                 min_context_slot,
                 inner_instructions: enable_cpi_recording,
+                inner_instructions_encoding,
             } = config.unwrap_or_default();
+            let inner_instructions_encoding =
+                inner_instructions_encoding.unwrap_or(UiTransactionEncoding::JsonParsed);
+            if !matches!(
+                inner_instructions_encoding,
+                UiTransactionEncoding::Json | UiTransactionEncoding::JsonParsed
+            ) {
+                return Err(Error::invalid_params(format!(
+                    "unsupported inner instructions encoding: {inner_instructions_encoding}. \
+                     Supported encodings: json, jsonParsed"
+                )));
+            }
             let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
             let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
                 Error::invalid_params(format!(
@@ -4283,7 +4297,10 @@ pub mod rpc_full {
 
             let inner_instructions = inner_instructions.map(|info| {
                 map_inner_instructions(info)
-                    .map(|converted| parse_ui_inner_instructions(converted, &account_keys))
+                    .map(|converted| match inner_instructions_encoding {
+                        UiTransactionEncoding::Json => UiInnerInstructions::from(converted),
+                        _ => parse_ui_inner_instructions(converted, &account_keys),
+                    })
                     .collect()
             });
 
@@ -7280,6 +7297,79 @@ pub mod tests {
         let result: Response = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
         assert_eq!(result, expected);
+
+        // `innerInstructionsEncoding` provided as `json`, should have compiled inner instructions
+        let req = format!(
+            r#"{{"jsonrpc":"2.0",
+                 "id":1,
+                 "method":"simulateTransaction",
+                 "params":[
+                   "{tx_serialized_encoded}",
+                   {{ "innerInstructions": true, "innerInstructionsEncoding": "json", "encoding": "base64" }}
+                 ]
+            }}"#,
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let account_index = |pubkey: &Pubkey| {
+            tx.message
+                .account_keys
+                .iter()
+                .position(|key| key == pubkey)
+                .unwrap()
+        };
+        let create_account_ix = system_instruction::create_account(
+            &from_pubkey,
+            &to_pubkey,
+            lamports,
+            space as u64,
+            &owner_pubkey,
+        );
+        let expected_inner_instructions = json!([
+            {
+            "index": 0,
+            "instructions": [
+                {
+                "programIdIndex": account_index(&system_program::id()),
+                "accounts": [account_index(&from_pubkey), account_index(&to_pubkey)],
+                "data": bs58::encode(&create_account_ix.data).into_string(),
+                "stackHeight": 2
+                }
+            ]
+            }
+        ]);
+        let result: Response = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let Response::Single(Output::Success(success)) = result else {
+            panic!("expected success response, got {result:?}");
+        };
+        assert_eq!(
+            success.result["value"]["innerInstructions"],
+            expected_inner_instructions
+        );
+
+        // Unsupported `innerInstructionsEncoding` should return an error
+        let req = format!(
+            r#"{{"jsonrpc":"2.0",
+                 "id":1,
+                 "method":"simulateTransaction",
+                 "params":[
+                   "{tx_serialized_encoded}",
+                   {{ "innerInstructions": true, "innerInstructionsEncoding": "base64", "encoding": "base64" }}
+                 ]
+            }}"#,
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let result: Response = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let Response::Single(Output::Failure(failure)) = result else {
+            panic!("expected failure response, got {result:?}");
+        };
+        assert_eq!(failure.error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            failure.error.message,
+            "unsupported inner instructions encoding: base64. Supported encodings: json, \
+             jsonParsed"
+        );
     }
 
     #[test]
