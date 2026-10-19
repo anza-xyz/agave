@@ -3457,13 +3457,21 @@ mod tests {
         ));
     }
 
-    #[test_case::test_case(true, false, true; "rpc_only")]
-    #[test_case::test_case(false, false, false; "neither")]
-    #[test_case::test_case(false, true, false; "geyser_only")]
-    #[test_case::test_case(true, true, true; "rpc_and_geyser")]
-    #[test_case::test_case(true, false, false; "minimal_rpc")]
-    #[test_case::test_case(true, true, false; "minimal_rpc_and_geyser")]
-    fn validator_exit(rpc_enabled: bool, geyser_enabled: bool, full_api: bool) {
+    #[test_case::test_case(true, false, true, false; "rpc_only")]
+    #[test_case::test_case(false, false, false, false; "neither")]
+    #[test_case::test_case(false, true, false, false; "geyser_only")]
+    #[test_case::test_case(true, true, true, false; "rpc_and_geyser")]
+    #[test_case::test_case(true, false, false, false; "minimal_rpc")]
+    #[test_case::test_case(true, true, false, false; "minimal_rpc_and_geyser")]
+    #[test_case::test_case(true, false, true, true; "rpc_with_transaction_history")]
+    #[test_case::test_case(true, true, true, true; "rpc_and_geyser_with_transaction_history")]
+    #[test_case::test_case(false, true, false, true; "geyser_only_with_transaction_history")]
+    fn validator_exit(
+        rpc_enabled: bool,
+        geyser_enabled: bool,
+        full_api: bool,
+        enable_rpc_transaction_history: bool,
+    ) {
         agave_logger::setup();
         let leader_keypair = Keypair::new();
         let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
@@ -3486,6 +3494,7 @@ mod tests {
             geyser_plugin_always_enabled: geyser_enabled,
             rpc_config: JsonRpcConfig {
                 full_api,
+                enable_rpc_transaction_history,
                 ..JsonRpcConfig::default_for_test()
             },
             ..ValidatorConfig::default_for_test()
@@ -3521,6 +3530,10 @@ mod tests {
             (rpc_enabled && full_api) || geyser_enabled
         );
         assert_eq!(validator.geyser_plugin_service.is_some(), geyser_enabled);
+        assert_eq!(
+            validator.sample_performance_service.is_some(),
+            rpc_enabled && enable_rpc_transaction_history
+        );
         validator.close();
         remove_dir_all(validator_ledger_path).unwrap();
     }
