@@ -95,8 +95,12 @@ impl SlotStatusObserver {
 mod tests {
     use {
         super::*,
-        solana_clock::{BankId, Slot},
-        solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
+        solana_clock::Slot,
+        solana_rpc::{
+            optimistically_confirmed_bank_tracker::SlotNotification,
+            slot_status_notifier::SlotStatusNotifierInterface,
+        },
+        solana_runtime::bank::BankId,
         std::sync::RwLock,
     };
 
@@ -113,16 +117,74 @@ mod tests {
         fn notify_slot_dead(&self, _: Slot, _: Slot, _: String) {}
     }
 
+    #[derive(Debug)]
+    struct SignalNotifier(Arc<AtomicBool>);
+
+    impl SlotStatusNotifierInterface for SignalNotifier {
+        fn notify_slot_confirmed(&self, _: Slot, _: Option<Slot>, _: BankId) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+        fn notify_slot_processed(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+        fn notify_slot_rooted(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+        fn notify_first_shred_received(&self, _: Slot) {}
+        fn notify_completed(&self, _: Slot) {}
+        fn notify_created_bank(&self, _: Slot, _: Slot, _: BankId) {}
+        fn notify_slot_dead(&self, _: Slot, _: Slot, _: String) {}
+    }
+
+    fn wait_until_entered(entered: &AtomicBool) {
+        for _ in 0..100 {
+            if entered.load(Ordering::SeqCst) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("worker never entered the receive path");
+    }
+
     #[test]
     fn test_slot_status_observer_joins_on_idle_channel() {
-        // join() sets the exit flag and must return; the run loop may not block
-        // on an idle channel, so shutdown cannot hang waiting for the next
-        // notification.
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let entered = Arc::new(AtomicBool::new(false));
+        let notifier: SlotStatusNotifier = Arc::new(RwLock::new(SignalNotifier(entered.clone())));
+        let observer = SlotStatusObserver::new(receiver, notifier);
+
+        sender
+            .send(SlotNotification::OptimisticallyConfirmed(
+                0,
+                BankId::default(),
+            ))
+            .unwrap();
+        wait_until_entered(&entered);
+
+        let (done_tx, done_rx) = crossbeam_channel::unbounded();
+        thread::spawn(move || {
+            let mut observer = observer;
+            observer.join().unwrap();
+            done_tx.send(()).unwrap();
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("observer join timed out on an idle channel");
+        drop(sender);
+    }
+
+    #[test]
+    fn test_slot_status_observer_exits_on_disconnect() {
         let (sender, receiver) = crossbeam_channel::unbounded();
         let notifier: SlotStatusNotifier = Arc::new(RwLock::new(NoopNotifier));
         let mut observer = SlotStatusObserver::new(receiver, notifier);
 
-        observer.join().unwrap();
         drop(sender);
+        let handle = observer.bank_notification_receiver_service.take().unwrap();
+        for _ in 0..100 {
+            if handle.is_finished() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(handle.is_finished());
+        assert!(!observer.exit_updated_slot_server.load(Ordering::Relaxed));
+        handle.join().unwrap();
     }
 }
