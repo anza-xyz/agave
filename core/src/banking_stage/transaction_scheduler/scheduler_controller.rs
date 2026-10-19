@@ -295,7 +295,7 @@ where
                         block_limit,
                         shared_block_cost,
                         detection_time: now,
-                        fill_time,
+                        fill_time: self.config.scheduler_pacing.fill_time(),
                     }
                 });
             }
