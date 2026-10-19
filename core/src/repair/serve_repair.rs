@@ -251,12 +251,12 @@ impl RequestResponse for AncestorHashesRepairType {
 pub enum BlockIdRepairType {
     ParentAndFecSetCount {
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     },
 
     FecSetRoot {
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
         // Authenticated by the ParentAndFecSetCount response and retained locally
         // to verify the depth of the FEC-set proof. This is not sent on the wire.
@@ -267,14 +267,8 @@ pub enum BlockIdRepairType {
 impl BlockIdRepairType {
     pub(crate) fn block(&self) -> Block {
         match *self {
-            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block {
-                slot,
-                block_id: BlockId::from(block_id),
-            },
-            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block {
-                slot,
-                block_id: BlockId::from(block_id),
-            },
+            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block { slot, block_id },
+            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block { slot, block_id },
         }
     }
 
@@ -355,7 +349,7 @@ impl RequestResponse for BlockIdRepairType {
                     merkle_tree::hash_as_merkle_proof_entry(&parent_info_leaf),
                     *fec_set_count as usize,
                     parent_proof,
-                    *block_id,
+                    block_id.to_hash(),
                 )
                 .is_ok()
             }
@@ -394,7 +388,7 @@ impl RequestResponse for BlockIdRepairType {
                     fec_set_root.as_bytes(),
                     leaf_index,
                     fec_set_proof,
-                    *block_id,
+                    block_id.to_hash(),
                 )
                 .is_ok()
             }
@@ -2026,7 +2020,7 @@ impl ServeRepair {
                 RepairProtocol::ParentAndFecSetCount {
                     header,
                     slot: *slot,
-                    block_id: BlockId::from(*block_id),
+                    block_id: *block_id,
                 }
             }
             BlockIdRepairType::FecSetRoot {
@@ -2037,7 +2031,7 @@ impl ServeRepair {
             } => RepairProtocol::FecSetRoot {
                 header,
                 slot: *slot,
-                block_id: BlockId::from(*block_id),
+                block_id: *block_id,
                 fec_set_index: *fec_set_index,
             },
         };
@@ -3135,7 +3129,7 @@ mod tests {
                 &repair_info,
                 BlockIdRepairType::ParentAndFecSetCount {
                     slot,
-                    block_id: Hash::new_unique(),
+                    block_id: BlockId::new_unique(),
                 },
                 &mut peers_cache,
                 &mut outstanding_block_id_requests,
@@ -3424,7 +3418,7 @@ mod tests {
         let tree =
             merkle_tree::MerkleTree::try_new_with_len(leaves.iter().copied().map(Ok), leaves.len())
                 .unwrap();
-        let block_id = *tree.root();
+        let block_id = BlockId::from(*tree.root());
         let real_parent_proof: Vec<u8> = tree
             .make_merkle_proof(fec_set_count as usize, leaves.len())
             .flat_map(|entry| entry.unwrap().iter().copied())
@@ -3458,7 +3452,7 @@ mod tests {
 
     #[test]
     fn test_verify_fec_set_root_rejects_empty_proof() {
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let request = BlockIdRepairType::FecSetRoot {
             slot: 100,
             block_id,
@@ -3466,7 +3460,7 @@ mod tests {
             fec_set_count: 1,
         };
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root: block_id.into(),
+            fec_set_root: FecSetRoot::from(block_id.to_hash()),
             fec_set_proof: vec![],
         };
 
@@ -3481,7 +3475,7 @@ mod tests {
         let tree =
             merkle_tree::MerkleTree::try_new_with_len(leaves.into_iter().map(Ok), leaves.len())
                 .unwrap();
-        let block_id = *tree.root();
+        let block_id = BlockId::from(*tree.root());
         let fec_set_proof: Vec<u8> = tree
             .make_merkle_proof(0, leaves.len())
             .flat_map(|entry| entry.unwrap().iter().copied())
@@ -3500,7 +3494,7 @@ mod tests {
                 hash_as_merkle_proof_entry(&internal_node),
                 0,
                 &shortened_proof,
-                block_id
+                block_id.to_hash()
             )
             .is_ok()
         );
