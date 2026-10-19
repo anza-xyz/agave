@@ -7185,7 +7185,7 @@ fn test_mark_slots_duplicate_confirmed() {
 }
 
 #[test_case(true ; "same_batch")]
-#[test_case(false ; "seperate_batches")]
+#[test_case(false ; "separate_batches")]
 #[should_panic(expected = "Additional duplicate confirmed notification for slot 6")]
 fn test_process_duplicate_confirmed_slots(same_batch: bool) {
     let generate_votes = |pubkeys: Vec<Pubkey>| {
@@ -7229,7 +7229,7 @@ fn test_process_duplicate_confirmed_slots(same_batch: bool) {
 
     assert!(!duplicate_confirmed_slots.contains_key(&0));
 
-    // Mark 5 as duplicate confirmed, should succed
+    // Mark 5 as duplicate confirmed, should succeed
     let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
     sender.send(vec![(5, bank_hash_5)]).unwrap();
 
