@@ -98,9 +98,6 @@ impl GeyserPluginService {
         let account_data_notifications_enabled =
             plugin_manager.load().account_data_notifications_enabled()
                 || geyser_plugin_always_enabled;
-        let account_data_snapshot_notifications_enabled = plugin_manager
-            .load()
-            .account_data_snapshot_notifications_enabled();
         let transaction_notifications_enabled =
             plugin_manager.load().transaction_notifications_enabled()
                 || geyser_plugin_always_enabled;
@@ -113,16 +110,11 @@ impl GeyserPluginService {
                 || plugin_manager.load().block_footer_notifications_enabled()
                 || geyser_plugin_always_enabled;
 
-        let accounts_update_notifier: Option<AccountsUpdateNotifier> =
-            if account_data_notifications_enabled {
-                let accounts_update_notifier = AccountsUpdateNotifierImpl::new(
-                    plugin_manager.clone(),
-                    account_data_snapshot_notifications_enabled,
-                );
-                Some(Arc::new(accounts_update_notifier))
-            } else {
-                None
-            };
+        let accounts_update_notifier = AccountsUpdateNotifierImpl::new(
+            Arc::clone(&plugin_manager),
+            geyser_plugin_always_enabled,
+        )
+        .map(|notifier| Arc::new(notifier) as AccountsUpdateNotifier);
 
         let transaction_notifier: Option<TransactionNotifierArc> =
             if transaction_notifications_enabled {
