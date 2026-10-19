@@ -149,38 +149,34 @@ pub(crate) fn udp_socket_with_config(config: SocketConfiguration) -> io::Result<
     Ok(sock)
 }
 
-/// The get_max_recv/send_buffer_size functions below will probe buffer sizes
-/// up to this limit which should both be sufficiently large and within the
-/// allowable ranges for the platforms below.
-const MAX_BUF_SIZ: usize = 0x7fff_ffff;
-
-pub fn get_max_tcp_recv_buffer_size() -> io::Result<usize> {
-    get_max_recv_buffer_size(Type::STREAM)
-}
-pub fn get_max_tcp_send_buffer_size() -> io::Result<usize> {
-    get_max_send_buffer_size(Type::STREAM)
-}
 pub fn get_max_udp_recv_buffer_size() -> io::Result<usize> {
-    get_max_recv_buffer_size(Type::DGRAM)
+    get_max_socket_buffer_size(Type::DGRAM, nix::sys::socket::sockopt::RcvBuf)
 }
 pub fn get_max_udp_send_buffer_size() -> io::Result<usize> {
-    get_max_send_buffer_size(Type::DGRAM)
+    get_max_socket_buffer_size(Type::DGRAM, nix::sys::socket::sockopt::SndBuf)
 }
 
+// The get_max_socket_buffer_size() functions below will probe buffer sizes
+// up to this limit which should be both sufficiently large and within the
+// allowable range on all the platforms below. It has been conservatively
+// set as the maximum value representable by a signed 32-bit integer.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+const MAX_BUF_SIZ: usize = 0x7fff_ffff;
+
 // Linux normally always succeeds, clamping the size to the system limit.
-// A quirk of Linux is that it doubles buffer size internally hence the
-// division by two below.
+// A quirk of Linux is that it doubles buffer size internally and returns
+// the doubled buffer size when queried hence the division by two below.
 #[cfg(target_os = "linux")]
-pub fn get_max_recv_buffer_size(sock_type: Type) -> io::Result<usize> {
+fn get_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
+where
+    T: nix::sys::socket::GetSockOpt<Val = usize> + nix::sys::socket::SetSockOpt<Val = usize>,
+{
     let sock = Socket::new(Domain::IPV4, sock_type, None)?;
-    sock.set_recv_buffer_size(MAX_BUF_SIZ)?;
-    sock.recv_buffer_size().map(|sz| sz / 2)
-}
-#[cfg(target_os = "linux")]
-pub fn get_max_send_buffer_size(sock_type: Type) -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
-    sock.set_send_buffer_size(MAX_BUF_SIZ)?;
-    sock.send_buffer_size().map(|sz| sz / 2)
+    let mut sz = sock_opt.get(&sock)? / 2;
+    if sz < MAX_BUF_SIZ && sock_opt.set(&sock, &MAX_BUF_SIZ).is_ok() {
+        sz = sock_opt.get(&sock)? / 2;
+    }
+    Ok(sz)
 }
 
 // MacOS will clamp the size to the system limit but will succeed the
@@ -189,48 +185,41 @@ pub fn get_max_send_buffer_size(sock_type: Type) -> io::Result<usize> {
 // fail. Hence we intentionally disregard any error when requesting the
 // maximum buffer size.
 #[cfg(target_os = "macos")]
-pub fn get_max_recv_buffer_size(sock_type: Type) -> io::Result<usize> {
+fn get_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
+where
+    T: nix::sys::socket::GetSockOpt<Val = usize> + nix::sys::socket::SetSockOpt<Val = usize>,
+{
     let sock = Socket::new(Domain::IPV4, sock_type, None)?;
-    let _ = sock.set_recv_buffer_size(MAX_BUF_SIZ);
-    sock.recv_buffer_size()
-}
-#[cfg(target_os = "macos")]
-pub fn get_max_send_buffer_size(sock_type: Type) -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
-    let _ = sock.set_send_buffer_size(MAX_BUF_SIZ);
-    sock.send_buffer_size()
+    let mut sz = sock_opt.get(&sock)?;
+    if sz < MAX_BUF_SIZ && sock_opt.set(&sock, &MAX_BUF_SIZ).is_ok() {
+        sz = sock_opt.get(&sock)?;
+    }
+    Ok(sz)
 }
 
 // FreeBSD will not clamp the requested size but rather will return an
 // error if the size requested exceeds the system limit. Thus a binary
 // search algorithm is employed to determine the maximum available size.
 #[cfg(target_os = "freebsd")]
-pub fn get_max_recv_buffer_size(sock_type: Type) -> io::Result<usize> {
+fn get_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
+where
+    T: nix::sys::socket::GetSockOpt<Val = usize> + nix::sys::socket::SetSockOpt<Val = usize>,
+{
     let sock = Socket::new(Domain::IPV4, sock_type, None)?;
-    let (mut lo, mut hi) = (1, MAX_BUF_SIZ);
-    while lo <= hi {
-        let mid = (lo + hi) / 2;
-        if sock.set_recv_buffer_size(mid).is_ok() {
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
+    let mut sz = sock_opt.get(&sock)?;
+    if sz < MAX_BUF_SIZ {
+        let (mut lo, mut hi) = (sz + 1, MAX_BUF_SIZ);
+        while lo <= hi {
+            let mid = (lo + hi) / 2;
+            if sock_opt.set(&sock, &mid).is_ok() {
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
         }
+        sz = hi;
     }
-    Ok(hi)
-}
-#[cfg(target_os = "freebsd")]
-pub fn get_max_send_buffer_size(sock_type: Type) -> io::Result<usize> {
-    let sock = Socket::new(Domain::IPV4, sock_type, None)?;
-    let (mut lo, mut hi) = (1, MAX_BUF_SIZ);
-    while lo <= hi {
-        let mid = (lo + hi) / 2;
-        if sock.set_send_buffer_size(mid).is_ok() {
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    Ok(hi)
+    Ok(sz)
 }
 
 /// Find a port in the given range with a socket config that is available for both TCP and UDP
