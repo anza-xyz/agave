@@ -55,6 +55,12 @@ impl BlockId {
         Self(Hash::new_unique())
     }
 
+    #[cfg(feature = "stable-abi")]
+    /// Creates a new random BlockId using the provided RNG.
+    pub fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(rng: &mut R) -> Self {
+        Self(sample_hash(rng))
+    }
+
     /// Returns a reference to the byte representation of the block id hash.
     pub const fn as_bytes(&self) -> &[u8; HASH_BYTES] {
         self.0.as_bytes()

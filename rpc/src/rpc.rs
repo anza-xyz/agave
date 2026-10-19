@@ -4738,10 +4738,7 @@ pub fn populate_blockstore_for_tests(
 
     // Check that process_entries successfully writes can_commit transactions statuses, and
     // that they are matched properly by get_rooted_block
-    assert_eq!(
-        solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries),
-        Ok(())
-    );
+    solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries).unwrap();
 
     transaction_status_service.quiesce_and_join_for_tests(tss_exit);
 }
