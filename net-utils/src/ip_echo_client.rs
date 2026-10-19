@@ -241,8 +241,8 @@ pub(crate) async fn verify_all_reachable_tcp(
 /// Checks if all of the provided UDP ports on all of the provided IPs are
 /// reachable by the machine at `ip_echo_server_addr`.
 /// This function will test a few ports at a time, retrying if necessary.
-/// Tests must complete within timeout provided, so a longer timeout may be
-/// necessary if checking many ports.
+/// Each attempt waits up to `timeout` for UDP responses. Failed echo requests
+/// are retried no sooner than `timeout` after the request started.
 /// A given amount of retries will be made to accommodate packet loss.
 /// This function may panic.
 ///
@@ -274,8 +274,8 @@ pub(crate) async fn verify_all_reachable_udp(
         'outer: for chunk_to_check in ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
             let ports_to_check = chunk_to_check.to_vec();
 
-            for attempt in 0..retry_count {
-                if attempt > 0 {
+            for attempt in 1..=retry_count {
+                if attempt > 1 {
                     error!("There are some udp ports with no response!! Retrying...");
                 }
                 // clone off the sockets that use ports within our chunk
@@ -285,6 +285,7 @@ pub(crate) async fn verify_all_reachable_udp(
                     .map(|&s| s.try_clone().expect("Unable to clone UDP socket"))
                     .collect();
 
+                let request_start = Instant::now();
                 if let Err(err) = ip_echo_server_request_with_binding(
                     ip_echo_server_addr,
                     IpEchoServerMessage::new(&[], &ports_to_check),
@@ -293,6 +294,10 @@ pub(crate) async fn verify_all_reachable_udp(
                 .await
                 {
                     warn!("ip_echo_server request failed: {err}");
+                    // Pace retries so the network can recover after XDP setup.
+                    if attempt < retry_count {
+                        tokio::time::sleep(timeout.saturating_sub(request_start.elapsed())).await;
+                    }
                     continue;
                 }
 
