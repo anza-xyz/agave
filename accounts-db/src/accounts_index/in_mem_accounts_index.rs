@@ -861,7 +861,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     slot_list
                         .iter()
                         .all(|(existing_slot, _)| *existing_slot != slot),
-                    "Accounts may only be stored once per slot: {slot}"
+                    "Accounts may only be stored once per slot: slot {slot}, pubkey {pubkey}"
                 );
 
                 // If there is only one entry in the slot list, it means that
