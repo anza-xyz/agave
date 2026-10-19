@@ -728,7 +728,7 @@ mod tests {
         vote_address: &Pubkey,
         modify_fn: &dyn Fn(&mut VoteStateV4),
     ) {
-        let mut vote_account = bank.get_account_with_fixed_root(vote_address).unwrap();
+        let mut vote_account = bank.get_account(vote_address).unwrap();
         let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
         let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
             panic!("unexpected version");
@@ -1983,7 +1983,7 @@ mod tests {
 
                 // All vote accounts had field reset
                 for vote_address in voters.iter() {
-                    let vote_account = curr_bank.get_account_with_fixed_root(vote_address).unwrap();
+                    let vote_account = curr_bank.get_account(vote_address).unwrap();
                     let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
                     let VoteStateVersions::V4(vote_state) = vote_state_versions else {
                         panic!("unexpected version");
@@ -2040,9 +2040,7 @@ mod tests {
                 );
 
                 for stake_address in stakers.iter() {
-                    let stake_account = curr_bank
-                        .get_account_with_fixed_root(stake_address)
-                        .unwrap();
+                    let stake_account = curr_bank.get_account(stake_address).unwrap();
                     let stake_state: StakeStateV2 = stake_account.state().unwrap();
                     let delegation = stake_state.delegation().unwrap();
                     // Check that stake accounts expected to receive a distribution, do.

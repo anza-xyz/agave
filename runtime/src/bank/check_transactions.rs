@@ -228,7 +228,7 @@ impl Bank {
         nonce_address: Pubkey,
         strict_nonce_checks: bool,
     ) -> Option<NonceData> {
-        let nonce_account = self.get_account_with_fixed_root(&nonce_address)?;
+        let nonce_account = self.get_account(&nonce_address)?;
 
         if strict_nonce_checks && nonce_account.data().len() != NonceState::size() {
             return None;

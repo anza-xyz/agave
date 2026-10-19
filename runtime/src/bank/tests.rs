@@ -690,7 +690,7 @@ impl Bank {
             // already have been cached in cached_vote_accounts; so the code
             // below is only for sanity check in tests, and should not be hit
             // in practice.
-            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            let account = self.get_account(vote_pubkey)?;
             if account.owner() == &solana_vote_program
                 && VoteStateV4::deserialize(account.data(), vote_pubkey).is_ok()
             {

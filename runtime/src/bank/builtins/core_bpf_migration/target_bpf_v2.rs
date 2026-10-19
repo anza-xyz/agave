@@ -29,7 +29,7 @@ impl TargetBpfV2 {
     ) -> Result<Self, CoreBpfMigrationError> {
         // The program account should exist.
         let program_account = bank
-            .get_account_with_fixed_root(program_address)
+            .get_account(program_address)
             .ok_or(CoreBpfMigrationError::AccountNotFound(*program_address))?;
 
         // The program account should be owned by the loader v2.
@@ -49,7 +49,7 @@ impl TargetBpfV2 {
         let program_data_account_lamports = if allow_prefunded {
             // The program data account should not exist, but a system account with funded
             // lamports is acceptable.
-            if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
+            if let Some(account) = bank.get_account(&program_data_address) {
                 if account.owner() != &SYSTEM_PROGRAM_ID {
                     return Err(CoreBpfMigrationError::ProgramHasDataAccount(
                         *program_address,
@@ -61,10 +61,7 @@ impl TargetBpfV2 {
             }
         } else {
             // The program data account should not exist and have zero lamports.
-            if bank
-                .get_account_with_fixed_root(&program_data_address)
-                .is_some()
-            {
+            if bank.get_account(&program_data_address).is_some() {
                 return Err(CoreBpfMigrationError::ProgramHasDataAccount(
                     *program_address,
                 ));

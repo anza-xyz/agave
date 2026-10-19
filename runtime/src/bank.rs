@@ -2571,7 +2571,7 @@ impl Bank {
     where
         F: Fn(&Option<AccountSharedData>) -> AccountSharedData,
     {
-        let old_account = self.get_account_with_fixed_root(pubkey);
+        let old_account = self.get_account(pubkey);
         let mut new_account = updater(&old_account);
 
         // When new sysvar comes into existence (with RENT_UNADJUSTED_INITIAL_BALANCE lamports),
@@ -3471,7 +3471,7 @@ impl Bank {
 
     // Used by tests to simulate clusters with precompiles that aren't owned by the native loader
     fn add_precompiled_account_with_owner(&self, program_id: &Pubkey, owner: Pubkey) {
-        if let Some(account) = self.get_account_with_fixed_root(program_id) {
+        if let Some(account) = self.get_account(program_id) {
             if account.executable() {
                 return;
             } else {
@@ -3553,7 +3553,7 @@ impl Bank {
         }
         .or_else(|| {
             let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
-            let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
+            let nonce_account = self.get_account(nonce_address)?;
             verify_nonce_account(&nonce_account, message.recent_blockhash())
                 .map(|nonce_data| nonce_data.get_lamports_per_signature())
         })?;
@@ -4171,7 +4171,7 @@ impl Bank {
         let mut account_overrides = AccountOverrides::default();
         let slot_history_id = sysvar::slot_history::id();
         if account_keys.iter().any(|pubkey| *pubkey == slot_history_id) {
-            let current_account = self.get_account_with_fixed_root(&slot_history_id);
+            let current_account = self.get_account(&slot_history_id);
             let slot_history: SlotHistory = current_account
                 .as_ref()
                 .map(|account| account.state().unwrap())
@@ -5290,21 +5290,7 @@ impl Bank {
             .map(|(acc, _slot)| acc)
     }
 
-    // Hi! leaky abstraction here....
-    // try to use get_account_with_fixed_root() if it's called ONLY from on-chain runtime account
-    // processing. That alternative fn provides more safety.
     pub fn get_account(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        self.get_account_modified_slot(pubkey)
-            .map(|(acc, _slot)| acc)
-    }
-
-    // Hi! leaky abstraction here....
-    // use this over get_account() if it's called ONLY from on-chain runtime account
-    // processing (i.e. from in-band replay/banking stage; that ensures root is *fixed* while
-    // running).
-    // pro: safer assertion can be enabled inside AccountsDb
-    // con: panics!() if called from off-chain processing
-    pub fn get_account_with_fixed_root(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.get_account_modified_slot(pubkey)
             .map(|(acc, _slot)| acc)
     }
@@ -6343,7 +6329,7 @@ impl Bank {
 
         // Update activation slot of features in `new_feature_activations`
         for feature_id in new_feature_activations.iter() {
-            if let Some(mut account) = self.get_account_with_fixed_root(feature_id)
+            if let Some(mut account) = self.get_account(feature_id)
                 && let Some(mut feature) = feature::state::from_account(&account)
             {
                 feature.activated_at = Some(self.slot());
@@ -6520,7 +6506,7 @@ impl Bank {
 
         for feature_id in self.feature_set.inactive() {
             let mut activated = None;
-            if let Some(account) = self.get_account_with_fixed_root(feature_id)
+            if let Some(account) = self.get_account(feature_id)
                 && let Some(feature) = feature::state::from_account(&account)
             {
                 match feature.activated_at {
@@ -6549,7 +6535,7 @@ impl Bank {
     /// If `feature_id` is pending to be activated at the next epoch boundary, return
     /// the first slot at which it will be active (the epoch boundary).
     pub fn compute_pending_activation_slot(&self, feature_id: &Pubkey) -> Option<Slot> {
-        let account = self.get_account_with_fixed_root(feature_id)?;
+        let account = self.get_account(feature_id)?;
         let feature = feature::from_account(&account)?;
         if feature.activated_at.is_some() {
             // Feature is already active
@@ -6718,20 +6704,18 @@ impl Bank {
     // NOTE: must hold idempotent for the same set of arguments
     /// Add a builtin program account
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-        let existing_genuine_program =
-            self.get_account_with_fixed_root(program_id)
-                .and_then(|account| {
-                    // it's very unlikely to be squatted at program_id as non-system account because of burden to
-                    // find victim's pubkey/hash. So, when account.owner is indeed native_loader's, it's
-                    // safe to assume it's a genuine program.
-                    if native_loader::check_id(account.owner()) {
-                        Some(account)
-                    } else {
-                        // malicious account is pre-occupying at program_id
-                        self.burn_and_purge_account(program_id, account);
-                        None
-                    }
-                });
+        let existing_genuine_program = self.get_account(program_id).and_then(|account| {
+            // it's very unlikely to be squatted at program_id as non-system account because of burden to
+            // find victim's pubkey/hash. So, when account.owner is indeed native_loader's, it's
+            // safe to assume it's a genuine program.
+            if native_loader::check_id(account.owner()) {
+                Some(account)
+            } else {
+                // malicious account is pre-occupying at program_id
+                self.burn_and_purge_account(program_id, account);
+                None
+            }
+        });
 
         // introducing builtin program
         if existing_genuine_program.is_some() {
@@ -7299,7 +7283,7 @@ impl Bank {
     }
 
     pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
-        match self.get_account_with_fixed_root(pubkey) {
+        match self.get_account(pubkey) {
             Some(mut account) => {
                 let min_balance = match get_system_account_kind(&account) {
                     Some(SystemAccountKind::Nonce) => self

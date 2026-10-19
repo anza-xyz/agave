@@ -4859,7 +4859,7 @@ mod tests {
 
         // check all vote accounts were swept
         for vote_address in voters.iter() {
-            let vote_account = bank.get_account_with_fixed_root(vote_address).unwrap();
+            let vote_account = bank.get_account(vote_address).unwrap();
             let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
             let VoteStateVersions::V4(vote_state) = vote_state_versions else {
                 panic!("unexpected version");

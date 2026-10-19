@@ -591,7 +591,7 @@ pub(crate) mod external {
         ) {
             response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
             response.fee_payer_balance = working_bank
-                .get_account_with_fixed_root(transaction.fee_payer())
+                .get_account(transaction.fee_payer())
                 .map(|account| account.lamports())
                 .unwrap_or(0);
             response.balance_slot = working_bank.slot();

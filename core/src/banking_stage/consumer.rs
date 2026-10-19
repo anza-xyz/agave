@@ -567,7 +567,7 @@ impl Consumer {
             bank.fee_features(),
         );
         let mut fee_payer_account = bank
-            .get_account_with_fixed_root(fee_payer)
+            .get_account(fee_payer)
             .ok_or(TransactionError::AccountNotFound)?;
 
         validate_fee_payer(
