@@ -167,6 +167,35 @@ impl TransactionAccountViewMut<'_> {
         }
     }
 
+    /// Encodes `state` over the start of the data.
+    ///
+    /// A shared buffer is replaced by one with a capacity of at least `cow_capacity` bytes, and
+    /// only the old bytes behind the state are copied.
+    #[cfg(feature = "wincode")]
+    pub(crate) fn set_state_with_cow_capacity<T>(
+        &mut self,
+        state: &T,
+        cow_capacity: usize,
+    ) -> Result<(), InstructionError>
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>,
+    {
+        let Some(data) = Arc::get_mut(&mut self.private_fields.payload) else {
+            let old_data = &self.private_fields.payload;
+            let mut data = Vec::with_capacity(cow_capacity.max(old_data.len()));
+            wincode::config::serialize_into(&mut data, state, solana_account::WINCODE_CONFIG)
+                .map_err(|_| InstructionError::GenericError)?;
+            let tail = old_data
+                .get(data.len()..)
+                .ok_or(InstructionError::AccountDataTooSmall)?;
+            data.extend_from_slice(tail);
+            self.private_fields.payload = Arc::new(data);
+            return Ok(());
+        };
+        wincode::config::serialize_into(data.as_mut_slice(), state, solana_account::WINCODE_CONFIG)
+            .map_err(|_| InstructionError::GenericError)
+    }
+
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn is_shared(&self) -> bool {
         Arc::strong_count(&self.private_fields.payload) > 1

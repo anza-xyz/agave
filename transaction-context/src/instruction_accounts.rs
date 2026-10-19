@@ -258,21 +258,51 @@ impl BorrowedInstructionAccount<'_, '_> {
     }
 
     /// Serializes a state into the account data
+    ///
+    /// Shared data moves to a new buffer with headroom for the account to grow later in the
+    /// transaction.
     #[cfg(feature = "wincode")]
     pub fn set_state<T>(&mut self, state: &T) -> Result<(), InstructionError>
     where
         T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>,
     {
-        let data = self.get_data_mut()?;
+        let cow_capacity = self
+            .get_data()
+            .len()
+            .saturating_add(MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION);
+        self.set_state_with_cow_capacity(state, cow_capacity)
+    }
+
+    /// Serializes a state into the data of an account that keeps its size
+    ///
+    /// Shared data moves to a new buffer of the exact data size.
+    #[cfg(feature = "wincode")]
+    pub fn set_state_without_growth<T>(&mut self, state: &T) -> Result<(), InstructionError>
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>,
+    {
+        self.set_state_with_cow_capacity(state, 0)
+    }
+
+    #[cfg(feature = "wincode")]
+    fn set_state_with_cow_capacity<T>(
+        &mut self,
+        state: &T,
+        cow_capacity: usize,
+    ) -> Result<(), InstructionError>
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>,
+    {
+        self.can_data_be_changed()?;
+        self.touch()?;
         let serialized_size =
             wincode::config::serialized_size(state, solana_account::WINCODE_CONFIG)
                 .map_err(|_| InstructionError::GenericError)?;
-        if serialized_size > data.len() as u64 {
+        if serialized_size > self.get_data().len() as u64 {
             return Err(InstructionError::AccountDataTooSmall);
         }
-        wincode::config::serialize_into(&mut *data, state, solana_account::WINCODE_CONFIG)
-            .map_err(|_| InstructionError::GenericError)?;
-        Ok(())
+        self.account
+            .set_state_with_cow_capacity(state, cow_capacity)
     }
 
     // Returns whether or the lamports currently in the account is sufficient for rent exemption should the
@@ -396,12 +426,10 @@ mod tests {
         solana_rent::Rent,
     };
 
-    fn with_account<R>(data: Vec<u8>, f: impl FnOnce(&mut BorrowedInstructionAccount) -> R) -> R {
-        let program_id = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_data(1, data, &program_id);
+    fn new_transaction_context(account: AccountSharedData) -> TransactionContext<'static> {
         let mut transaction_context = TransactionContext::new(
             vec![
-                (program_id, AccountSharedData::default()),
+                (*account.owner(), AccountSharedData::default()),
                 (Pubkey::new_unique(), account),
             ],
             Rent::default(),
@@ -417,12 +445,58 @@ mod tests {
             )
             .unwrap();
         transaction_context.push(true).unwrap();
-        let instruction_context = transaction_context
+        transaction_context
+    }
+
+    fn with_instruction_account<R>(
+        transaction_context: &TransactionContext,
+        f: impl FnOnce(&mut BorrowedInstructionAccount) -> R,
+    ) -> R {
+        f(&mut transaction_context
             .get_current_instruction_context()
-            .unwrap();
-        f(&mut instruction_context
+            .unwrap()
             .try_borrow_instruction_account(0)
             .unwrap())
+    }
+
+    fn with_account<R>(data: Vec<u8>, f: impl FnOnce(&mut BorrowedInstructionAccount) -> R) -> R {
+        let account = AccountSharedData::new_with_data(1, data, &Pubkey::new_unique());
+        with_instruction_account(&new_transaction_context(account), f)
+    }
+
+    #[test]
+    fn test_set_state_shared_data_capacity() {
+        const STATE: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+        const TAIL: [u8; 100] = [200; 100];
+        const LEN: usize = STATE.len() + TAIL.len();
+
+        fn set_shared_state_capacity(
+            update: impl FnOnce(&mut BorrowedInstructionAccount) -> Result<(), InstructionError>,
+        ) -> usize {
+            let data = [[0; STATE.len()].as_slice(), &TAIL].concat();
+            let account = AccountSharedData::new_with_data(1, data.clone(), &Pubkey::new_unique());
+            let shared = account.clone();
+            let mut transaction_context = new_transaction_context(account);
+            with_instruction_account(&transaction_context, update).unwrap();
+            transaction_context.pop().unwrap();
+            let account = transaction_context
+                .deconstruct_without_keys()
+                .unwrap()
+                .swap_remove(1);
+
+            assert_eq!(account.data(), [STATE.as_slice(), &TAIL].concat());
+            assert_eq!(shared.data(), data);
+            account.capacity()
+        }
+
+        assert_eq!(
+            set_shared_state_capacity(|account| account.set_state(&STATE)),
+            LEN + MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION,
+        );
+        assert_eq!(
+            set_shared_state_capacity(|account| account.set_state_without_growth(&STATE)),
+            LEN,
+        );
     }
 
     #[test]
