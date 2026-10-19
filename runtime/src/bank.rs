@@ -2536,7 +2536,11 @@ impl Bank {
             (if roots.is_empty() { 0 } else { min }, ancestors)
         };
 
-        ancestors.extend(self.ancestors.iter().filter(|ancestor| *ancestor >= min));
+        ancestors.extend(
+            self.ancestors
+                .iter_slots()
+                .filter(|ancestor| *ancestor >= min),
+        );
         ancestors.sort_unstable();
         ancestors.dedup();
         ancestors

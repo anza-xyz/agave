@@ -300,10 +300,6 @@ impl AccountsCache {
         account: AccountSharedData,
     ) -> Arc<CachedAccount> {
         let slot_cache = self.bank_cache(bank_id).unwrap_or_else(|| {
-            debug_assert!(
-                !self.unflushed_roots.read().unwrap().contains_key(&bank_id),
-                "slot {slot} stored after it was rooted"
-            );
             let slot_bank_id = *self
                 .bank_ids
                 .write()
@@ -345,13 +341,18 @@ impl AccountsCache {
     /// Removes a slot from the accounts cache and returns the set of pubkeys removed from the index.
     #[must_use]
     pub fn remove_slot(&self, slot: Slot) -> Option<Vec<Pubkey>> {
-        let bank_id = self.bank_ids.write().unwrap().remove(&slot)?;
+        let bank_id = {
+            // Held across the bank id removal so a concurrent `add_root` can't re-track this bank
+            let mut unflushed_roots = self.unflushed_roots.write().unwrap();
+            let bank_id = self.bank_ids.write().unwrap().remove(&slot)?;
+            // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
+            unflushed_roots.remove(&bank_id);
+            bank_id
+        };
         let result = self
             .cache
             .remove(&bank_id)
             .map(|(_, slot_cache)| slot_cache);
-        // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
-        self.unflushed_roots.write().unwrap().remove(&bank_id);
 
         result
             .as_ref()
@@ -373,7 +374,7 @@ impl AccountsCache {
         // Ancestors take priority over roots regardless of slot. Walk them in descending order,
         // skipping those above the newest cached version, and return the first (highest) that has it.
         for bank_id in ancestors
-            .bank_ids()
+            .iter_bank_ids()
             .rev()
             .skip_while(|bank_id| *bank_id > index_max_bank_id)
         {
@@ -388,7 +389,7 @@ impl AccountsCache {
         // the newest because a root between them that is not an ancestor belongs to a
         // different fork and should not be returned.
         let max_root_bank_id = ancestors
-            .bank_ids()
+            .iter_bank_ids()
             .next()
             .map_or(index_max_bank_id, |bank_id| bank_id.min(index_max_bank_id));
 
@@ -428,8 +429,10 @@ impl AccountsCache {
 
     /// A root without a cache is not tracked; nothing stores into a slot once it is rooted
     pub fn add_root(&self, root: Slot) {
+        // Held across the lookup so a concurrent `remove_slot` can't leave this root stranded
+        let mut unflushed_roots = self.unflushed_roots.write().unwrap();
         if let Some(bank_id) = self.bank_id(root) {
-            self.unflushed_roots.write().unwrap().insert(bank_id, root);
+            unflushed_roots.insert(bank_id, root);
         }
     }
 
