@@ -19,10 +19,27 @@ use {
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
     plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
+    account_notifications_enabled: bool,
     snapshot_notifications_enabled: bool,
 }
 
 impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
+    fn account_notifications_enabled(&self) -> bool {
+        self.account_notifications_enabled
+    }
+
+    fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+        let plugin_manager = self.plugin_manager.load();
+        for plugin in plugin_manager.plugins() {
+            if let Err(err) = plugin.notify_bank_creation(slot, parent, bank_id.into()) {
+                error!(
+                    "Failed to notify bank creation at slot {slot}, error: {err} to plugin {}",
+                    plugin.name()
+                );
+            }
+        }
+    }
+
     fn snapshot_notifications_enabled(&self) -> bool {
         self.snapshot_notifications_enabled
     }
@@ -81,12 +98,22 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
 impl AccountsUpdateNotifierImpl {
     pub fn new(
         plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
-        snapshot_notifications_enabled: bool,
-    ) -> Self {
-        AccountsUpdateNotifierImpl {
-            plugin_manager,
-            snapshot_notifications_enabled,
+        always_enabled: bool,
+    ) -> Option<Self> {
+        let plugins = plugin_manager.load();
+        if plugins.plugins().next().is_none() && !always_enabled {
+            return None;
         }
+        let account_notifications_enabled =
+            plugins.account_data_notifications_enabled() || always_enabled;
+        let snapshot_notifications_enabled =
+            account_notifications_enabled && plugins.account_data_snapshot_notifications_enabled();
+        drop(plugins);
+        Some(Self {
+            plugin_manager,
+            account_notifications_enabled,
+            snapshot_notifications_enabled,
+        })
     }
 
     fn accountinfo_from_shared_account_data<'a>(
@@ -297,7 +324,7 @@ mod tests {
                 }),
             ],
         ))));
-        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false);
+        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false).unwrap();
         let account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
         let pubkey = Pubkey::new_unique();
         let bank_id = BankId::new(9);
@@ -322,7 +349,7 @@ mod tests {
                 account_update_bank_ids: account_update_bank_ids.clone(),
             })],
         ))));
-        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, true);
+        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false).unwrap();
         let pubkey = Pubkey::new_unique();
         let owner = Pubkey::new_unique();
         let data = [1, 2, 3];
@@ -367,10 +394,100 @@ mod tests {
                 .collect(),
         );
         let notifier =
-            AccountsUpdateNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)), true);
+            AccountsUpdateNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)), false)
+                .unwrap();
         notifier.notify_end_of_restore_from_snapshot();
         for count in counts {
             assert_eq!(count.load(Ordering::Relaxed), 1);
         }
+    }
+
+    type BankCreation = (Slot, Option<Slot>, u64);
+
+    #[derive(Debug)]
+    struct BankCreationPlugin {
+        creations: Arc<Mutex<Vec<BankCreation>>>,
+        fail: bool,
+    }
+
+    impl GeyserPlugin for BankCreationPlugin {
+        fn name(&self) -> &'static str {
+            if self.fail {
+                "failing"
+            } else {
+                "transaction-only"
+            }
+        }
+
+        fn account_data_notifications_enabled(&self) -> bool {
+            false
+        }
+
+        fn transaction_notifications_enabled(&self) -> bool {
+            true
+        }
+
+        fn notify_bank_creation(
+            &self,
+            slot: Slot,
+            parent: Option<Slot>,
+            bank_id: u64,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            self.creations.lock().unwrap().push((slot, parent, bank_id));
+            if self.fail {
+                Err(agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPluginError::Custom(
+                    "test callback failure".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_bank_creation_without_account_subscriptions() {
+        let creations = Arc::new(Mutex::new(Vec::new()));
+        let manager = Arc::new(ArcSwap::from_pointee(GeyserPluginHost::from_plugins(
+            [true, false]
+                .into_iter()
+                .map(|fail| {
+                    loaded_test_plugin(BankCreationPlugin {
+                        creations: Arc::clone(&creations),
+                        fail,
+                    })
+                })
+                .collect(),
+        )));
+        let notifier = AccountsUpdateNotifierImpl::new(manager, false).unwrap();
+        assert!(!notifier.account_notifications_enabled());
+        assert!(!notifier.snapshot_notifications_enabled());
+        let accounts_db = solana_accounts_db::accounts_db::AccountsDb::new_with_config(
+            Vec::new(),
+            solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            Some(Arc::new(notifier)),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        assert!(!accounts_db.has_accounts_update_notifier());
+        accounts_db.notify_bank_creation(42, Some(40), BankId::new(7));
+        // Failure in the first plugin must not prevent delivery to the second.
+        assert_eq!(*creations.lock().unwrap(), [(42, Some(40), 7); 2]);
+    }
+
+    #[test]
+    fn test_bank_creation_after_dynamic_plugin_load() {
+        let manager = Arc::new(ArcSwap::from_pointee(GeyserPluginHost::default()));
+        assert!(AccountsUpdateNotifierImpl::new(Arc::clone(&manager), false).is_none());
+        let notifier = AccountsUpdateNotifierImpl::new(Arc::clone(&manager), true).unwrap();
+        assert!(notifier.account_notifications_enabled());
+        notifier.notify_bank_creation(0, None, BankId::new(0));
+        let creations = Arc::new(Mutex::new(Vec::new()));
+        manager.store(Arc::new(GeyserPluginHost::from_plugins(vec![
+            loaded_test_plugin(BankCreationPlugin {
+                creations: Arc::clone(&creations),
+                fail: false,
+            }),
+        ])));
+        notifier.notify_bank_creation(1, Some(0), BankId::new(1));
+        assert_eq!(*creations.lock().unwrap(), [(1, Some(0), 1)]);
     }
 }

@@ -7,6 +7,12 @@ use {
 };
 
 impl AccountsDb {
+    pub fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+        if let Some(notifier) = &self.accounts_update_notifier {
+            notifier.notify_bank_creation(slot, parent, bank_id);
+        }
+    }
+
     pub fn notify_account_at_accounts_update(
         &self,
         slot: Slot,

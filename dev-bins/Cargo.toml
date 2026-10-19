@@ -187,5 +187,7 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
+# Bank creation callback, pending an agave-geyser-plugin-interface release.
+agave-geyser-plugin-interface = { git = "https://github.com/sam0x17/agave-sdk", rev = "fbecb363996dc181c60c226d451c86700136593c" }
 librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
 rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
