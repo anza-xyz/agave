@@ -4180,9 +4180,7 @@ impl Bank {
                 let mut ancestors = self.ancestors.clone();
                 let removed = ancestors.remove_max_slot();
                 debug_assert_eq!(removed, Some(self.slot()));
-                if let Some((account, _)) =
-                    self.load_slow_with_fixed_root(&ancestors, &slot_history_id)
-                {
+                if let Some((account, _)) = self.load(&ancestors, &slot_history_id) {
                     account_overrides.set_slot_history(Some(account));
                 }
             }
@@ -5316,7 +5314,7 @@ impl Bank {
         &self,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow_with_fixed_root(&self.ancestors, pubkey)
+        self.load(&self.ancestors, pubkey)
     }
 
     // See note above get_account_with_fixed_root() about when to prefer this function.
@@ -5337,25 +5335,10 @@ impl Bank {
     }
 
     pub fn get_account_modified_slot(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(&self.ancestors, pubkey)
+        self.load(&self.ancestors, pubkey)
     }
 
-    fn load_slow(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
-        // get_account (= primary this fn caller) may be called from on-chain Bank code even if we
-        // try hard to use get_account_with_fixed_root for that purpose...
-        // so pass safer LoadHint:Unspecified here as a fallback
-        self.rc.accounts.load(ancestors, pubkey)
-    }
-
-    fn load_slow_with_fixed_root(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
+    fn load(&self, ancestors: &Ancestors, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.rc.accounts.load(ancestors, pubkey)
     }
 
@@ -5442,7 +5425,7 @@ impl Bank {
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
         let just_self: Ancestors = Ancestors::from(vec![(self.slot(), self.bank_id())]);
-        if let Some((account, slot)) = self.load_slow_with_fixed_root(&just_self, pubkey)
+        if let Some((account, slot)) = self.load(&just_self, pubkey)
             && slot == self.slot()
         {
             return Some((account, slot));

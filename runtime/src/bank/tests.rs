@@ -7984,13 +7984,13 @@ fn test_remove_unrooted_before_scan() {
                 // Test removing the slot before the scan starts, should cause
                 // SlotRemoved error every time
                 for k in pubkeys_to_modify.iter() {
-                    assert!(bank_at_fork_tip.load_slow(&ancestors, k).is_some());
+                    assert!(bank_at_fork_tip.load(&ancestors, k).is_some());
                 }
                 bank_at_fork_tip.remove_unrooted_slots(&slots_on_fork);
 
                 // Accounts on this fork should not be found after removal
                 for k in pubkeys_to_modify.iter() {
-                    assert!(bank_at_fork_tip.load_slow(&ancestors, k).is_none());
+                    assert!(bank_at_fork_tip.load(&ancestors, k).is_none());
                 }
                 if bank_to_scan_sender.send(bank_at_fork_tip.clone()).is_err() {
                     return;
@@ -8045,7 +8045,7 @@ fn test_remove_unrooted_scan_then_recreate_same_slot_before_scan() {
                     // we've recreated those slots this iteration, so they should be findable
                     // again
                     for k in pubkeys_to_modify.iter() {
-                        assert!(bank_at_fork_tip.load_slow(&ancestors, k).is_some());
+                        assert!(bank_at_fork_tip.load(&ancestors, k).is_some());
                     }
 
                     // Now after we've recreated the slots removed in the previous loop
@@ -8096,7 +8096,7 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 // we've recreated those slots this iteration, so they should be findable
                 // again
                 for k in pubkeys_to_modify.iter() {
-                    assert!(bank_at_fork_tip.load_slow(&ancestors, k).is_some());
+                    assert!(bank_at_fork_tip.load(&ancestors, k).is_some());
                 }
 
                 // Now after we've recreated the slots removed in the previous loop
