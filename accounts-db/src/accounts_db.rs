@@ -308,8 +308,6 @@ struct IndexGenerationAccumulator {
     num_did_not_exist: u64,
     /// Number of accounts in this slot that already existed, and were in-mem
     num_existed_in_mem: u64,
-    /// Number of accounts in this slot that already existed, and were on-disk
-    num_existed_on_disk: u64,
     /// The accounts lt hash for the set of accounts processed using this accumulator
     lt_hash_acc: batch::Accumulator,
     /// The capitalization for the set of accounts processed using this accumulator.
@@ -333,7 +331,6 @@ impl IndexGenerationAccumulator {
             slots_with_only_zero_lamport_accounts: Vec::new(),
             num_did_not_exist: 0,
             num_existed_in_mem: 0,
-            num_existed_on_disk: 0,
             lt_hash_acc: batch::Accumulator::new(),
             capitalization: 0,
             num_obsolete_accounts_skipped: 0,
@@ -350,7 +347,6 @@ impl IndexGenerationAccumulator {
             .append(&mut other.slots_with_only_zero_lamport_accounts);
         self.num_did_not_exist += other.num_did_not_exist;
         self.num_existed_in_mem += other.num_existed_in_mem;
-        self.num_existed_on_disk += other.num_existed_on_disk;
         self.lt_hash_acc.mix_in(&other.lt_hash_acc.into_lt_hash());
         self.capitalization = self
             .capitalization
@@ -4784,7 +4780,6 @@ impl AccountsDb {
         accum.accounts_data_len += accounts_data_len;
         accum.num_did_not_exist += insert_info.num_did_not_exist;
         accum.num_existed_in_mem += insert_info.num_existed_in_mem;
-        accum.num_existed_on_disk += insert_info.num_existed_on_disk;
         accum.num_obsolete_accounts_skipped += num_obsolete_accounts_skipped;
         if all_accounts_are_zero_lamports {
             accum.all_accounts_are_zero_lamports_slots += 1;
@@ -4898,15 +4893,6 @@ impl AccountsDb {
             index_stats
                 .updates_in_mem
                 .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
-
-            // stats for inserted entries that previously did exist *on-disk*
-            index_stats.add_mem_count(total_accum.num_existed_on_disk as usize);
-            index_stats
-                .entries_missing
-                .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
-            index_stats
-                .updates_in_mem
-                .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
         }
 
         if let Some(geyser_notifier) = &self.accounts_update_notifier {
