@@ -2473,6 +2473,13 @@ impl AccountsDb {
         num_selected
     }
 
+    /// Returns ancestors holding only `root`, with the id of the bank that stored it.
+    /// If `root` was already flushed, so were all older roots, and `BankId::FIRST` hides the rest.
+    fn root_as_ancestors(&self, root: Slot) -> Ancestors {
+        let bank_id = self.accounts_cache.bank_id(root).unwrap_or(BankId::FIRST);
+        Ancestors::from(vec![(root, bank_id)])
+    }
+
     /// Scans all accounts visible from `ancestors`, invoking `scan_func` for each.
     /// Pre-scans the write cache to capture entries not yet flushed to the accounts index, then
     /// deduplicates against the index scan, calling `scan_func` with the newest version of each
@@ -2497,7 +2504,7 @@ impl AccountsDb {
         // If the scan's ancestors are all rooted, drop them and scan roots only
         // Scan Guard max root must be used as the scan guard guarantees that
         // the account state as of max root is persisted in the database
-        let max_root_ancestors = Ancestors::from(vec![scan_guard.max_root()]);
+        let max_root_ancestors = self.root_as_ancestors(scan_guard.max_root());
         let ancestors = if scan_guard.should_use_ancestors(ancestors) {
             ancestors
         } else {
@@ -2604,7 +2611,7 @@ impl AccountsDb {
         // If the scan's ancestors are all rooted, drop them and scan roots only
         // Scan Guard max root must be used as the scan guard guarantees that
         // the account state as of max root is persisted in the database
-        let max_root_ancestors = Ancestors::from(vec![scan_guard.max_root()]);
+        let max_root_ancestors = self.root_as_ancestors(scan_guard.max_root());
         let ancestors = if scan_guard.should_use_ancestors(ancestors) {
             ancestors
         } else {
