@@ -5584,3 +5584,149 @@ fn test_program_sbf_rust_input_metadata_r3_r5(num_accounts: usize, input_data_le
         effects.return_data
     );
 }
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_invoke_signed_v2() {
+    agave_logger::setup();
+
+    let feature_set = SVMFeatureSet::all_enabled();
+
+    let invoke_signed_v2_program = load_program_elf("solana_sbf_rust_invoke_v2_ok");
+    let invoke_signed_v2_program_id = Pubkey::new_unique();
+
+    let mut program_cache = default_program_cache_with_program(
+        &invoke_signed_v2_program_id,
+        &invoke_signed_v2_program,
+        &feature_set,
+    );
+
+    let noop_program = load_program_elf("solana_sbf_rust_noop");
+    let noop_program_id = Pubkey::new_unique();
+
+    add_program_to_program_cache(
+        &mut program_cache,
+        &noop_program_id,
+        &bpf_loader_upgradeable::id(),
+        &noop_program,
+        &feature_set,
+    );
+
+    let sysvar_cache = default_sysvar_cache();
+
+    let mut accounts = Vec::new();
+    accounts.extend(upgradeable_program_accounts(
+        &invoke_signed_v2_program_id,
+        &invoke_signed_v2_program,
+    ));
+    accounts.extend(upgradeable_program_accounts(
+        &noop_program_id,
+        &noop_program,
+    ));
+
+    let mut account_metas = Vec::new();
+    account_metas.push(AccountMeta::new_readonly(noop_program_id, false));
+
+    for i in 0..10 {
+        let pubkey = Pubkey::new_unique();
+
+        // Mixed account sizes.
+        accounts.push((
+            pubkey,
+            Account::new(0, 100 + (i * 50), &invoke_signed_v2_program_id),
+        ));
+
+        // Mixed account roles.
+        if i % 2 == 0 {
+            account_metas.push(AccountMeta::new(pubkey, false));
+        } else {
+            account_metas.push(AccountMeta::new_readonly(pubkey, false));
+        }
+    }
+
+    let instruction =
+        Instruction::new_with_bytes(invoke_signed_v2_program_id, &[100], account_metas);
+
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
+
+    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+
+    assert!(effects.result.is_none());
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_invoke_signed_v2_fail() {
+    agave_logger::setup();
+
+    let feature_set = SVMFeatureSet::all_enabled();
+
+    let invoke_signed_v2_program = load_program_elf("solana_sbf_rust_invoke_v2_fail");
+    let invoke_signed_v2_program_id = Pubkey::new_unique();
+
+    let mut program_cache = default_program_cache_with_program(
+        &invoke_signed_v2_program_id,
+        &invoke_signed_v2_program,
+        &feature_set,
+    );
+
+    let noop_program = load_program_elf("solana_sbf_rust_noop");
+    let noop_program_id = Pubkey::new_unique();
+
+    add_program_to_program_cache(
+        &mut program_cache,
+        &noop_program_id,
+        &bpf_loader_upgradeable::id(),
+        &noop_program,
+        &feature_set,
+    );
+
+    let sysvar_cache = default_sysvar_cache();
+
+    let mut accounts = Vec::new();
+    accounts.extend(upgradeable_program_accounts(
+        &invoke_signed_v2_program_id,
+        &invoke_signed_v2_program,
+    ));
+    accounts.extend(upgradeable_program_accounts(
+        &noop_program_id,
+        &noop_program,
+    ));
+
+    let mut account_metas = Vec::new();
+    account_metas.push(AccountMeta::new_readonly(noop_program_id, false));
+
+    for i in 0..10 {
+        let pubkey = Pubkey::new_unique();
+
+        // Mixed account sizes.
+        accounts.push((
+            pubkey,
+            Account::new(0, 100 + (i * 50), &invoke_signed_v2_program_id),
+        ));
+
+        // Mixed account roles.
+        if i % 2 == 0 {
+            account_metas.push(AccountMeta::new(pubkey, false));
+        } else {
+            account_metas.push(AccountMeta::new_readonly(pubkey, false));
+        }
+    }
+
+    let instruction =
+        Instruction::new_with_bytes(invoke_signed_v2_program_id, &[100], account_metas);
+
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
+
+    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+
+    assert!(effects.result.is_some());
+
+    println!("effects: {:?}", effects.logs);
+
+    assert!(effects.logs.iter().any(|log| log
+        == &format!(
+            "Program {} failed: An account required by the instruction is missing",
+            invoke_signed_v2_program_id
+        )));
+}
