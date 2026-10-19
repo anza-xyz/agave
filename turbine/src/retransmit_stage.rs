@@ -242,6 +242,7 @@ impl<const K: usize> ShredDeduper<K> {
     }
 }
 
+// Entries are sorted by slot, with at most one entry per slot, for exact binary lookup.
 type SlotLeaderCache = Vec<(Slot, (Pubkey, Arc<ClusterNodes<RetransmitStage>>))>;
 
 struct RetransmitJob {
@@ -913,9 +914,12 @@ fn notify_subscribers(
 mod tests {
     use {
         super::*,
+        crate::cluster_nodes::new_cluster_nodes,
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
+        solana_cluster_type::ClusterType,
         solana_entry::entry::create_ticks,
+        solana_gossip::contact_info::Protocol,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
@@ -924,6 +928,7 @@ mod tests {
             shred::{ProcessShredsStats, Shredder},
         },
         solana_signer::Signer,
+        std::collections::HashMap,
     };
 
     fn get_keypair() -> Keypair {
@@ -935,6 +940,40 @@ mod tests {
             .map(Keypair::try_from)
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn test_get_retransmit_addrs_exact_slot() {
+        let (nodes, _, cluster_info) =
+            crate::cluster_nodes::make_test_cluster(&mut rand::rng(), 3, None);
+        let leader = *nodes[1].pubkey();
+        // Distinct results for both hits also detect selecting the wrong cache entry.
+        let cache = [(2, cluster_info.id()), (4, *nodes[2].pubkey())]
+            .map(|(slot, staked_node)| {
+                let cluster_nodes = new_cluster_nodes::<RetransmitStage>(
+                    &cluster_info,
+                    ClusterType::Development,
+                    &HashMap::from([(staked_node, 1)]),
+                );
+                (slot, (leader, Arc::new(cluster_nodes)))
+            })
+            .to_vec();
+        let mut stats = JobStats::default();
+        for (slot, expected) in [
+            (1, None),
+            (2, Some((0, vec![nodes[2].tvu(Protocol::UDP).unwrap()]))),
+            (3, None),
+            (4, Some((1, Vec::new()))),
+            (5, None),
+        ] {
+            let shred = ShredId::new(slot, 0, ShredType::Data);
+            assert_eq!(
+                get_retransmit_addrs(&shred, &cache, &SocketAddrSpace::Unspecified, &mut stats),
+                expected,
+                "slot {slot}",
+            );
+        }
+        assert_eq!(stats.num_loopback_errs, 0);
     }
 
     #[test]
@@ -979,32 +1018,52 @@ mod tests {
         let mut state = RetransmitState::new(Instant::now());
         let mut allocations = None;
         let entries = create_ticks(1, 1, Hash::new_unique());
-        for slots in [[3, 0, 1, Slot::MAX], [6, 4, 5, Slot::MAX]] {
+        for (batch_index, (slots, copies)) in [
+            (&[3, 0, 1, Slot::MAX][..], 2),
+            (&[6, 4, 5, Slot::MAX][..], 2),
+            (&[7][..], 1),         // One worker job with a populated cache.
+            (&[Slot::MAX][..], 2), // Worker job with no cached leaders.
+            (&[][..], 0),          // No worker jobs; the local job context must still be dropped.
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let num_slots = state.stats.slot_stats.len()
+                + slots.iter().filter(|&&slot| slot != Slot::MAX).count();
             let batch: Vec<_> = slots
-                .into_iter()
-                .flat_map(|slot| {
+                .iter()
+                .flat_map(|&slot| {
                     let shredder = Shredder::new(slot, slot.saturating_sub(1), 1, 0).unwrap();
                     let (data, _) = shredder.entries_to_merkle_shreds_for_tests(
                         &keypair,
                         &entries,
                         true,
                         Hash::new_unique(),
-                        0,
+                        batch_index as u32,
                         0,
                         &mut ProcessShredsStats::default(),
                     );
                     let payload = data.into_iter().next().unwrap().into_payload();
-                    [payload.clone(), payload]
+                    std::iter::repeat_n(payload, copies)
                 })
                 .collect();
-            let unknown = state.stats.unknown_shred_slot_leader + batch.len();
+            let skipped = state.stats.num_shreds_skipped + batch.len() - slots.len();
+            let unknown = state.stats.unknown_shred_slot_leader
+                + if slots.contains(&Slot::MAX) {
+                    batch.len()
+                } else {
+                    0
+                };
             shred_sender.send(batch).unwrap();
             retransmit(&context, &mut state).unwrap();
             // Slot::MAX is missing, and its duplicate must not trigger another leader lookup.
             assert_eq!(state.stats.unknown_shred_slot_leader, unknown);
-            for slot in &slots[..3] {
+            // Unique payloads must reach lookup, including the all-missing batch.
+            assert_eq!(state.stats.num_shreds_skipped, skipped);
+            for slot in slots.iter().filter(|&&slot| slot != Slot::MAX) {
                 assert!(state.stats.slot_stats.contains(slot));
             }
+            assert_eq!(state.stats.slot_stats.len(), num_slots);
             assert!(!state.stats.slot_stats.contains(&Slot::MAX));
             let cache = &state.slot_leader_cache;
             assert!(state.slots.is_empty());
@@ -1012,9 +1071,6 @@ mod tests {
             let pointers = (Arc::as_ptr(cache), state.slots.as_ptr(), cache.as_ptr());
             assert_eq!(*allocations.get_or_insert(pointers), pointers);
         }
-        // An empty input dispatches no worker jobs and must still release the job context.
-        shred_sender.send(Vec::new()).unwrap();
-        retransmit(&context, &mut state).unwrap();
         drop(context);
         pool.join().unwrap();
     }
