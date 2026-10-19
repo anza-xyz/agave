@@ -5399,7 +5399,7 @@ mod tests {
     }
 
     #[test]
-    fn test_withdraw_self_withdrawal_rejected() {
+    fn test_withdraw_self_withdrawal() {
         let rent_sysvar = Rent::default();
         let rent_minimum_balance = rent_sysvar.minimum_balance(VoteStateV4::size_of());
 
@@ -5411,62 +5411,6 @@ mod tests {
             create_test_account_with_provided_authorized(&vote_pubkey, &vote_pubkey);
         let vote_account_lamports = rent_minimum_balance + 1_000_000;
         vote_account.set_lamports(vote_account_lamports);
-
-        let features = VoteProgramFeatures::all_enabled();
-
-        let instruction_accounts = vec![
-            AccountMeta {
-                pubkey: vote_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: vote_pubkey,
-                is_signer: true,
-                is_writable: true,
-            },
-        ];
-
-        let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::clock::id(), create_default_clock_account()),
-            (sysvar::rent::id(), create_sysvar_account(&rent_sysvar)),
-        ];
-
-        // SIMD-0609: partial self-withdrawal.
-        process_instruction(
-            features,
-            &serialize(&VoteInstruction::Withdraw(1_000)).unwrap(),
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
-            Err(InstructionError::InvalidArgument),
-        );
-
-        // SIMD-0609: full-balance self-withdrawal.
-        process_instruction(
-            features,
-            &serialize(&VoteInstruction::Withdraw(vote_account_lamports)).unwrap(),
-            transaction_accounts.clone(),
-            instruction_accounts,
-            Err(InstructionError::InvalidArgument),
-        );
-    }
-
-    #[test]
-    fn test_withdraw_self_withdrawal_allowed_when_feature_disabled() {
-        let rent_sysvar = Rent::default();
-        let rent_minimum_balance = rent_sysvar.minimum_balance(VoteStateV4::size_of());
-
-        let vote_pubkey = solana_pubkey::new_rand();
-        let mut vote_account =
-            create_test_account_with_provided_authorized(&vote_pubkey, &vote_pubkey);
-        let vote_account_lamports = rent_minimum_balance + 1_000_000;
-        vote_account.set_lamports(vote_account_lamports);
-
-        let features = VoteProgramFeatures {
-            prohibit_vote_self_withdrawals: false,
-            ..VoteProgramFeatures::all_enabled()
-        };
 
         let instruction_accounts = vec![
             AccountMeta {
@@ -5490,12 +5434,33 @@ mod tests {
         // Before the feature activates, a partial self-withdrawal is a
         // no-op that succeeds.
         let accounts = process_instruction(
-            features,
+            VoteProgramFeatures {
+                prohibit_vote_self_withdrawals: false,
+                ..VoteProgramFeatures::all_enabled()
+            },
             &serialize(&VoteInstruction::Withdraw(1_000)).unwrap(),
-            transaction_accounts,
-            instruction_accounts,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
             Ok(()),
         );
         assert_eq!(accounts[0].lamports(), vote_account_lamports);
+
+        // SIMD-0609: partial self-withdrawal.
+        process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &serialize(&VoteInstruction::Withdraw(1_000)).unwrap(),
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidArgument),
+        );
+
+        // SIMD-0609: full-balance self-withdrawal.
+        process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &serialize(&VoteInstruction::Withdraw(vote_account_lamports)).unwrap(),
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::InvalidArgument),
+        );
     }
 }
