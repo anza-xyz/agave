@@ -1,4 +1,5 @@
 #![cfg(test)]
+mod bank_creation_notifications;
 use {
     super::{
         test_utils::{goto_end_of_slot, update_vote_account_timestamp},
