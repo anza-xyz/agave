@@ -62,8 +62,8 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot,
-        UnixTimestamp,
+        DEFAULT_NS_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH,
+        MAX_RECENT_BLOCKHASHES, Slot, UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::{
@@ -190,9 +190,15 @@ pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, K
     solana_genesis_config::create_genesis_config(lamports)
 }
 
-fn create_genesis_config_with_legacy_hashes(lamports: u64) -> (GenesisConfig, Keypair) {
-    let (mut genesis_config, mint_keypair) = create_genesis_config(lamports);
+fn set_legacy_slot_params(genesis_config: &mut GenesisConfig) {
+    genesis_config.poh_config.target_tick_duration =
+        Duration::from_nanos(DEFAULT_NS_PER_TICK_400_MS);
     genesis_config.poh_config.hashes_per_tick = Some(LEGACY_HASHES_PER_TICK);
+}
+
+fn create_genesis_config_with_legacy_slot_params(lamports: u64) -> (GenesisConfig, Keypair) {
+    let (mut genesis_config, mint_keypair) = create_genesis_config(lamports);
+    set_legacy_slot_params(&mut genesis_config);
     (genesis_config, mint_keypair)
 }
 
@@ -5495,7 +5501,7 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                "2d4i4L5xnbVpUi3QQJ63iewXhSikxG2XtvCj7N2eARWy",
+                "Frj3kc8QfCipZJssD4Bp1m4YkhBv5Ps2u72YUQY4TjGB",
             );
         }
 
@@ -5503,14 +5509,14 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "6ywzk1X9xXC7Fjyzidm8wmBq2Zo68UoNtjnPd7mZTNac",
+                "2cZPDxSwRoohpRQ9v6U6jkLVsdq4pGAvhrrGmwkLgETe",
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "7mvN7U6inSg5setMw5S6w6LEsMz8Avmgqg3u5Tama3J1",
+                "EwSi5Y5VX6w3WZph6aVdwELkiDHGLmBymLmKrhGj9yYt",
             );
             break;
         }
@@ -5808,7 +5814,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "3Bgnu7jRBPv47Bm4B4CsfDHqWz9oj2tXidPeNjEHFZPG",
+        "6NexZW334XPXzSeaB33XbY7uwR17LC4VW6durttvLL6a",
     );
 }
 
@@ -6530,7 +6536,7 @@ fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
 
 #[test]
 fn test_reduce_slot_time_features() {
-    let (genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+    let (genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
     let feature_account_balance = genesis_config.rent.minimum_balance(Feature::size_of());
 
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -6598,6 +6604,7 @@ fn test_vat_burn_slot_params() {
             ClusterType::Development,
             FeatureSet::default(),
         );
+        set_legacy_slot_params(&mut genesis_config);
         activate_feature(&mut genesis_config, feature_set::alpenglow::id());
         if let Some(feature_id) = slot_time_feature_id {
             activate_feature(&mut genesis_config, feature_id);
@@ -6667,7 +6674,7 @@ fn test_vat_burn_slot_params() {
 
 #[test]
 fn test_reduce_slot_time_features_active_at_genesis() {
-    let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
     for feature_id in slot_time_feature_ids() {
         activate_feature(&mut genesis_config, feature_id);
     }
@@ -6709,7 +6716,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
             assert_eq!(bank.hashes_per_tick(), expected_effective_hashes_per_tick);
         };
 
-    let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
     activate_feature(
         &mut genesis_config,
         feature_set::reduce_slot_time_to_200ms::id(),
@@ -6720,7 +6727,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
         SLOT_PARAMS_200MS.hashes_per_tick(),
     );
 
-    let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
     genesis_utils::activate_all_features(&mut genesis_config);
     assert_eq!(genesis_config.poh_config.hashes_per_tick, None);
     assert_reduced_slot_time_hashes_per_tick(genesis_config, None, None);
@@ -6730,7 +6737,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
 fn test_reduce_slot_time_range_duration() {
     const SLOTS_PER_EPOCH: Slot = 32;
     let bank_for_activations = |activations: &[(Pubkey, Slot)]| {
-        let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+        let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
         genesis_config.epoch_schedule =
             EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
         let mut bank = Bank::new_for_tests(&genesis_config);

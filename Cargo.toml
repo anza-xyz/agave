@@ -436,7 +436,7 @@ solana-file-download = "3.1.4"
 solana-frozen-abi = { version = "3.9.0", default-features = false }
 solana-frozen-abi-macro = { version = "3.7.0", default-features = false }
 solana-genesis = { path = "genesis", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-genesis-config = "5.0.0"
+solana-genesis-config = "5.0.1"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
@@ -472,7 +472,7 @@ solana-offchain-message = "4.0.0"
 solana-packet = "4.4.0"
 solana-perf = { path = "perf", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-poh-config = "3.1.0"
+solana-poh-config = "3.1.1"
 solana-poseidon = "5.0.1"
 solana-precompile-error = "3.0.0"
 solana-presigner = "4.0.0"
