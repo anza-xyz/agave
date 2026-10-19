@@ -1564,7 +1564,7 @@ fn test_abandon_invalidates() {
     assert_eq!(update_parent.slot, slot);
     assert_eq!(update_parent.cleared_bank_id, bank.bank_id());
     assert_eq!(update_parent.parent_slot, 0);
-    assert_eq!(update_parent.parent_block_id, parent_block_id.to_hash());
+    assert_eq!(update_parent.parent_block_id, parent_block_id);
 }
 
 // Given a shred and a fatal expected error, check that replaying that shred causes causes the fork to be
@@ -3471,7 +3471,10 @@ fn test_update_parent_restart() {
     assert_eq!(update_parent.slot, 4);
     assert_eq!(update_parent.cleared_bank_id, cleared_bank_id);
     assert_eq!(update_parent.parent_slot, slot_meta.parent_slot.unwrap());
-    assert_eq!(update_parent.parent_block_id, slot_meta.parent_block_id);
+    assert_eq!(
+        update_parent.parent_block_id.to_hash(),
+        slot_meta.parent_block_id
+    );
 }
 
 #[test]
