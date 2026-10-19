@@ -2402,7 +2402,7 @@ impl Blockstore {
         })
     }
 
-    /// Simlar to `insert_shreds_at_location_handle_duplicate`  but always inserts
+    /// Similar to `insert_shreds_at_location_handle_duplicate`  but always inserts
     /// shreds in the original column specified by `BlockLocation::Original`
     #[cfg(feature = "dev-context-only-utils")]
     pub fn insert_shreds_handle_duplicate<'a, F>(
@@ -2671,7 +2671,7 @@ impl Blockstore {
         Ok(())
     }
 
-    // Bypasses erasure recovery becuase it is called from broadcast stage
+    // Bypasses erasure recovery because it is called from broadcast stage
     // when inserting own shreds during leader slots. Stores all shreds in the original column.
     pub fn insert_cow_shreds<'a, 'db>(
         &'db self,
