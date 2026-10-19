@@ -192,6 +192,7 @@ mod tests {
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::VoteMessage,
+            stake::NonZeroStake,
         },
         bitvec::vec::BitVec,
         rand::Rng,
@@ -202,7 +203,7 @@ mod tests {
         },
         solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
-        std::{collections::HashMap, num::NonZero},
+        std::collections::HashMap,
     };
 
     fn new_vote_msg(
@@ -217,7 +218,7 @@ mod tests {
             vote,
             signature,
             rank: rank.try_into().unwrap(),
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         }
     }
 

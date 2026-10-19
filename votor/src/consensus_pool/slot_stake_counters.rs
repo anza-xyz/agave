@@ -2,25 +2,25 @@ use {
     crate::{
         common::{
             SAFE_TO_NOTAR_MIN_NOTARIZE_AND_SKIP, SAFE_TO_NOTAR_MIN_NOTARIZE_FOR_NOTARIZE_OR_SKIP,
-            SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY, SAFE_TO_SKIP_THRESHOLD, Stake,
+            SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY, SAFE_TO_SKIP_THRESHOLD,
         },
         consensus_pool::stats::ConsensusPoolStats,
         event::VotorEvent,
     },
     agave_votor_messages::{
         consensus_message::{Block, BlockId},
-        fraction::Fraction,
+        stake::{NonZeroStake, Stake},
         vote::Vote,
     },
     solana_clock::Slot,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
-    std::{collections::HashMap, num::NonZero},
+    std::collections::HashMap,
 };
 
 #[derive(Debug)]
 pub(crate) struct SlotStakeCounters {
     my_first_vote: Option<Vote>,
-    total_stake: NonZero<Stake>,
+    total_stake: NonZeroStake,
     skip_total: Stake,
     notarize_total: Stake,
     notarize_entry_total: HashMap<BlockId, Stake>,
@@ -30,14 +30,15 @@ pub(crate) struct SlotStakeCounters {
 }
 
 impl SlotStakeCounters {
-    pub fn new(total_stake: NonZero<Stake>) -> Self {
+    pub fn new(total_stake: NonZeroStake) -> Self {
+        let zero_stake = Stake(0);
         Self {
             my_first_vote: None,
             total_stake,
-            skip_total: 0,
-            notarize_total: 0,
+            skip_total: zero_stake,
+            notarize_total: zero_stake,
             notarize_entry_total: HashMap::new(),
-            top_notarized_stake: 0,
+            top_notarized_stake: zero_stake,
             safe_to_notar_sent: vec![],
             safe_to_skip_sent: false,
         }
@@ -64,11 +65,9 @@ impl SlotStakeCounters {
                 let old_entry_stake = self
                     .notarize_entry_total
                     .insert(vote.block.block_id, entry_stake)
-                    .unwrap_or(0);
-                self.notarize_total = self
-                    .notarize_total
-                    .saturating_sub(old_entry_stake)
-                    .saturating_add(entry_stake);
+                    .unwrap_or_default();
+                self.notarize_total.decrement(old_entry_stake);
+                self.notarize_total.increment(entry_stake);
                 self.top_notarized_stake = self.top_notarized_stake.max(entry_stake);
             }
             _ => return, // Not interested in other vote types
@@ -125,15 +124,12 @@ impl SlotStakeCounters {
         }
         trace!(
             "safe_to_notar {block_id:?} skip_ratio={} notarized_ratio={}",
-            self.skip_total as f64 / self.total_stake.get() as f64,
-            *stake as f64 / self.total_stake.get() as f64
+            self.skip_total.0 as f64 / self.total_stake.get().get() as f64,
+            stake.0 as f64 / self.total_stake.get().get() as f64
         );
         // Check if the block fits condition (i) 40% of stake holders voted notarize
-        let notarized_ratio = Fraction::new(*stake, self.total_stake);
-        let notarized_plus_skip_ratio = Fraction::new(
-            self.skip_total.checked_add(*stake).unwrap(),
-            self.total_stake,
-        );
+        let notarized_ratio = self.total_stake.fraction(*stake);
+        let notarized_plus_skip_ratio = self.total_stake.fraction(self.skip_total.add(*stake));
         notarized_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY
             // Check if the block fits condition (ii) 20% notarized, and 60% notarized or skip
             || (notarized_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_FOR_NOTARIZE_OR_SKIP
@@ -154,11 +150,10 @@ impl SlotStakeCounters {
                 self.top_notarized_stake
             );
 
-            let num_stake = self
-                .skip_total
-                .saturating_add(self.notarize_total.saturating_sub(self.top_notarized_stake));
-
-            Fraction::new(num_stake, self.total_stake) >= SAFE_TO_SKIP_THRESHOLD
+            self.total_stake.fraction(
+                self.skip_total
+                    .add(self.notarize_total.sub(self.top_notarized_stake)),
+            ) >= SAFE_TO_SKIP_THRESHOLD
         } else {
             false
         }
@@ -171,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_safe_to_notar_first_in_leader_window() {
-        let mut counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
+        let mut counters = SlotStakeCounters::new(NonZeroStake::new(100).unwrap());
 
         let mut events = vec![];
         let mut pending_safe_to_notar = vec![];
@@ -181,7 +176,7 @@ mod tests {
         // I voted for skip
         counters.add_vote(
             &Vote::new_skip_vote(slot),
-            10,
+            Stake(10),
             true,
             &mut events,
             &mut pending_safe_to_notar,
@@ -196,7 +191,7 @@ mod tests {
         // 40% of stake holders voted notarize
         counters.add_vote(
             &vote,
-            40,
+            Stake(40),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -217,7 +212,7 @@ mod tests {
         // Adding more notarizations does not trigger more events
         counters.add_vote(
             &vote,
-            20,
+            Stake(20),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -228,7 +223,7 @@ mod tests {
         assert_eq!(stats.event_safe_to_notarize, 1);
 
         // Reset counters with slot 4 (first in next leader window)
-        counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
+        counters = SlotStakeCounters::new(NonZeroStake::new(100).unwrap());
         events.clear();
         pending_safe_to_notar.clear();
         stats = ConsensusPoolStats::default();
@@ -241,7 +236,7 @@ mod tests {
                 slot,
                 block_id: block_id_1,
             }),
-            1,
+            Stake(1),
             true,
             &mut events,
             &mut pending_safe_to_notar,
@@ -258,7 +253,7 @@ mod tests {
                 slot,
                 block_id: block_id_2,
             }),
-            25,
+            Stake(25),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -271,7 +266,7 @@ mod tests {
         // 35% more of stake holders voted skip
         counters.add_vote(
             &Vote::new_skip_vote(slot),
-            35,
+            Stake(35),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -291,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_safe_to_notar_intrawindow_block() {
-        let mut counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
+        let mut counters = SlotStakeCounters::new(NonZeroStake::new(100).unwrap());
 
         let mut events = vec![];
         let mut pending_safe_to_notar = vec![];
@@ -301,7 +296,7 @@ mod tests {
         // I voted for skip
         counters.add_vote(
             &Vote::new_skip_vote(slot),
-            10,
+            Stake(10),
             true,
             &mut events,
             &mut pending_safe_to_notar,
@@ -314,7 +309,7 @@ mod tests {
         let block_id = BlockId::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(Block { slot, block_id }),
-            40,
+            Stake(40),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -330,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_safe_to_skip() {
-        let mut counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
+        let mut counters = SlotStakeCounters::new(NonZeroStake::new(100).unwrap());
 
         let mut events = vec![];
         let mut pending_safe_to_notar = vec![];
@@ -339,7 +334,7 @@ mod tests {
         // I voted for notarize b
         counters.add_vote(
             &Vote::new_notarization_vote(Block::new_unique(slot)),
-            10,
+            Stake(10),
             true,
             &mut events,
             &mut pending_safe_to_notar,
@@ -351,7 +346,7 @@ mod tests {
         // 40% of stake holders voted skip
         counters.add_vote(
             &Vote::new_skip_vote(slot),
-            40,
+            Stake(40),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -365,7 +360,7 @@ mod tests {
         // Adding more skips does not trigger more events
         counters.add_vote(
             &Vote::new_skip_vote(slot),
-            20,
+            Stake(20),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -375,7 +370,7 @@ mod tests {
         assert_eq!(stats.event_safe_to_skip, 1);
 
         // Reset counters
-        counters = SlotStakeCounters::new(NonZero::new(100).unwrap());
+        counters = SlotStakeCounters::new(NonZeroStake::new(100).unwrap());
         events.clear();
         pending_safe_to_notar.clear();
         stats = ConsensusPoolStats::default();
@@ -387,7 +382,7 @@ mod tests {
                 slot,
                 block_id: block_id_1,
             }),
-            10,
+            Stake(10),
             true,
             &mut events,
             &mut pending_safe_to_notar,
@@ -400,7 +395,7 @@ mod tests {
                 slot,
                 block_id: block_id_2,
             }),
-            20,
+            Stake(20),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -409,7 +404,7 @@ mod tests {
         // 30% of stake holders voted skip
         counters.add_vote(
             &Vote::new_skip_vote(slot),
-            30,
+            Stake(30),
             false,
             &mut events,
             &mut pending_safe_to_notar,
@@ -426,7 +421,7 @@ mod tests {
                 slot,
                 block_id: block_id_1,
             }),
-            10,
+            Stake(10),
             false,
             &mut events,
             &mut pending_safe_to_notar,
