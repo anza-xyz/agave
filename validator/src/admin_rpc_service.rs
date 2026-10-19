@@ -1,4 +1,5 @@
 use {
+    agave_event_system::stream_policy::StreamPolicy,
     agave_votor::{
         event::VotorEvent, vote_history::VoteHistory, vote_history_storage::VoteHistoryStorage,
     },
@@ -216,6 +217,9 @@ pub trait AdminRpc {
 
     #[rpc(name = "setLogFilter")]
     fn set_log_filter(&self, filter: String) -> Result<()>;
+
+    #[rpc(meta, name = "setEventFilter")]
+    fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()>;
 
     #[rpc(meta, name = "startTime")]
     fn start_time(&self, meta: Self::Metadata) -> Result<SystemTime>;
@@ -536,6 +540,16 @@ impl AdminRpc for AdminRpcImpl {
         debug!("set_log_filter admin rpc request received");
         agave_logger::setup_with(&filter);
         Ok(())
+    }
+
+    fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()> {
+        let stream_policy = filter
+            .parse::<StreamPolicy>()
+            .map_err(|err| jsonrpc_core::Error::invalid_params(err.to_string()))?;
+        meta.with_post_init(|post_init| {
+            post_init.event_system.set_stream_policy(stream_policy);
+            Ok(())
+        })
     }
 
     fn start_time(&self, meta: Self::Metadata) -> Result<SystemTime> {
@@ -1286,6 +1300,7 @@ mod tests {
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
+                    event_system: agave_event_system::EventSystem::stub(),
                     cluster_info,
                     bank_forks,
                     vote_account,

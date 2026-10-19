@@ -49,6 +49,7 @@ stable-abi = [
 agave-banking-stage-ingress-types = { workspace = true }
 agave-bls-cert-verify = { workspace = true }
 agave-bls-sigverify = { workspace = true }
+agave-event-system = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
 agave-jemalloc = { workspace = true }
