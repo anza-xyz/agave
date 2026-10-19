@@ -339,10 +339,199 @@ mod tests {
     use {
         super::*,
         crate::geyser_plugin_manager::{TESTPLUGIN_CONFIG, TESTPLUGIN2_CONFIG},
+        agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, SlotStatus},
         crossbeam_channel::{Sender, unbounded},
         jsonrpc_core::Result as JsonRpcResult,
         tokio::sync::oneshot,
     };
+
+    #[derive(Debug)]
+    struct BankStatusPlugin {
+        updates: Sender<(u64, Option<u64>, SlotStatus, Option<u64>)>,
+    }
+
+    impl GeyserPlugin for BankStatusPlugin {
+        fn name(&self) -> &'static str {
+            "bank-status-test"
+        }
+
+        fn update_bank_status(
+            &self,
+            slot: u64,
+            parent: Option<u64>,
+            status: &SlotStatus,
+            bank_id: u64,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            self.updates
+                .send((slot, parent, status.clone(), Some(bank_id)))
+                .unwrap();
+            Ok(())
+        }
+
+        fn update_slot_status(
+            &self,
+            slot: u64,
+            parent: Option<u64>,
+            status: &SlotStatus,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            self.updates
+                .send((slot, parent, status.clone(), None))
+                .unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_bank_notifications_without_rpc() {
+        check_bank_notifications_without_rpc(true);
+    }
+
+    #[test]
+    fn test_bank_notifications_without_rpc_or_transaction_history() {
+        check_bank_notifications_without_rpc(false);
+    }
+
+    fn check_bank_notifications_without_rpc(transaction_history_enabled: bool) {
+        use {
+            agave_geyser_plugin_host::LoadedGeyserPlugin,
+            crossbeam_channel::RecvTimeoutError,
+            solana_ledger::genesis_utils::create_genesis_config,
+            solana_rpc::{
+                optimistically_confirmed_bank_tracker::{
+                    BankNotification, OptimisticallyConfirmedBank,
+                    OptimisticallyConfirmedBankTracker,
+                },
+                rpc_completed_slots_service::RpcCompletedSlotsService,
+            },
+            solana_runtime::{
+                bank::{Bank, SlotLeader},
+                bank_forks::BankForks,
+                dependency_tracker::DependencyTracker,
+            },
+        };
+
+        let (slot_sender, slot_receiver) = unbounded();
+        let service = GeyserPluginService::new(slot_receiver, true, &[]).unwrap();
+        let (updates_sender, updates_receiver) = unbounded();
+        #[cfg(unix)]
+        let library = libloading::os::unix::Library::this();
+        #[cfg(windows)]
+        let library = libloading::os::windows::Library::this().unwrap();
+        // SAFETY: The plugin lives in this executable and starts no background work.
+        let plugin = unsafe {
+            LoadedGeyserPlugin::new(
+                library.into(),
+                Box::new(BankStatusPlugin {
+                    updates: updates_sender,
+                }),
+                None,
+            )
+        };
+        service
+            .plugin_manager_handle()
+            .store(Arc::new(GeyserPluginHost::from_plugins(vec![Arc::new(
+                plugin,
+            )])));
+
+        let genesis_config = create_genesis_config(100).genesis_config;
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank = Bank::new_from_parent(
+            bank_forks.read().unwrap().root_bank(),
+            SlotLeader::default(),
+            1,
+        );
+        bank.freeze();
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler();
+        let bank_id = u64::from(bank.bank_id());
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let dependency_tracker =
+            transaction_history_enabled.then(|| Arc::new(DependencyTracker::default()));
+        let exit = Arc::new(AtomicBool::new(false));
+        let (bank_sender, bank_receiver) = unbounded();
+        let tracker = OptimisticallyConfirmedBankTracker::new(
+            bank_receiver,
+            exit.clone(),
+            bank_forks,
+            optimistically_confirmed_bank,
+            None,
+            Some(Arc::new(RwLock::new(vec![slot_sender]))),
+            None,
+            dependency_tracker.clone(),
+        );
+        let (completed_sender, completed_receiver) = unbounded();
+        let completed_service = RpcCompletedSlotsService::spawn(
+            completed_receiver,
+            None,
+            service.get_slot_status_notifier(),
+            exit,
+        );
+
+        // The bank status must wait for its transaction callbacks, even without RPC.
+        let work = dependency_tracker
+            .as_ref()
+            .map(|tracker| tracker.declare_work());
+        bank_sender
+            .send((BankNotification::Frozen(bank.clone()), work))
+            .unwrap();
+        if let Some(tracker) = dependency_tracker {
+            let before_transactions = updates_receiver.recv_timeout(Duration::from_millis(100));
+            // Release the dependency before asserting so a failed assertion cannot strand the worker.
+            tracker.mark_this_and_all_previous_work_processed(work.unwrap());
+            assert!(matches!(
+                before_transactions,
+                Err(RecvTimeoutError::Timeout)
+            ));
+        }
+        let timeout = Duration::from_secs(5);
+        assert_eq!(
+            updates_receiver.recv_timeout(timeout).unwrap(),
+            (1, Some(0), SlotStatus::Processed, Some(bank_id))
+        );
+        bank_sender
+            .send((
+                BankNotification::OptimisticallyConfirmed(1, bank.hash()),
+                work,
+            ))
+            .unwrap();
+        assert_eq!(
+            updates_receiver.recv_timeout(timeout).unwrap(),
+            (1, None, SlotStatus::Confirmed, Some(bank_id))
+        );
+        bank_sender
+            .send((
+                BankNotification::NewRootedChain(vec![(1, bank.bank_id())], 0),
+                work,
+            ))
+            .unwrap();
+        assert_eq!(
+            updates_receiver.recv_timeout(timeout).unwrap(),
+            (1, Some(0), SlotStatus::Rooted, Some(bank_id))
+        );
+        completed_sender.send(vec![1]).unwrap();
+        assert_eq!(
+            updates_receiver.recv_timeout(timeout).unwrap(),
+            (1, None, SlotStatus::Completed, None)
+        );
+        assert!(updates_receiver.try_recv().is_err());
+
+        // Dropping the producers must also let the no-RPC pipeline shut down.
+        drop(bank_sender);
+        drop(completed_sender);
+        let (done_sender, done_receiver) = unbounded();
+        let join = thread::spawn(move || {
+            tracker.join().unwrap();
+            completed_service.join().unwrap();
+            service.join().unwrap();
+            done_sender.send(()).unwrap();
+        });
+        done_receiver.recv_timeout(timeout).unwrap();
+        join.join().unwrap();
+    }
 
     fn request<T>(
         sender: &Sender<GeyserPluginManagerRequest>,
