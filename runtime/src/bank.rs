@@ -5305,16 +5305,8 @@ impl Bank {
     // pro: safer assertion can be enabled inside AccountsDb
     // con: panics!() if called from off-chain processing
     pub fn get_account_with_fixed_root(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        self.get_account_modified_slot_with_fixed_root(pubkey)
+        self.get_account_modified_slot(pubkey)
             .map(|(acc, _slot)| acc)
-    }
-
-    // See note above get_account_with_fixed_root() about when to prefer this function
-    pub fn get_account_modified_slot_with_fixed_root(
-        &self,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
-        self.load(&self.ancestors, pubkey)
     }
 
     // See note above get_account_with_fixed_root() about when to prefer this function.
