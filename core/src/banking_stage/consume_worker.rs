@@ -231,6 +231,7 @@ pub(crate) mod external {
     type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
     type MessageResult = Result<(bool, ExecutionWorkerToPackMessage), ExternalConsumeWorkerError>;
 
+    #[derive(Debug)]
     enum IterationResult {
         ProcessedMessage,
         Idle,
@@ -685,8 +686,9 @@ pub(crate) mod external {
             sender: shaq::mpmc::Producer<ExecutionWorkerToPackMessage>,
         ) -> Result<(), ExternalConsumeWorkerError> {
             while !self.exit.load(Ordering::Relaxed) {
-                if !self.iterate_simulation(&receiver, &sender)? {
-                    std::thread::yield_now();
+                match self.iterate_simulation(&receiver, &sender)? {
+                    IterationResult::ProcessedMessage => {}
+                    IterationResult::Idle => std::thread::yield_now(),
                 }
             }
             Ok(())
@@ -696,14 +698,14 @@ pub(crate) mod external {
             &mut self,
             receiver: &shaq::mpmc::Consumer<PackToExecutionWorkerMessage>,
             sender: &shaq::mpmc::Producer<ExecutionWorkerToPackMessage>,
-        ) -> Result<bool, ExternalConsumeWorkerError> {
+        ) -> Result<IterationResult, ExternalConsumeWorkerError> {
             self.allocator.clean_remote_frees();
             let Some(message) = receiver.try_read() else {
-                return Ok(false);
+                return Ok(IterationResult::Idle);
             };
             let (_, response) = self.process_message(&message, false, true)?;
             self.send_simulation_response(sender, response);
-            Ok(true)
+            Ok(IterationResult::ProcessedMessage)
         }
 
         fn send_simulation_response(
@@ -745,7 +747,10 @@ pub(crate) mod external {
             solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
-            std::sync::{RwLock, atomic::AtomicBool},
+            std::{
+                assert_matches,
+                sync::{RwLock, atomic::AtomicBool},
+            },
             test_case::test_case,
         };
 
@@ -796,7 +801,7 @@ pub(crate) mod external {
                     &mut self.sender,
                     &mut self.should_drain_executes,
                 )?;
-                assert!(matches!(result, IterationResult::ProcessedMessage));
+                assert_matches!(result, IterationResult::ProcessedMessage);
                 Ok(())
             }
 
@@ -1476,10 +1481,11 @@ pub(crate) mod external {
             let second_receiver = request_receiver.clone();
             let second_sender = response_sender.clone();
 
-            assert!(
-                !first_worker
+            assert_matches!(
+                first_worker
                     .iterate_simulation(&request_receiver, &response_sender)
-                    .unwrap()
+                    .unwrap(),
+                IterationResult::Idle
             );
             for _ in 0..2 {
                 request_sender
@@ -1490,10 +1496,11 @@ pub(crate) mod external {
                     })
                     .unwrap();
             }
-            assert!(
+            assert_matches!(
                 first_worker
                     .iterate_simulation(&request_receiver, &response_sender)
-                    .unwrap()
+                    .unwrap(),
+                IterationResult::ProcessedMessage
             );
             let (done_sender, done_receiver) = bounded(1);
             let second_thread = std::thread::spawn(move || {
@@ -1517,11 +1524,12 @@ pub(crate) mod external {
                     .is_err()
             );
             let first_response = response_receiver.try_read().unwrap();
-            assert!(
+            assert_matches!(
                 done_receiver
                     .recv_timeout(Duration::from_secs(1))
                     .unwrap()
-                    .unwrap()
+                    .unwrap(),
+                IterationResult::ProcessedMessage
             );
             second_thread.join().unwrap();
             let second_response = response_receiver.try_read().unwrap();
