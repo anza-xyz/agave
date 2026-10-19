@@ -301,7 +301,7 @@ mod tests {
         assert_eq!(resp.skip, None);
         let notar = resp.notar.unwrap();
         assert_eq!(notar.slot, slot);
-        assert_eq!(notar.block_id, blockid1.to_hash());
+        assert_eq!(notar.block_id, blockid1);
         validate_bitmap(notar.bitmap(), 3, 5);
     }
 
@@ -334,7 +334,7 @@ mod tests {
 
         let resp = entry.build_certs(slot).unwrap();
         assert!(resp.skip.is_none());
-        assert_eq!(resp.notar.unwrap().block_id, block_id.to_hash());
+        assert_eq!(resp.notar.unwrap().block_id, block_id);
         assert_eq!(resp.validators, notar_validators);
     }
 
