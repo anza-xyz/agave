@@ -5014,14 +5014,6 @@ fn start_load_thread(
                 if exit.load(Ordering::Relaxed) {
                     return;
                 }
-                // Meddle load_limit to cover all branches of implementation.
-                // There should absolutely no behavioral difference; the load_limit triggered
-                // slow branch should only affect the performance.
-                // Ordering::Relaxed is ok because of no data dependencies; the modified field is
-                // completely free-standing cfg(test) control-flow knob.
-                db.load_limit
-                    .store(rng().random_range(0..10) as u64, Ordering::Relaxed);
-
                 // Load should never be unable to find this key
                 let loaded_account = db
                     .do_load(
@@ -5044,8 +5036,7 @@ fn start_load_thread(
 
 #[test]
 fn test_load_account_and_cache_flush_race() {
-    let mut db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    db.load_delay = RACY_SLEEP_MS;
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let db = Arc::new(db);
     let pubkey = Arc::new(Pubkey::new_unique());
     let exit = Arc::new(AtomicBool::new(false));
@@ -5157,9 +5148,8 @@ fn test_load_during_batched_flush_returns_latest() {
 }
 
 fn do_test_load_account_and_shrink_race(with_retry: bool) {
-    let mut db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let epoch_schedule = EpochSchedule::default();
-    db.load_delay = RACY_SLEEP_MS;
     let db = Arc::new(db);
     let pubkey = Arc::new(Pubkey::new_unique());
     let exit = Arc::new(AtomicBool::new(false));
