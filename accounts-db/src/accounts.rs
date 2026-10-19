@@ -112,11 +112,7 @@ impl Accounts {
         loaded_addresses: &mut LoadedAddresses,
     ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
-            .load_with_fixed_root(
-                ancestors,
-                address_table_lookup.account_key,
-                None::<fn(_, &_, _) -> _>,
-            )
+            .load(ancestors, address_table_lookup.account_key)
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
 
@@ -166,7 +162,7 @@ impl Accounts {
         }
     }
 
-    pub fn load_with_fixed_root(
+    pub fn load_with_filter(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
@@ -176,9 +172,9 @@ impl Accounts {
             .load(ancestors, pubkey, PopulateReadCache::True, load_filter)
     }
 
-    /// same as `load_with_fixed_root` except:
+    /// same as `load` except:
     /// if the account is not already in the read cache, it is NOT put in the read cache on successful load
-    pub fn load_with_fixed_root_do_not_populate_read_cache(
+    pub fn load_do_not_populate_read_cache(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
@@ -191,7 +187,7 @@ impl Accounts {
         )
     }
 
-    pub fn load_without_fixed_root(
+    pub fn load(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,

@@ -202,7 +202,7 @@ mod serde_snapshot_tests {
         for _ in 1..num {
             let idx = rng().random_range(0..num - 1);
             let ancestors = Ancestors::from(vec![0]);
-            let account = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx]);
+            let account = accounts.load(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new((idx + 1) as u64, 0, AccountSharedData::default().owner()),
                 0,
