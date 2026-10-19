@@ -506,26 +506,6 @@ pub type AccountsFileId = u32;
 type SlotOffsets = IntMap<Slot, IntSet<Offset>>;
 type ShrinkCandidates = IntSet<Slot>;
 
-// Some hints for applicability of additional sanity checks for the do_load fast-path;
-// Slower fallback code path will be taken if the fast path has failed over the retry
-// threshold, regardless of these hints. Also, load cannot fail not-deterministically
-// even under very rare circumstances, unlike previously did allow.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoadHint {
-    // Caller hints that it's loading transactions for a block which is
-    // descended from the current root, and at the tip of its fork.
-    // Thereby, further this assumes AccountIndex::max_root should not increase
-    // during this load, meaning there should be no squash.
-    // Overall, this enables us to assert!() strictly while running the fast-path for
-    // account loading, while maintaining the determinism of account loading and resultant
-    // transaction execution thereof.
-    FixedMaxRoot,
-    // Caller can't hint the above safety assumption. Generally RPC and miscellaneous
-    // other call-site falls into this category. The likelihood of slower path is slightly
-    // increased as well.
-    Unspecified,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum PopulateReadCache {
     /// If the account is found in storage, populate the read cache with the loaded account
@@ -2605,7 +2585,6 @@ impl AccountsDb {
             if let Some((account, slot)) = self.do_load(
                 ancestors,
                 &pubkey,
-                LoadHint::Unspecified,
                 PopulateReadCache::False,
                 None::<fn(_, &_, _) -> _>,
             ) {
@@ -2720,30 +2699,20 @@ impl AccountsDb {
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
-        load_hint: LoadHint,
         populate_read_cache: PopulateReadCache,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load(
-            ancestors,
-            pubkey,
-            load_hint,
-            populate_read_cache,
-            load_filter,
-        )
-        .filter(|(account, _)| !account.is_zero_lamport())
+        self.do_load(ancestors, pubkey, populate_read_cache, load_filter)
+            .filter(|(account, _)| !account.is_zero_lamport())
     }
 
     fn do_load(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
-        load_hint: LoadHint,
         populate_read_cache: PopulateReadCache,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
-        let starting_max_root = self.max_root();
-
         // Check the write cache first; a hit is the freshest version visible on this fork
         if let Some((cached_account, cached_slot)) =
             self.accounts_cache.load_latest(pubkey, ancestors)
@@ -2820,17 +2789,6 @@ impl AccountsDb {
                 }
                 (false, ())
             });
-        }
-        if load_hint == LoadHint::FixedMaxRoot {
-            // If the load hint is that the max root is fixed, the max root should be fixed.
-            let ending_max_root = self.max_root();
-            if starting_max_root != ending_max_root {
-                warn!(
-                    "do_load_with_populate_read_cache() scanning pubkey {pubkey} called with \
-                     fixed max root, but max root changed from {starting_max_root} to \
-                     {ending_max_root} during function call"
-                );
-            }
         }
         maybe_account.map(|account| (account, slot))
     }
@@ -3747,7 +3705,6 @@ impl AccountsDb {
                 if let Some((account, _slot)) = self.load(
                     ancestors,
                     pubkey,
-                    LoadHint::FixedMaxRoot,
                     PopulateReadCache::False,
                     None::<fn(_, &_, _) -> _>,
                 ) {
@@ -3817,7 +3774,6 @@ impl AccountsDb {
                     .load(
                         ancestors,
                         pubkey,
-                        LoadHint::FixedMaxRoot,
                         PopulateReadCache::False,
                         None::<fn(_, &_, _) -> _>,
                     )
@@ -5389,7 +5345,6 @@ impl AccountsDb {
         self.do_load(
             ancestors,
             pubkey,
-            LoadHint::Unspecified,
             PopulateReadCache::True,
             None::<fn(_, &_, _) -> _>,
         )

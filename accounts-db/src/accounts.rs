@@ -3,7 +3,7 @@ use {
         account_locks::{AccountLocks, validate_account_locks},
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
-            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
+            AccountsAddRootTiming, AccountsDb, LoadedAccount, PopulateReadCache,
             ScanAccountStorageData, ScanStorageResult,
         },
         accounts_index::IndexKey,
@@ -172,13 +172,8 @@ impl Accounts {
         pubkey: &Pubkey,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db.load(
-            ancestors,
-            pubkey,
-            LoadHint::FixedMaxRoot,
-            PopulateReadCache::True,
-            load_filter,
-        )
+        self.accounts_db
+            .load(ancestors, pubkey, PopulateReadCache::True, load_filter)
     }
 
     /// same as `load_with_fixed_root` except:
@@ -191,7 +186,6 @@ impl Accounts {
         self.accounts_db.load(
             ancestors,
             pubkey,
-            LoadHint::FixedMaxRoot,
             PopulateReadCache::False,
             None::<fn(_, &_, _) -> _>,
         )
@@ -205,7 +199,6 @@ impl Accounts {
         self.accounts_db.load(
             ancestors,
             pubkey,
-            LoadHint::Unspecified,
             PopulateReadCache::True,
             None::<fn(_, &_, _) -> _>,
         )
