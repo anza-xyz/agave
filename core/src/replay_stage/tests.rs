@@ -1072,11 +1072,11 @@ fn test_dead_fork_entry_deserialize_failure() {
 }
 
 struct SlotStatusNotifierForTest {
-    dead_slots: Arc<Mutex<HashSet<Slot>>>,
+    dead_slots: Arc<Mutex<HashSet<(Slot, BankId)>>>,
 }
 
 impl SlotStatusNotifierForTest {
-    pub fn new(dead_slots: Arc<Mutex<HashSet<Slot>>>) -> Self {
+    pub fn new(dead_slots: Arc<Mutex<HashSet<(Slot, BankId)>>>) -> Self {
         Self { dead_slots }
     }
 }
@@ -1094,8 +1094,8 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
 
     fn notify_created_bank(&self, _slot: Slot, _parent: Slot, _bank_id: BankId) {}
 
-    fn notify_slot_dead(&self, slot: Slot, _parent: Slot, _error: String) {
-        self.dead_slots.lock().unwrap().insert(slot);
+    fn notify_slot_dead(&self, slot: Slot, _parent: Slot, _error: String, bank_id: BankId) {
+        self.dead_slots.lock().unwrap().insert((slot, bank_id));
     }
 }
 
@@ -1694,7 +1694,10 @@ where
                 replay_slot: bank1.slot(),
             })
         );
-        assert!(dead_slots.lock().unwrap().contains(&bank1.slot()));
+        assert_eq!(
+            *dead_slots.lock().unwrap(),
+            HashSet::from([(bank1.slot(), bank1.bank_id())])
+        );
         // Check that the erroring bank was marked as dead in the progress map
         assert!(
             progress

@@ -34,8 +34,8 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
         self.notify_bank_status(slot, Some(parent), SlotStatus::CreatedBank, bank_id);
     }
 
-    fn notify_slot_dead(&self, slot: Slot, parent: Slot, error: String) {
-        self.notify_slot_status(slot, Some(parent), SlotStatus::Dead(error));
+    fn notify_slot_dead(&self, slot: Slot, parent: Slot, error: String, bank_id: BankId) {
+        self.notify_bank_status(slot, Some(parent), SlotStatus::Dead(error), bank_id);
     }
 }
 
@@ -158,7 +158,7 @@ mod tests {
         }
     }
 
-    fn loaded_test_plugin(plugin: TestSlotStatusPlugin) -> Arc<LoadedGeyserPlugin> {
+    fn loaded_test_plugin(plugin: impl GeyserPlugin + 'static) -> Arc<LoadedGeyserPlugin> {
         #[cfg(unix)]
         let library = libloading::os::unix::Library::this();
         #[cfg(windows)]
@@ -206,14 +206,80 @@ mod tests {
         let notifier = SlotStatusNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)));
         notifier.notify_first_shred_received(42);
         notifier.notify_completed(42);
-        notifier.notify_slot_dead(43, 42, "dead fork".to_owned());
         assert_eq!(
             *updates.lock().unwrap(),
             [
                 (42, None, SlotStatus::FirstShredReceived),
                 (42, None, SlotStatus::Completed),
-                (43, Some(42), SlotStatus::Dead("dead fork".to_owned())),
             ]
+        );
+    }
+    #[test]
+    fn test_dead_status_identifies_each_bank_at_the_same_slot() {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let slot_updates = Arc::new(Mutex::new(Vec::new()));
+        let manager =
+            GeyserPluginHost::from_plugins(vec![loaded_test_plugin(TestSlotStatusPlugin {
+                updates: Arc::clone(&updates),
+                slot_updates: Arc::clone(&slot_updates),
+            })]);
+        let notifier = SlotStatusNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)));
+
+        notifier.notify_slot_dead(43, 42, "first bank failed".to_owned(), BankId::new(9));
+        notifier.notify_slot_dead(43, 42, "replacement failed".to_owned(), BankId::new(10));
+
+        assert_eq!(
+            *updates.lock().unwrap(),
+            [
+                (
+                    43,
+                    Some(42),
+                    SlotStatus::Dead("first bank failed".to_owned()),
+                    9
+                ),
+                (
+                    43,
+                    Some(42),
+                    SlotStatus::Dead("replacement failed".to_owned()),
+                    10
+                ),
+            ],
+        );
+        assert!(slot_updates.lock().unwrap().is_empty());
+    }
+
+    #[derive(Debug)]
+    struct LegacySlotStatusPlugin(Arc<Mutex<Vec<SlotUpdate>>>);
+
+    impl GeyserPlugin for LegacySlotStatusPlugin {
+        fn name(&self) -> &'static str {
+            "legacy-slot-status-plugin"
+        }
+
+        fn update_slot_status(
+            &self,
+            slot: Slot,
+            parent: Option<Slot>,
+            status: &SlotStatus,
+        ) -> Result<()> {
+            self.0.lock().unwrap().push((slot, parent, status.clone()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_dead_status_reaches_legacy_plugin_once() {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let manager = GeyserPluginHost::from_plugins(vec![loaded_test_plugin(
+            LegacySlotStatusPlugin(Arc::clone(&updates)),
+        )]);
+        let notifier = SlotStatusNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)));
+
+        notifier.notify_slot_dead(43, 42, "dead bank".to_owned(), BankId::new(9));
+
+        assert_eq!(
+            *updates.lock().unwrap(),
+            [(43, Some(42), SlotStatus::Dead("dead bank".to_owned()))],
         );
     }
 }
