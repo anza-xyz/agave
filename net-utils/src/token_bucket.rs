@@ -487,7 +487,7 @@ pub mod test {
         tb.consume_tokens(1000).expect("Bucket is initially full");
         assert!(
             tb.current_tokens() < 100,
-            "Shoult not have many tokens left in bucket"
+            "Should not have many tokens left in bucket"
         );
 
         let t = tb
