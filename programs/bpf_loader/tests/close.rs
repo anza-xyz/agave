@@ -27,43 +27,45 @@ fn test_bpf_loader_upgradeable_close() {
     let recipient_address = Pubkey::new_unique();
     let recipient_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account =
-        AccountSharedData::new(1, UpgradeableLoaderState::size_of_buffer(128), &loader_id);
-    buffer_account
-        .set_state(&UpgradeableLoaderState::Buffer {
-            authority_address: Some(authority_address),
-        })
-        .unwrap();
-    let uninitialized_address = Pubkey::new_unique();
-    let mut uninitialized_account = AccountSharedData::new(
+    let buffer_account = AccountSharedData::new_data_with_space(
         1,
+        &UpgradeableLoaderState::Buffer {
+            authority_address: Some(authority_address),
+        },
+        UpgradeableLoaderState::size_of_buffer(128),
+        &loader_id,
+    )
+    .unwrap();
+    let uninitialized_address = Pubkey::new_unique();
+    let uninitialized_account = AccountSharedData::new_data_with_space(
+        1,
+        &UpgradeableLoaderState::Uninitialized,
         UpgradeableLoaderState::size_of_programdata(0),
         &loader_id,
-    );
-    uninitialized_account
-        .set_state(&UpgradeableLoaderState::Uninitialized)
-        .unwrap();
+    )
+    .unwrap();
     let programdata_address = Pubkey::new_unique();
-    let mut programdata_account = AccountSharedData::new(
+    let mut programdata_account = AccountSharedData::new_data_with_space(
         1,
-        UpgradeableLoaderState::size_of_programdata(128),
-        &loader_id,
-    );
-    programdata_account
-        .set_state(&UpgradeableLoaderState::ProgramData {
+        &UpgradeableLoaderState::ProgramData {
             slot: 0,
             upgrade_authority_address: Some(authority_address),
-        })
-        .unwrap();
+        },
+        UpgradeableLoaderState::size_of_programdata(128),
+        &loader_id,
+    )
+    .unwrap();
     let program_address = Pubkey::new_unique();
-    let mut program_account =
-        AccountSharedData::new(1, UpgradeableLoaderState::size_of_program(), &loader_id);
-    program_account.set_executable(true);
-    program_account
-        .set_state(&UpgradeableLoaderState::Program {
+    let mut program_account = AccountSharedData::new_data_with_space(
+        1,
+        &UpgradeableLoaderState::Program {
             programdata_address,
-        })
-        .unwrap();
+        },
+        UpgradeableLoaderState::size_of_program(),
+        &loader_id,
+    )
+    .unwrap();
+    program_account.set_executable(true);
     let clock_account = create_sysvar_account(&Clock {
         slot: 1,
         ..Clock::default()
