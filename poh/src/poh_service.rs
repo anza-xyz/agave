@@ -620,14 +620,19 @@ impl PohService {
                 }
             }
 
-            if let Some(service_message) = service_message
-                && !should_exit
-            {
-                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                target_ns_per_tick = Self::target_tick_ns_adjusted(
-                    ticks_per_slot,
-                    Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
-                );
+            if let Some(service_message) = service_message {
+                if should_exit {
+                    // The service skips handling messages once the exit signal is
+                    // set. Discard the guard explicitly so the pending count is
+                    // released instead of tripping the unprocessed-message panic.
+                    service_message.shutdown_discard();
+                } else {
+                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                    target_ns_per_tick = Self::target_tick_ns_adjusted(
+                        ticks_per_slot,
+                        Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
+                    );
+                }
             }
 
             // If exit signal is set and there are no more records to process, exit.
@@ -918,5 +923,63 @@ mod tests {
         // This queued wake prevents ReplayStage from falling through to its 100 ms timeout
         // with the stale pre-reset `tpu_has_bank` snapshot.
         assert!(replay_wakeup_receiver.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_service_message_shutdown_discard_releases_pending_count() {
+        // The service skips handling a service message once the exit signal is set,
+        // so a message consumed into a guard at exit is discarded explicitly.
+        // The discard must release the pending count, since ReplayStage busy-waits
+        // on has_pending_message().
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (mut poh_controller, poh_service_message_receiver) = PohController::new();
+
+        // A message is in flight when the exit path consumes it into a guard.
+        poh_controller
+            .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()))
+            .unwrap();
+        let service_message = poh_service_message_receiver.try_recv().unwrap();
+
+        // The service exits before handling the message; the guard is discarded.
+        service_message.shutdown_discard();
+
+        // The pending count must be released so replay's wait is not wedged.
+        assert!(!poh_controller.has_pending_message());
+    }
+
+    #[test]
+    fn test_send_message_failure_releases_pending_count() {
+        // Once the receiver is gone, every send fails and must roll its pending
+        // count back, or has_pending_message() stays true forever.
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (mut poh_controller, poh_service_message_receiver) = PohController::new();
+        drop(poh_service_message_receiver);
+
+        poh_controller
+            .set_bank(BankWithScheduler::new_without_scheduler(bank))
+            .unwrap_err();
+
+        assert!(!poh_controller.has_pending_message());
+    }
+
+    #[test]
+    #[should_panic(expected = "PohServiceMessageGuard dropped without processing the message")]
+    fn test_service_message_guard_still_panics_when_dropped_unprocessed() {
+        // Outside the shutdown path, dropping a guard without processing the
+        // message is still a programmer error and must keep tripping the guard.
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (mut poh_controller, poh_service_message_receiver) = PohController::new();
+
+        poh_controller
+            .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()))
+            .unwrap();
+        let service_message = poh_service_message_receiver.try_recv().unwrap();
+
+        // Dropped without processing and without shutdown_discard: the guard
+        // must panic.
+        drop(service_message);
     }
 }
