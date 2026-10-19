@@ -230,6 +230,14 @@ pub(crate) mod external {
     }
 
     type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
+
+    /// Simulate the batch as an ordered bundle instead of executing it: nothing is recorded
+    /// or committed, no fees are charged, and no account locks are taken. The batch is always
+    /// simulated with `DROP_ON_FAILURE` and `ALL_OR_NOTHING` semantics.
+    ///
+    /// Pending release in `agave-scheduler-bindings` as `execution_message_flags::SIMULATE`
+    /// (anza-xyz/agave-sdk#156); defined here until then.
+    pub(crate) const SIMULATE_FLAG: u16 = 1 << 2;
     enum IterationResult {
         ProcessedMessage,
         Idle,
@@ -381,11 +389,15 @@ pub(crate) mod external {
             let (translation_results, transactions, max_ages) =
                 Self::translate_transaction_batch(&batch, bank);
 
-            // Enforce all or nothing on translation_results.
+            // Simulated batches are always all-or-nothing with failing transactions dropped.
+            let simulate = message.flags & SIMULATE_FLAG != 0;
             let execution_flags = ExecutionFlags {
-                drop_on_failure: message.flags & execution_message_flags::DROP_ON_FAILURE != 0,
-                all_or_nothing: message.flags & execution_message_flags::ALL_OR_NOTHING != 0,
+                drop_on_failure: simulate
+                    || message.flags & execution_message_flags::DROP_ON_FAILURE != 0,
+                all_or_nothing: simulate
+                    || message.flags & execution_message_flags::ALL_OR_NOTHING != 0,
             };
+            // Enforce all or nothing on translation_results.
             if execution_flags.all_or_nothing && translation_results.len() != transactions.len() {
                 self.send_execution_response(
                     message,
@@ -393,6 +405,9 @@ pub(crate) mod external {
                 )?;
 
                 return Ok(false);
+            }
+            if simulate {
+                return self.simulate_batch(message, bank, &transactions);
             }
             let output = self.consumer.process_and_record_aged_transactions(
                 bank,
@@ -428,6 +443,67 @@ pub(crate) mod external {
                     bank,
                     &execution_flags,
                 ),
+            )?;
+
+            Ok(false)
+        }
+
+        /// Simulate the batch as an ordered bundle against `bank` without recording or
+        /// committing anything. Every transaction observes the state written by the
+        /// transactions before it. Returns `true` if the bank was unavailable.
+        fn simulate_batch(
+            &mut self,
+            message: &PackToExecutionWorkerMessage,
+            bank: &Bank,
+            transactions: &[Tx],
+        ) -> Result<bool, ExternalConsumeWorkerError> {
+            self.metrics
+                .count_metrics
+                .num_simulated_messages
+                .fetch_add(1, Ordering::Relaxed);
+
+            let Some(results) = bank.simulate_transaction_batch_unchecked(transactions) else {
+                // The bank is being retired; report as unavailable so the scheduler can retry.
+                return self
+                    .return_not_included_with_reason(
+                        message,
+                        not_included_reasons::BANK_NOT_AVAILABLE,
+                        bank.slot(),
+                    )
+                    .map(|()| true);
+            };
+            assert_eq!(results.len(), transactions.len());
+
+            let execution_slot = bank.slot();
+            self.send_execution_response(
+                message,
+                transactions
+                    .iter()
+                    .zip(results)
+                    .map(|(tx, result)| match result.result {
+                        Ok(()) => ExecutionResponse {
+                            execution_slot,
+                            not_included_reason: not_included_reasons::NONE,
+                            cost_units: CostModel::calculate_cost_for_executed_transaction(
+                                tx,
+                                result.units_consumed,
+                                result.loaded_accounts_data_size,
+                                &bank.feature_set,
+                            )
+                            .sum(),
+                            fee_payer_balance: result.fee_payer_post_balance.unwrap_or(0),
+                        },
+                        // The batch is simulated all-or-nothing, so a cancelled transaction
+                        // maps to `ALL_OR_NOTHING_BATCH_FAILURE`.
+                        Err(err) => ExecutionResponse {
+                            execution_slot,
+                            not_included_reason: transaction_error_to_not_included_reason(
+                                &err, true,
+                            ),
+                            cost_units: 0,
+                            fee_payer_balance: 0,
+                        },
+                    }),
             )?;
 
             Ok(false)
@@ -632,8 +708,9 @@ pub(crate) mod external {
         }
 
         fn validate_message_flags(flags: u16) -> bool {
-            const ALLOWED_EXECUTE_FLAGS: u16 =
-                execution_message_flags::DROP_ON_FAILURE | execution_message_flags::ALL_OR_NOTHING;
+            const ALLOWED_EXECUTE_FLAGS: u16 = execution_message_flags::DROP_ON_FAILURE
+                | execution_message_flags::ALL_OR_NOTHING
+                | SIMULATE_FLAG;
 
             flags & !ALLOWED_EXECUTE_FLAGS == 0
         }
@@ -703,6 +780,7 @@ pub(crate) mod external {
             },
             solana_pubkey::Pubkey,
             solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
+            solana_signer::Signer,
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
             std::sync::{RwLock, atomic::AtomicBool},
@@ -960,6 +1038,12 @@ pub(crate) mod external {
             ));
             assert!(ExternalWorker::validate_message_flags(
                 execution_message_flags::DROP_ON_FAILURE | execution_message_flags::ALL_OR_NOTHING
+            ));
+            assert!(ExternalWorker::validate_message_flags(SIMULATE_FLAG));
+            assert!(ExternalWorker::validate_message_flags(
+                SIMULATE_FLAG
+                    | execution_message_flags::DROP_ON_FAILURE
+                    | execution_message_flags::ALL_OR_NOTHING
             ));
             assert!(!ExternalWorker::validate_message_flags(1 << 15));
         }
@@ -1395,6 +1479,138 @@ pub(crate) mod external {
             test_frame.free_batch(batch);
         }
 
+        #[test]
+        fn test_run_simulate_dependent_bundle_without_committing() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.set_active_bank();
+            let mint = test_frame.mint_keypair.pubkey();
+            let mint_balance = test_frame.bank.get_balance(&mint);
+            let intermediate = Keypair::new();
+            let recipient = Pubkey::new_unique();
+            let fee = test_frame.bank.fee_structure().lamports_per_signature;
+
+            // The second transfer is only fundable with the state produced by the first.
+            let blockhash = test_frame.bank.confirmed_last_blockhash();
+            let batch = test_frame.allocate_batch(&[
+                wincode::serialize(&transfer(
+                    &test_frame.mint_keypair,
+                    &intermediate.pubkey(),
+                    fee + 1,
+                    blockhash,
+                ))
+                .unwrap(),
+                wincode::serialize(&transfer(&intermediate, &recipient, 1, blockhash)).unwrap(),
+            ]);
+
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: SIMULATE_FLAG,
+                max_working_slot: test_frame.bank.slot(),
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(responses.len(), 2);
+            for response in &responses {
+                assert_eq!(response.execution_slot, test_frame.bank.slot());
+                assert_eq!(response.not_included_reason, not_included_reasons::NONE);
+                assert!(response.cost_units > 0);
+            }
+            assert_eq!(responses[0].fee_payer_balance, mint_balance - 2 * fee - 1);
+            assert_eq!(responses[1].fee_payer_balance, 0);
+
+            // Nothing was committed.
+            assert_eq!(test_frame.bank.get_balance(&mint), mint_balance);
+            assert_eq!(test_frame.bank.get_balance(&intermediate.pubkey()), 0);
+            assert_eq!(test_frame.bank.get_balance(&recipient), 0);
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_run_simulate_failure_fails_entire_bundle() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.set_active_bank();
+            let mint = test_frame.mint_keypair.pubkey();
+            let mint_balance = test_frame.bank.get_balance(&mint);
+            let unfunded = Keypair::new();
+
+            let blockhash = test_frame.bank.confirmed_last_blockhash();
+            let batch = test_frame.allocate_batch(&[
+                wincode::serialize(&transfer(
+                    &test_frame.mint_keypair,
+                    &Pubkey::new_unique(),
+                    1,
+                    blockhash,
+                ))
+                .unwrap(),
+                wincode::serialize(&transfer(&unfunded, &Pubkey::new_unique(), 1, blockhash))
+                    .unwrap(),
+                wincode::serialize(&transfer(
+                    &test_frame.mint_keypair,
+                    &Pubkey::new_unique(),
+                    1,
+                    blockhash,
+                ))
+                .unwrap(),
+            ]);
+
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: SIMULATE_FLAG,
+                max_working_slot: test_frame.bank.slot(),
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(
+                responses
+                    .iter()
+                    .map(|response| response.not_included_reason)
+                    .collect::<Vec<_>>(),
+                vec![
+                    not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                    not_included_reasons::ACCOUNT_NOT_FOUND,
+                    not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                ]
+            );
+            assert!(responses.iter().all(|response| response.cost_units == 0));
+            assert_eq!(test_frame.bank.get_balance(&mint), mint_balance);
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_run_simulate_without_active_bank() {
+            let mut test_frame = setup_external_test_frame();
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
+                &Pubkey::new_unique(),
+                1,
+                test_frame.bank.confirmed_last_blockhash(),
+            ))
+            .unwrap()]);
+
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: SIMULATE_FLAG,
+                max_working_slot: u64::MAX,
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
+            assert_eq!(
+                responses[0].not_included_reason,
+                not_included_reasons::BANK_NOT_AVAILABLE
+            );
+
+            test_frame.free_batch(batch);
+        }
+
         #[test_case(false; "strict_fee_payer")]
         #[test_case(true; "relaxed_fee_payer")]
         fn test_run_execute_mixed_batch_results(relax_fee_payer_constraint: bool) {
@@ -1806,6 +2022,7 @@ impl ConsumeWorkerMetrics {
 struct ConsumeWorkerCountMetrics {
     max_queue_len: AtomicU64,
     num_messages_processed: AtomicU64,
+    num_simulated_messages: AtomicU64,
     transactions_attempted_processing_count: AtomicU64,
     processed_transactions_count: AtomicU64,
     processed_with_successful_result_count: AtomicU64,
@@ -1823,6 +2040,11 @@ impl ConsumeWorkerCountMetrics {
             (
                 "num_messages_processed",
                 self.num_messages_processed.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_simulated_messages",
+                self.num_simulated_messages.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
