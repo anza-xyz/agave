@@ -22,6 +22,7 @@ use {
         UiAccount, UiAccountEncoding, encode_ui_account, parse_token::is_known_spl_token_id,
     },
     solana_clock::Slot,
+    solana_commitment_config::CommitmentConfig,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
@@ -367,6 +368,21 @@ fn filter_block_result_txs(
     }))
 }
 
+fn max_complete_slot_for_block_subscription(
+    commitment: CommitmentConfig,
+    alpenglow_enabled: bool,
+    max_complete_transaction_status_slot: &AtomicU64,
+    max_complete_and_rooted_transaction_status_slot: &AtomicU64,
+) -> Slot {
+    // Alpenglow confirmed blocks are finalized too. Only Tower confirmed subscriptions
+    // can use transaction history before it is rooted.
+    if alpenglow_enabled || commitment.is_finalized() {
+        max_complete_and_rooted_transaction_status_slot.load(Ordering::SeqCst)
+    } else {
+        max_complete_transaction_status_slot.load(Ordering::SeqCst)
+    }
+}
+
 fn filter_account_result(
     result: Option<(AccountSharedData, Slot)>,
     params: &AccountSubscriptionParams,
@@ -582,6 +598,7 @@ impl RpcSubscriptions {
 
         let rpc_subscriptions = Self::new_with_config(
             exit,
+            max_complete_transaction_status_slot.clone(),
             max_complete_transaction_status_slot,
             blockstore,
             bank_forks,
@@ -607,6 +624,7 @@ impl RpcSubscriptions {
     pub fn new_with_config(
         exit: Arc<AtomicBool>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         blockstore: Arc<Blockstore>,
         bank_forks: Arc<RwLock<BankForks>>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
@@ -645,6 +663,7 @@ impl RpcSubscriptions {
                         Self::process_notifications(
                             exit,
                             max_complete_transaction_status_slot,
+                            max_complete_and_rooted_transaction_status_slot,
                             blockstore,
                             notifier,
                             notification_receiver,
@@ -684,6 +703,7 @@ impl RpcSubscriptions {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         Self::new_with_config(
             Arc::new(AtomicBool::new(false)),
+            max_complete_transaction_status_slot.clone(),
             max_complete_transaction_status_slot,
             blockstore,
             bank_forks,
@@ -757,6 +777,7 @@ impl RpcSubscriptions {
     fn process_notifications(
         exit: Arc<AtomicBool>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         blockstore: Arc<Blockstore>,
         notifier: RpcNotifier,
         notification_receiver: Receiver<TimestampedNotificationEntry>,
@@ -843,6 +864,7 @@ impl RpcSubscriptions {
                             const SOURCE: &str = "bank";
                             RpcSubscriptions::notify_watchers(
                                 max_complete_transaction_status_slot.clone(),
+                                max_complete_and_rooted_transaction_status_slot.clone(),
                                 subscriptions.commitment_watchers(),
                                 &bank_forks,
                                 &blockstore,
@@ -859,6 +881,7 @@ impl RpcSubscriptions {
                             const SOURCE: &str = "gossip";
                             RpcSubscriptions::notify_watchers(
                                 max_complete_transaction_status_slot.clone(),
+                                max_complete_and_rooted_transaction_status_slot.clone(),
                                 subscriptions.gossip_watchers(),
                                 &bank_forks,
                                 &blockstore,
@@ -914,6 +937,7 @@ impl RpcSubscriptions {
 
     fn notify_watchers(
         max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         subscriptions: &HashMap<SubscriptionId, Arc<SubscriptionInfo>>,
         bank_forks: &RwLock<BankForks>,
         blockstore: &Blockstore,
@@ -938,6 +962,11 @@ impl RpcSubscriptions {
         let num_signatures_found = AtomicUsize::new(0);
         let num_signatures_notified = AtomicUsize::new(0);
 
+        let alpenglow_enabled = bank_forks
+            .read()
+            .unwrap()
+            .migration_status()
+            .is_alpenglow_enabled();
         let subscriptions = subscriptions.into_par_iter();
         subscriptions.for_each(|(_id, subscription)| {
             let slot = if let Some(commitment) = subscription.commitment() {
@@ -1002,12 +1031,19 @@ impl RpcSubscriptions {
                             let ancestors = bank.proper_ancestors_set();
                             slots_to_notify.retain(|slot| ancestors.contains(slot));
                             slots_to_notify.push(slot);
+                            let max_transaction_history_slot =
+                                max_complete_slot_for_block_subscription(
+                                    params.commitment,
+                                    alpenglow_enabled,
+                                    &max_complete_transaction_status_slot,
+                                    &max_complete_and_rooted_transaction_status_slot,
+                                );
                             for s in slots_to_notify {
                                 // To avoid skipping a slot that fails this condition,
                                 // caused by non-deterministic concurrency accesses, we
                                 // break out of the loop. Besides if the current `s` is
                                 // greater, then any `s + K` is also greater.
-                                if s > max_complete_transaction_status_slot.load(Ordering::SeqCst) {
+                                if s > max_transaction_history_slot {
                                     break;
                                 }
 
@@ -1223,7 +1259,6 @@ pub(crate) mod tests {
             rpc_pubsub_service,
         },
         serial_test::serial,
-        solana_commitment_config::CommitmentConfig,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::get_tmp_ledger_path_auto_delete,
