@@ -3839,8 +3839,11 @@ impl AccountsDb {
     /// account in the slot.
     fn flush_slot_cache(&self, slot: Slot, pubkeys_to_store: &PubkeysToStore) -> FlushStats {
         let slot_cache = self.accounts_cache.slot_cache(slot);
-        // Only roots with a cache are tracked, and nothing else removes a root's cache
-        debug_assert!(slot_cache.is_some(), "unflushed root {slot} has no cache");
+        // Only roots with a slot cache are tracked, and nothing else removes a root's slot cache
+        debug_assert!(
+            slot_cache.is_some(),
+            "unflushed root {slot} has no slot cache"
+        );
         slot_cache.map_or_else(FlushStats::default, |slot_cache| {
             self.do_flush_slot_cache(slot, &slot_cache, pubkeys_to_store)
         })
@@ -5777,7 +5780,7 @@ impl AccountsDb {
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn flush_root_write_cache(&self, root: Slot) {
-        // A root without a cache is not tracked
+        // A root without a slot cache is not tracked
         assert!(
             self.accounts_cache.contains_unflushed_root(root)
                 || !self.accounts_cache.contains(root)

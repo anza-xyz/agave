@@ -229,9 +229,9 @@ impl AccountsCacheIndex {
         removed_pubkeys
     }
 
-    /// Returns the highest bank id that stored `pubkey` in the cache, or `None` if the pubkey is not
-    /// present in the cache. That bank's cache may since have been flushed or purged, so this is
-    /// only an upper bound on the banks whose caches hold `pubkey`
+    /// Returns the highest bank id that stored `pubkey` in the cache, or `None` if the pubkey is
+    /// not present in the cache. That bank's slot cache may since have been flushed or purged, so
+    /// this is only an upper bound on the banks whose slot caches hold `pubkey`
     fn max_bank_id_for_pubkey(&self, pubkey: &Pubkey) -> Option<BankId> {
         self.entries.get(pubkey).map(|entry| entry.0)
     }
@@ -245,8 +245,8 @@ pub struct AccountsCache {
     // Index to find which banks a pubkey is stored in, to speed up lookups in load_latest
     index: AccountsCacheIndex,
     // Rooted banks that still have accounts in the write cache, and the slot each stored at. A
-    // bank enters via `add_root` if it has a cache, and is dropped by `remove_slot` when its cache
-    // is flushed. Roots form one chain, so bank id order is slot order.
+    // bank enters via `add_root` if it has a slot cache, and is dropped by `remove_slot` when its
+    // slot cache is flushed. Roots form one chain, so bank id order is slot order.
     unflushed_roots: RwLock<BTreeMap<BankId, Slot>>,
     max_flushed_root: MaxFlushedRoot,
     /// The size of account data stored in the whole AccountsCache, in bytes
@@ -427,7 +427,7 @@ impl AccountsCache {
         self.bank_ids.read().unwrap().get(&slot).copied()
     }
 
-    /// A root without a cache is not tracked; nothing stores into a slot once it is rooted
+    /// A root without a slot cache is not tracked; nothing stores into a slot once it is rooted
     pub fn add_root(&self, root: Slot) {
         // Held across the lookup so a concurrent `remove_slot` can't leave this root stranded
         let mut unflushed_roots = self.unflushed_roots.write().unwrap();
