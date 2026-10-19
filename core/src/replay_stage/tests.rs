@@ -512,12 +512,14 @@ fn test_child_slots_of_same_parent() {
             leader_schedule_cache: &leader_schedule_cache,
             rpc_subscriptions: rpc_subscriptions.as_deref(),
             slot_status_notifier: &None,
+            transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
         },
         &mut progress,
         &mut replay_timing,
-    );
+    )
+    .unwrap();
     assert!(
         bank_forks
             .read()
@@ -544,12 +546,14 @@ fn test_child_slots_of_same_parent() {
             leader_schedule_cache: &leader_schedule_cache,
             rpc_subscriptions: rpc_subscriptions.as_deref(),
             slot_status_notifier: &None,
+            transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
         },
         &mut progress,
         &mut replay_timing,
-    );
+    )
+    .unwrap();
     assert!(
         bank_forks
             .read()
@@ -3267,12 +3271,14 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             leader_schedule_cache: &leader_schedule_cache,
             rpc_subscriptions: rpc_subscriptions.as_deref(),
             slot_status_notifier: &None,
+            transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
         },
         &mut progress,
         &mut replay_timing,
-    );
+    )
+    .unwrap();
     assert_eq!(bank_forks.read().unwrap().active_bank_slots(), vec![3]);
 
     // Freeze 3
@@ -3300,12 +3306,14 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             leader_schedule_cache: &leader_schedule_cache,
             rpc_subscriptions: rpc_subscriptions.as_deref(),
             slot_status_notifier: &None,
+            transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
         },
         &mut progress,
         &mut replay_timing,
-    );
+    )
+    .unwrap();
     assert_eq!(bank_forks.read().unwrap().active_bank_slots(), vec![5]);
 
     // Freeze 5
@@ -3334,12 +3342,14 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             leader_schedule_cache: &leader_schedule_cache,
             rpc_subscriptions: rpc_subscriptions.as_deref(),
             slot_status_notifier: &None,
+            transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
         },
         &mut progress,
         &mut replay_timing,
-    );
+    )
+    .unwrap();
     assert_eq!(bank_forks.read().unwrap().active_bank_slots(), vec![6]);
 
     // Freeze 6 now that we have the correct version of 5.
@@ -3367,12 +3377,14 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             leader_schedule_cache: &leader_schedule_cache,
             rpc_subscriptions: rpc_subscriptions.as_deref(),
             slot_status_notifier: &None,
+            transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
         },
         &mut progress,
         &mut replay_timing,
-    );
+    )
+    .unwrap();
     assert_eq!(bank_forks.read().unwrap().active_bank_slots(), vec![7]);
 }
 
@@ -3474,8 +3486,9 @@ fn test_update_parent_restart() {
     assert_eq!(update_parent.parent_block_id, slot_meta.parent_block_id);
 }
 
-#[test]
-fn test_headerless_update_parent() {
+#[test_case(false; "transaction_status_connected")]
+#[test_case(true; "transaction_status_disconnected")]
+fn test_headerless_update_parent(transaction_status_disconnected: bool) {
     let ReplayBlockstoreComponents {
         blockstore,
         vote_simulator,
@@ -3521,19 +3534,46 @@ fn test_headerless_update_parent() {
     assert!(slot_meta.has_update_parent());
     assert!(bank_forks.read().unwrap().get(slot).is_none());
 
+    let (sender, receiver) = bounded(1);
+    let receiver = (!transaction_status_disconnected).then_some(receiver);
+    let transaction_status_sender = TransactionStatusSender {
+        sender,
+        dependency_tracker: None,
+    };
     let mut replay_timing = ReplayLoopTiming::default();
-    ReplayStage::generate_new_bank_forks(
+    let result = ReplayStage::generate_new_bank_forks(
         NewBankForksContext {
             blockstore: &blockstore,
             bank_forks: &bank_forks,
             leader_schedule_cache: &leader_schedule_cache,
             rpc_subscriptions: None,
             slot_status_notifier: &None,
+            transaction_status_sender: Some(&transaction_status_sender),
             migration_status: &migration_status,
             my_pubkey: &my_pubkey,
         },
         &mut progress,
         &mut replay_timing,
+    );
+    if transaction_status_disconnected {
+        assert_matches!(
+            result,
+            Err(ReplayStageError::PurgeTransactionHistory { slot: 4, .. })
+        );
+        assert!(bank_forks.read().unwrap().get(slot).is_none());
+        assert!(!progress.contains_key(&slot));
+        return;
+    }
+    result.unwrap();
+    assert_matches!(
+        receiver.unwrap().try_recv(),
+        Ok(TransactionStatusMessage::PurgeTransactionHistory {
+            slot: 4,
+            source: TransactionHistoryPurgeSource::ReplayStart,
+            purge_input: TransactionHistoryPurgeInput::ReplayStage,
+            done_sender: None,
+            ..
+        })
     );
 
     assert!(
@@ -4194,12 +4234,14 @@ fn test_replay_own_update_full() {
             leader_schedule_cache: &leader_schedule_cache,
             rpc_subscriptions: None,
             slot_status_notifier: &None,
+            transaction_status_sender: None,
             migration_status: &migration_status,
             my_pubkey: &my_pubkey,
         },
         &mut progress,
         &mut replay_timing,
-    );
+    )
+    .unwrap();
 
     let bank = bank_forks.read().unwrap().get(slot).unwrap();
     assert!(bank.should_replay_from_blockstore());
