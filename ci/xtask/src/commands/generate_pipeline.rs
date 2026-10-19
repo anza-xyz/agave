@@ -191,7 +191,6 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("ci/do-audit.sh")
                         || file.ends_with("ci/check-install-all.sh")
                         || file.ends_with("scripts/spl-token-cli-version.sh")
-                        || file.ends_with("scripts/cargo-build-sbf-version.sh")
                 }),
             release_check: trigger_all
                 || rust_changed
