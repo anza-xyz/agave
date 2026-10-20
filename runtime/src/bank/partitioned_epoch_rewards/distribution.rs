@@ -240,12 +240,15 @@ impl Bank {
                     rewards.push((x.stake_pubkey, x.stake_reward_info.into()))
                 }
                 if x.block_reward_lamports > 0 {
-                    rewards.push((x.stake_pubkey, RewardInfo {
-                        reward_type: RewardType::BlockRevenueSharing,
-                        lamports: i64::try_from(x.block_reward_lamports).unwrap(),
-                        post_balance: x.stake_reward_info.post_balance,
-                        commission_bps: None,
-                    }));
+                    rewards.push((
+                        x.stake_pubkey,
+                        RewardInfo {
+                            reward_type: RewardType::BlockRevenueSharing,
+                            lamports: i64::try_from(x.block_reward_lamports).unwrap(),
+                            post_balance: x.stake_reward_info.post_balance,
+                            commission_bps: None,
+                        },
+                    ));
                 }
             });
         rewards.len().saturating_sub(initial_len)
@@ -324,10 +327,7 @@ impl Bank {
             stake_pubkey: partitioned_stake_reward.stake_pubkey,
             stake_reward_info: StakeRewardInfo {
                 reward_type,
-                lamports: i64::try_from(
-                    partitioned_stake_reward.inflation.stake_reward
-                )
-                .unwrap(),
+                lamports: i64::try_from(partitioned_stake_reward.inflation.stake_reward).unwrap(),
                 post_balance: account.lamports(),
                 commission_bps: partitioned_stake_reward.inflation.commission_bps,
             },
@@ -752,19 +752,22 @@ mod tests {
 
             let num_in_history = bank.update_reward_history_in_partition(&stake_rewards);
 
-            let mut reward_infos = stake_rewards.into_iter()
-                .flat_map(|x| [
-                    (x.stake_pubkey, RewardInfo::from(x.stake_reward_info)),
-                    (
-                        x.stake_pubkey,
-                        RewardInfo {
-                            reward_type: RewardType::BlockRevenueSharing,
-                            lamports: i64::try_from(x.block_reward_lamports).unwrap(),
-                            post_balance: x.stake_reward_info.post_balance,
-                            commission_bps: None,
-                        }
-                    )
-                ])
+            let mut reward_infos = stake_rewards
+                .into_iter()
+                .flat_map(|x| {
+                    [
+                        (x.stake_pubkey, RewardInfo::from(x.stake_reward_info)),
+                        (
+                            x.stake_pubkey,
+                            RewardInfo {
+                                reward_type: RewardType::BlockRevenueSharing,
+                                lamports: i64::try_from(x.block_reward_lamports).unwrap(),
+                                post_balance: x.stake_reward_info.post_balance,
+                                commission_bps: None,
+                            },
+                        ),
+                    ]
+                })
                 .collect::<Vec<_>>();
 
             if zero_reward {
@@ -779,10 +782,7 @@ mod tests {
                 .iter()
                 .zip(reward_infos.iter())
                 .for_each(|((k, reward_info), (expected_key, expected_reward_info))| {
-                    assert_eq!(
-                        (expected_key, expected_reward_info),
-                        (k, reward_info)
-                    );
+                    assert_eq!((expected_key, expected_reward_info), (k, reward_info));
                 });
 
             assert_eq!(num_in_history, expected_num);

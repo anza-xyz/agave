@@ -3621,11 +3621,8 @@ impl RpcClient {
             .iter()
             .map(|address| address.to_string())
             .collect();
-        self.send(
-            RpcRequest::GetInflationReward,
-            json!([addresses, config]),
-        )
-        .await
+        self.send(RpcRequest::GetInflationReward, json!([addresses, config]))
+            .await
     }
 
     /// Returns the current solana version running on the node.
