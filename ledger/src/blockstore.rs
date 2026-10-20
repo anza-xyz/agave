@@ -21,7 +21,7 @@ use {
             self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats, Shred,
             ShredFlags, ShredId, ShredType, Shredder,
             filter::ShredRecoveryContext,
-            merkle::ErasureBatch,
+            merkle::{ErasureBatch, FecSetViolation},
             merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
         slot_stats::{ShredSource, SlotsStats},
@@ -493,6 +493,41 @@ impl<'batch> ShredInsertionTracker<'_, 'batch> {
             index_meta_time_us: 0,
             newly_completed_data_sets: vec![],
         }
+    }
+}
+
+/// What to do with an erasure set after a batch of shreds was inserted.
+struct FecSetActions {
+    /// Some data shreds are missing but enough shreds are present for recovery.
+    recover_missing_data_shreds: bool,
+    /// The erasure set has enough shreds to be rebuilt, but *did not* have
+    /// enough before the last inserted batch, i.e. checks were not run on it.
+    ///
+    /// Insertion is serialized by `insert_shreds_lock`, so this holds in at
+    /// most one batch for each erasure set (unless its shreds are purged).
+    run_fec_checks: bool,
+}
+
+fn fec_set_actions(
+    index: &Index,
+    erasure_set: ErasureSetId,
+    erasure_meta: Option<&ErasureMeta>,
+    num_inserted: usize,
+) -> FecSetActions {
+    let Range { start, end } = erasure_set.data_shred_indices();
+    let num_data = index.data().count_range(u64::from(start)..u64::from(end));
+    // Without an erasure meta the set is data-only, see `try_shred_recovery`.
+    let num_coding = erasure_meta.map_or(0, |erasure_meta| {
+        index
+            .coding()
+            .count_range(erasure_meta.coding_shreds_indices())
+    });
+    let num_shreds = num_data + num_coding;
+    let can_rebuild = num_shreds >= DATA_SHREDS_PER_FEC_BLOCK;
+    FecSetActions {
+        recover_missing_data_shreds: can_rebuild && num_data < DATA_SHREDS_PER_FEC_BLOCK,
+        run_fec_checks: can_rebuild
+            && num_shreds.saturating_sub(num_inserted) < DATA_SHREDS_PER_FEC_BLOCK,
     }
 }
 
@@ -1471,15 +1506,16 @@ impl Blockstore {
     fn get_recovery_data_shreds<'a>(
         &'a self,
         index: &'a Index,
-        erasure_meta: &'a ErasureMeta,
+        erasure_set: ErasureSetId,
         prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
     ) -> impl Iterator<Item = Shred> + 'a {
         let slot = index.slot;
-        erasure_meta.data_shreds_indices().filter_map(move |i| {
-            let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Data);
+        erasure_set.data_shred_indices().filter_map(move |i| {
+            let key = ShredId::new(slot, i, ShredType::Data);
             if let Some(shred) = prev_inserted_shreds.get(&(BlockLocation::Original, key)) {
                 return Some(shred.as_ref().clone());
             }
+            let i = u64::from(i);
             if !index.data().contains(i) {
                 return None;
             }
@@ -1528,18 +1564,21 @@ impl Blockstore {
         })
     }
 
-    /// Rebuilds the whole erasure batch of `erasure_meta` from the shreds
+    /// Rebuilds the whole erasure batch of `erasure_set` from the shreds
     /// available in blockstore, applying filters to them.
     /// Note: that we do not do recovery on the Alternate shred columns
     fn rebuild_erasure_batch(
         &self,
         index: &Index,
-        erasure_meta: &ErasureMeta,
+        erasure_set: ErasureSetId,
+        erasure_meta: Option<&ErasureMeta>,
         prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         shred_recovery_ctx: &mut ShredRecoveryContext,
     ) -> std::result::Result<ErasureBatch, shred::Error> {
-        let data = self.get_recovery_data_shreds(index, erasure_meta, prev_inserted_shreds);
-        let code = self.get_recovery_coding_shreds(index, erasure_meta, prev_inserted_shreds);
+        let data = self.get_recovery_data_shreds(index, erasure_set, prev_inserted_shreds);
+        let code = erasure_meta.into_iter().flat_map(|erasure_meta| {
+            self.get_recovery_coding_shreds(index, erasure_meta, prev_inserted_shreds)
+        });
         shred_recovery_ctx.rebuild_erasure_batch(data.chain(code))
     }
 
@@ -1727,8 +1766,13 @@ impl Blockstore {
     /// 1. Only try recovery around indexes for which new data or coding shreds are received
     /// 2. For new data shreds, check if an erasure set exists. If not, don't try recovery
     /// 3. Before trying recovery, check if enough number of shreds have been received
-    ///    3a. Enough number of shreds = (#data + #coding shreds) > erasure.num_data
-    /// 4. Only perform rceovery in the Original column
+    ///    3a. Enough number of shreds = (#data + #coding shreds) >= erasure.num_data
+    /// 4. Only perform recovery in the Original column
+    ///
+    /// Additionally, erasure sets which have enough shreds to be rebuilt for
+    /// the first time in this batch are rebuilt and checked against the
+    /// SIMD-0504 per-FEC-set rules. The outcome of the checks is only reported
+    /// in metrics, not enforced.
     ///
     /// Returns (recovered_shreds, recovered_data_shreds)
     fn try_shred_recovery(
@@ -1737,49 +1781,120 @@ impl Blockstore {
         index_working_set: &HashMap<(BlockLocation, u64), IndexMetaWorkingSetEntry>,
         prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         shred_recovery_ctx: &mut ShredRecoveryContext,
+        metrics: &mut BlockstoreInsertionMetrics,
     ) -> (
         /* recovered_shreds */ Vec<Payload>,
         /* recovered_data_shreds */ Vec<Shred>,
     ) {
-        let erasure_metas_to_recover = erasure_metas
+        // Recovered shreds are inserted only after this function returns, so
+        // these are the shreds received in this batch.
+        // The capacity is a guess at the number of erasure sets in a batch. The
+        // batch size depends on how shred sigverify batches its output, so
+        // revisit this when that changes.
+        let mut num_inserted_shreds = HashMap::with_capacity(64);
+        for ((location, _), shred) in prev_inserted_shreds {
+            if matches!(location, BlockLocation::Original) {
+                *num_inserted_shreds.entry(shred.erasure_set()).or_default() += 1;
+            }
+        }
+        // `erasure_metas` covers every erasure set touched by this batch that
+        // has at least one coding shred, either in this batch or already in
+        // blockstore. Any other erasure set touched by this batch has only
+        // data shreds, so nothing in it can be recovered. Once all its data
+        // shreds are present, it is still rebuilt (re-encoding the coding
+        // shreds) in order to check it.
+        let data_only_sets = num_inserted_shreds
+            .keys()
+            .filter(|erasure_set| !erasure_metas.contains_key(erasure_set))
+            .map(|erasure_set| (*erasure_set, None));
+        let erasure_sets_to_rebuild = erasure_metas
             .iter()
-            .filter_map(|(erasure_set, working_erasure_meta)| {
-                let erasure_meta = working_erasure_meta.as_ref();
-                let slot = erasure_set.slot();
-                let index_meta_entry = index_working_set.get(&(BlockLocation::Original, slot))?;
+            .map(|(erasure_set, erasure_meta)| (*erasure_set, Some(erasure_meta.as_ref())))
+            .chain(data_only_sets)
+            .filter_map(|(erasure_set, erasure_meta)| {
+                let index_meta_entry =
+                    index_working_set.get(&(BlockLocation::Original, erasure_set.slot()))?;
                 let index = &index_meta_entry.index;
-                erasure_meta
-                    .should_recover_shreds(index)
-                    .then_some((index, erasure_meta))
+                let num_inserted = num_inserted_shreds.get(&erasure_set).copied().unwrap_or(0);
+                let actions = fec_set_actions(index, erasure_set, erasure_meta, num_inserted);
+                (actions.recover_missing_data_shreds || actions.run_fec_checks).then_some((
+                    erasure_set,
+                    erasure_meta,
+                    index,
+                    actions,
+                ))
             })
             .collect_vec();
 
-        let max_recovered_shreds = erasure_metas_to_recover.len() * DATA_SHREDS_PER_FEC_BLOCK;
+        let num_to_recover = erasure_sets_to_rebuild
+            .iter()
+            .filter(|(_, _, _, actions)| actions.recover_missing_data_shreds)
+            .count();
+        // At least DATA_SHREDS_PER_FEC_BLOCK shreds are received, so at most as
+        // many are recovered.
+        let max_recovered_shreds = num_to_recover * DATA_SHREDS_PER_FEC_BLOCK;
         let mut recovered_shreds = Vec::with_capacity(max_recovered_shreds);
         let mut recovered_data_shreds = Vec::with_capacity(max_recovered_shreds);
-        for (index, erasure_meta) in erasure_metas_to_recover {
+        for (erasure_set, erasure_meta, index, actions) in erasure_sets_to_rebuild {
+            let FecSetActions {
+                recover_missing_data_shreds: should_recover,
+                run_fec_checks: should_check,
+            } = actions;
             let batch = match self.rebuild_erasure_batch(
                 index,
+                erasure_set,
                 erasure_meta,
                 prev_inserted_shreds,
                 shred_recovery_ctx,
             ) {
                 Ok(batch) => batch,
                 Err(err) => {
-                    info!(
-                        "Unable to perform shred recovery for slot {} fec set {}: {err:?}",
-                        index.slot,
-                        erasure_meta.fec_set_index()
+                    debug!(
+                        "Unable to rebuild erasure batch for slot {} fec set {}: {err:?}",
+                        erasure_set.slot(),
+                        erasure_set.fec_set_index(),
                     );
+                    // The check is not retried. Once SIMD-0504 is active, a
+                    // failed rebuild fails the FEC set checks, which marks
+                    // the slot dead.
+                    if should_check {
+                        metrics.num_fec_set_checks_rebuild_failed += 1;
+                    }
                     continue;
                 }
             };
+            let fec_set_check = should_check.then(|| batch.check_fec_set());
             let recovered = shred_recovery_ctx.check_recovered_shreds(batch);
-            ShredRecoveryContext::collect_recovered_shreds(
-                recovered,
-                &mut recovered_shreds,
-                &mut recovered_data_shreds,
-            );
+            let invalid_shreds_found = if should_recover {
+                ShredRecoveryContext::collect_recovered_shreds(
+                    recovered,
+                    &mut recovered_shreds,
+                    &mut recovered_data_shreds,
+                )
+            } else {
+                // TODO: Retransmit these too. All data shreds are present, so
+                // the reconstructed shreds are only coding shreds, which the
+                // node may not have received and so has not retransmitted.
+                recovered.fold(false, |found, shred| found | shred.is_err())
+            };
+            if let Some(fec_set_check) = fec_set_check {
+                let fec_set_check = fec_set_check.and(if invalid_shreds_found {
+                    Err(FecSetViolation::InvalidReconstructedShred)
+                } else {
+                    Ok(())
+                });
+                match fec_set_check {
+                    Ok(()) => metrics.num_fec_set_checks_passed += 1,
+                    Err(violation) => {
+                        debug!(
+                            "Erasure batch for slot {} fec set {} violates SIMD-0504: {violation}",
+                            erasure_set.slot(),
+                            erasure_set.fec_set_index(),
+                        );
+                        metrics.num_fec_set_checks_failed += 1;
+                    }
+                }
+            }
         }
         (recovered_shreds, recovered_data_shreds)
     }
@@ -1805,6 +1920,7 @@ impl Blockstore {
             &shred_insertion_tracker.index_working_set,
             &shred_insertion_tracker.just_inserted_shreds,
             shred_recovery_context,
+            metrics,
         );
         if !recovered_shreds.is_empty() {
             metrics.num_recovered_retransmit_batches += 1;
