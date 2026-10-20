@@ -74,7 +74,6 @@ solana-metrics = { workspace = true }
 solana-nohash-hasher = { workspace = true }
 solana-nonce = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, optional = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true, optional = true }
