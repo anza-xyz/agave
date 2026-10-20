@@ -2,8 +2,9 @@ use {
     super::receive_and_buffer::{PrecheckResult, precheck_transaction},
     crossbeam_channel::{Receiver, Sender},
     solana_perf::packet::bytes::Bytes,
+    solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::SharableBanks,
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     std::{
         collections::HashSet,
         num::NonZeroUsize,
@@ -17,6 +18,7 @@ pub(crate) fn spawn_check_workers(
     work_receiver: Receiver<Bytes>,
     result_sender: Sender<PrecheckResult>,
     sharable_banks: SharableBanks,
+    shared_leader_state: SharedLeaderState,
     filter_keys: Arc<HashSet<Pubkey>>,
 ) -> Vec<JoinHandle<()>> {
     (0..num_workers.get())
@@ -24,11 +26,18 @@ pub(crate) fn spawn_check_workers(
             let work_receiver = work_receiver.clone();
             let result_sender = result_sender.clone();
             let sharable_banks = sharable_banks.clone();
+            let shared_leader_state = shared_leader_state.clone();
             let filter_keys = filter_keys.clone();
             Builder::new()
                 .name(format!("solBnkChk{index:02}"))
                 .spawn(move || {
-                    run_check_worker(work_receiver, result_sender, sharable_banks, filter_keys);
+                    run_check_worker(
+                        work_receiver,
+                        result_sender,
+                        sharable_banks,
+                        shared_leader_state,
+                        filter_keys,
+                    );
                 })
                 .expect("check worker thread must spawn")
         })
@@ -39,12 +48,13 @@ fn run_check_worker(
     work_receiver: Receiver<Bytes>,
     result_sender: Sender<PrecheckResult>,
     sharable_banks: SharableBanks,
+    shared_leader_state: SharedLeaderState,
     filter_keys: Arc<HashSet<Pubkey>>,
 ) {
     while let Ok(bytes) = work_receiver.recv() {
         let banks = sharable_banks.load();
-        let result =
-            precheck_transaction(bytes, &banks.root_bank, &banks.working_bank, &filter_keys);
+        let working_bank = preferred_working_bank(&shared_leader_state, banks.working_bank);
+        let result = precheck_transaction(bytes, &banks.root_bank, &working_bank, &filter_keys);
 
         // A result queue at capacity applies backpressure to check workers. Accepted
         // work is never dropped by a worker.
@@ -54,12 +64,26 @@ fn run_check_worker(
     }
 }
 
+fn preferred_working_bank(
+    shared_leader_state: &SharedLeaderState,
+    working_bank: Arc<Bank>,
+) -> Arc<Bank> {
+    let leader_state = shared_leader_state.load();
+    leader_state
+        .working_bank()
+        .filter(|bank| !bank.is_complete())
+        .cloned()
+        .unwrap_or(working_bank)
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*, crate::banking_stage::tests::create_slow_genesis_config,
-        crossbeam_channel::bounded, solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::BytesPacket, solana_runtime::bank::Bank,
+        crossbeam_channel::bounded, solana_account::AccountSharedData,
+        solana_leader_schedule::SlotLeader, solana_ledger::genesis_utils::GenesisConfigInfo,
+        solana_perf::packet::BytesPacket, solana_poh::poh_recorder::LeaderState,
+        solana_runtime::bank::Bank, solana_sdk_ids::system_program, solana_signer::Signer,
         solana_system_transaction::transfer,
     };
 
@@ -99,6 +123,7 @@ mod tests {
             work_receiver,
             result_sender,
             sharable_banks.clone(),
+            SharedLeaderState::new(0, None, None),
             Arc::default(),
         );
         for _ in 0..8 {
@@ -118,11 +143,69 @@ mod tests {
             .into_iter()
             .for_each(|handle| assert!(handle.join().is_ok()));
     }
+
+    #[test]
+    fn prefers_active_leader_bank_over_highest_working_fork() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(u64::MAX);
+        let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let leader_bank = Arc::new(Bank::new_from_parent(
+            root_bank.clone(),
+            SlotLeader::new_unique(),
+            1,
+        ));
+        let working_bank = Bank::new_from_parent(root_bank, SlotLeader::new_unique(), 2);
+        working_bank.store_account(
+            &mint_keypair.pubkey(),
+            &AccountSharedData::new(0, 0, &system_program::ID),
+        );
+        let sharable_banks = {
+            let mut forks = bank_forks.write().unwrap();
+            forks.insert(working_bank);
+            forks.sharable_banks()
+        };
+        let mut shared_leader_state = SharedLeaderState::new(0, None, None);
+        shared_leader_state.store(Arc::new(LeaderState::new(Some(leader_bank), 0, None, None)));
+
+        let (work_sender, work_receiver) = bounded(1);
+        let (result_sender, result_receiver) = bounded(1);
+        let worker = spawn_check_workers(
+            NonZeroUsize::new(1).unwrap(),
+            work_receiver,
+            result_sender,
+            sharable_banks.clone(),
+            shared_leader_state.clone(),
+            Arc::default(),
+        )
+        .pop()
+        .unwrap();
+
+        work_sender
+            .send(transaction_bytes(&sharable_banks, &mint_keypair))
+            .unwrap();
+        assert!(result_receiver.recv().unwrap().is_ok());
+
+        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None, None)));
+        work_sender
+            .send(transaction_bytes(&sharable_banks, &mint_keypair))
+            .unwrap();
+        assert!(matches!(
+            result_receiver.recv().unwrap(),
+            Err(crate::banking_stage::transaction_scheduler::receive_and_buffer::IngressCheckError::FeePayer)
+        ));
+
+        drop(work_sender);
+        worker.join().unwrap();
+    }
 }
 
 #[cfg(unix)]
 pub(crate) mod external {
     use {
+        super::preferred_working_bank,
         crate::banking_stage::transaction_scheduler::receive_and_buffer::translate_sanitized_to_runtime_view,
         agave_scheduler_bindings::{
             CheckResponseRegion, CheckWorkerToPackMessage, MAX_TRANSACTIONS_PER_MESSAGE,
@@ -145,7 +228,7 @@ pub(crate) mod external {
         solana_clock::Slot,
         solana_cost_model::cost_model::CostModel,
         solana_message::v0::LoadedAddresses,
-        solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
+        solana_poh::poh_recorder::SharedLeaderState,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -261,9 +344,7 @@ pub(crate) mod external {
                 working_bank,
             } = self.sharable_banks.load();
             // Prefer the leader bank over the highest working fork when leader.
-            let working_bank = active_leader_state(&self.shared_leader_state)
-                .and_then(|leader_state| leader_state.working_bank().cloned())
-                .unwrap_or(working_bank);
+            let working_bank = preferred_working_bank(&self.shared_leader_state, working_bank);
 
             // SAFETY: Assumption that external scheduler does not pass messages with batch regions
             //         not pointing to valid regions in the allocator.
@@ -601,23 +682,6 @@ pub(crate) mod external {
             for (index, pubkey) in loaded_addresses.enumerate() {
                 unsafe { dest.add(index).write(*pubkey) };
             }
-        }
-    }
-
-    /// Returns an active leader state if available, otherwise None.
-    fn active_leader_state(
-        shared_leader_state: &SharedLeaderState,
-    ) -> Option<arc_swap::Guard<Arc<LeaderState>>> {
-        let guard = shared_leader_state.load();
-        if guard
-            .as_ref()
-            .working_bank()
-            .map(|bank| bank.is_complete())
-            .unwrap_or(true)
-        {
-            None
-        } else {
-            Some(guard)
         }
     }
 

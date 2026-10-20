@@ -1775,10 +1775,9 @@ impl ClusterInfo {
             }
         };
         let mut num_crds_values = 0;
-        let (scores, mut pull_responses): (Vec<_>, Vec<_>) = requests
-            .iter()
-            .zip(pull_responses)
-            .flat_map(|(PullRequest { addr, .. }, values)| {
+        let (scores, mut pull_responses): (Vec<_>, Vec<_>) = pull_responses
+            .into_iter()
+            .flat_map(|(addr, values)| {
                 num_crds_values += values.len();
                 split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, values).map(move |values| {
                     let score = values.iter().map(get_score).max().unwrap_or_default();

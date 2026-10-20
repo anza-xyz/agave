@@ -6,6 +6,7 @@
 use {
     agave_bls_sigverify::unverified_votes_batch::{UnverifiedVotePayload, verify_individual_votes},
     agave_votor_messages::{
+        stake::NonZeroStake,
         unverified_vote_message::UnverifiedVoteMessage,
         vote::Vote,
         wire::{VotePayloadToSign, get_vote_payload_to_sign},
@@ -20,7 +21,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::{Bank, SlotLeader},
     solana_signer::Signer,
-    std::{hint::black_box, num::NonZero},
+    std::hint::black_box,
 };
 
 static BATCH_SIZES: &[usize] = &[8, 16, 32, 64, 128];
@@ -56,7 +57,7 @@ fn generate_test_data(
                     sender_bls_pubkey: bls_keypair.public,
                     sender_identity_pubkey: Keypair::new().pubkey(),
                     rank: 0,
-                    stake: NonZero::new(1234).unwrap(),
+                    stake: NonZeroStake::new(1234).unwrap(),
                 },
                 Keypair::new().pubkey(),
             )

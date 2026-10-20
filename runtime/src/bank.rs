@@ -2084,7 +2084,7 @@ impl Bank {
         // The serialized rent collector is deprecated. Instead, reconstruct from fields plus
         // the rent sysvar account state.
         let rent_sysvar = accounts
-            .load_with_fixed_root_do_not_populate_read_cache(ancestors, &sysvar::rent::id())
+            .load_do_not_populate_read_cache(ancestors, &sysvar::rent::id())
             .expect("snapshot must contain rent sysvar account")
             .0;
         from_account::<sysvar::rent::Rent>(&rent_sysvar)
@@ -2200,7 +2200,7 @@ impl Bank {
             Stakes::load_from_deserialized_delegations(fields.stakes, |pubkey| {
                 let (account, _slot) = bank_rc
                     .accounts
-                    .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
+                    .load_do_not_populate_read_cache(&ancestors, pubkey)?;
                 Some(account)
             })
             .expect(
@@ -2536,7 +2536,11 @@ impl Bank {
             (if roots.is_empty() { 0 } else { min }, ancestors)
         };
 
-        ancestors.extend(self.ancestors.iter().filter(|ancestor| *ancestor >= min));
+        ancestors.extend(
+            self.ancestors
+                .iter_slots()
+                .filter(|ancestor| *ancestor >= min),
+        );
         ancestors.sort_unstable();
         ancestors.dedup();
         ancestors
@@ -4665,7 +4669,8 @@ impl Bank {
         Self::create_commit_results(processing_results)
     }
 
-    fn create_commit_results(
+    /// Convert execution results to commit results without changing bank state.
+    pub fn create_commit_results(
         processing_results: Vec<TransactionProcessingResult>,
     ) -> Vec<TransactionCommitResult> {
         processing_results
@@ -5283,7 +5288,7 @@ impl Bank {
     ) -> Option<AccountSharedData> {
         self.rc
             .accounts
-            .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, pubkey)
+            .load_do_not_populate_read_cache(&self.ancestors, pubkey)
             .map(|(acc, _slot)| acc)
     }
 
@@ -5327,7 +5332,7 @@ impl Bank {
     ) -> Option<AccountSharedData> {
         self.rc
             .accounts
-            .load_with_fixed_root(&self.ancestors, pubkey, Some(load_filter))
+            .load_with_filter(&self.ancestors, pubkey, Some(load_filter))
             .map(|(acc, _slot)| acc)
     }
 
@@ -5343,7 +5348,7 @@ impl Bank {
         // get_account (= primary this fn caller) may be called from on-chain Bank code even if we
         // try hard to use get_account_with_fixed_root for that purpose...
         // so pass safer LoadHint:Unspecified here as a fallback
-        self.rc.accounts.load_without_fixed_root(ancestors, pubkey)
+        self.rc.accounts.load(ancestors, pubkey)
     }
 
     fn load_slow_with_fixed_root(
@@ -5351,9 +5356,7 @@ impl Bank {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.rc
-            .accounts
-            .load_with_fixed_root(ancestors, pubkey, None::<fn(_, &_, _) -> _>)
+        self.rc.accounts.load(ancestors, pubkey)
     }
 
     pub fn get_program_accounts(
@@ -6923,7 +6926,7 @@ impl TransactionProcessingCallback for Bank {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.rc
             .accounts
-            .load_with_fixed_root(&self.ancestors, pubkey, None::<fn(_, &_, _) -> _>)
+            .load(&self.ancestors, pubkey)
             .map(|(account, _slot)| account)
     }
 }

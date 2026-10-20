@@ -146,7 +146,7 @@ repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
 edition = "2024"
-rust-version = "1.99.0"
+rust-version = "1.99.1"
 
 # Agave binary and package names, grouped by intended audience.
 # Read by scripts/agave-build-lists.sh, which build/install scripts source.
@@ -365,7 +365,7 @@ semver = "1.0.28"
 seqlock = "0.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_bytes = "0.11.19"
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
 shaq = { version = "5.0.0" }
@@ -373,7 +373,7 @@ shuttle = "0.9.3"
 signal-hook = "0.4.4"
 slab = "0.4.12"
 slotmap = "1.0.7"
-smallvec = { version = "1.16.2", default-features = false, features = ["union"] }
+smallvec = { version = "1.16.3", default-features = false, features = ["union"] }
 smpl_jwt = "0.9.0"
 socket2 = "0.6.5"
 soketto = "0.8"

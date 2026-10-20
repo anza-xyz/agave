@@ -24,8 +24,8 @@ impl AccountsDb {
     }
 
     fn get_account_at_slot(&self, pubkey: &Pubkey, slot: Slot) -> Option<AccountSharedData> {
-        // Check the cache for the pubkey first
-        if let Some(cached) = self.accounts_cache.load(slot, pubkey) {
+        // Check the cache for the pubkey first; store_for_tests stores `slot` under `BankId::new(slot)`
+        if let Some((cached, _slot)) = self.accounts_cache.load(BankId::new(slot), pubkey) {
             return Some(cached.account.clone());
         }
 

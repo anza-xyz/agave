@@ -1,6 +1,7 @@
 use {
     crate::cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
+    solana_account::state_traits::StateMutWincode as _,
     solana_address_lookup_table_interface::{
         self as address_lookup_table,
         instruction::{
@@ -558,7 +559,8 @@ async fn process_create_lookup_table(
         .get_account_with_commitment(&sysvar::clock::id(), CommitmentConfig::finalized())
         .await?;
     let clock_account = get_clock_result.value.expect("Clock account doesn't exist");
-    let clock: Clock = wincode::deserialize(&clock_account.data)
+    let clock: Clock = clock_account
+        .state()
         .map_err(|_| CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string()))?;
 
     let get_slot_hashes_result = rpc_client

@@ -36,7 +36,6 @@ stable-abi = [
     "solana-gossip/stable-abi",
     "solana-hash/stable-abi",
     "solana-ledger/stable-abi",
-    "solana-packet/stable-abi",
     "solana-perf/stable-abi",
     "solana-pubkey/stable-abi",
     "solana-runtime/stable-abi",
@@ -107,6 +106,7 @@ solana-cluster-type = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-cost-model = { workspace = true }
+solana-ed25519-program = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee = { workspace = true }
@@ -142,6 +142,8 @@ solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-secp256k1-program = { workspace = true }
+solana-secp256r1-program = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-shred-version = { workspace = true }

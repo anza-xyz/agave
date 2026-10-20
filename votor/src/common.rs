@@ -6,7 +6,6 @@ use {
 };
 
 // Core consensus types and constants
-pub(crate) type Stake = u64;
 
 pub(crate) const MAX_NOTAR_FALLBACK_BLOCKS: usize = 4;
 
