@@ -47,7 +47,7 @@ const PRUNE_DATA_PREFIX: &[u8] = b"\xffSOLANA_PRUNE_DATA";
 const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 /// Minimum serialized size of a Protocol::PullResponse packet.
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
-const MIN_CRDS_VALUE_SERIALIZED_SIZE: usize =
+pub(crate) const MIN_CRDS_VALUE_SERIALIZED_SIZE: usize =
     PULL_RESPONSE_MIN_SERIALIZED_SIZE - (PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE);
 pub(crate) const MAX_CRDS_VALUES_PER_PACKET: usize =
     (PULL_RESPONSE_MAX_PAYLOAD_SIZE / MIN_CRDS_VALUE_SERIALIZED_SIZE) + 1;
