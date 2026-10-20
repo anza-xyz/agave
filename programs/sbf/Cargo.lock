@@ -8881,7 +8881,6 @@ version = "4.5.0-alpha.2"
 dependencies = [
  "libsecp256k1",
  "solana-hash",
- "solana-keccak-hasher",
  "solana-msg",
  "solana-program-entrypoint",
  "solana-secp256k1-recover",
