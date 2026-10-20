@@ -1,4 +1,5 @@
 use {
+    crate::retransmit_stage::RetransmitSender,
     agave_wake_channel::{Receiver as WakeReceiver, Sender as WakeSender, bounded as wake_bounded},
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     scopeguard::defer,
@@ -9,6 +10,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
             self,
+            filter::RETRANSMIT_SHRED_BATCH_SIZE,
             layout::{is_retransmitter_signed_variant, set_retransmitter_signature},
         },
         sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
@@ -24,7 +26,7 @@ use {
     },
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
+    solana_streamer::streamer::ChannelSend,
     std::{
         num::NonZeroUsize,
         sync::{Arc, RwLock},
@@ -315,7 +317,7 @@ pub fn spawn_shred_sigverify(
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
-    retransmit_sender: EvictingSender<Vec<shred::Payload>>,
+    retransmit_sender: RetransmitSender,
     verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     repair_nonce_location_lookup: Arc<RepairNonceLocationLookup>,
     num_sigverify_threads: NonZeroUsize,
@@ -379,7 +381,7 @@ fn run_shred_sigverify(
     workers: &ShredSigverifyWorkers,
     self_pubkey: &Pubkey,
     shred_fetch_receiver: &Receiver<PacketBatch>,
-    retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
+    retransmit_sender: &RetransmitSender,
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     repair_nonce_location_lookup: &RepairNonceLocationLookup,
     stats: &mut ShredSigVerifyStats,
@@ -439,12 +441,14 @@ fn run_shred_sigverify(
 
     stats.num_retransmit_shreds += retransmit_shreds.len();
 
-    if let Err(send_err) = retransmit_sender.try_send(retransmit_shreds) {
-        match send_err {
-            crossbeam_channel::TrySendError::Full(shreds) => {
-                stats.num_retransmit_stage_overflow_shreds += shreds.len();
+    for shreds in retransmit_shreds.chunks(RETRANSMIT_SHRED_BATCH_SIZE) {
+        if let Err(send_err) = retransmit_sender.try_send(shreds.to_vec()) {
+            match send_err {
+                crossbeam_channel::TrySendError::Full(shreds) => {
+                    stats.num_retransmit_stage_overflow_shreds += shreds.len();
+                }
+                _ => unreachable!("EvictingSender holds on to both ends of the channel"),
             }
-            _ => unreachable!("EvictingSender holds on to both ends of the channel"),
         }
     }
 

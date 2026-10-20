@@ -116,6 +116,7 @@ dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
  "agave-votor-messages",
+ "agave-wake-channel",
  "ahash 0.8.12",
  "bv",
  "bytes",

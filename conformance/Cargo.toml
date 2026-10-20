@@ -54,6 +54,7 @@ ffi = ["dep:prost", "dep:protosol", "agave-unstable-api", "solana-svm/conformanc
 agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-wake-channel = { workspace = true }
 ahash = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytes = { workspace = true }

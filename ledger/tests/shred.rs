@@ -42,7 +42,8 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
         SlotLeader::default(),
         warp_slot,
     ));
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (sender, receiver) = agave_wake_channel::bounded(1);
+    let dummy_retransmit_sender = EvictingSender::new(sender, receiver);
     ShredRecoveryContext::new(
         dummy_retransmit_sender,
         root_bank,

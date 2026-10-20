@@ -20,7 +20,7 @@ use {
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats, Shred,
             ShredFlags, ShredId, ShredType, Shredder,
-            filter::ShredRecoveryContext,
+            filter::{RETRANSMIT_SHRED_BATCH_SIZE, ShredRecoveryContext},
             merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
         slot_stats::{ShredSource, SlotsStats},
@@ -1825,9 +1825,16 @@ impl Blockstore {
             &shred_insertion_tracker.just_inserted_shreds,
             shred_recovery_context,
         );
+        if !recovered_shreds.is_empty() {
+            metrics.num_recovered_retransmit_batches +=
+                recovered_shreds.len().div_ceil(RETRANSMIT_SHRED_BATCH_SIZE);
+        }
+
+        metrics.num_recovered_data_shreds += recovered_data_shreds.len();
+        metrics.num_recovered_coding_shreds += recovered_shreds.len() - recovered_data_shreds.len();
+
         shred_recovery_context.try_retransmit_shreds(recovered_shreds);
 
-        metrics.num_recovered += recovered_data_shreds.len();
         for shred in recovered_data_shreds {
             let slot = shred.slot();
             *match self.check_insert_data_shred(
