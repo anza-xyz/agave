@@ -2505,13 +2505,12 @@ mod tests {
     fn test_scheduler_active_after_stale() {
         agave_logger::setup();
 
+        // The cleaner may expire a listener on its first pass, so a zero count is optional.
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
-            &CheckPoint::TimeoutListenerTriggered(0),
             &CheckPoint::TimeoutListenerTriggered(1),
             &TestCheckPoint::AfterTimeoutListenerTriggered,
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
-            &CheckPoint::TimeoutListenerTriggered(0),
             &CheckPoint::TimeoutListenerTriggered(1),
             &TestCheckPoint::AfterTimeoutListenerTriggered,
         ]);

@@ -544,31 +544,12 @@ impl BlockComponent {
     pub(crate) const ENTRY_COUNT_SIZE: usize = 8;
     pub(crate) const EMPTY_ENTRY_BATCH: [u8; Self::ENTRY_COUNT_SIZE] = 0u64.to_le_bytes();
 
-    pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
-        if entries.is_empty() {
-            return Err(BlockComponentError::EmptyEntryBatch);
-        }
-
-        if entries.len() >= Self::MAX_ENTRIES {
-            return Err(BlockComponentError::TooManyEntries {
-                count: entries.len(),
-                max: Self::MAX_ENTRIES,
-            });
-        }
-
-        Ok(Self::EntryBatch(entries))
-    }
-
-    pub const fn new_block_marker(marker: VersionedBlockMarker) -> Self {
-        Self::BlockMarker(marker)
-    }
-
     pub fn new_block_header(parent_slot: Slot, parent_block_id: Hash) -> Self {
         let header = BlockHeaderV1 {
             parent_slot,
             parent_block_id,
         };
-        Self::new_block_marker(VersionedBlockMarker::from_block_header(header))
+        Self::BlockMarker(VersionedBlockMarker::from_block_header(header))
     }
 
     pub const fn as_marker(&self) -> Option<&VersionedBlockMarker> {
@@ -594,6 +575,27 @@ impl BlockComponent {
     /// are aborting the block
     pub fn infer_is_empty_entry_batch(data: &[u8]) -> bool {
         *data == Self::EMPTY_ENTRY_BATCH
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub const fn new_block_marker(marker: VersionedBlockMarker) -> Self {
+        Self::BlockMarker(marker)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
+        if entries.is_empty() {
+            return Err(BlockComponentError::EmptyEntryBatch);
+        }
+
+        if entries.len() >= Self::MAX_ENTRIES {
+            return Err(BlockComponentError::TooManyEntries {
+                count: entries.len(),
+                max: Self::MAX_ENTRIES,
+            });
+        }
+
+        Ok(Self::EntryBatch(entries))
     }
 }
 

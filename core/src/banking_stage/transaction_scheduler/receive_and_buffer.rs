@@ -592,6 +592,7 @@ mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_packet::PACKET_DATA_SIZE,
         solana_perf::packet::{BytesPacket, Meta, PacketBatch},
+        solana_poh::poh_recorder::SharedLeaderState,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program, system_program},
@@ -751,6 +752,7 @@ mod tests {
             check_work_receiver,
             check_result_sender,
             bank_forks.read().unwrap().sharable_banks(),
+            SharedLeaderState::new(0, None, None),
             filter_keys,
         );
         let receive_and_buffer = TransactionViewReceiveAndBuffer::new(

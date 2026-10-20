@@ -528,6 +528,7 @@ impl BankingStage {
             check_work_receiver,
             check_result_sender,
             sharable_banks.clone(),
+            self.poh_recorder.read().unwrap().shared_leader_state(),
             self.filter_keys.clone(),
         );
         let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
