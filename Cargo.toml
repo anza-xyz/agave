@@ -372,7 +372,6 @@ shaq = { version = "5.0.0" }
 shuttle = "0.9.3"
 signal-hook = "0.4.4"
 slab = "0.4.12"
-slotmap = "1.0.7"
 smallvec = { version = "1.16.3", default-features = false, features = ["union"] }
 smpl_jwt = "0.9.0"
 socket2 = "0.6.5"
@@ -435,7 +434,6 @@ solana-fee-structure = "4.1.0"
 solana-file-download = "3.1.4"
 solana-frozen-abi = { version = "3.9.0", default-features = false }
 solana-frozen-abi-macro = { version = "3.7.0", default-features = false }
-solana-genesis = { path = "genesis", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-genesis-config = "5.0.1"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
@@ -456,7 +454,6 @@ solana-ledger = { path = "ledger", version = "=4.5.0-alpha.2", features = ["agav
 solana-loader-v2-interface = "3.1.0"
 solana-loader-v3-interface = "9.0.0"
 solana-loader-v4-interface = "3.1.0"
-solana-local-cluster = { path = "local-cluster", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-measure = { path = "measure", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-message = "5.1.0"
@@ -508,7 +505,6 @@ solana-seed-derivable = "3.0.0"
 solana-seed-phrase = "3.0.0"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-serde = "3.0.0"
-solana-serde-varint = "3.0.1"
 solana-serialize-utils = "4.0.0"
 solana-sha256-hasher = "3.1.0"
 solana-sha512-hasher = "1.0.1"
