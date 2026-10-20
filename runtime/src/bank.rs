@@ -4744,9 +4744,7 @@ impl Bank {
     }
 
     fn run_incinerator(&self) {
-        if let Some((account, _)) =
-            self.get_account_modified_since_parent_with_fixed_root(&incinerator::id())
-        {
+        if let Some((account, _)) = self.get_account_modified_since_parent(&incinerator::id()) {
             self.capitalization.fetch_sub(account.lamports(), Relaxed);
             self.store_account(&incinerator::id(), &AccountSharedData::default());
         }
@@ -5395,8 +5393,7 @@ impl Bank {
             .load_by_program_slot(self.slot(), self.bank_id(), None)
     }
 
-    // if you want get_account_modified_since_parent without fixed_root, please define so...
-    fn get_account_modified_since_parent_with_fixed_root(
+    fn get_account_modified_since_parent(
         &self,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {

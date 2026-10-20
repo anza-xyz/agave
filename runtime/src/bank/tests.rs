@@ -2837,14 +2837,14 @@ fn test_bank_get_account_in_parent_after_squash2() {
 }
 
 #[test]
-fn test_bank_get_account_modified_since_parent_with_fixed_root() {
+fn test_bank_get_account_modified_since_parent() {
     let pubkey = solana_pubkey::new_rand();
 
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let amount = genesis_config.rent.minimum_balance(0);
     let (bank1, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     bank1.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    let result = bank1.get_account_modified_since_parent_with_fixed_root(&pubkey);
+    let result = bank1.get_account_modified_since_parent(&pubkey);
     assert!(result.is_some());
     let (account, slot) = result.unwrap();
     assert_eq!(account.lamports(), amount);
@@ -2856,18 +2856,14 @@ fn test_bank_get_account_modified_since_parent_with_fixed_root() {
         SlotLeader::default(),
         1,
     );
-    assert!(
-        bank2
-            .get_account_modified_since_parent_with_fixed_root(&pubkey)
-            .is_none()
-    );
+    assert!(bank2.get_account_modified_since_parent(&pubkey).is_none());
     bank2.transfer(2 * amount, &mint_keypair, &pubkey).unwrap();
-    let result = bank1.get_account_modified_since_parent_with_fixed_root(&pubkey);
+    let result = bank1.get_account_modified_since_parent(&pubkey);
     assert!(result.is_some());
     let (account, slot) = result.unwrap();
     assert_eq!(account.lamports(), amount);
     assert_eq!(slot, 0);
-    let result = bank2.get_account_modified_since_parent_with_fixed_root(&pubkey);
+    let result = bank2.get_account_modified_since_parent(&pubkey);
     assert!(result.is_some());
     let (account, slot) = result.unwrap();
     assert_eq!(account.lamports(), 3 * amount);
@@ -2877,10 +2873,7 @@ fn test_bank_get_account_modified_since_parent_with_fixed_root() {
 
     let bank3 =
         Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, SlotLeader::default(), 3);
-    assert_eq!(
-        None,
-        bank3.get_account_modified_since_parent_with_fixed_root(&pubkey)
-    );
+    assert_eq!(None, bank3.get_account_modified_since_parent(&pubkey));
 }
 
 #[test]
