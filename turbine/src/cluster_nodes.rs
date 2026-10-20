@@ -87,13 +87,31 @@ pub struct ClusterNodes<T> {
     _phantom: PhantomData<T>,
 }
 
-// Cache entries are wrapped in Arc<OnceLock<...>>, so that, when needed, only
-// one single thread initializes the entry for the epoch without holding a lock
-// on the entire cache.
-type LruCacheOnce<K, V> = RwLock<LruCache<K, Arc<OnceLock<V>>>>;
+// Contacts expire independently of stake ordering and shuffle weights.
+struct BroadcastTopology {
+    self_pubkey: Pubkey,
+    stakes: Arc<HashMap<Pubkey, u64>>,
+    nodes: Box<[(Pubkey, u64)]>,
+    index: HashMap<Pubkey, usize>,
+    weighted_shuffle: WeightedShuffle,
+}
+
+// (asof, cluster nodes, broadcast topology)
+type CacheSnapshot<T> = (
+    Instant,
+    Arc<ClusterNodes<T>>,
+    Option<Arc<BroadcastTopology>>,
+);
+
+// One initializer publishes the snapshot and its topology together outside
+// cache locks. Every contender can reuse the preceding snapshot's topology.
+struct CacheEntry<T> {
+    snapshot: OnceLock<CacheSnapshot<T>>,
+    previous_topology: Option<Arc<BroadcastTopology>>,
+}
 
 pub struct ClusterNodesCache<T> {
-    cache: LruCacheOnce<Epoch, (/*as of:*/ Instant, Arc<ClusterNodes<T>>)>,
+    cache: RwLock<LruCache<Epoch, Arc<CacheEntry<T>>>>,
     ttl: Duration, // Time to live.
 }
 
@@ -139,18 +157,6 @@ impl ContactInfo {
         match protocol {
             Protocol::QUIC => None,
             Protocol::UDP => self.tvu_udp,
-        }
-    }
-
-    // Removes respective TVU address from the ContactInfo so that no more
-    // shreds are sent to that socket address.
-    #[inline]
-    fn remove_tvu_addr(&mut self, protocol: Protocol) {
-        match protocol {
-            Protocol::QUIC => {}
-            Protocol::UDP => {
-                self.tvu_udp = None;
-            }
         }
     }
 }
@@ -307,22 +313,108 @@ pub fn new_cluster_nodes<T: 'static>(
 ) -> ClusterNodes<T> {
     let self_pubkey = cluster_info.id();
     let nodes = get_nodes(cluster_info, cluster_type, stakes);
-    let index: HashMap<_, _> = nodes
-        .iter()
-        .enumerate()
-        .map(|(ix, node)| (*node.pubkey(), ix))
-        .collect();
     let broadcast = TypeId::of::<T>() == TypeId::of::<BroadcastStage>();
+    // Only retransmit needs the reverse index to exclude the slot leader.
+    let index = if broadcast {
+        HashMap::new()
+    } else {
+        nodes
+            .iter()
+            .enumerate()
+            .map(|(ix, node)| (*node.pubkey(), ix))
+            .collect()
+    };
     let stakes = nodes.iter().map(|node| node.stake);
     let mut weighted_shuffle = WeightedShuffle::new("cluster-nodes", stakes);
     if broadcast {
-        weighted_shuffle.remove_index(index[&self_pubkey]);
+        let self_index = nodes
+            .iter()
+            .position(|node| node.pubkey() == &self_pubkey)
+            .expect("local node must be in cluster nodes");
+        weighted_shuffle.remove_index(self_index);
     }
     ClusterNodes {
         pubkey: self_pubkey,
         nodes,
         index,
         weighted_shuffle,
+        _phantom: PhantomData,
+    }
+}
+
+impl BroadcastTopology {
+    fn new(stakes: Arc<HashMap<Pubkey, u64>>, self_pubkey: Pubkey) -> Option<Self> {
+        // Fall back to the full shuffle if weights overflow or removing self
+        // leaves no positive weight.
+        let mut total_stake = 0u64;
+        let mut nodes = Vec::with_capacity(stakes.len());
+        for (&pubkey, &stake) in stakes.iter() {
+            if stake > 0 {
+                total_stake = total_stake.checked_add(stake)?;
+                nodes.push((pubkey, stake));
+            }
+        }
+        if total_stake <= stakes.get(&self_pubkey).copied().unwrap_or_default() {
+            return None;
+        }
+        nodes.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
+        let index: HashMap<_, _> = nodes
+            .iter()
+            .enumerate()
+            .map(|(index, (pubkey, _))| (*pubkey, index))
+            .collect();
+        let mut weighted_shuffle =
+            WeightedShuffle::new("cluster-nodes", nodes.iter().map(|(_, stake)| stake));
+        if let Some(index) = index.get(&self_pubkey) {
+            weighted_shuffle.remove_index(*index);
+        }
+        Some(Self {
+            self_pubkey,
+            stakes,
+            nodes: nodes.into_boxed_slice(),
+            index,
+            weighted_shuffle,
+        })
+    }
+}
+
+fn new_cluster_nodes_from_topology<T>(
+    topology: &BroadcastTopology,
+    cluster_info: &ClusterInfo,
+) -> ClusterNodes<T> {
+    let gossip = cluster_info.tvu_peers(|node| ContactInfo::from(node));
+    let num_staked = topology.nodes.len();
+    let mut nodes = Vec::with_capacity(num_staked.saturating_add(gossip.len()).saturating_add(1));
+    nodes.extend(topology.nodes.iter().map(|&(pubkey, stake)| Node {
+        node: NodeId::from(pubkey),
+        stake,
+    }));
+    let this_node = ContactInfo::from(&cluster_info.my_contact_info());
+    for node in gossip.into_iter().chain(std::iter::once(this_node)) {
+        if let Some(index) = topology.index.get(node.pubkey()) {
+            nodes[*index].node = NodeId::from(node);
+        } else {
+            nodes.push(Node {
+                node: NodeId::from(node),
+                stake: 0,
+            });
+        }
+    }
+    nodes[num_staked..].sort_unstable_by(|a, b| b.pubkey().cmp(a.pubkey()));
+    dedup_tvu_addrs(&mut nodes);
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.pubkey() == &topology.self_pubkey),
+        "local node must be in cluster nodes"
+    );
+    ClusterNodes {
+        pubkey: topology.self_pubkey,
+        nodes,
+        index: HashMap::new(),
+        // Keep the per-shred representation and retransmit path unchanged.
+        // Cloning once per refresh is included in the refresh benchmark.
+        weighted_shuffle: topology.weighted_shuffle.clone(),
         _phantom: PhantomData,
     }
 }
@@ -399,20 +491,11 @@ fn cmp_nodes_stake(a: &Node, b: &Node) -> Ordering {
         })
 }
 
-/// If set > 1 it allows the nodes to run behind a NAT.
-/// This usecase is currently not supported.
-const MAX_NUM_NODES_PER_IP_ADDRESS: usize = 1;
-
 /// Dedups socket addresses so that if there are 2 nodes in the cluster with the
 /// same TVU socket-addr, we only send shreds to one of them.
 /// Additionally limits number of nodes at the same IP address to 1
 fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
-    const TVU_PROTOCOLS: [Protocol; 1] = [Protocol::UDP];
-    let capacity = nodes.len().saturating_mul(2);
-    // Tracks (Protocol, SocketAddr) tuples already observed.
-    let mut addrs = HashSet::with_capacity(capacity);
-    // Maps IP addresses to number of nodes at that IP address.
-    let mut counts = HashMap::with_capacity(capacity);
+    let mut ips = HashSet::with_capacity(nodes.len());
     nodes.retain_mut(|node| {
         let node_stake = node.stake;
         let Some(node) = node.contact_info_mut() else {
@@ -420,27 +503,16 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
             // deterministic shuffle.
             return node_stake > 0u64;
         };
-        // Dedup socket addresses and limit nodes at same IP address.
-        for protocol in TVU_PROTOCOLS {
-            let Some(addr) = node.tvu(protocol) else {
-                continue;
-            };
-            let count: usize = *counts
-                .entry((protocol, addr.ip()))
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
-            if !addrs.insert((protocol, addr)) || count > MAX_NUM_NODES_PER_IP_ADDRESS {
-                // Remove the respective TVU address so that no more shreds are
-                // sent to this socket address.
-                node.remove_tvu_addr(protocol);
-            }
+        if node
+            .tvu_udp
+            .as_ref()
+            .is_some_and(|addr| !ips.insert(addr.ip()))
+        {
+            node.tvu_udp = None;
         }
         // Always keep staked nodes for deterministic shuffle,
         // but drop non-staked nodes if they have no valid TVU address.
-        node_stake > 0u64
-            || TVU_PROTOCOLS
-                .into_iter()
-                .any(|protocol| node.tvu(protocol).is_some())
+        node_stake > 0u64 || node.tvu_udp.is_some()
     })
 }
 
@@ -529,8 +601,8 @@ impl<T: 'static> ClusterNodesCache<T> {
         // or not expired yet. Discards the entry if it is already initialized
         // but also expired.
         let get_epoch_entry = |cache: &LruCache<Epoch, _>, epoch, ttl| {
-            let entry: &Arc<OnceLock<(Instant, _)>> = cache.get(&epoch)?;
-            let Some((asof, _)) = entry.get() else {
+            let entry: &Arc<CacheEntry<T>> = cache.get(&epoch)?;
+            let Some((asof, _, _)) = entry.snapshot.get() else {
                 return Some(entry.clone()); // not initialized yet
             };
             (asof.elapsed() < ttl).then(|| entry.clone())
@@ -544,18 +616,29 @@ impl<T: 'static> ClusterNodesCache<T> {
         };
         // Fall back to exclusive lock if there is a cache miss or the cached
         // entry has already expired.
-        let entry: Arc<OnceLock<_>> = entry.unwrap_or_else(|| {
+        let entry = entry.unwrap_or_else(|| {
             let mut cache = self.cache.write().unwrap();
             get_epoch_entry(&cache, epoch, self.ttl).unwrap_or_else(|| {
                 // Either a cache miss here or the existing entry has already
-                // expired. Upsert and return an uninitialized entry.
-                let entry = Arc::<OnceLock<_>>::default();
+                // expired. Carry only immutable topology into the next entry;
+                // do not retain preceding contact snapshots or entry chains.
+                let previous_topology = if TypeId::of::<T>() == TypeId::of::<BroadcastStage>() {
+                    cache
+                        .get(&epoch)
+                        .and_then(|entry| entry.snapshot.get()?.2.clone())
+                } else {
+                    None
+                };
+                let entry = Arc::new(CacheEntry {
+                    snapshot: OnceLock::new(),
+                    previous_topology,
+                });
                 cache.put(epoch, Arc::clone(&entry));
                 entry
             })
         });
         // Initialize if needed by only a single thread outside locks.
-        let (_, nodes) = entry.get_or_init(|| {
+        let (_, nodes, _) = entry.snapshot.get_or_init(|| {
             let epoch_staked_nodes = [root_bank, working_bank]
                 .iter()
                 .find_map(|bank| bank.epoch_staked_nodes(epoch))
@@ -567,9 +650,31 @@ impl<T: 'static> ClusterNodesCache<T> {
                     inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
                     Arc::<HashMap<Pubkey, /*stake:*/ u64>>::default()
                 });
-            let nodes =
-                new_cluster_nodes::<T>(cluster_info, root_bank.cluster_type(), &epoch_staked_nodes);
-            (Instant::now(), Arc::new(nodes))
+            let cluster_type = root_bank.cluster_type();
+            // Development needs the full shuffle, including zero-stake peers.
+            let topology = if TypeId::of::<T>() == TypeId::of::<BroadcastStage>()
+                && cluster_type != ClusterType::Development
+            {
+                let self_pubkey = cluster_info.id();
+                entry
+                    .previous_topology
+                    .as_ref()
+                    .filter(|topology| {
+                        topology.self_pubkey == self_pubkey && topology.stakes == epoch_staked_nodes
+                    })
+                    .cloned()
+                    .or_else(|| {
+                        BroadcastTopology::new(epoch_staked_nodes.clone(), self_pubkey)
+                            .map(Arc::new)
+                    })
+            } else {
+                None
+            };
+            let nodes = match &topology {
+                Some(topology) => new_cluster_nodes_from_topology::<T>(topology, cluster_info),
+                None => new_cluster_nodes::<T>(cluster_info, cluster_type, &epoch_staked_nodes),
+            };
+            (Instant::now(), Arc::new(nodes), topology)
         });
         nodes.clone()
     }
@@ -767,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cluster_nodes_retransmit() {
+    fn test_cluster_nodes() {
         let mut rng = rand::rng();
         let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
         // ClusterInfo::tvu_peers excludes the node itself.
@@ -775,56 +880,19 @@ mod tests {
             cluster_info.tvu_peers(GossipContactInfo::clone).len(),
             nodes.len() - 1
         );
-        let cluster_nodes =
+        let retransmit =
             new_cluster_nodes::<RetransmitStage>(&cluster_info, ClusterType::Development, &stakes);
-        // All nodes with contact-info should be in the index.
-        // Staked nodes with no contact-info should be included.
-        assert!(cluster_nodes.nodes.len() > nodes.len());
-        // Assert that all nodes keep their contact-info.
-        // and, all staked nodes are also included.
-        {
-            let cluster_nodes: HashMap<_, _> = cluster_nodes
-                .nodes
-                .iter()
-                .map(|node| (node.pubkey(), node))
-                .collect();
-            for node in &nodes {
-                assert_eq!(
-                    cluster_nodes[node.pubkey()]
-                        .contact_info()
-                        .unwrap()
-                        .pubkey(),
-                    node.pubkey()
-                );
-            }
-            for (pubkey, stake) in &stakes {
-                if *stake > 0 {
-                    assert_eq!(cluster_nodes[pubkey].stake, *stake);
-                }
-            }
+        assert_eq!(retransmit.index.len(), retransmit.nodes.len());
+        for (index, node) in retransmit.nodes.iter().enumerate() {
+            assert_eq!(retransmit.index.get(node.pubkey()), Some(&index));
         }
-    }
-
-    #[test]
-    fn test_cluster_nodes_broadcast() {
-        let mut rng = rand::rng();
-        let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
-        // ClusterInfo::tvu_peers excludes the node itself.
-        assert_eq!(
-            cluster_info.tvu_peers(GossipContactInfo::clone).len(),
-            nodes.len() - 1
-        );
-        let cluster_nodes =
+        let broadcast =
             ClusterNodes::<BroadcastStage>::new(&cluster_info, ClusterType::Development, &stakes);
-        // All nodes with contact-info should be in the index.
-        // Excluding this node itself.
-        // Staked nodes with no contact-info should be included.
-        assert!(cluster_nodes.nodes.len() > nodes.len());
-        // Assert that all nodes keep their contact-info.
-        // and, all staked nodes are also included.
-        {
+        assert!(broadcast.index.is_empty());
+        for cluster_nodes in [retransmit.nodes, broadcast.nodes] {
+            // Include all contacts and staked nodes, even without contact-info.
+            assert!(cluster_nodes.len() > nodes.len());
             let cluster_nodes: HashMap<_, _> = cluster_nodes
-                .nodes
                 .iter()
                 .map(|node| (node.pubkey(), node))
                 .collect();
@@ -1028,6 +1096,53 @@ mod tests {
                 assert_eq!(get_retransmit_parent(fanout, cache[peer], &nodes), parent);
             }
         }
+    }
+
+    #[test]
+    fn test_dedup_tvu_addrs_by_ip() {
+        let addr = |ip, port| SocketAddr::from(([127, 0, 0, ip], port));
+        let node = |stake, tvu_udp| Node {
+            node: NodeId::ContactInfo(ContactInfo {
+                pubkey: Pubkey::new_unique(),
+                wallclock: 0,
+                tvu_udp,
+            }),
+            stake,
+        };
+        // Stake order determines which contact keeps a shared IP, regardless of port.
+        let mut nodes = vec![
+            node(5, Some(addr(1, 8001))),
+            node(4, Some(addr(1, 8002))),
+            node(3, Some(addr(1, 8001))),
+            node(2, None),
+            Node {
+                node: NodeId::from(Pubkey::new_unique()),
+                stake: 1,
+            },
+            node(0, Some(addr(1, 8003))),
+            node(0, Some(addr(2, 8001))),
+            node(0, None),
+        ];
+        let pubkeys: Vec<_> = nodes.iter().map(|node| *node.pubkey()).collect();
+        dedup_tvu_addrs(&mut nodes);
+        assert_eq!(
+            nodes
+                .iter()
+                .map(|node| (
+                    *node.pubkey(),
+                    node.stake,
+                    node.contact_info().map(|info| info.tvu_udp)
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (pubkeys[0], 5, Some(Some(addr(1, 8001)))),
+                (pubkeys[1], 4, Some(None)),
+                (pubkeys[2], 3, Some(None)),
+                (pubkeys[3], 2, Some(None)),
+                (pubkeys[4], 1, None),
+                (pubkeys[6], 0, Some(Some(addr(2, 8001)))),
+            ]
+        );
     }
 
     #[test]
