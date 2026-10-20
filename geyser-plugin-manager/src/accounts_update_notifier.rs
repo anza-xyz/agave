@@ -446,6 +446,7 @@ mod tests {
 
     #[test]
     fn test_bank_creation_without_account_subscriptions() {
+        agave_logger::setup();
         let creations = Arc::new(Mutex::new(Vec::new()));
         let manager = Arc::new(ArcSwap::from_pointee(GeyserPluginHost::from_plugins(
             [true, false]
@@ -458,6 +459,7 @@ mod tests {
                 })
                 .collect(),
         )));
+        assert!(manager.load().transaction_notifications_enabled());
         let notifier = AccountsUpdateNotifierImpl::new(manager, false).unwrap();
         assert!(!notifier.account_notifications_enabled());
         assert!(!notifier.snapshot_notifications_enabled());

@@ -48,6 +48,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-votor-messages = { path = "../votor-messages", features = ["agave-unstable-api"] }
 libloading = { workspace = true }
 solana-bls-signatures = { workspace = true }
