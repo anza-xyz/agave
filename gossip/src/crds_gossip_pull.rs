@@ -358,9 +358,9 @@ impl CrdsGossipPull {
     ///
     /// `requests` are served in the given order until the egress budget runs out.
     /// Returns pairs (destination, missing CRDS values).
-    pub(crate) fn generate_pull_responses(
+    pub(crate) fn generate_pull_responses<'a>(
         crds: &RwLock<Crds>,
-        requests: &[PullRequest],
+        requests: impl IntoIterator<Item = &'a PullRequest>,
         outbound_budget: &TokenBucket,
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
@@ -379,14 +379,12 @@ impl CrdsGossipPull {
         let mut remaining_budget = outbound_budget.current_tokens();
         let mut spent_budget = 0u64;
         let mut crds = crds.read();
-        let mut ret = Vec::with_capacity(requests.len());
-        for (batch_index, request) in requests.iter().enumerate() {
+        let mut ret = Vec::new();
+        for (batch_index, request) in requests.into_iter().enumerate() {
             // Requests are not scanned (and requesters' scan budget is not charged)
             // unless at least the smallest CRDS value fits into the egress budget.
             if remaining_budget < MIN_CRDS_VALUE_SERIALIZED_SIZE as u64 {
-                stats
-                    .gossip_pull_request_no_budget
-                    .add_relaxed((requests.len() - batch_index) as u64);
+                stats.gossip_pull_request_no_budget.add_relaxed(1);
                 break;
             }
             // Let pending writers through between chunks of requests.
@@ -441,9 +439,7 @@ impl CrdsGossipPull {
             }
             // Break if we cannot fit any more responses into outbound_budget.
             if out_of_budget {
-                stats
-                    .gossip_pull_request_no_budget
-                    .add_relaxed((requests.len() - batch_index) as u64);
+                stats.gossip_pull_request_no_budget.add_relaxed(1);
                 break;
             }
         }

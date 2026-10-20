@@ -230,9 +230,9 @@ impl CrdsGossip {
         )
     }
 
-    pub fn generate_pull_responses(
+    pub fn generate_pull_responses<'a>(
         &self,
-        requests: &[PullRequest],
+        requests: impl IntoIterator<Item = &'a PullRequest>,
         outbound_budget: &TokenBucket,
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,

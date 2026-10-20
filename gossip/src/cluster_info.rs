@@ -1726,30 +1726,22 @@ impl ClusterInfo {
         });
         // Prioritize requests from higher-staked peers. Weighted-shuffle prevents
         // faulty high-stake nodes from consuming the whole budget.
-        let requests: Vec<_> = {
-            let weights = requests
+        // The shuffle is lazy, so only requests that fit into the budget are sampled.
+        let mut shuffle = WeightedShuffle::new(
+            "handle-pull-requests",
+            requests
                 .iter()
-                .map(|request| stakes.get(&request.pubkey).copied().unwrap_or_default());
-            let order: Vec<_> = WeightedShuffle::new("handle-pull-requests", weights)
-                .shuffle(&mut ChaCha8Rng::from_rng(&mut rng))
-                .collect();
-            let mut requests: Vec<_> = requests.into_iter().map(Some).collect();
-            order
-                .into_iter()
-                .map(|k| {
-                    requests[k]
-                        .take()
-                        .expect("weighted shuffle yields each index exactly once")
-                })
-                .collect()
-        };
+                .map(|request| stakes.get(&request.pubkey).copied().unwrap_or_default()),
+        );
+        let mut shuffle_rng = ChaCha8Rng::from_rng(&mut rng);
+        let shuffled_requests = shuffle.shuffle(&mut shuffle_rng).map(|k| &requests[k]);
         let now = timestamp();
         let self_id = self.id();
         let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let pull_responses = {
             let _st = ScopedTimer::from(&self.stats.generate_pull_responses);
             self.gossip.generate_pull_responses(
-                &requests,
+                shuffled_requests,
                 &self.outbound_budget,
                 now,
                 |value| {
