@@ -2733,10 +2733,25 @@ mod tests {
         let expected_num_delegations = 4;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
-        let (RewardBank { bank, .. }, bank_forks) = create_reward_bank(
+        let (RewardBank { bank, voters, .. }, bank_forks) = create_reward_bank(
             expected_num_delegations,
             num_rewards_per_block,
             SLOTS_PER_EPOCH,
+        );
+        // Epoch zero has no rewards in AG.
+        for voter in voters {
+            modify_vote_state(&bank, &voter, &|vote_state| {
+                let last_credits = vote_state.credits();
+                vote_state
+                    .epoch_credits
+                    .push((bank.epoch(), last_credits + 100, last_credits));
+            });
+        }
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            SLOTS_PER_EPOCH * 2,
         );
         let rewarded_epoch = bank.epoch() - 1;
 
@@ -2760,7 +2775,7 @@ mod tests {
             stake_delegations,
             cached_vote_accounts,
             rewarded_epoch,
-            &reward_epoch_delegated_stakes_for_tests(rewarded_epoch),
+            &RewardEpochDelegatedStakes::get(&bank).unwrap(),
             null_tracer(),
             &thread_pool,
             &mut rewards_metrics,
