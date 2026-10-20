@@ -4,7 +4,8 @@
 use {
     super::{
         DATA_SHREDS_PER_FEC_BLOCK, Error, Payload, Shred, ShredFetchStats, ShredFlags, ShredType,
-        ShredVariant, layout, merkle,
+        ShredVariant, layout,
+        merkle::{self, ErasureBatch},
     },
     crate::blockstore,
     agave_feature_set as feature_set,
@@ -532,46 +533,81 @@ impl ShredRecoveryContext {
     }
 
     /// Recover shreds and apply filtering to the recovered shreds
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn recover<T: IntoIterator<Item = Shred>>(
         &mut self,
         shreds: T,
         recovered_shreds: &mut Vec<Payload>,
         recovered_data_shreds: &mut Vec<Shred>,
     ) -> Result<(), Error> {
+        let batch = self.rebuild_erasure_batch(shreds)?;
+        let (shreds, _num_discarded) = self.filter_recovered_shreds(batch);
+        Self::collect_recovered_shreds(shreds, recovered_shreds, recovered_data_shreds);
+        Ok(())
+    }
+
+    /// Rebuild the whole erasure batch from the given shreds, after applying
+    /// filtering to them.
+    ///
+    /// The leader signs the Merkle root of the erasure batch, so the same signature
+    /// is valid for every shred. For recovered shreds the signature is copied from shreds
+    /// which were received from turbine (or repair) and are already sig-verified. It
+    /// verifies for recovered shreds too, because rebuilding checks that the Merkle tree
+    /// of the erasure batch yields the same Merkle root.
+    pub(crate) fn rebuild_erasure_batch<T: IntoIterator<Item = Shred>>(
+        &mut self,
+        shreds: T,
+    ) -> Result<ErasureBatch, Error> {
         let shreds: Vec<_> = shreds
             .into_iter()
             .filter(|shred| !self.shred_filter_ctx.should_discard_shred(shred.payload()))
             .collect();
 
-        // With Merkle shreds, leader signs the Merkle root of the erasure batch
-        // and all shreds within the same erasure batch have the same signature.
-        // For recovered shreds, the (unique) signature is copied from shreds which
-        // were received from turbine (or repair) and are already sig-verified.
-        // The same signature also verifies for recovered shreds because when
-        // reconstructing the Merkle tree for the erasure batch, we will obtain the
-        // same Merkle root.
-        let shreds = merkle::recover(shreds)?;
-        shreds
-            .filter_map(|shred| shred.ok())
-            .filter(|shred| !self.should_discard_shred(shred))
-            .for_each(|shred| {
-                // All shreds should be retransmitted, but because there are no
-                // more missing data shreds in the erasure batch, coding shreds
-                // are not stored in blockstore.
-                match shred.shred_type() {
-                    ShredType::Code => {
-                        // Don't need Arc overhead here!
-                        recovered_shreds.push(shred.into_payload());
-                    }
-                    ShredType::Data => {
-                        // Verify that the cloning is cheap here.
-                        recovered_shreds.push(shred.payload().clone());
-                        recovered_data_shreds.push(shred);
-                    }
-                }
-            });
-        Ok(())
+        merkle::rebuild_erasure_batch(shreds)
     }
+
+    /// Apply filtering to the reconstructed shreds of the erasure batch.
+    ///
+    /// Returns the reconstructed shreds which pass filtering and the number of
+    /// discarded ones.
+    pub(crate) fn filter_recovered_shreds(&mut self, batch: ErasureBatch) -> (Vec<Shred>, usize) {
+        let mut num_discarded = 0;
+        let shreds = batch
+            .into_recovered()
+            .filter(|shred| {
+                let discard = self.should_discard_shred(shred);
+                num_discarded += usize::from(discard);
+                !discard
+            })
+            .collect();
+        (shreds, num_discarded)
+    }
+
+    /// Collect filtered reconstructed shreds for retransmit and blockstore
+    /// insertion.
+    pub(crate) fn collect_recovered_shreds(
+        shreds: Vec<Shred>,
+        recovered_shreds: &mut Vec<Payload>,
+        recovered_data_shreds: &mut Vec<Shred>,
+    ) {
+        shreds.into_iter().for_each(|shred| {
+            // All shreds should be retransmitted, but because there are no
+            // more missing data shreds in the erasure batch, coding shreds
+            // are not stored in blockstore.
+            match shred.shred_type() {
+                ShredType::Code => {
+                    // Don't need Arc overhead here!
+                    recovered_shreds.push(shred.into_payload());
+                }
+                ShredType::Data => {
+                    // Verify that the cloning is cheap here.
+                    recovered_shreds.push(shred.payload().clone());
+                    recovered_data_shreds.push(shred);
+                }
+            }
+        });
+    }
+
     /// Send recovered shreds for retransmit
     pub fn try_retransmit_shreds(&self, recovered_shreds: Vec<Payload>) {
         if !recovered_shreds.is_empty() {
