@@ -6883,10 +6883,7 @@ impl InvokeContextCallback for Bank {
 
 impl TransactionProcessingCallback for Bank {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        self.rc
-            .accounts
-            .load(&self.ancestors, pubkey)
-            .map(|(account, _slot)| account)
+        self.get_account(pubkey)
     }
 }
 
