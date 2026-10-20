@@ -5295,13 +5295,11 @@ impl Bank {
             .map(|(acc, _slot)| acc)
     }
 
-    // See note above get_account_with_fixed_root() about when to prefer this function.
-    //
     // `load_filter` is a predicate over an account's lamports, owner, and data length,
     // which AccountsDb uses to avoid loading the full data. Callers should regard
     // the predicate as a performance hint, not a validation function, and perform
     // all necessary validation on the returned account themselves.
-    pub fn get_account_with_fixed_root_if(
+    pub fn get_account_if(
         &self,
         pubkey: &Pubkey,
         load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
