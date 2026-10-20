@@ -1733,13 +1733,27 @@ impl ClusterInfo {
             let now = Instant::now();
             self.check_pull_request(now, &mut rng, &mut packet_batch)
         });
+        if output_size_limit == 0 {
+            return packet_batch;
+        }
+        // Prioritize requests from higher-staked peers. Weighted-shuffle prevents
+        // faulty high-stake nodes from consuming the whole budget.
+        // The shuffle is lazy, so only requests that fit into the budget are sampled.
+        let mut shuffle = WeightedShuffle::new(
+            "handle-pull-requests",
+            requests
+                .iter()
+                .map(|request| stakes.get(&request.pubkey).copied().unwrap_or_default()),
+        );
+        let mut shuffle_rng = ChaCha8Rng::from_rng(&mut rng);
+        let shuffled_requests = shuffle.shuffle(&mut shuffle_rng).map(|k| &requests[k]);
         let now = timestamp();
         let self_id = self.id();
         let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let pull_responses = {
             let _st = ScopedTimer::from(&self.stats.generate_pull_responses);
             self.gossip.generate_pull_responses(
-                &requests,
+                shuffled_requests,
                 output_size_limit,
                 now,
                 |value| {
