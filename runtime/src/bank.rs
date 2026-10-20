@@ -5052,7 +5052,7 @@ impl Bank {
         new_account: &AccountSharedData,
     ) {
         let old_account_data_size = if let Some(old_account) =
-            self.get_account_with_fixed_root_no_cache(pubkey)
+            self.get_account_do_not_populate_read_cache(pubkey)
         {
             match new_account.lamports().cmp(&old_account.lamports()) {
                 std::cmp::Ordering::Greater => {
@@ -5278,7 +5278,7 @@ impl Bank {
         }
     }
 
-    pub fn get_account_with_fixed_root_no_cache(
+    pub fn get_account_do_not_populate_read_cache(
         &self,
         pubkey: &Pubkey,
     ) -> Option<AccountSharedData> {
@@ -7426,7 +7426,7 @@ pub mod test_utils {
         // This doesn't collect rents intentionally.
         // Rents should only be applied to actual TXes
         let mut account = bank
-            .get_account_with_fixed_root_no_cache(pubkey)
+            .get_account_do_not_populate_read_cache(pubkey)
             .unwrap_or_default();
         account.checked_add_lamports(lamports)?;
         bank.store_account(pubkey, &account);

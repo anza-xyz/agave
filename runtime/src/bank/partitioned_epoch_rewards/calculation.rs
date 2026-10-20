@@ -1193,7 +1193,7 @@ impl Bank {
                             },
                         )| {
                             let maybe_commission_account =
-                                self.get_account_with_fixed_root_no_cache(commission_pubkey);
+                                self.get_account_do_not_populate_read_cache(commission_pubkey);
                             let mut commission_account = if custom_commission_collector {
                                 // If the account doesn't exist, the vote commission
                                 // may be enough lamports to cover rent-exemption
@@ -1298,7 +1298,7 @@ impl Bank {
                                 return None;
                             }
                             let mut account =
-                                self.get_account_with_fixed_root_no_cache(vote_address)?;
+                                self.get_account_do_not_populate_read_cache(vote_address)?;
                             let maybe_stake = reward_epoch_delegated_stakes
                                 .delegated_stakes
                                 .get(vote_address);
