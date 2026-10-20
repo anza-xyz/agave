@@ -18,7 +18,7 @@ export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
 
 # format and sort TOML files
-tombi format --check --diff
+_ tombi format --check --diff --offline
 
 # lint the changelog
 _ rumdl check CHANGELOG.md
