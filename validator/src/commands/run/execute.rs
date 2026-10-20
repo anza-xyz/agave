@@ -1,5 +1,11 @@
 #[cfg(target_os = "linux")]
-use {super::xdp, agave_xdp::transmitter::XdpConfig};
+use {
+    super::{
+        capabilities::{self, XdpMode},
+        xdp,
+    },
+    agave_xdp::transmitter::XdpConfig,
+};
 use {
     crate::{
         admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
@@ -289,95 +295,20 @@ pub fn execute(
 
     #[cfg(target_os = "linux")]
     let (xdp_transmit_setup, xdp_network_config_report) = {
-        use caps::{
-            CapSet,
-            Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
+        let needs_sys_nice = value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8) != 0
+            || run_args.json_rpc_config.rpc_niceness_adj != 0;
+        let xdp_mode = match xdp_transmit_config.as_ref() {
+            None => XdpMode::Disabled,
+            Some(xdp_config) if xdp_config.zero_copy => XdpMode::ZeroCopy,
+            Some(_) => XdpMode::Copy,
         };
-
-        let super::Config { primordial_caps } = config;
-
-        let mut required_caps = HashSet::new();
-        let mut retained_caps = HashSet::new();
-        let mut supported_caps = HashSet::from_iter([
-            CAP_BPF,
-            CAP_NET_ADMIN,
-            CAP_NET_RAW,
-            CAP_PERFMON,
-            CAP_SYS_NICE,
-        ]);
-
-        // make sure we keep any primordial caps
-        supported_caps.extend(primordial_caps.clone());
-        required_caps.extend(primordial_caps.clone());
-        retained_caps.extend(primordial_caps.clone());
-
-        if let Some(xdp_config) = xdp_transmit_config.as_ref() {
-            required_caps.insert(CAP_NET_ADMIN);
-            required_caps.insert(CAP_NET_RAW);
-            if xdp_config.zero_copy {
-                required_caps.insert(CAP_BPF);
-                required_caps.insert(CAP_PERFMON);
-            }
-        }
-
-        let snapshot_packager_niceness_adj =
-            value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
-
-        if snapshot_packager_niceness_adj != 0 || run_args.json_rpc_config.rpc_niceness_adj != 0 {
-            required_caps.insert(CAP_SYS_NICE);
-            retained_caps.insert(CAP_SYS_NICE);
-        }
-
-        // lazy dev check
-        assert!(
-            required_caps.is_subset(&supported_caps),
-            "required_caps contains a cap not in supported_caps",
-        );
-
-        // validate and minimize the permitted set
-        let current_permitted =
-            caps::read(None, CapSet::Permitted).expect("permitted capset to be readable");
-        let missing_caps = required_caps
-            .difference(&current_permitted)
-            .collect::<Vec<_>>();
-        if !missing_caps.is_empty() {
-            error!(
-                "the current configuration requires the following capabilities, which have not \
-                 been permitted to the current process: {missing_caps:?}",
-            );
-            std::process::exit(1);
-        }
-        // warn about extraneous caps that no configuration requires
-        let extra_caps = current_permitted
-            .difference(&supported_caps)
-            .collect::<Vec<_>>();
-        if !extra_caps.is_empty() {
-            warn!(
-                "dropping extraneous capabilities ({extra_caps:?}) from the current process. \
-                 consider removing them from your operational configuration.",
-            );
-        }
-
-        // drop all caps that the current configuration does not require
-        caps::set(None, CapSet::Effective, &required_caps)
-            .expect("linux allows effective capset to be set");
-        caps::set(None, CapSet::Permitted, &required_caps)
-            .expect("linux allows permitted capset to be set");
-
-        // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
-        // capabilities do not leak, leaving the process in a state where it could
-        // potentially be used as a privilege escalation gadget
-        let xdp_transmit_setup_result = xdp_transmit_config.clone().map(|xdp_config| {
-            xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
-        });
-
-        // Drop temporary XDP capabilities before propagating any setup error.
-        caps::set(None, CapSet::Effective, &retained_caps)
-            .expect("linux allows effective capset to be set");
-        caps::set(None, CapSet::Permitted, &retained_caps)
-            .expect("linux allows permitted capset to be set");
-
-        xdp_transmit_setup_result.transpose()?.unzip()
+        capabilities::restrict(config.primordial_caps, needs_sys_nice, xdp_mode, || {
+            xdp_transmit_config.map(|xdp_config| {
+                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+            })
+        })?
+        .transpose()?
+        .unzip()
     };
 
     #[cfg(not(target_os = "linux"))]
