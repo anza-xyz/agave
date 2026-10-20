@@ -162,6 +162,8 @@ pub struct TvuConfig {
     pub turbine_xdp_sender: Option<TurbineXdpSender>,
     pub repair_xdp_sender: Option<PinnedXdpSender>,
     pub(crate) replay_arena: Option<Arena>,
+    /// Whether certificates and raw vote signatures are forwarded for reward recovery.
+    pub enable_reward_recovery: bool,
 }
 
 impl Default for TvuConfig {
@@ -179,6 +181,7 @@ impl Default for TvuConfig {
             turbine_xdp_sender: None,
             repair_xdp_sender: None,
             replay_arena: None,
+            enable_reward_recovery: false,
         }
     }
 }
@@ -369,6 +372,7 @@ impl Tvu {
                 leader_schedule: leader_schedule_cache.clone(),
                 num_threads: tvu_config.bls_sigverify_threads.get(),
                 generated_cert_types: generated_cert_types.clone(),
+                enable_reward_recovery: tvu_config.enable_reward_recovery,
             },
             SigVerifierChannels::new(
                 votor_ingress_receiver,
@@ -903,7 +907,11 @@ pub mod tests {
             None, // completed_data_sets_sender
             None, // bank_notification_sender
             gossip_confirmed_slots_receiver,
-            TvuConfig::default(),
+            TvuConfig {
+                // Reward recovery adds a verifier thread that must also exit.
+                enable_reward_recovery: true,
+                ..TvuConfig::default()
+            },
             &Arc::new(MaxSlots::default()),
             None, // block_metadata_notifier
             None, // wait_to_vote_slot

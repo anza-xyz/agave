@@ -149,6 +149,7 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
                         max_validators,
                         black_box(&votes),
                         black_box(sender_vote_account_pubkeys),
+                        false,
                         black_box(&hashed_msg),
                         &thread_pool,
                     );

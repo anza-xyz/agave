@@ -19,6 +19,7 @@ use {
         certificate::{Certificate, CertificateType},
         consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
+        reward_certificate::NUM_SLOTS_FOR_REWARD,
         unverified_vote_message::UnverifiedCertificate,
         vote::Vote,
         wire::{VersionedWireConsensusMessage, get_vote_payload_to_sign},
@@ -74,6 +75,8 @@ fn new_vote_aggregate(bank: &Bank, mut msg: VoteMessage) -> VoteAggregate {
 
 struct TestContext {
     service: Option<JoinHandle<()>>,
+    /// The verifier's inputs, until [`TestContext::start`] spawns it.
+    unstarted: Option<(SigVerifierContext, SigVerifierChannels)>,
     exit: Arc<AtomicBool>,
     sharable_banks: SharableBanks,
     cluster_info: Arc<ClusterInfo>,
@@ -83,7 +86,7 @@ struct TestContext {
     ban_receiver: mpsc::Receiver<BanCommand>,
     packet_sender: Sender<Datagram>,
     repair_receiver: Receiver<VerifiedVotorSlotsMessage>,
-    _reward_receiver: Receiver<RewardInput>,
+    reward_receiver: Receiver<RewardInput>,
     pool_receiver: Receiver<SigVerifiedBatch>,
     metrics_receiver: ConsensusMetricsEventReceiver,
     generated_cert_types: Arc<GeneratedCertTypes>,
@@ -97,6 +100,40 @@ impl TestContext {
     }
 
     fn new_with_config(pool_capacity: usize, migration_status: MigrationStatus) -> Self {
+        Self::new_with_reward_slot(pool_capacity, migration_status, None)
+    }
+
+    fn new_with_reward_slot(
+        pool_capacity: usize,
+        migration_status: MigrationStatus,
+        reward_slot: Option<Slot>,
+    ) -> Self {
+        Self::new_with_reward_capacity(pool_capacity, migration_status, reward_slot, 1024)
+    }
+
+    fn new_with_reward_capacity(
+        pool_capacity: usize,
+        migration_status: MigrationStatus,
+        reward_slot: Option<Slot>,
+        reward_capacity: usize,
+    ) -> Self {
+        let mut ctx = Self::new_unstarted(
+            pool_capacity,
+            migration_status,
+            reward_slot,
+            reward_capacity,
+        );
+        ctx.start();
+        ctx
+    }
+
+    /// Inputs sent before [`TestContext::start`] are received as one batch.
+    fn new_unstarted(
+        pool_capacity: usize,
+        migration_status: MigrationStatus,
+        reward_slot: Option<Slot>,
+        reward_capacity: usize,
+    ) -> Self {
         let (channel_to_pool, pool_receiver) = bounded(pool_capacity);
         let num_validators = 10;
         let validator_keypairs = (0..num_validators)
@@ -114,17 +151,27 @@ impl TestContext {
         let bank = Bank::new_for_tests(&genesis.genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let keypair = Keypair::new();
+        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
+        let keypair = reward_slot
+            .map(|slot| {
+                let leader = leader_schedule.slot_leader_at(slot, None).unwrap();
+                validator_keypairs
+                    .iter()
+                    .find(|keys| keys.node_keypair.pubkey() == leader.id)
+                    .unwrap()
+                    .node_keypair
+                    .insecure_clone()
+            })
+            .unwrap_or_else(Keypair::new);
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let cluster_info = Arc::new(ClusterInfo::new(
             contact_info,
             Arc::new(keypair),
             SocketAddrSpace::Unspecified,
         ));
-        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
         let (channel_to_repair, repair_receiver) = EvictingSender::new_bounded(1024);
-        let (channel_to_reward, reward_receiver) = bounded(1024);
+        let (channel_to_reward, reward_receiver) = bounded(reward_capacity);
         let (packet_sender, packet_receiver) = bounded(1024);
         let (certificate_sender, certificate_receiver) = bounded(1024);
         let (channel_to_metrics, metrics_receiver) = bounded(1024);
@@ -145,6 +192,7 @@ impl TestContext {
             leader_schedule,
             num_threads: 4,
             generated_cert_types: generated_cert_types.clone(),
+            enable_reward_recovery: true,
         };
         let channels = SigVerifierChannels::new(
             packet_receiver,
@@ -155,10 +203,10 @@ impl TestContext {
             channel_to_metrics,
         );
         let exit = Arc::new(AtomicBool::new(false));
-        let service = spawn_service(exit.clone(), context, channels);
         Self {
             validator_keypairs,
-            service: Some(service),
+            service: None,
+            unstarted: Some((context, channels)),
             exit,
             sharable_banks,
             cluster_info,
@@ -167,13 +215,18 @@ impl TestContext {
             ban_receiver,
             packet_sender,
             repair_receiver,
-            _reward_receiver: reward_receiver,
+            reward_receiver,
             pool_receiver,
             metrics_receiver,
             generated_cert_types,
             certificate_sender,
             bank_forks,
         }
+    }
+
+    fn start(&mut self) {
+        let (context, channels) = self.unstarted.take().unwrap();
+        self.service = Some(spawn_service(self.exit.clone(), context, channels));
     }
 
     /// Drain pending ban requests and collect the banned pubkeys.
@@ -261,6 +314,80 @@ fn receive_messages(
     }
     expect_no_receive(receiver);
     (votes, certificates)
+}
+
+fn receive_reward_certificates(receiver: &Receiver<RewardInput>, count: usize) -> Vec<Certificate> {
+    let deadline = Instant::now() + RECEIVE_TIMEOUT;
+    let mut certificates = Vec::new();
+    while certificates.len() < count {
+        match receiver
+            .recv_deadline(deadline)
+            .expect("reward certificates")
+        {
+            RewardInput::Certificates(certs) => certificates.extend(certs),
+            input => panic!("unexpected reward input: {input:?}"),
+        }
+    }
+    assert_eq!(certificates.len(), count);
+    expect_no_receive(receiver);
+    certificates
+}
+
+/// Returns once the reward verifier has handled every input handed to it before this call, and
+/// the other senders banned meanwhile. The verifier handles inputs in order, so banning an invalid
+/// sentinel's sender proves it handled everything handed off earlier. The consensus loop hands off
+/// a batch's reward groups in no particular order, though, so the first sentinel only proves its
+/// batch was handed off. The second one is sent after that, so it arrives in a later batch.
+fn sync_reward_verifier(ctx: &mut TestContext, source_slot: Slot) -> HashSet<Pubkey> {
+    let mut banned = ban_reward_sentinel(ctx, source_slot);
+    banned.extend(ban_reward_sentinel(ctx, source_slot));
+    banned
+}
+
+/// Sends invalid reward-only sentinels until the reward verifier bans one. Returns the other
+/// senders banned meanwhile.
+fn ban_reward_sentinel(ctx: &mut TestContext, source_slot: Slot) -> HashSet<Pubkey> {
+    let shred_version = ctx.cluster_info.my_shred_version();
+    let deadline = Instant::now() + RECEIVE_TIMEOUT;
+    let mut banned = HashSet::new();
+    // A sentinel arriving while the shared verification budget is spent is dropped unverified,
+    // so send another once the budget can have refilled.
+    loop {
+        let cert_type = CertificateType::new_unique_notar(source_slot);
+        // A locally generated type needs no consensus proof, so this goes to the reward verifier.
+        ctx.generated_cert_types.insert_cert(cert_type);
+        let mut sentinel = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
+            shred_version,
+            cert_type,
+            &(0..7).collect::<Vec<_>>(),
+        );
+        sentinel.signature = ctx.bls_keypairs()[0].sign(b"sentinel").into();
+        let sentinel_sender = Pubkey::new_unique();
+        ctx.send_datagrams(messages_to_datagrams(
+            &[(ConsensusMessage::Certificate(sentinel), sentinel_sender)],
+            shred_version,
+        ));
+        let retry_at = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < retry_at {
+            banned.extend(ctx.banned_pubkeys());
+            if banned.remove(&sentinel_sender) {
+                return banned;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reward verifier did not handle a sentinel"
+        );
+    }
+}
+
+fn advance_root(ctx: &TestContext, slot: Slot) {
+    let bank = Bank::new_from_parent(ctx.sharable_banks.root(), SlotLeader::default(), slot);
+    let mut bank_forks = ctx.bank_forks.write().unwrap();
+    bank_forks.insert(bank);
+    bank_forks.set_root(slot, None, None);
 }
 
 fn assert_verified_votes(aggregates: &[VoteAggregate], expected: &[(Vote, usize)]) {
@@ -1181,6 +1308,486 @@ fn test_verified_certs_are_skipped() {
 }
 
 #[test]
+fn test_reward_certificate_after_finality_and_expiration() {
+    let slot = 10;
+    let ctx = TestContext::new_with_reward_slot(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+    );
+    advance_root(&ctx, slot + 1);
+    let cert = test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        CertificateType::new_unique_notar(slot),
+        &(0..7).collect::<Vec<_>>(),
+    );
+    let send = || {
+        ctx.send_datagrams(messages_to_datagrams(
+            &[(
+                ConsensusMessage::Certificate(cert.clone()),
+                Pubkey::new_unique(),
+            )],
+            ctx.cluster_info.my_shred_version(),
+        ));
+    };
+    send();
+    assert_eq!(
+        receive_reward_certificates(&ctx.reward_receiver, 1),
+        vec![cert.clone()]
+    );
+    // Reward-only evidence never reaches the consensus pool.
+    expect_no_receive(&ctx.pool_receiver);
+
+    // Crossing another root must retain the dedup entry while rewards are useful.
+    advance_root(&ctx, slot + 2);
+    send();
+    expect_no_receive(&ctx.reward_receiver);
+    expect_no_receive(&ctx.pool_receiver);
+
+    advance_root(&ctx, slot + 8);
+    send();
+    expect_no_receive(&ctx.reward_receiver);
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_old_blockstore_certificate_is_kept_for_rewards() {
+    let slot = 10;
+    let ctx = TestContext::new_with_reward_slot(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+    );
+    advance_root(&ctx, slot + 2);
+    let cert = test_create_base2_unverified_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        CertificateType::FinalizeFast(Block::new_unique(slot)),
+        &(0..8).collect::<Vec<_>>(),
+    );
+    let cert_type = cert.cert_type;
+    ctx.send_certificate(slot + 1, cert);
+    let certificates = receive_reward_certificates(&ctx.reward_receiver, 1);
+    assert_eq!(certificates[0].cert_type, cert_type);
+    // Reward-only evidence never reaches the consensus pool.
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_reward_certificates_keep_bounded_alternatives_and_accept_broader_signer_set() {
+    let slot = 10;
+    let mut ctx = TestContext::new_with_reward_slot(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+    );
+    let cert_type = CertificateType::new_unique_notar(slot);
+    // Locally generated consensus proofs must not suppress external reward evidence.
+    ctx.generated_cert_types.insert_cert(cert_type);
+    for start in 0..4 {
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
+            ctx.cluster_info.my_shred_version(),
+            cert_type,
+            &(start..start + 7).collect::<Vec<_>>(),
+        );
+        ctx.send_datagrams(messages_to_datagrams(
+            &[(
+                ConsensusMessage::Certificate(cert.clone()),
+                Pubkey::new_unique(),
+            )],
+            ctx.cluster_info.my_shred_version(),
+        ));
+        assert_eq!(
+            receive_reward_certificates(&ctx.reward_receiver, 1),
+            vec![cert]
+        );
+        // Reward-only evidence never reaches the consensus pool.
+        expect_no_receive(&ctx.pool_receiver);
+    }
+    let fifth = test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        cert_type,
+        &(0..8).collect::<Vec<_>>(),
+    );
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(
+            ConsensusMessage::Certificate(fifth.clone()),
+            Pubkey::new_unique(),
+        )],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    assert_eq!(
+        receive_reward_certificates(&ctx.reward_receiver, 1),
+        vec![fifth.clone()],
+    );
+    expect_no_receive(&ctx.pool_receiver);
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(ConsensusMessage::Certificate(fifth), Pubkey::new_unique())],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    // A signer set that cannot improve the retained ones is never verified, so its invalid
+    // signature goes unnoticed and spends no budget.
+    let mut non_improving = test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        cert_type,
+        &[0, 1],
+    );
+    non_improving.signature = ctx.bls_keypairs()[0].sign(b"never verified").into();
+    let non_improving_sender = Pubkey::new_unique();
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(
+            ConsensusMessage::Certificate(non_improving),
+            non_improving_sender,
+        )],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    assert!(!sync_reward_verifier(&mut ctx, slot).contains(&non_improving_sender));
+    assert!(ctx.reward_receiver.is_empty());
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_relayed_copies_do_not_crowd_out_an_alternative_in_one_batch() {
+    let slot = 10;
+    let mut ctx = TestContext::new_unstarted(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+        1024,
+    );
+    let shred_version = ctx.cluster_info.my_shred_version();
+    let cert_type = CertificateType::new_unique_notar(slot);
+    // A locally generated type needs no consensus proof, so every candidate is reward evidence.
+    ctx.generated_cert_types.insert_cert(cert_type);
+    let relayed = test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        shred_version,
+        cert_type,
+        &(0..7).collect::<Vec<_>>(),
+    );
+    let alternative = test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        shred_version,
+        cert_type,
+        &(1..8).collect::<Vec<_>>(),
+    );
+    // More relayed copies than the per-type limit of eight arrive ahead of the alternative.
+    let mut messages = (0..9)
+        .map(|_| {
+            (
+                ConsensusMessage::Certificate(relayed.clone()),
+                Pubkey::new_unique(),
+            )
+        })
+        .collect::<Vec<_>>();
+    messages.push((
+        ConsensusMessage::Certificate(alternative.clone()),
+        Pubkey::new_unique(),
+    ));
+    // Queued before the verifier starts, the complete batch is one certificate group.
+    ctx.send_datagrams(messages_to_datagrams(&messages, shred_version));
+    ctx.start();
+    assert_eq!(
+        receive_reward_certificates(&ctx.reward_receiver, 2),
+        vec![relayed, alternative],
+    );
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_verified_reward_certificate_retries_after_channel_saturation() {
+    let slot = 10;
+    let mut ctx = TestContext::new_with_reward_capacity(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+        1,
+    );
+    let certificates = (0..2)
+        .map(|_| {
+            test_create_base2_certificate(
+                &ctx.bls_keypairs(),
+                ctx.cluster_info.my_shred_version(),
+                CertificateType::new_unique_notar(slot),
+                &(0..7).collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    for cert in &certificates {
+        ctx.send_datagrams(messages_to_datagrams(
+            &[(
+                ConsensusMessage::Certificate(cert.clone()),
+                Pubkey::new_unique(),
+            )],
+            ctx.cluster_info.my_shred_version(),
+        ));
+        // Consensus progresses even while the reward channel remains full.
+        receive_messages(&ctx.pool_receiver, 0, 1);
+    }
+    // A retransmitted signer set is never verified again, so a different and invalid signature
+    // goes unnoticed. Pending verified evidence still reaches rewards without another peer.
+    let mut retransmission = certificates[1].clone();
+    retransmission.signature = ctx.bls_keypairs()[0].sign(b"retransmission").into();
+    let retransmission_sender = Pubkey::new_unique();
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(
+            ConsensusMessage::Certificate(retransmission),
+            retransmission_sender,
+        )],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    assert!(!sync_reward_verifier(&mut ctx, slot).contains(&retransmission_sender));
+    assert_eq!(
+        receive_reward_certificates(&ctx.reward_receiver, 2),
+        certificates,
+    );
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_pending_verified_reward_certificate_expires_at_cutoff() {
+    let slot = 10;
+    let mut ctx = TestContext::new_with_reward_capacity(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+        1,
+    );
+    let certificates = (0..2)
+        .map(|_| {
+            test_create_base2_certificate(
+                &ctx.bls_keypairs(),
+                ctx.cluster_info.my_shred_version(),
+                CertificateType::new_unique_notar(slot),
+                &(0..7).collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    for cert in &certificates {
+        ctx.send_datagrams(messages_to_datagrams(
+            &[(
+                ConsensusMessage::Certificate(cert.clone()),
+                Pubkey::new_unique(),
+            )],
+            ctx.cluster_info.my_shred_version(),
+        ));
+        receive_messages(&ctx.pool_receiver, 0, 1);
+    }
+    // The first certificate fills the capacity-one reward channel, and the second must wait.
+    let deadline = Instant::now() + RECEIVE_TIMEOUT;
+    while ctx.reward_receiver.is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "first certificate did not reach rewards"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // The reward verifier must have queued the second certificate before its window closes, or
+    // nothing would be pending to expire.
+    sync_reward_verifier(&mut ctx, slot);
+    advance_root(&ctx, slot + NUM_SLOTS_FOR_REWARD);
+    // Handling any input under the advanced root expires the waiting certificate, so a later
+    // source slot of this leader window can serve as the sentinel's slot.
+    let leader_schedule = LeaderScheduleCache::new_from_bank(&ctx.sharable_banks.root());
+    let my_pubkey = ctx.cluster_info.id();
+    let sentinel_slot = (slot + 1..slot + NUM_SLOTS_FOR_REWARD)
+        .find(|source| {
+            leader_schedule
+                .slot_leader_at(source + NUM_SLOTS_FOR_REWARD, None)
+                .is_some_and(|leader| leader.id == my_pubkey)
+        })
+        .expect("a later source slot whose rewards this node includes");
+    sync_reward_verifier(&mut ctx, sentinel_slot);
+    assert_eq!(
+        receive_reward_certificates(&ctx.reward_receiver, 1),
+        vec![certificates[0].clone()],
+    );
+}
+
+#[test]
+fn test_previous_epoch_certificate_is_kept_for_rewards() {
+    let slot = EpochSchedule::without_warmup().slots_per_epoch - 1;
+    let ctx = TestContext::new_with_reward_slot(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+    );
+    let cert = test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        CertificateType::new_unique_notar(slot),
+        &(0..7).collect::<Vec<_>>(),
+    );
+    advance_root(&ctx, slot + 1);
+    assert_eq!(ctx.sharable_banks.root().epoch(), 1);
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(
+            ConsensusMessage::Certificate(cert.clone()),
+            Pubkey::new_unique(),
+        )],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    assert_eq!(
+        receive_reward_certificates(&ctx.reward_receiver, 1),
+        vec![cert]
+    );
+    // Reward-only evidence never reaches the consensus pool.
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_mixed_fallback_certificate_is_not_sent_to_rewards() {
+    let slot = 10;
+    let ctx = TestContext::new_with_reward_slot(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+    );
+    let mixed = test_create_base3_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        CertificateType::Skip(slot),
+        &[0, 1, 2, 3],
+        &[4, 5, 6],
+    );
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(ConsensusMessage::Certificate(mixed), Pubkey::new_unique())],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    receive_messages(&ctx.pool_receiver, 0, 1);
+    expect_no_receive(&ctx.reward_receiver);
+
+    // A later pure certificate of the same type remains useful for rewards.
+    let pure = test_create_base3_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        CertificateType::Skip(slot),
+        &(0..7).collect::<Vec<_>>(),
+        &[],
+    );
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(
+            ConsensusMessage::Certificate(pure.clone()),
+            Pubkey::new_unique(),
+        )],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    assert_eq!(
+        receive_reward_certificates(&ctx.reward_receiver, 1),
+        vec![pure]
+    );
+    // Reward-only evidence never reaches the consensus pool.
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_certificate_for_another_reward_leader_is_not_forwarded() {
+    let ctx = TestContext::new();
+    let cert = test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        CertificateType::new_unique_notar(10),
+        &(0..7).collect::<Vec<_>>(),
+    );
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(ConsensusMessage::Certificate(cert), Pubkey::new_unique())],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    receive_messages(&ctx.pool_receiver, 0, 1);
+    expect_no_receive(&ctx.reward_receiver);
+}
+
+#[test]
+fn test_disabled_reward_recovery_forwards_only_direct_votes() {
+    let slot = 10;
+    let mut ctx = TestContext::new_unstarted(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+        1024,
+    );
+    ctx.unstarted.as_mut().unwrap().0.enable_reward_recovery = false;
+    ctx.start();
+    let rank = ctx
+        .validator_keypairs
+        .iter()
+        .position(|keys| keys.node_keypair.pubkey() != ctx.cluster_info.id())
+        .unwrap();
+    let message = create_signed_vote_message(
+        &ctx.sharable_banks.root(),
+        &ctx.validator_keypairs,
+        ctx.cluster_info.my_shred_version(),
+        Vote::new_skip_vote(slot),
+        rank,
+    );
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(
+            ConsensusMessage::Vote(message),
+            ctx.validator_keypairs[rank].node_keypair.pubkey(),
+        )],
+        ctx.cluster_info.my_shred_version(),
+    ));
+    receive_messages(&ctx.pool_receiver, 1, 0);
+    // Reward inputs are sent before the pool batch: the direct vote, but not its raw signature,
+    // which only recovery uses.
+    assert!(matches!(
+        ctx.reward_receiver.try_recv(),
+        Ok(RewardInput::External(_))
+    ));
+    assert!(ctx.reward_receiver.is_empty());
+}
+
+#[test]
+fn test_reward_vote_retry_is_deduplicated_after_root_advance() {
+    let slot = 10;
+    let ctx = TestContext::new_with_reward_slot(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+    );
+    let rank = ctx
+        .validator_keypairs
+        .iter()
+        .position(|keys| keys.node_keypair.pubkey() != ctx.cluster_info.id())
+        .unwrap();
+    let message = create_signed_vote_message(
+        &ctx.sharable_banks.root(),
+        &ctx.validator_keypairs,
+        ctx.cluster_info.my_shred_version(),
+        Vote::new_skip_vote(slot),
+        rank,
+    );
+    let send = || {
+        ctx.send_datagrams(messages_to_datagrams(
+            &[(
+                ConsensusMessage::Vote(message.clone()),
+                ctx.validator_keypairs[rank].node_keypair.pubkey(),
+            )],
+            ctx.cluster_info.my_shred_version(),
+        ));
+    };
+    send();
+    receive_messages(&ctx.pool_receiver, 1, 0);
+    assert!(matches!(
+        ctx.reward_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap(),
+        RewardInput::External(_),
+    ));
+    assert!(matches!(
+        ctx.reward_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap(),
+        RewardInput::VoteSignatures { .. },
+    ));
+
+    advance_root(&ctx, slot + 1);
+    send();
+    expect_no_receive(&ctx.reward_receiver);
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
 fn test_same_type_certs_verify_until_first_valid() {
     let mut ctx = TestContext::new();
 
@@ -1267,6 +1874,132 @@ fn test_same_type_certs_try_next_candidate_after_failure() {
     assert!(banlist.contains(&invalid_sender), "Invalid cert -> ban");
     assert!(!banlist.contains(&valid_sender), "Valid certs ok");
     assert!(!banlist.contains(&redundant_sender), "Redundant certs ok");
+}
+
+fn assert_first_consensus_certificate_survives_invalid_candidates(reward_eligible: bool) {
+    let slot = 10;
+    let mut ctx = TestContext::new_unstarted(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+        1024,
+    );
+    advance_root(&ctx, slot);
+    let bls_keypairs = ctx.bls_keypairs();
+    let shred_version = ctx.cluster_info.my_shred_version();
+
+    let cert_type = if reward_eligible {
+        CertificateType::new_unique_notar(slot)
+    } else {
+        CertificateType::Finalize(slot)
+    };
+    let valid = test_create_base2_certificate(
+        &bls_keypairs,
+        shred_version,
+        cert_type,
+        &(0..7).collect::<Vec<_>>(),
+    );
+    let invalid_sender = Pubkey::new_unique();
+    let valid_sender = Pubkey::new_unique();
+    // Different valid curve points signing the wrong payload avoid relying on
+    // duplicate-message admission. All twelve invalid messages use one peer.
+    let mut messages = (0u64..12)
+        .map(|i| {
+            let mut invalid = valid.clone();
+            invalid.signature = bls_keypairs[0].sign(&i.to_le_bytes()).into();
+            (ConsensusMessage::Certificate(invalid), invalid_sender)
+        })
+        .collect::<Vec<_>>();
+    messages.push((ConsensusMessage::Certificate(valid.clone()), valid_sender));
+    // Queued before the verifier starts, the complete batch is one certificate group.
+    ctx.send_datagrams(messages_to_datagrams(&messages, shred_version));
+    ctx.start();
+
+    let (_, certificates) = receive_messages(&ctx.pool_receiver, 0, 1);
+    assert_eq!(certificates, vec![valid.clone()]);
+    if reward_eligible {
+        assert_eq!(
+            receive_reward_certificates(&ctx.reward_receiver, 1),
+            vec![valid],
+        );
+    } else {
+        expect_no_receive(&ctx.reward_receiver);
+    }
+    let banned = ctx.banned_pubkeys();
+    assert!(banned.contains(&invalid_sender));
+    assert!(!banned.contains(&valid_sender));
+}
+
+#[test]
+fn test_first_non_reward_consensus_certificate_after_many_invalid_candidates() {
+    assert_first_consensus_certificate_survives_invalid_candidates(false);
+}
+
+#[test]
+fn test_first_reward_consensus_certificate_after_many_invalid_candidates() {
+    assert_first_consensus_certificate_survives_invalid_candidates(true);
+}
+
+#[test]
+fn test_first_consensus_proof_reaches_pool_and_optional_candidates_are_verified() {
+    let slot = 10;
+    let mut ctx = TestContext::new_unstarted(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+        1024,
+    );
+    advance_root(&ctx, slot);
+    let keypairs = ctx.bls_keypairs();
+    let shred_version = ctx.cluster_info.my_shred_version();
+    let create = |cert_type, ranks: Vec<_>| {
+        test_create_base2_certificate(&keypairs, shred_version, cert_type, &ranks)
+    };
+    let cert_type = CertificateType::new_unique_notar(slot);
+    let required = create(cert_type, (0..7).collect());
+    let deferred_sender = Pubkey::new_unique();
+    let mut deferred = create(cert_type, (1..8).collect());
+    deferred.signature = keypairs[0].sign(b"invalid deferred proof").into();
+    let optional_type = CertificateType::new_unique_notar(slot);
+    ctx.generated_cert_types.insert_cert(optional_type);
+    let optional_sender = Pubkey::new_unique();
+    let mut optional = create(optional_type, (0..7).collect());
+    optional.signature = keypairs[0].sign(b"invalid optional proof").into();
+    // Queued before the verifier starts, `deferred` is a later candidate in the group of the
+    // required proof, and `optional` is a reward-only candidate in its own group.
+    ctx.send_datagrams(messages_to_datagrams(
+        &[
+            (ConsensusMessage::Certificate(optional), optional_sender),
+            (
+                ConsensusMessage::Certificate(required.clone()),
+                Pubkey::new_unique(),
+            ),
+            (ConsensusMessage::Certificate(deferred), deferred_sender),
+        ],
+        shred_version,
+    ));
+    ctx.start();
+
+    // Only the consensus proof reaches the pool. Optional checks run on the reward verifier.
+    let (_, certificates) = receive_messages(&ctx.pool_receiver, 0, 1);
+    assert_eq!(certificates, vec![required.clone()]);
+    assert_eq!(
+        receive_reward_certificates(&ctx.reward_receiver, 1),
+        vec![required],
+    );
+    // The reward verifier still checks both optional candidates and bans their senders.
+    let deadline = Instant::now() + RECEIVE_TIMEOUT;
+    let mut banned = HashSet::new();
+    while banned.len() < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "optional candidates were not verified"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+        banned.extend(ctx.banned_pubkeys());
+    }
+    assert_eq!(banned, HashSet::from([deferred_sender, optional_sender]));
+    expect_no_receive(&ctx.pool_receiver);
 }
 
 #[test]

@@ -44,13 +44,17 @@ impl CertsRequestor {
         bank_slot: Slot,
     ) -> Result<Option<RewardRequestToken>, ()> {
         let (reply_sender, reply_receiver) = bounded(1);
+        let request_sent = Instant::now();
         let request = RewardRequest {
             bank_slot,
             reply_sender,
-            request_sent: Instant::now(),
+            request_sent,
         };
         match self.req_sender.try_send(request) {
-            Ok(()) => Ok(Some(RewardRequestToken { reply_receiver })),
+            Ok(()) => Ok(Some(RewardRequestToken {
+                reply_receiver,
+                request_sent,
+            })),
             Err(TrySendError::Full(_)) => {
                 warn!(
                     "{my_pubkey} sending request to build reward cert for bank_slot={bank_slot} \
@@ -67,7 +71,9 @@ impl CertsRequestor {
     ///
     /// Does not block trying to receive the response as we have a tight deadline to produce
     /// the block and if the rewards container is not keeping up, we will rather not include any
-    /// reward certs than wait for it.
+    /// reward certs than wait for it. Once the direct snapshot is available, use an optional
+    /// recovery upgrade only if it has already completed; an empty or closed recovery channel
+    /// always leaves the direct snapshot available.
     pub(crate) fn recv_reward_certs(
         &mut self,
         stats: &mut SlotMetrics,
@@ -77,6 +83,14 @@ impl CertsRequestor {
         match request {
             None => Ok(RewardRespSucc::default()),
             Some(request) => {
+                stats.reward_certs_observation_us = Some(
+                    request
+                        .request_sent
+                        .elapsed()
+                        .as_micros()
+                        .try_into()
+                        .unwrap_or(u64::MAX),
+                );
                 let msg = request.reply_receiver.try_recv();
                 match msg {
                     Err(TryRecvError::Empty) => {
@@ -86,7 +100,17 @@ impl CertsRequestor {
                     }
                     Err(TryRecvError::Disconnected) => Err(()),
                     Ok(resp) => match resp.result {
-                        Ok(res) => Ok(res),
+                        Ok(baseline) => match resp.recovery.map(|receiver| receiver.try_recv()) {
+                            Some(Ok(upgrade)) => {
+                                stats.reward_certs_recovery_ready += 1;
+                                Ok(upgrade)
+                            }
+                            Some(Err(TryRecvError::Empty)) => {
+                                stats.reward_certs_recovery_pending += 1;
+                                Ok(baseline)
+                            }
+                            Some(Err(TryRecvError::Disconnected)) | None => Ok(baseline),
+                        },
                         Err(err) => {
                             error!("{my_pubkey} building reward cert failed with {err:?}");
                             Ok(RewardRespSucc::default())
@@ -120,7 +144,10 @@ mod tests {
 
         {
             let (_reply_sender, reply_receiver) = bounded(0);
-            let request = RewardRequestToken { reply_receiver };
+            let request = RewardRequestToken {
+                reply_receiver,
+                request_sent: Instant::now(),
+            };
             let resp = handler
                 .recv_reward_certs(&mut slot_metrics, my_pubkey, Some(request))
                 .unwrap();
@@ -151,6 +178,7 @@ mod tests {
                     notar: None,
                     validators: validators.clone(),
                 }),
+                recovery: None,
             })
             .unwrap();
         let resp = handler
@@ -159,5 +187,86 @@ mod tests {
         assert!(resp.skip.is_none());
         assert!(resp.notar.is_none());
         assert_eq!(resp.validators, validators);
+    }
+
+    #[test]
+    fn test_recovery_uses_only_an_already_completed_upgrade() {
+        for completed in [false, true] {
+            let (mut requestor, _requests) = CertsRequestor::new();
+            let mut metrics = SlotMetrics::new(100, true);
+            let baseline = Pubkey::new_unique();
+            let recovered = Pubkey::new_unique();
+            let (upgrade, recovery) = bounded(1);
+            if completed {
+                upgrade
+                    .send(RewardRespSucc {
+                        validators: vec![baseline, recovered],
+                        ..RewardRespSucc::default()
+                    })
+                    .unwrap();
+            }
+            let (reply, reply_receiver) = bounded(1);
+            reply
+                .send(RewardResponse {
+                    result: Ok(RewardRespSucc {
+                        validators: vec![baseline],
+                        ..RewardRespSucc::default()
+                    }),
+                    recovery: Some(recovery),
+                })
+                .unwrap();
+            let response = requestor
+                .recv_reward_certs(
+                    &mut metrics,
+                    Pubkey::new_unique(),
+                    Some(RewardRequestToken {
+                        reply_receiver,
+                        request_sent: Instant::now(),
+                    }),
+                )
+                .unwrap();
+            assert_eq!(metrics.reward_certs_skipped, 0);
+            assert_eq!(
+                response.validators,
+                if completed {
+                    vec![baseline, recovered]
+                } else {
+                    vec![baseline]
+                }
+            );
+            // The cutoff consumes the token. Later optional output cannot replace its snapshot.
+            assert!(upgrade.try_send(RewardRespSucc::default()).is_err());
+        }
+    }
+
+    #[test]
+    fn test_disconnected_recovery_preserves_direct_snapshot() {
+        let (mut requestor, _requests) = CertsRequestor::new();
+        let mut metrics = SlotMetrics::new(100, true);
+        let baseline = Pubkey::new_unique();
+        let (upgrade, recovery) = bounded(1);
+        drop(upgrade);
+        let (reply, reply_receiver) = bounded(1);
+        reply
+            .send(RewardResponse {
+                result: Ok(RewardRespSucc {
+                    validators: vec![baseline],
+                    ..RewardRespSucc::default()
+                }),
+                recovery: Some(recovery),
+            })
+            .unwrap();
+        let response = requestor
+            .recv_reward_certs(
+                &mut metrics,
+                Pubkey::new_unique(),
+                Some(RewardRequestToken {
+                    reply_receiver,
+                    request_sent: Instant::now(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(response.validators, vec![baseline]);
+        assert_eq!(metrics.reward_certs_skipped, 0);
     }
 }
