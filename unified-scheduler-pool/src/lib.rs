@@ -1733,8 +1733,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .map({
                 |thx| {
                     let assigned_arena = handler_thread_arenas.map(|arenas| {
+                        let first_handler_arena = usize::from(arenas.len() > 1);
                         #[allow(clippy::arithmetic_side_effects)]
-                        let arena_index = thx % arenas.len();
+                        let arena_index =
+                            first_handler_arena + thx % (arenas.len() - first_handler_arena);
                         arenas[arena_index]
                     });
                     thread::Builder::new()
@@ -2078,6 +2080,7 @@ mod tests {
             sync::{Arc, RwLock},
             thread::JoinHandle,
         },
+        test_case::test_case,
     };
 
     impl<S, TH> SchedulerPool<S, TH>
@@ -2205,8 +2208,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_handler_threads_use_assigned_arenas() {
+    #[test_case(1, [0, 0]; "single_arena_shared")]
+    #[test_case(2, [1, 1]; "two_arenas")]
+    #[test_case(3, [1, 2]; "three_arenas")]
+    fn test_handler_threads_use_assigned_arenas(arena_count: usize, handler_arenas: [usize; 2]) {
         const SECOND_ARENA_SHIFT: u32 = 32;
         const TASK_SEQUENCE_SHIFT: u32 = 64;
 
@@ -2246,10 +2251,10 @@ mod tests {
             }
         }
 
-        let arenas = ArenaGroup::new(2, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        let arenas = ArenaGroup::new(arena_count, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
         // Encode both arena IDs so either handler can verify its assigned arena from any task.
-        let encoded_arena_ids = u128::from(arenas[0].id().as_raw())
-            | (u128::from(arenas[1].id().as_raw()) << SECOND_ARENA_SHIFT);
+        let encoded_arena_ids = u128::from(arenas[handler_arenas[0]].id().as_raw())
+            | (u128::from(arenas[handler_arenas[1]].id().as_raw()) << SECOND_ARENA_SHIFT);
         let task_ids = [
             encoded_arena_ids,
             encoded_arena_ids | (1 << TASK_SEQUENCE_SHIFT),
@@ -2500,13 +2505,12 @@ mod tests {
     fn test_scheduler_active_after_stale() {
         agave_logger::setup();
 
+        // The cleaner may expire a listener on its first pass, so a zero count is optional.
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
-            &CheckPoint::TimeoutListenerTriggered(0),
             &CheckPoint::TimeoutListenerTriggered(1),
             &TestCheckPoint::AfterTimeoutListenerTriggered,
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
-            &CheckPoint::TimeoutListenerTriggered(0),
             &CheckPoint::TimeoutListenerTriggered(1),
             &TestCheckPoint::AfterTimeoutListenerTriggered,
         ]);
@@ -3847,47 +3851,5 @@ mod tests {
             DefaultSchedulerPool::calculate_default_handler_count(None),
             4
         );
-    }
-
-    // See comment in SchedulingStateMachine::create_task() for the justification of this test
-    #[test]
-    fn test_enfoced_get_account_locks_validation() {
-        agave_logger::setup();
-
-        let GenesisConfigInfo {
-            genesis_config,
-            ref mint_keypair,
-            ..
-        } = create_genesis_config(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = &setup_dummy_fork_graph(bank);
-
-        let mut tx = system_transaction::transfer(
-            mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        );
-        // mangle the transfer tx to try to lock fee_payer (= mint_keypair) address twice!
-        tx.message.account_keys.push(tx.message.account_keys[0]);
-
-        // this internally should call validate_account_locks() via
-        // Bank::prepare_unlocked_batch_from_single_tx().
-        let timings = &mut ExecuteTimings::default();
-        let scheduling_context = &SchedulingContext::new(bank.clone());
-        let handler_context = &HandlerContext {
-            thread_count: 0,
-            log_messages_bytes_limit: None,
-            transaction_status_sender: None,
-            replay_vote_sender: None,
-            prioritization_fee_cache: None,
-        };
-
-        let task = SchedulingStateMachine::create_task(ReplayTransaction::from(tx), 0, &mut |_| {
-            UsageQueue::new(&Capability::FifoQueueing)
-        });
-        let result =
-            DefaultTaskHandler::handle(timings, scheduling_context, &task, handler_context);
-        assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
 }

@@ -45,13 +45,13 @@ pub struct SVMFeatureSet {
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
-    pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
+    pub unbound_loader_v3_instruction_data: bool,
 }
 
 impl SVMFeatureSet {
@@ -101,13 +101,13 @@ impl SVMFeatureSet {
             block_revenue_sharing: true,
             vote_account_initialize_v2: true,
             direct_account_pointers_in_program_input: true,
-            loader_v3_minimum_extend_program_size: true,
             enable_sha512_syscall: true,
             relax_post_exec_min_balance_check: true,
             define_ltds_fee_only_semantics: true,
             relax_fee_payer_constraint: true,
             loader_v3_set_program_data_to_elf_length: true,
             early_instruction_trace_overflow_detection: true,
+            unbound_loader_v3_instruction_data: true,
         }
     }
 }

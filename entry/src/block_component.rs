@@ -299,7 +299,7 @@ impl TryFrom<GenesisCert> for GenesisCertBlockMarker {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockFinalizationCert {
     pub slot: Slot,
-    pub block_id: Hash,
+    pub block_id: BlockId,
     pub final_aggregate: VotesAggregate,
     pub notar_aggregate: Option<VotesAggregate>,
 }
@@ -309,7 +309,7 @@ impl BlockFinalizationCert {
     pub fn new_for_tests() -> BlockFinalizationCert {
         BlockFinalizationCert {
             slot: 1234567890,
-            block_id: Hash::new_from_array([1u8; 32]),
+            block_id: BlockId::new_unique(),
             final_aggregate: VotesAggregate {
                 signature: BLSSignatureCompressed(
                     [0; solana_bls_signatures::BLS_SIGNATURE_COMPRESSED_SIZE],
@@ -544,31 +544,12 @@ impl BlockComponent {
     pub(crate) const ENTRY_COUNT_SIZE: usize = 8;
     pub(crate) const EMPTY_ENTRY_BATCH: [u8; Self::ENTRY_COUNT_SIZE] = 0u64.to_le_bytes();
 
-    pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
-        if entries.is_empty() {
-            return Err(BlockComponentError::EmptyEntryBatch);
-        }
-
-        if entries.len() >= Self::MAX_ENTRIES {
-            return Err(BlockComponentError::TooManyEntries {
-                count: entries.len(),
-                max: Self::MAX_ENTRIES,
-            });
-        }
-
-        Ok(Self::EntryBatch(entries))
-    }
-
-    pub const fn new_block_marker(marker: VersionedBlockMarker) -> Self {
-        Self::BlockMarker(marker)
-    }
-
     pub fn new_block_header(parent_slot: Slot, parent_block_id: Hash) -> Self {
         let header = BlockHeaderV1 {
             parent_slot,
             parent_block_id,
         };
-        Self::new_block_marker(VersionedBlockMarker::from_block_header(header))
+        Self::BlockMarker(VersionedBlockMarker::from_block_header(header))
     }
 
     pub const fn as_marker(&self) -> Option<&VersionedBlockMarker> {
@@ -594,6 +575,27 @@ impl BlockComponent {
     /// are aborting the block
     pub fn infer_is_empty_entry_batch(data: &[u8]) -> bool {
         *data == Self::EMPTY_ENTRY_BATCH
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub const fn new_block_marker(marker: VersionedBlockMarker) -> Self {
+        Self::BlockMarker(marker)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
+        if entries.is_empty() {
+            return Err(BlockComponentError::EmptyEntryBatch);
+        }
+
+        if entries.len() >= Self::MAX_ENTRIES {
+            return Err(BlockComponentError::TooManyEntries {
+                count: entries.len(),
+                max: Self::MAX_ENTRIES,
+            });
+        }
+
+        Ok(Self::EntryBatch(entries))
     }
 }
 
@@ -693,10 +695,7 @@ pub fn finalization_certificates_from_footer(
         final_aggregate,
         notar_aggregate,
     } = block_final_cert;
-    let block = Block {
-        slot,
-        block_id: BlockId::from(block_id),
-    };
+    let block = Block { slot, block_id };
 
     let final_signature = final_aggregate.uncompress_signature().ok()?;
     let final_bitmap = final_aggregate.into_bitmap();
@@ -799,7 +798,7 @@ mod tests {
     #[test]
     fn finalization_certificates_from_fast_footer() {
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let shred_version = 123;
         let final_bitmap = vec![0x11; 64];
         let (final_aggregate, final_signature) =
@@ -820,10 +819,7 @@ mod tests {
         };
         assert_eq!(
             certificate.cert_type,
-            CertificateType::FinalizeFast(Block {
-                slot,
-                block_id: BlockId::from(block_id)
-            })
+            CertificateType::FinalizeFast(Block { slot, block_id })
         );
         assert_eq!(certificate.signature, final_signature);
         assert_eq!(certificate.bitmap, final_bitmap);
@@ -833,7 +829,7 @@ mod tests {
     #[test]
     fn finalization_certificates_from_slow_footer() {
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let shred_version = 123;
         let final_bitmap = vec![0x11; 64];
         let notar_bitmap = vec![0x22; 64];
@@ -857,10 +853,7 @@ mod tests {
         };
         assert_eq!(
             notarize.cert_type,
-            CertificateType::Notarize(Block {
-                slot,
-                block_id: BlockId::from(block_id)
-            })
+            CertificateType::Notarize(Block { slot, block_id })
         );
         assert_eq!(notarize.signature, notar_signature);
         assert_eq!(notarize.bitmap, notar_bitmap);

@@ -5,7 +5,10 @@ use {
         admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
         bootstrap,
         cli::{self},
-        commands::{FromClapArgMatches, run::args::RunArgs},
+        commands::{
+            FromClapArgMatches,
+            run::{args::RunArgs, storage},
+        },
         ledger_lockfile, lock_ledger,
     },
     agave_snapshots::{
@@ -30,10 +33,7 @@ use {
             MINIMAL_THRESHOLD_NUM_BYTES, ScanFilter,
         },
         partitioned_rewards::PartitionedEpochRewardsConfig,
-        utils::{
-            create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
-            create_and_canonicalize_directory,
-        },
+        utils::create_and_canonicalize_directory,
     },
     solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
@@ -67,7 +67,7 @@ use {
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
+    solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
@@ -78,7 +78,7 @@ use {
     std::{
         collections::HashSet,
         env,
-        fs::{self, File},
+        fs::File,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
@@ -106,6 +106,15 @@ pub fn execute(
     }
 
     let run_args = RunArgs::from_clap_arg_match(matches)?;
+    // Canonicalize ledger path to avoid issues with symlink creation
+    let ledger_path = create_and_canonicalize_directory(&run_args.ledger_path).map_err(|err| {
+        format!(
+            "failed to create and canonicalize ledger path '{}': {err}",
+            run_args.ledger_path.display(),
+        )
+    })?;
+    let mut ledger_lock = ledger_lockfile(&ledger_path);
+    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
     let cli::thread_args::NumThreadConfig {
         accounts_db_background_threads,
@@ -358,20 +367,17 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let (xdp_transmit_setup, report) = xdp_transmit_config
-            .clone()
-            .map(|xdp_config| {
-                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
-            })
-            .map_or((None, None), |(setup, report)| (Some(setup), Some(report)));
+        let xdp_transmit_setup_result = xdp_transmit_config.clone().map(|xdp_config| {
+            xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+        });
 
-        // we're done with caps needed to init xdp now. remove them from our process
+        // Drop temporary XDP capabilities before propagating any setup error.
         caps::set(None, CapSet::Effective, &retained_caps)
             .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        (xdp_transmit_setup, report)
+        xdp_transmit_setup_result.transpose()?.unzip()
     };
 
     #[cfg(not(target_os = "linux"))]
@@ -415,7 +421,6 @@ pub fn execute(
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");
 
-    let ledger_path = run_args.ledger_path;
     let blockstore_cleanup_strategy = BlockstoreCleanupStrategy::from_clap_arg_match(matches)?;
 
     let debug_keys: Option<Arc<HashSet<_>>> = if matches.is_present("debug_key") {
@@ -498,7 +503,6 @@ pub fn execute(
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
-    let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
@@ -684,6 +688,7 @@ pub fn execute(
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         accounts_file_provider,
+        use_direct_io: !matches.is_present("no_accounts_db_snapshots_direct_io"),
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
@@ -709,18 +714,10 @@ pub fn execute(
         } else {
             vec![ledger_path.join("accounts")]
         };
-    let account_paths = create_and_canonicalize_directories(account_paths)
-        .map_err(|err| format!("unable to access account path: {err}"))?;
-
-    // From now on, use run/ paths in the same way as the previous account_paths.
-    let (account_run_paths, account_snapshot_paths) =
-        create_all_accounts_run_and_snapshot_dirs(&account_paths)
-            .map_err(|err| format!("unable to create account directories: {err}"))?;
 
     let snapshot_config = new_snapshot_config(
         matches,
         &ledger_path,
-        &account_paths,
         run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
     )?;
 
@@ -805,8 +802,7 @@ pub fn execute(
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
-        account_paths: account_run_paths,
-        account_snapshot_paths,
+        account_paths,
         accounts_db_config,
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
@@ -867,6 +863,12 @@ pub fn execute(
             i8
         ),
     };
+
+    storage::prepare(
+        &mut validator_config.account_paths,
+        &mut validator_config.snapshot_config,
+    )?;
+
     validator_config
         .block_production_method
         .warn_if_deprecated_value();
@@ -902,9 +904,6 @@ pub fn execute(
                 .to_string())?;
         }
     }
-
-    let mut ledger_lock = ledger_lockfile(&ledger_path);
-    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
     let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
     let admin_service_post_init = Arc::new(RwLock::new(None));
@@ -993,15 +992,6 @@ pub fn execute(
             set_socket!(set_rpc_pubsub, (addr, rpc_pubsub_addr.port()), "RPC-pubsub");
         }
     }
-
-    snapshot_utils::remove_tmp_snapshot_archives(
-        &validator_config.snapshot_config.full_snapshot_archives_dir,
-    );
-    snapshot_utils::remove_tmp_snapshot_archives(
-        &validator_config
-            .snapshot_config
-            .incremental_snapshot_archives_dir,
-    );
 
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
@@ -1102,7 +1092,7 @@ pub fn execute(
         start_progress,
         run_args.socket_addr_space,
         ValidatorTpuConfig {
-            vote_use_quic,
+            vote_use_quic: false,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1177,7 +1167,6 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
 fn new_snapshot_config(
     matches: &ArgMatches,
     ledger_path: &Path,
-    account_paths: &[PathBuf],
     incremental_snapshot_fetch: bool,
 ) -> Result<SnapshotConfig, Box<dyn std::error::Error>> {
     let (full_snapshot_archive_interval, incremental_snapshot_archive_interval) =
@@ -1247,52 +1236,15 @@ fn new_snapshot_config(
         .value_of("snapshots")
         .map(Path::new)
         .unwrap_or(ledger_path);
-    let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).map_err(|err| {
-        format!(
-            "failed to create snapshots directory '{}': {err}",
-            snapshots_dir.display(),
-        )
-    })?;
-    if account_paths
-        .iter()
-        .any(|account_path| account_path == &snapshots_dir)
-    {
-        Err(
-            "the --accounts and --snapshots paths must be unique since they both create \
-             'snapshots' subdirectories, otherwise there may be collisions"
-                .to_string(),
-        )?;
-    }
-
     let bank_snapshots_dir = snapshots_dir.join(BANK_SNAPSHOTS_DIR);
-    fs::create_dir_all(&bank_snapshots_dir).map_err(|err| {
-        format!(
-            "failed to create bank snapshots directory '{}': {err}",
-            bank_snapshots_dir.display(),
-        )
-    })?;
-
     let full_snapshot_archives_dir = matches
         .value_of("full_snapshot_archive_path")
         .map(PathBuf::from)
-        .unwrap_or_else(|| snapshots_dir.clone());
-    fs::create_dir_all(&full_snapshot_archives_dir).map_err(|err| {
-        format!(
-            "failed to create full snapshot archives directory '{}': {err}",
-            full_snapshot_archives_dir.display(),
-        )
-    })?;
-
+        .unwrap_or_else(|| snapshots_dir.to_path_buf());
     let incremental_snapshot_archives_dir = matches
         .value_of("incremental_snapshot_archive_path")
         .map(PathBuf::from)
-        .unwrap_or_else(|| snapshots_dir.clone());
-    fs::create_dir_all(&incremental_snapshot_archives_dir).map_err(|err| {
-        format!(
-            "failed to create incremental snapshot archives directory '{}': {err}",
-            incremental_snapshot_archives_dir.display(),
-        )
-    })?;
+        .unwrap_or_else(|| snapshots_dir.to_path_buf());
 
     let archive_format = {
         let archive_format_str = value_t_or_exit!(matches, "snapshot_archive_format", String);

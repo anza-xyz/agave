@@ -5,6 +5,7 @@ pub mod handler;
 
 pub use solana_vote_interface::state::{vote_state_versions::*, *};
 use {
+    crate::vote_state::handler::VoteStateVersionsInline,
     handler::{VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
@@ -40,7 +41,7 @@ fn get_vote_state_handler_checked(
             // 1. Deserialize as `VoteStateVersions`
             // 2. Check for uninitialized
             // 3. Convert
-            let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
+            let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
             if versioned.is_uninitialized() {
                 return Err(InstructionError::UninitializedAccount);
             }
@@ -973,9 +974,9 @@ pub fn deposit_delegator_rewards<S: std::hash::BuildHasher>(
         // Can't use `get_vote_state_handler_checked`, since it will convert
         // the underlying vote state to v4.
         // SIMD-0123 requires an *initialized v4*.
-        let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
-        if let VoteStateVersions::V4(vote_state_v4) = versioned {
-            Ok(VoteStateHandler::new_v4(*vote_state_v4))
+        let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
+        if let VoteStateVersionsInline::V4(vote_state_v4) = versioned {
+            Ok(VoteStateHandler::new_v4(vote_state_v4))
         } else {
             Err(InstructionError::InvalidAccountData)
         }
@@ -1165,7 +1166,7 @@ where
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
     VoteStateHandler::check_vote_account_length(&mut vote_account, target_version)?;
-    let versioned = vote_account.get_state::<VoteStateVersions>()?;
+    let versioned = vote_account.get_state::<VoteStateVersionsInline>()?;
 
     if !versioned.is_uninitialized() {
         return Err(InstructionError::AccountAlreadyInitialized);
@@ -1218,7 +1219,7 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     clock: &Clock,
 ) -> Result<(), InstructionError> {
     VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
-    let versioned = vote_account.get_state::<VoteStateVersions>()?;
+    let versioned = vote_account.get_state::<VoteStateVersionsInline>()?;
 
     if !versioned.is_uninitialized() {
         return Err(InstructionError::AccountAlreadyInitialized);
@@ -1438,6 +1439,79 @@ mod tests {
         solana_vote_interface::authorized_voters::AuthorizedVoters,
         test_case::{test_case, test_matrix},
     };
+
+    fn boxed(versions: VoteStateVersionsInline) -> VoteStateVersions {
+        match versions {
+            VoteStateVersionsInline::Uninitialized => VoteStateVersions::Uninitialized,
+            VoteStateVersionsInline::V1_14_11(state) => {
+                VoteStateVersions::V1_14_11(Box::new(state))
+            }
+            VoteStateVersionsInline::V3(state) => VoteStateVersions::V3(Box::new(state)),
+            VoteStateVersionsInline::V4(state) => VoteStateVersions::V4(Box::new(state)),
+        }
+    }
+
+    /// Checks that the inline wincode decoders match bincode and the hand-written
+    /// `VoteStateVersions::deserialize` on `data`.
+    fn assert_vote_state_decoders_agree(data: &[u8]) {
+        let inline = wincode::config::deserialize::<VoteStateVersionsInline, _>(
+            data,
+            solana_account::WINCODE_CONFIG,
+        )
+        .ok()
+        .map(boxed);
+        assert_eq!(
+            inline,
+            bincode::deserialize::<VoteStateVersions>(data).ok(),
+            "data: {data:?}",
+        );
+        assert_eq!(
+            VoteStateVersionsInline::deserialize(data).ok().map(boxed),
+            VoteStateVersions::deserialize(data).ok(),
+            "data: {data:?}",
+        );
+    }
+
+    #[test]
+    fn test_vote_state_decoders_agree() {
+        use {
+            arbitrary::{Arbitrary, Unstructured},
+            rand::Rng,
+        };
+
+        for len in [0, 4, 100, VoteStateV3::size_of(), VoteStateV4::size_of()] {
+            assert_vote_state_decoders_agree(&vec![0; len]);
+        }
+        let mut rng = rand::rng();
+        for _ in 0..4 {
+            let raw_data: Vec<u8> = (0..VoteStateV3::size_of() * 4)
+                .map(|_| rng.random::<u8>())
+                .collect();
+            let mut unstructured = Unstructured::new(&raw_data);
+            let vote_state_v3 = VoteStateV3::arbitrary(&mut unstructured).unwrap();
+            let vote_state_v4 = VoteStateV4::arbitrary(&mut unstructured).unwrap();
+            for versions in [
+                VoteStateVersions::V1_14_11(Box::new(vote_state_v3.clone().into())),
+                VoteStateVersions::new_v3(vote_state_v3),
+                VoteStateVersions::new_v4(vote_state_v4),
+            ] {
+                let encoded = bincode::serialize(&versions).unwrap();
+                let mut trailing = encoded.clone();
+                trailing.extend_from_slice(&[0xff; 16]);
+                assert_vote_state_decoders_agree(&trailing);
+                for len in 0..=encoded.len() {
+                    assert_vote_state_decoders_agree(encoded.get(..len).unwrap());
+                }
+                for index in 0..encoded.len() {
+                    for byte in [0x00, 0x01, 0x02, 0x7f, 0x80, 0xff] {
+                        let mut mutated = encoded.clone();
+                        *mutated.get_mut(index).unwrap() = byte;
+                        assert_vote_state_decoders_agree(&mutated);
+                    }
+                }
+            }
+        }
+    }
 
     const MAX_RECENT_VOTES: usize = 16;
 

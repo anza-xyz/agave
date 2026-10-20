@@ -88,7 +88,7 @@ pub use {
     crate::shredder::Shredder,
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
+use {solana_keypair::Keypair, solana_signer::Signer};
 
 mod common;
 pub mod filter;
@@ -599,6 +599,7 @@ impl Shred {
 
     dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    #[cfg(test)]
     dispatch!(fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
 
     dispatch!(pub fn payload(&self) -> &Payload);
@@ -636,14 +637,6 @@ impl Shred {
         Payload: From<T>,
     {
         Self::from_payload(shred)
-    }
-
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    pub fn copy_to_packet(&self, packet: &mut Packet) {
-        let payload = self.payload();
-        let size = payload.len();
-        packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
-        packet.meta_mut().size = size;
     }
 
     /// Unique identifier for each shred.
@@ -779,19 +772,8 @@ impl Shred {
         if self.id() != other.id() {
             return false;
         }
-        fn get_payload(shred: &Shred) -> &[u8] {
-            let Ok(offset) = shred.retransmitter_signature_offset() else {
-                return shred.payload();
-            };
-            // Assert that the retransmitter's signature is at the very end of
-            // the shred payload.
-            debug_assert_eq!(offset + SIZE_OF_SIGNATURE, shred.payload().len());
-            shred
-                .payload()
-                .get(..offset)
-                .unwrap_or_else(|| shred.payload())
-        }
-        get_payload(self) != get_payload(other)
+        wire::get_payload_without_retransmitter_signature(self.payload())
+            != wire::get_payload_without_retransmitter_signature(other.payload())
     }
 
     #[inline]
@@ -1116,10 +1098,9 @@ mod tests {
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(10, &keypair);
         assert_matches!(shred.parent(), Ok(9));
-        let mut packet = Packet::default();
-        shred.copy_to_packet(&mut packet);
-        wire::corrupt_and_set_parent_offset(packet.buffer_mut(), 1000);
-        let shred_res = Shred::new_from_serialized_shred(packet.data(..).unwrap().to_vec());
+        let mut payload = shred.payload().to_vec();
+        wire::corrupt_and_set_parent_offset(&mut payload, 1000);
+        let shred_res = Shred::new_from_serialized_shred(payload);
         assert_matches!(
             shred_res,
             Err(Error::InvalidParentOffset {
@@ -1282,9 +1263,8 @@ mod tests {
         );
     }
 
-    fn verify_shred_layout(shred: &Shred, packet: &Packet) {
-        let packet = BytesPacket::from(packet);
-        let data = layout::get_shred(&packet).unwrap();
+    fn verify_shred_layout(shred: &Shred, packet: &BytesPacket) {
+        let data = layout::get_shred(packet).unwrap();
         assert_eq!(data, packet.data(..).unwrap());
         assert_eq!(layout::get_slot(data), Some(shred.slot()));
         assert_eq!(layout::get_index(data), Some(shred.index()));
@@ -1357,9 +1337,7 @@ mod tests {
         assert!(shred.verify(&keypair.pubkey()));
         assert_matches!(shred.sanitize(), Ok(()));
         let payload = bs58::decode(PAYLOAD).into_vec().unwrap();
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
-        packet.meta_mut().size = payload.len();
+        let packet = BytesPacket::from_bytes(None, payload.clone());
         assert_eq!(
             shred,
             Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
@@ -1418,9 +1396,7 @@ mod tests {
         assert!(shred.verify(&keypair.pubkey()));
         assert_matches!(shred.sanitize(), Ok(()));
         let payload = bs58::decode(PAYLOAD).into_vec().unwrap();
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
-        packet.meta_mut().size = payload.len();
+        let packet = BytesPacket::from_bytes(None, payload.clone());
         assert_eq!(
             shred,
             Shred::new_from_serialized_shred(payload.to_vec()).unwrap()

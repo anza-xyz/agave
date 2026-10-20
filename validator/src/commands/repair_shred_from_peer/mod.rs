@@ -13,7 +13,7 @@ const COMMAND: &str = "repair-shred-from-peer";
 
 #[derive(Debug, PartialEq)]
 pub struct RepairShredFromPeerArgs {
-    pub pubkey: Option<Pubkey>,
+    pub pubkey: Pubkey,
     pub slot: u64,
     pub shred: u64,
 }
@@ -21,7 +21,7 @@ pub struct RepairShredFromPeerArgs {
 impl FromClapArgMatches for RepairShredFromPeerArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(RepairShredFromPeerArgs {
-            pubkey: value_t!(matches, "pubkey", Pubkey).ok(),
+            pubkey: value_t!(matches, "pubkey", Pubkey)?,
             slot: value_t!(matches, "slot", u64)?,
             shred: value_t!(matches, "shred", u64)?,
         })
@@ -35,7 +35,7 @@ pub fn command<'a>() -> App<'a, 'a> {
             Arg::with_name("pubkey")
                 .long("pubkey")
                 .value_name("PUBKEY")
-                .required(false)
+                .required(true)
                 .takes_value(true)
                 .validator(is_pubkey)
                 .help("Identity pubkey of the validator to repair from"),
@@ -103,14 +103,9 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_repair_shred_from_peer_missing_pubkey() {
-        verify_args_struct_by_command(
+        verify_args_struct_by_command_is_error::<RepairShredFromPeerArgs>(
             command(),
             vec![COMMAND, "--slot", "1", "--shred", "2"],
-            RepairShredFromPeerArgs {
-                pubkey: None,
-                slot: 1,
-                shred: 2,
-            },
         );
     }
 
@@ -128,9 +123,7 @@ mod tests {
                 "ch1do11111111111111111111111111111111111111",
             ],
             RepairShredFromPeerArgs {
-                pubkey: Some(
-                    Pubkey::from_str("ch1do11111111111111111111111111111111111111").unwrap(),
-                ),
+                pubkey: Pubkey::from_str("ch1do11111111111111111111111111111111111111").unwrap(),
                 slot: 1,
                 shred: 2,
             },

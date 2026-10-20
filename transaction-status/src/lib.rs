@@ -720,14 +720,14 @@ impl Encodable for Transaction {
     fn encode(&self, encoding: UiTransactionEncoding) -> Self::Encoded {
         match encoding {
             UiTransactionEncoding::Binary => EncodedTransaction::LegacyBinary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(wincode::serialize(self).unwrap()).into_string(),
             ),
             UiTransactionEncoding::Base58 => EncodedTransaction::Binary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(wincode::serialize(self).unwrap()).into_string(),
                 TransactionBinaryEncoding::Base58,
             ),
             UiTransactionEncoding::Base64 => EncodedTransaction::Binary(
-                BASE64_STANDARD.encode(bincode::serialize(self).unwrap()),
+                BASE64_STANDARD.encode(wincode::serialize(self).unwrap()),
                 TransactionBinaryEncoding::Base64,
             ),
             UiTransactionEncoding::Json | UiTransactionEncoding::JsonParsed => {

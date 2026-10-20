@@ -1,7 +1,7 @@
 use {
     crate::vote_transaction::VoteTransaction,
-    solana_bincode::limited_deserialize,
     solana_hash::Hash,
+    solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_svm_transaction::{svm_message::SVMStaticMessage, svm_transaction::SVMTransaction},
@@ -10,6 +10,16 @@ use {
 };
 
 pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
+
+/// Decodes vote instruction data from at most `PACKET_DATA_SIZE` bytes, ignoring trailing bytes.
+pub fn deserialize_vote_instruction(data: &[u8]) -> Option<VoteInstruction> {
+    wincode::config::deserialize(
+        data,
+        wincode::config::Configuration::default()
+            .with_deserialization_size_limit::<PACKET_DATA_SIZE>(),
+    )
+    .ok()
+}
 
 /// Check if a transaction is a valid vote-only transaction.
 /// A valid vote-only transaction must:
@@ -31,9 +41,8 @@ pub fn is_valid_vote_only_transaction(tx: &impl SVMStaticMessage) -> bool {
         return false;
     }
 
-    limited_deserialize::<VoteInstruction>(instruction.data, solana_packet::PACKET_DATA_SIZE as u64)
-        .map(|ix| ix.is_single_vote_state_update())
-        .unwrap_or(false)
+    deserialize_vote_instruction(instruction.data)
+        .is_some_and(|ix| ix.is_single_vote_state_update())
 }
 
 // Used for locally forwarding processed vote transactions to consensus
@@ -70,12 +79,7 @@ pub fn parse_vote_transaction(tx: &Transaction) -> Option<ParsedVote> {
 fn parse_vote_instruction_data(
     vote_instruction_data: &[u8],
 ) -> Option<(VoteTransaction, Option<Hash>)> {
-    match limited_deserialize(
-        vote_instruction_data,
-        solana_packet::PACKET_DATA_SIZE as u64,
-    )
-    .ok()?
-    {
+    match deserialize_vote_instruction(vote_instruction_data)? {
         VoteInstruction::Vote(vote) => Some((VoteTransaction::from(vote), None)),
         VoteInstruction::VoteSwitch(vote, hash) => Some((VoteTransaction::from(vote), Some(hash))),
         VoteInstruction::UpdateVoteState(vote_state_update) => {
@@ -121,9 +125,75 @@ mod test {
         solana_transaction::sanitized::SanitizedTransaction,
         solana_vote_interface::{
             instruction as vote_instruction,
-            state::{TowerSync, Vote, VoteAuthorize},
+            state::{TowerSync, Vote, VoteAuthorize, VoteAuthorizeWithSeedArgs, VoteStateUpdate},
         },
     };
+
+    fn compact_vote_instructions() -> [VoteInstruction; 4] {
+        let hash = Hash::new_unique();
+        let mut vote_state_update = VoteStateUpdate::from(vec![(1, 3), (2, 2), (3, 1)]);
+        vote_state_update.root = Some(0);
+        vote_state_update.timestamp = Some(9);
+        let mut tower_sync = TowerSync::from(vec![(1, 3), (2, 2), (3, 1)]);
+        tower_sync.root = Some(0);
+        tower_sync.timestamp = Some(9);
+        tower_sync.block_id = Hash::new_unique();
+        [
+            VoteInstruction::CompactUpdateVoteState(vote_state_update.clone()),
+            VoteInstruction::CompactUpdateVoteStateSwitch(vote_state_update, hash),
+            VoteInstruction::TowerSync(tower_sync.clone()),
+            VoteInstruction::TowerSyncSwitch(tower_sync, hash),
+        ]
+    }
+
+    /// Checks the compact variants, whose hand-written bincode and wincode decoders sit on top of
+    /// the shared varint and short_vec primitives, on corrupted copies of valid encodings.
+    #[test]
+    fn test_deserialize_compact_vote_instruction_matches_bincode_on_corrupted_input() {
+        let assert_decoders_agree = |data: &[u8]| {
+            assert_eq!(
+                deserialize_vote_instruction(data),
+                solana_bincode::limited_deserialize(data, PACKET_DATA_SIZE as u64).ok(),
+                "data: {data:?}",
+            );
+        };
+        for instruction in compact_vote_instructions() {
+            let encoded = wincode::serialize(&instruction).unwrap();
+            let mut trailing = encoded.clone();
+            trailing.extend_from_slice(&[0xff; 16]);
+            assert_decoders_agree(&trailing);
+            for len in 0..encoded.len() {
+                assert_decoders_agree(encoded.get(..len).unwrap());
+            }
+            for index in 0..encoded.len() {
+                for byte in [0x00, 0x01, 0x02, 0x7f, 0x80, 0xff] {
+                    let mut mutated = encoded.clone();
+                    *mutated.get_mut(index).unwrap() = byte;
+                    assert_decoders_agree(&mutated);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_deserialize_vote_instruction_size_limit() {
+        // Every byte outside the seed: two u32 tags, two pubkeys and the u64 seed length.
+        const FIXED_LEN: usize = 4 + 4 + 32 + 8 + 32;
+        for encoded_len in [PACKET_DATA_SIZE - 1, PACKET_DATA_SIZE, PACKET_DATA_SIZE + 1] {
+            let instruction = VoteInstruction::AuthorizeWithSeed(VoteAuthorizeWithSeedArgs {
+                authorization_type: VoteAuthorize::Voter,
+                current_authority_derived_key_owner: Pubkey::new_unique(),
+                current_authority_derived_key_seed: "x".repeat(encoded_len - FIXED_LEN),
+                new_authority: Pubkey::new_unique(),
+            });
+            let mut encoded = wincode::serialize(&instruction).unwrap();
+            assert_eq!(encoded.len(), encoded_len);
+            let expected = (encoded_len <= PACKET_DATA_SIZE).then_some(instruction);
+            assert_eq!(deserialize_vote_instruction(&encoded), expected);
+            encoded.push(0);
+            assert_eq!(deserialize_vote_instruction(&encoded), expected);
+        }
+    }
 
     // Reimplemented locally from Vote program.
     fn new_vote_transaction(

@@ -104,10 +104,13 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     // Populate the accounts DB with the input accounts at the parent slot.
     let bank_rc = BankRc::new(new_accounts_for_tests_single_threaded());
     let bank_id = bank_rc.next_bank_id();
-    let ancestors = Ancestors::from(vec![parent_slot]);
-    bank_rc
-        .accounts
-        .store_accounts((parent_slot, &accounts[..]), bank_id, None, None, &ancestors);
+    bank_rc.accounts.store_accounts(
+        (parent_slot, &accounts[..]),
+        bank_id,
+        None,
+        None,
+        &Ancestors::default(),
+    );
     bank_rc.accounts.accounts_db.add_root(parent_slot);
 
     // Dummy epoch stakes with the provided total stake at the current and next epoch.
@@ -422,7 +425,10 @@ mod tests {
             TransactionMessage as ProtoTransactionMessage, TxnBank as ProtoTxnBank,
             TxnContext as ProtoTxnContext, acct_state::DataRepr,
         },
-        solana_account::{AccountSharedData, ReadableAccount},
+        solana_account::{
+            AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount, WincodeConfig,
+            WritableAccount, state_traits::StateMutWincode as _,
+        },
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
@@ -435,13 +441,15 @@ mod tests {
             v0::{self, MessageAddressTableLookup},
         },
         solana_pubkey::Pubkey,
-        solana_sdk_ids::{bpf_loader_upgradeable, native_loader, sysvar},
+        solana_runtime::sysvar_account::create_account,
+        solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
         solana_signature::Signature,
         solana_slot_hashes::SlotHashes,
         solana_svm::{
             conformance::fd_hash::fd_hash_or_zero,
             transaction_processing_result::ProcessedTransaction,
         },
+        solana_sysvar_id::SysvarId,
         solana_transaction::versioned::VersionedTransaction,
         std::{borrow::Cow, collections::HashSet, env, fs, sync::Arc},
     };
@@ -601,15 +609,15 @@ mod tests {
         account(lamports, vec![], Pubkey::default(), false)
     }
 
-    fn sysvar_account<T: serde::Serialize>(id: Pubkey, state: &T) -> (Pubkey, AccountSharedData) {
+    fn sysvar_account<T>(sysvar: &T) -> (Pubkey, AccountSharedData)
+    where
+        T: wincode::SchemaWrite<WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, WincodeConfig, Dst = T>
+            + SysvarId,
+    {
         (
-            id,
-            account(
-                1,
-                bincode::serialize(state).unwrap(),
-                native_loader::id(),
-                false,
-            ),
+            T::id(),
+            create_account(sysvar, DUMMY_INHERITABLE_ACCOUNT_FIELDS),
         )
     }
 
@@ -621,7 +629,7 @@ mod tests {
             leader_schedule_epoch: 1,
             unix_timestamp: 1720556855,
         };
-        sysvar_account(sysvar::clock::id(), &clock)
+        sysvar_account(&clock)
     }
 
     fn epoch_schedule_sysvar_account() -> (Pubkey, AccountSharedData) {
@@ -632,23 +640,15 @@ mod tests {
             first_normal_epoch: 14,
             first_normal_slot: 524256,
         };
-        sysvar_account(sysvar::epoch_schedule::id(), &epoch_schedule)
+        sysvar_account(&epoch_schedule)
     }
 
     fn rent_sysvar_account() -> (Pubkey, AccountSharedData) {
-        sysvar_account(sysvar::rent::id(), &solana_rent::Rent::default())
+        sysvar_account(&solana_rent::Rent::default())
     }
 
     fn slot_hashes_sysvar_account() -> (Pubkey, AccountSharedData) {
-        (
-            sysvar::slot_hashes::id(),
-            account(
-                1,
-                wincode::serialize(&SlotHashes::default()).unwrap(),
-                native_loader::id(),
-                false,
-            ),
-        )
+        sysvar_account(&SlotHashes::default())
     }
 
     fn system_program_account() -> (Pubkey, AccountSharedData) {
@@ -674,30 +674,31 @@ mod tests {
         let program_account = Pubkey::new_unique();
         let program_data_account = Pubkey::new_unique();
 
-        let state = UpgradeableLoaderState::Program {
-            programdata_address: program_data_account,
-        };
-        let program = account(
+        let mut program = AccountSharedData::new_data(
             25,
-            bincode::serialize(&state).unwrap(),
-            bpf_loader_upgradeable::id(),
-            true,
-        );
+            &UpgradeableLoaderState::Program {
+                programdata_address: program_data_account,
+            },
+            &bpf_loader_upgradeable::id(),
+        )
+        .unwrap();
+        program.set_executable(true);
+        program.set_rent_epoch(u64::MAX);
 
-        let state = UpgradeableLoaderState::ProgramData {
-            slot: 0,
-            upgrade_authority_address: None,
-        };
-        let mut header = bincode::serialize(&state).unwrap();
-        let mut complement = vec![
-            0;
-            UpgradeableLoaderState::size_of_programdata_metadata()
-                .saturating_sub(header.len())
-        ];
-        let mut buffer = load_program(name);
-        header.append(&mut complement);
-        header.append(&mut buffer);
-        let program_data = account(25, header, bpf_loader_upgradeable::id(), false);
+        let elf = load_program(name);
+        let metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
+        let mut program_data = AccountSharedData::new_data_with_space(
+            25,
+            &UpgradeableLoaderState::ProgramData {
+                slot: 0,
+                upgrade_authority_address: None,
+            },
+            metadata_size.saturating_add(elf.len()),
+            &bpf_loader_upgradeable::id(),
+        )
+        .unwrap();
+        program_data.data_as_mut_slice()[metadata_size..].copy_from_slice(&elf);
+        program_data.set_rent_epoch(u64::MAX);
 
         [
             (program_account, program),

@@ -10,7 +10,7 @@ use {
     log::*,
     solana_accounts_db::{
         accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
-        utils::{create_all_accounts_run_and_snapshot_dirs, validate_account_paths_for_direct_io},
+        utils::{create_all_accounts_run_dirs, validate_account_paths_for_direct_io},
     },
     solana_clock::Slot,
     solana_core::{
@@ -75,8 +75,8 @@ const PROCESS_SLOTS_HELP_STRING: &str =
 
 #[derive(Error, Debug)]
 pub(crate) enum LoadAndProcessLedgerError {
-    #[error("failed to create all run and snapshot directories: {0}")]
-    CreateAllAccountsRunAndSnapshotDirectories(#[source] std::io::Error),
+    #[error("failed to create all account run directories: {0}")]
+    CreateAllAccountsRunDirectories(#[source] std::io::Error),
 
     #[error("custom accounts path is not supported with read-only blockstore access")]
     CustomAccountsPathUnsupported(#[source] BlockstoreError),
@@ -251,22 +251,18 @@ pub fn load_and_process_ledger(
         vec![non_primary_accounts_path]
     };
 
-    let (account_run_paths, account_snapshot_paths) =
-        create_all_accounts_run_and_snapshot_dirs(&account_paths)
-            .map_err(LoadAndProcessLedgerError::CreateAllAccountsRunAndSnapshotDirectories)?;
+    let account_run_paths = create_all_accounts_run_dirs(&account_paths)
+        .map_err(LoadAndProcessLedgerError::CreateAllAccountsRunDirectories)?;
     // From now on, use run/ paths in the same way as the previous account_paths.
     let account_paths = account_run_paths;
 
     validate_account_paths_for_direct_io(
         snapshot_config.use_direct_io,
-        account_paths
-            .iter()
-            .chain(account_snapshot_paths.iter())
-            .chain([
-                &snapshot_config.full_snapshot_archives_dir,
-                &snapshot_config.incremental_snapshot_archives_dir,
-                &snapshot_config.bank_snapshots_dir,
-            ]),
+        account_paths.iter().chain([
+            &snapshot_config.full_snapshot_archives_dir,
+            &snapshot_config.incremental_snapshot_archives_dir,
+            &snapshot_config.bank_snapshots_dir,
+        ]),
     )
     .map_err(LoadAndProcessLedgerError::ValidateAccountPaths)?;
 

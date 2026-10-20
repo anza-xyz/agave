@@ -1,8 +1,6 @@
 use {
-    crate::{
-        banking_stage::BankingControlMsg, cluster_slots_service::cluster_slots::ClusterSlots,
-        repair::repair_service::OutstandingShredRepairs,
-    },
+    crate::{banking_stage::BankingControlMsg, repair::repair_service::OutstandingShredRepairs},
+    agave_event_system::EventSystem,
     agave_votor::event::VotorEventSender,
     solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
     solana_ledger::blockstore::Blockstore,
@@ -77,6 +75,7 @@ impl<'a> IntoIterator for &'a KeyUpdaters {
 
 #[derive(Clone)]
 pub struct AdminRpcRequestMetadataPostInit {
+    pub event_system: EventSystem,
     pub cluster_info: Arc<ClusterInfo>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub vote_account: Pubkey,
@@ -84,7 +83,6 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub notifies: Arc<RwLock<KeyUpdaters>>,
     pub repair_socket: Arc<UdpSocket>,
     pub outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
-    pub cluster_slots: Arc<ClusterSlots>,
     pub node: Option<Arc<NodeMultihoming>>,
     pub banking_control_sender: mpsc::Sender<BankingControlMsg>,
     pub snapshot_controller: Arc<SnapshotController>,

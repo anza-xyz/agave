@@ -97,7 +97,6 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-fs_extra = { workspace = true }
 gag = { workspace = true }
 serial_test = { workspace = true }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }

@@ -1,7 +1,7 @@
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {
     crate::shred::Nonce,
-    solana_perf::packet::{BytesPacket, Meta, Packet, bytes::BufMut},
+    solana_perf::packet::{BytesPacket, Meta, bytes::BufMut},
 };
 use {
     bytes::{Bytes, BytesMut},
@@ -75,12 +75,6 @@ impl Payload {
 
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 impl Payload {
-    pub fn copy_to_packet(&self, packet: &mut Packet) {
-        let size = self.len();
-        packet.buffer_mut()[..size].copy_from_slice(&self[..]);
-        packet.meta_mut().size = size;
-    }
-
     pub fn to_bytes_packet(&self, nonce: Option<Nonce>) -> BytesPacket {
         let cap = self.len() + nonce.map(|_| mem::size_of::<Nonce>()).unwrap_or(0);
         let mut buffer = BytesMut::with_capacity(cap);

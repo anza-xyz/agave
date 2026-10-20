@@ -2,6 +2,7 @@
 
 use {
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
+    ahash::{AHashMap, AHashSet},
     protosol::protos::FeatureSet as ProtoFeatureSet,
     solana_pubkey::Pubkey,
     std::{collections::HashMap, sync::LazyLock},
@@ -28,11 +29,13 @@ static INDEXED_FEATURES: LazyLock<HashMap<u64, Pubkey>> = LazyLock::new(|| {
 
 /// Build a `FeatureSet` from a protobuf feature set.
 pub fn feature_set_from_proto(value: &ProtoFeatureSet) -> FeatureSet {
-    let mut feature_set = FeatureSet::default();
+    let mut active = AHashMap::default();
+    let mut inactive: AHashSet<Pubkey> = FEATURE_NAMES.keys().cloned().collect();
     for id in &value.features {
         if let Some(pubkey) = INDEXED_FEATURES.get(id) {
-            feature_set.activate(pubkey, 0);
+            inactive.remove(pubkey);
+            active.insert(*pubkey, 0);
         }
     }
-    feature_set
+    FeatureSet::new(active, inactive)
 }

@@ -1,6 +1,6 @@
 /// Module responsible for notifying plugins about entries
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::{
         block_footer,
         geyser_plugin_interface::{
@@ -72,7 +72,7 @@ fn convert_finalization_cert(
     } = cert;
     block_footer::BlockFinalizationCert {
         slot: *slot,
-        block_id: *block_id,
+        block_id: block_id.to_hash(),
         final_aggregate: convert_votes_aggregate(final_aggregate),
         notar_aggregate: notar_aggregate.as_ref().map(convert_votes_aggregate),
     }
@@ -89,7 +89,7 @@ fn convert_votes_aggregate(
 }
 
 pub(crate) struct EntryNotifierImpl {
-    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
 }
 
 impl EntryNotifier for EntryNotifierImpl {
@@ -102,14 +102,14 @@ impl EntryNotifier for EntryNotifierImpl {
         starting_transaction_index: usize,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
         let entry_info =
             Self::build_replica_entry_info(slot, index, entry, starting_transaction_index);
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.entry_notifications_enabled() {
                 continue;
             }
@@ -138,7 +138,7 @@ impl EntryNotifier for EntryNotifierImpl {
         block_footer: &block_component::VersionedBlockFooter,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
@@ -147,7 +147,7 @@ impl EntryNotifier for EntryNotifierImpl {
             slot,
             block_footer: &block_footer,
         };
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.block_footer_notifications_enabled() {
                 continue;
             }
@@ -174,9 +174,9 @@ impl EntryNotifier for EntryNotifierImpl {
             slot: update_parent.slot,
             cleared_bank_id: update_parent.cleared_bank_id.into(),
             parent_slot: update_parent.parent_slot,
-            parent_block_id: &update_parent.parent_block_id,
+            parent_block_id: &update_parent.parent_block_id.to_hash(),
         };
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins() {
             if plugin.entry_notifications_enabled()
                 && let Err(err) = plugin.notify_entry_update_parent(
                     ReplicaEntryUpdateParentInfoVersions::V0_0_1(&update_parent_info),
@@ -192,7 +192,7 @@ impl EntryNotifier for EntryNotifierImpl {
 }
 
 impl EntryNotifierImpl {
-    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginHost>>) -> Self {
         Self { plugin_manager }
     }
 
@@ -217,9 +217,12 @@ impl EntryNotifierImpl {
 mod tests {
     use {
         super::*,
-        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_host::{GeyserPluginHost, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
-        agave_votor_messages::reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        agave_votor_messages::{
+            consensus_message::BlockId,
+            reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        },
         arc_swap::ArcSwap,
         libloading::Library,
         solana_bls_signatures::{BLS_SIGNATURE_COMPRESSED_SIZE, SignatureCompressed},
@@ -310,11 +313,8 @@ mod tests {
         #[cfg(windows)]
         let library = libloading::os::windows::Library::this().unwrap();
 
-        Arc::new(LoadedGeyserPlugin::new(
-            Library::from(library),
-            Box::new(plugin),
-            None,
-        ))
+        // SAFETY: This plugin is defined in the current executable and starts no background work.
+        Arc::new(unsafe { LoadedGeyserPlugin::new(Library::from(library), Box::new(plugin), None) })
     }
 
     #[test]
@@ -325,8 +325,8 @@ mod tests {
         let block_footer_plugin_entry_updates = Arc::new(Mutex::new(Vec::new()));
         let block_footer_plugin_update_parents = Arc::new(Mutex::new(Vec::new()));
         let block_footer_plugin_block_footer_updates = Arc::new(Mutex::new(Vec::new()));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![
                 loaded_test_plugin(TestEntryPlugin {
                     entry_notifications_enabled: true,
                     block_footer_notifications_enabled: false,
@@ -342,7 +342,7 @@ mod tests {
                     block_footer_updates: block_footer_plugin_block_footer_updates.clone(),
                 }),
             ],
-        })));
+        ))));
         let notifier = EntryNotifierImpl::new(plugin_manager);
         let entry = EntrySummary {
             num_hashes: 1,
@@ -350,7 +350,7 @@ mod tests {
             num_transactions: 2,
         };
         let bank_hash = Hash::new_unique();
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let signature = SignatureCompressed([7; BLS_SIGNATURE_COMPRESSED_SIZE]);
         let block_footer = VersionedBlockFooter::V1(BlockFooterV1 {
             bank_hash,
@@ -364,7 +364,8 @@ mod tests {
             }),
             skip_reward_cert: Some(SkipRewardCertificate::try_new(41, signature, vec![6]).unwrap()),
             notar_reward_cert: Some(
-                NotarRewardCertificate::try_new(42, block_id, signature, vec![8]).unwrap(),
+                NotarRewardCertificate::try_new(42, block_id.to_hash(), signature, vec![8])
+                    .unwrap(),
             ),
         });
         let expected_block_footer =
@@ -374,7 +375,7 @@ mod tests {
                 block_user_agent: b"test-validator",
                 block_final_cert: Some(block_footer::BlockFinalizationCert {
                     slot: 42,
-                    block_id,
+                    block_id: block_id.to_hash(),
                     final_aggregate: block_footer::VotesAggregate {
                         signature,
                         bitmap: &[1, 2, 3],
@@ -391,12 +392,12 @@ mod tests {
                 }),
                 notar_reward_cert: Some(block_footer::NotarRewardCertificate {
                     slot: 42,
-                    block_id,
+                    block_id: block_id.to_hash(),
                     signature,
                     bitmap: &[8],
                 }),
             });
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
 
         notifier.notify_entry(42, BankId::new(9), 3, &entry, 7);
         notifier.notify_entry_update_parent(&EntryUpdateParentInfo {
@@ -413,7 +414,7 @@ mod tests {
         );
         assert_eq!(
             *entry_plugin_update_parents.lock().unwrap(),
-            vec![(42, 9, 40, parent_block_id)]
+            vec![(42, 9, 40, parent_block_id.to_hash())]
         );
         assert!(entry_plugin_block_footer_updates.lock().unwrap().is_empty());
         assert!(block_footer_plugin_entry_updates.lock().unwrap().is_empty());

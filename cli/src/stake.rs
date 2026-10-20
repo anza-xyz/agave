@@ -14,7 +14,7 @@ use {
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
     },
     clap::{App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand, value_t},
-    solana_account::Account,
+    solana_account::{Account, state_traits::StateMutWincode as _},
     solana_clap_utils::{
         ArgConstant,
         compute_budget::{COMPUTE_UNIT_PRICE_ARG, ComputeUnitLimit, compute_unit_price_arg},
@@ -2742,12 +2742,11 @@ pub async fn get_account_stake_state(
     match wincode::deserialize::<StakeStateV2>(&stake_account.data) {
         Ok(stake_state) => {
             let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
-            let stake_history: StakeHistory = wincode::deserialize(&stake_history_account.data)
-                .map_err(|_| {
-                    CliError::RpcRequestError("Failed to deserialize stake history".to_string())
-                })?;
+            let stake_history: StakeHistory = stake_history_account.state().map_err(|_| {
+                CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+            })?;
             let clock_account = rpc_client.get_account(&clock::id()).await?;
-            let clock: Clock = wincode::deserialize(&clock_account.data).map_err(|_| {
+            let clock: Clock = clock_account.state().map_err(|_| {
                 CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
             })?;
             let new_rate_activation_epoch = get_feature_activation_epoch(
@@ -2803,10 +2802,9 @@ pub async fn process_show_stake_history(
     limit_results: usize,
 ) -> ProcessResult {
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
-    let stake_history =
-        wincode::deserialize::<StakeHistory>(&stake_history_account.data).map_err(|_| {
-            CliError::RpcRequestError("Failed to deserialize stake history".to_string())
-        })?;
+    let stake_history: StakeHistory = stake_history_account.state().map_err(|_| {
+        CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+    })?;
 
     let limit_results = match config.output_format {
         OutputFormat::Json | OutputFormat::JsonCompact => usize::MAX,

@@ -62,13 +62,13 @@ pub(crate) fn rank_map_response(epoch: Epoch, stakes: &VersionedEpochStakes) -> 
                 vote_pubkey: vote_account_pubkey.to_string(),
                 node_pubkey: node_pubkey.to_string(),
                 bls_pubkey_compressed: bs58::encode(bls_pubkey.to_bytes_compressed()).into_string(),
-                stake: *stake,
+                stake: stake.get(),
             }
         })
         .collect();
     Arc::new(RpcRankMap {
         epoch,
-        total_stake: rank_map.total_stake(),
+        total_stake: rank_map.total_stake().get(),
         validators,
     })
 }

@@ -44,7 +44,7 @@ impl SetRootCommand {
     pub fn matches_frozen_bank(&self, bank_forks: &BankForks) -> bool {
         self.new_root.slot > bank_forks.root()
             && bank_forks.get(self.new_root.slot).is_some_and(|bank| {
-                bank.is_frozen() && bank.block_id() == Some(self.new_root.block_id.to_hash())
+                bank.is_frozen() && bank.block_id() == Some(self.new_root.block_id)
             })
     }
 }
@@ -280,7 +280,7 @@ mod tests {
         let parent_bank = bank_forks.read().unwrap().root_bank();
         let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
         let block_id = BlockId::new_unique();
-        bank.set_block_id(Some(block_id.to_hash()));
+        bank.set_block_id(Some(block_id));
         let bank = bank_forks
             .write()
             .unwrap()
@@ -364,7 +364,7 @@ mod tests {
         let parent_bank = bank_forks.read().unwrap().root_bank();
         let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
         let block_id = BlockId::new_unique();
-        bank.set_block_id(Some(block_id.to_hash()));
+        bank.set_block_id(Some(block_id));
         bank.freeze();
         let inserted_bank = controller.insert_bank(bank).unwrap();
         assert_eq!(inserted_bank.slot(), 1);

@@ -926,16 +926,18 @@ mod tests {
     fn test_shred_deduper() {
         let keypair = get_keypair();
         let entries = create_ticks(10, 1, Hash::new_unique());
-        let make_shreds_for_slot = |slot, parent, code_index| {
+        let make_shreds_for_slot = |slot, parent| {
             let shredder = Shredder::new(slot, parent, 1, 0).unwrap();
+            let next_shred_index = 0;
+            let next_code_index = 0;
             shredder.entries_to_merkle_shreds_for_tests(
                 &keypair,
                 &entries,
                 true,
                 // chained_merkle_root
                 Hash::new_from_array(rand::rng().random()),
-                0,
-                code_index,
+                next_shred_index,
+                next_code_index,
                 &mut ProcessShredsStats::default(),
             )
         };
@@ -944,11 +946,11 @@ mod tests {
         let shred_deduper = ShredDeduper::<2>::new(&mut rng, /*num_bits:*/ 640_007);
 
         // make a set of shreds for slot 5 with parent slot 4
-        let (shreds_data_5_4, shreds_code_5_4) = make_shreds_for_slot(5, 4, 0);
+        let (shreds_data_5_4, shreds_code_5_4) = make_shreds_for_slot(5, 4);
         // make a set of shreds for slot 5 with parent slot 3
-        let (shreds_data_5_3, _shreds_code_5_3) = make_shreds_for_slot(5, 3, 0);
+        let (shreds_data_5_3, shreds_code_5_3) = make_shreds_for_slot(5, 3);
         // make a set of shreds for slot 5 with parent slot 2
-        let (shreds_data_5_2, _shreds_code_5_2) = make_shreds_for_slot(5, 2, 0);
+        let (shreds_data_5_2, shreds_code_5_2) = make_shreds_for_slot(5, 2);
         // pick a shred for tests
         let shred = shreds_data_5_4.last().unwrap().clone();
         // unique shred should pass
@@ -1004,14 +1006,12 @@ mod tests {
             "
         );
 
-        // Make a coding shred at index 4 based off FEC set index 2
-        let (_, shreds_code_invalid) = make_shreds_for_slot(5, 4, 2);
-
-        let shred_inv_code_1 = shreds_code_invalid[2].clone();
+        // Pick a coding shred at index 4 from an erasure batch with parent slot 3
+        let shred_inv_code_1 = shreds_code_5_3[4].clone();
         assert_eq!(
             shred.index(),
             shred_inv_code_1.index(),
-            "we want a shred with same index but different FEC set index"
+            "we want a shred with same index but different signature"
         );
         // 2nd unique coding passes
         assert!(
@@ -1020,8 +1020,8 @@ mod tests {
                 shred_inv_code_1.payload(),
                 MAX_DUPLICATE_COUNT
             ),
-            "First time seeing shred Y w/ changed header (FEC Set index 2) => Not dup because \
-             common header is unique & shred ID only seen once"
+            "First time seeing shred Y from a different erasure batch => Not dup because common \
+             header is unique & shred ID only seen once"
         );
         // same again is blocked
         assert!(
@@ -1031,17 +1031,15 @@ mod tests {
                 MAX_DUPLICATE_COUNT
             ),
             "
-           Second time seeing shred Y w/ changed header (FEC Set index 2) => Dup because common \
-             header is not unique & shred ID seen twice "
+           Second time seeing shred Y from a different erasure batch => Dup because common header \
+             is not unique & shred ID seen twice "
         );
-        // Make a coding shred at index 4 based off FEC set index 3
-        let (_, shreds_code_invalid) = make_shreds_for_slot(5, 4, 3);
-
-        let shred_inv_code_2 = shreds_code_invalid[1].clone();
+        // Pick a coding shred at index 4 from an erasure batch with parent slot 2
+        let shred_inv_code_2 = shreds_code_5_2[4].clone();
         assert_eq!(
             shred.index(),
             shred_inv_code_2.index(),
-            "we want a shred with same index but different FEC set index"
+            "we want a shred with same index but different signature"
         );
         assert!(
             shred_deduper.dedup(
@@ -1050,8 +1048,8 @@ mod tests {
                 MAX_DUPLICATE_COUNT
             ),
             "
-           First time seeing shred Y w/ changed header (FEC Set index 3)=>Dup because common \
-             header is unique but shred ID seen twice already"
+           First time seeing shred Y from a third erasure batch => Dup because common header is \
+             unique but shred ID seen twice already"
         );
     }
 

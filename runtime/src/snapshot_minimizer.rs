@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        bank::Bank,
+        alpenglow_epoch_type::REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT, bank::Bank,
         block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
         static_ids,
     },
@@ -15,7 +15,7 @@ use {
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         prelude::ParallelSlice,
     },
-    solana_account::ReadableAccount,
+    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsDb, GetUniqueAccountsResult},
@@ -137,6 +137,8 @@ impl<'a> SnapshotMinimizer<'a> {
         self.minimized_account_set
             .insert(*GENESIS_CERTIFICATE_ACCOUNT);
         self.minimized_account_set.insert(*VOTE_REWARD_ACCOUNT_ADDR);
+        self.minimized_account_set
+            .insert(*REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT);
     }
 
     /// Used to get reserved accounts in `minimize`
@@ -191,7 +193,7 @@ impl<'a> SnapshotMinimizer<'a> {
             .filter_map(|account| {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = wincode::deserialize(account.data())
+                }) = account.state()
                 {
                     Some(programdata_address)
                 } else {
@@ -335,6 +337,7 @@ impl<'a> SnapshotMinimizer<'a> {
             self.accounts_db()
                 .store_accounts_for_shrink(&storable_accounts, new_storage);
 
+            new_storage.disable_remove_on_drop();
             new_storage.flush().unwrap();
         }
 
@@ -368,13 +371,13 @@ mod tests {
             snapshot_minimizer::SnapshotMinimizer, snapshot_utils,
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::consensus_message::BlockId,
         dashmap::DashSet,
         solana_account::{
             AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
         },
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_genesis_config::create_genesis_config,
-        solana_hash::Hash,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
@@ -815,7 +818,7 @@ mod tests {
         )
         .unwrap();
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
         bank.squash();
         bank.force_flush_accounts_cache();
 

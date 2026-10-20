@@ -31,6 +31,7 @@ use {
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
+    agave_event_system::{EventSystem, stream_policy::StreamPolicy},
     agave_jemalloc::group::ArenaGroup,
     agave_snapshots::{
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
@@ -46,7 +47,7 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
-    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
+    solana_account::{ReadableAccount, WINCODE_CONFIG},
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -334,7 +335,6 @@ pub struct ValidatorConfig {
     pub expected_shred_version: Option<u16>,
     pub voting_disabled: bool,
     pub account_paths: Vec<PathBuf>,
-    pub account_snapshot_paths: Vec<PathBuf>,
     pub rpc_config: JsonRpcConfig,
     /// Specifies which plugins to start up with
     pub on_start_geyser_plugin_config_files: Option<Vec<PathBuf>>,
@@ -425,7 +425,6 @@ impl ValidatorConfig {
             blockstore_cleanup_strategy: BlockstoreCleanupStrategy::None,
             blockstore_options: BlockstoreOptions::default_for_tests(),
             account_paths: Vec::new(),
-            account_snapshot_paths: Vec::new(),
             rpc_config: JsonRpcConfig::default_for_test(),
             on_start_geyser_plugin_config_files: None,
             geyser_plugin_always_enabled: false,
@@ -720,6 +719,9 @@ pub struct Validator {
     pub cluster_info: Arc<ClusterInfo>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub blockstore: Arc<Blockstore>,
+    /// Keep the event directory alive even when no admin RPC metadata or event
+    /// producers retain a handle yet.
+    _event_system: EventSystem,
     geyser_plugin_service: Option<GeyserPluginService>,
     /// Held for the lifetime of the validator so the dispatch thread keeps
     /// running. `None` when no loaded plugin opted into contact info
@@ -985,6 +987,8 @@ impl Validator {
                 .then(|| dependency_tracker.clone()),
         )
         .map_err(ValidatorError::Other)?;
+
+        let event_system = initialize_event_system(&blockstore)?;
 
         let migration_status = bank_forks.read().unwrap().migration_status();
 
@@ -1646,6 +1650,7 @@ impl Validator {
             banking_tracer: banking_tracer.clone(),
             slot_status_notifier: slot_status_notifier.clone(),
             entry_notification_sender: entry_notification_sender.clone(),
+            transaction_status_sender: transaction_status_sender.clone(),
             leader_window_info_receiver,
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
@@ -1763,7 +1768,7 @@ impl Validator {
             Some(snapshot_controller.clone()),
             banking_tracer,
             outstanding_repair_requests.clone(),
-            cluster_slots.clone(),
+            cluster_slots,
             slot_status_notifier,
             vote_connection_cache,
             AlpenglowInitializationState {
@@ -1885,6 +1890,7 @@ impl Validator {
         }
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
+            event_system: event_system.clone(),
             bank_forks: bank_forks.clone(),
             cluster_info: cluster_info.clone(),
             vote_account: *vote_account,
@@ -1892,7 +1898,6 @@ impl Validator {
             notifies: key_notifiers,
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
-            cluster_slots,
             node: Some(node_multihoming),
             banking_control_sender,
             snapshot_controller,
@@ -1926,6 +1931,7 @@ impl Validator {
             cluster_info,
             bank_forks,
             blockstore,
+            _event_system: event_system,
             geyser_plugin_service,
             _contact_info_notifier: contact_info_notifier,
             blockstore_metric_report_service,
@@ -2143,7 +2149,10 @@ pub fn should_require_vote_history_file(
         return false;
     };
 
-    let Some(Ok(vote_state)) = bank.get_account(vote_account).map(|acct| acct.state()) else {
+    let Some(Ok(vote_state)) = bank
+        .get_account(vote_account)
+        .map(|acct| wincode::config::deserialize(acct.data(), WINCODE_CONFIG))
+    else {
         // Must have a vote account
         return false;
     };
@@ -2425,6 +2434,60 @@ fn load_genesis(
     }
 
     Ok(genesis_config)
+}
+
+#[derive(Debug, Error)]
+enum InitializeEventSystemError {
+    #[error("event system initialization requires primary blockstore access")]
+    PrimaryAccessRequired,
+    #[error("failed to clear event directory {path:?}: {source}")]
+    ClearDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to initialize event system at {path:?}: {source}")]
+    Create {
+        path: PathBuf,
+        source: agave_event_system::CreateEventSystemError,
+    },
+}
+
+/// The validator owns the event directory for the lifetime of its primary ledger access.
+fn initialize_event_system(
+    blockstore: &Blockstore,
+) -> std::result::Result<EventSystem, InitializeEventSystemError> {
+    if !blockstore.is_primary_access() {
+        return Err(InitializeEventSystemError::PrimaryAccessRequired);
+    }
+    let stream_policy = match std::env::var("AGAVE_EVENTS") {
+        Ok(filter) => filter.parse::<StreamPolicy>().unwrap_or_else(|err| {
+            warn!("Invalid AGAVE_EVENTS filter: {err}; disabling all events");
+            StreamPolicy::default()
+        }),
+        Err(std::env::VarError::NotPresent) => StreamPolicy::default(),
+        Err(err) => {
+            warn!("Failed to read AGAVE_EVENTS: {err}; disabling all events");
+            StreamPolicy::default()
+        }
+    };
+    let events_path = blockstore.ledger_path().join("events");
+    match std::fs::remove_dir_all(&events_path) {
+        Ok(()) => (),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (),
+        Err(err) => {
+            return Err(InitializeEventSystemError::ClearDirectory {
+                path: events_path,
+                source: err,
+            });
+        }
+    }
+    let event_system =
+        EventSystem::new(&events_path).map_err(|source| InitializeEventSystemError::Create {
+            path: events_path,
+            source,
+        })?;
+    event_system.set_stream_policy(stream_policy);
+    Ok(event_system)
 }
 
 #[allow(clippy::type_complexity)]
@@ -3211,15 +3274,11 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {
     validate_account_paths_for_direct_io(
         config.snapshot_config.use_direct_io,
-        config
-            .account_paths
-            .iter()
-            .chain(&config.account_snapshot_paths)
-            .chain([
-                &config.snapshot_config.full_snapshot_archives_dir,
-                &config.snapshot_config.incremental_snapshot_archives_dir,
-                &config.snapshot_config.bank_snapshots_dir,
-            ]),
+        config.account_paths.iter().chain([
+            &config.snapshot_config.full_snapshot_archives_dir,
+            &config.snapshot_config.incremental_snapshot_archives_dir,
+            &config.snapshot_config.bank_snapshots_dir,
+        ]),
     )
 }
 
@@ -3251,19 +3310,61 @@ mod tests {
         crate::test_utils::RecordingAccountsNotifier,
         agave_votor_messages::certificate::{CertSignature, GenesisCert},
         crossbeam_channel::{RecvTimeoutError, bounded},
+        solana_account::state_traits::StateMutWincode,
         solana_entry::entry,
         solana_genesis_config::create_genesis_config,
         solana_gossip::contact_info::ContactInfo,
         solana_leader_schedule::SlotLeader,
         solana_ledger::{
-            blockstore, create_new_tmp_ledger, genesis_utils::create_genesis_config_with_leader,
-            get_tmp_ledger_path_auto_delete,
+            blockstore, blockstore_options::AccessType, create_new_tmp_ledger,
+            genesis_utils::create_genesis_config_with_leader, get_tmp_ledger_path_auto_delete,
         },
         solana_poh_config::PohConfig,
         solana_sha256_hasher::hash,
         solana_vote_program::vote_state::{LandedVote, Lockout, VoteStateVersions},
         std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
+
+    #[test]
+    fn test_initialize_event_system() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let events_path = ledger_path.path().join("events");
+
+        std::fs::create_dir_all(events_path.join("stale")).unwrap();
+        let stale_event = events_path.join("stale/event");
+        std::fs::write(&stale_event, b"stale").unwrap();
+
+        // Opening the ledger, including for maintenance, must not reset events.
+        drop(blockstore);
+        let blockstore = Blockstore::open_with_options(
+            ledger_path.path(),
+            BlockstoreOptions {
+                access_type: AccessType::PrimaryForMaintenance,
+                ..BlockstoreOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(stale_event.exists());
+        let reader = Blockstore::open_with_options(
+            ledger_path.path(),
+            BlockstoreOptions {
+                access_type: AccessType::ReadOnly,
+                ..BlockstoreOptions::default()
+            },
+        )
+        .unwrap();
+        assert_matches!(
+            initialize_event_system(&reader),
+            Err(InitializeEventSystemError::PrimaryAccessRequired)
+        );
+        assert!(stale_event.exists());
+
+        let _event_system = initialize_event_system(&blockstore).unwrap();
+        assert!(!stale_event.exists());
+        #[cfg(target_os = "linux")]
+        assert!(events_path.join("event-streams").is_dir());
+    }
 
     #[test]
     fn test_xdp_components_validate_sender_positions_with_component_context() {

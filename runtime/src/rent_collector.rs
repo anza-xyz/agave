@@ -44,15 +44,4 @@ impl RentCollector {
             ..self.clone()
         }
     }
-
-    #[allow(deprecated)]
-    pub(crate) fn deprecate_rent_exemption_threshold(&mut self) {
-        self.rent = Rent {
-            lamports_per_byte: (self.rent.lamports_per_byte as f64
-                * f64::from_le_bytes(self.rent.exemption_threshold))
-                as u64,
-            exemption_threshold: 1.0f64.to_le_bytes(),
-            burn_percent: 50,
-        }
-    }
 }

@@ -20,6 +20,7 @@ mod serde_snapshot_tests {
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::consensus_message::BlockId,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
@@ -39,7 +40,6 @@ mod serde_snapshot_tests {
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
-        solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         std::{
@@ -132,7 +132,9 @@ mod serde_snapshot_tests {
             // Copy file to new directory
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
-            buf_reader.set_file(file.as_ref(), storage_entry.accounts.len() as u64)?;
+            if let Some(file) = file {
+                buf_reader.set_file(file.as_ref(), file.read_limit())?;
+            }
             let reader = AccountStorageReader::new(
                 storage_entry,
                 None,
@@ -145,7 +147,7 @@ mod serde_snapshot_tests {
 
             // Read new file into append-vec and build new entry
             let file_info = FileInfo::new_from_path(output_path)?;
-            let accounts_file = AccountsFile::new_for_startup(file_info)?;
+            let accounts_file = AccountsFile::open_append_vec(file_info)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),
@@ -200,7 +202,7 @@ mod serde_snapshot_tests {
         for _ in 1..num {
             let idx = rng().random_range(0..num - 1);
             let ancestors = Ancestors::from(vec![0]);
-            let account = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx]);
+            let account = accounts.load(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new((idx + 1) as u64, 0, AccountSharedData::default().owner()),
                 0,
@@ -901,7 +903,7 @@ mod serde_snapshot_tests {
 
         let accounts_db = &bank2.rc.accounts.accounts_db;
 
-        bank2.set_block_id(Some(Hash::default()));
+        bank2.set_block_id(Some(BlockId::default()));
         bank2.squash();
         bank2.force_flush_accounts_cache();
 
@@ -977,7 +979,7 @@ mod serde_snapshot_tests {
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         bank0.squash();
         let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
         bank.freeze();
         bank.rc.accounts.add_root(bank.slot());
         bank.force_flush_accounts_cache();
@@ -1056,7 +1058,7 @@ mod serde_snapshot_tests {
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();
         }
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // Set extra field
         bank.fee_rate_governor.lamports_per_signature = 7000;

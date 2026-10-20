@@ -251,12 +251,12 @@ impl RequestResponse for AncestorHashesRepairType {
 pub enum BlockIdRepairType {
     ParentAndFecSetCount {
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     },
 
     FecSetRoot {
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
         // Authenticated by the ParentAndFecSetCount response and retained locally
         // to verify the depth of the FEC-set proof. This is not sent on the wire.
@@ -267,14 +267,8 @@ pub enum BlockIdRepairType {
 impl BlockIdRepairType {
     pub(crate) fn block(&self) -> Block {
         match *self {
-            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block {
-                slot,
-                block_id: BlockId::from(block_id),
-            },
-            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block {
-                slot,
-                block_id: BlockId::from(block_id),
-            },
+            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block { slot, block_id },
+            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block { slot, block_id },
         }
     }
 
@@ -355,7 +349,7 @@ impl RequestResponse for BlockIdRepairType {
                     merkle_tree::hash_as_merkle_proof_entry(&parent_info_leaf),
                     *fec_set_count as usize,
                     parent_proof,
-                    *block_id,
+                    block_id.to_hash(),
                 )
                 .is_ok()
             }
@@ -394,7 +388,7 @@ impl RequestResponse for BlockIdRepairType {
                     fec_set_root.as_bytes(),
                     leaf_index,
                     fec_set_proof,
-                    *block_id,
+                    block_id.to_hash(),
                 )
                 .is_ok()
             }
@@ -535,19 +529,19 @@ pub enum RepairProtocol {
     ParentAndFecSetCount {
         header: RepairRequestHeader,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     },
     FecSetRoot {
         header: RepairRequestHeader,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
     },
     WindowIndexForBlockId {
         header: RepairRequestHeader,
         slot: Slot,
         shred_index: u32,
-        block_id: Hash,
+        block_id: BlockId,
     },
 }
 
@@ -589,19 +583,19 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
             12 => RepairProtocol::ParentAndFecSetCount {
                 header: rng.random(),
                 slot: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
             },
             13 => RepairProtocol::FecSetRoot {
                 header: rng.random(),
                 slot: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
                 fec_set_index: rng.random(),
             },
             14 => RepairProtocol::WindowIndexForBlockId {
                 header: rng.random(),
                 slot: rng.random(),
                 shred_index: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
             },
             _ => unreachable!(),
         }
@@ -1081,9 +1075,12 @@ impl ServeRepair {
                 } => {
                     stats.parent += 1;
                     let response = if self.migration_status.should_allow_block_markers(*slot) {
-                        let response = self
-                            .repair_handler
-                            .run_parent_fec_set_count(from_addr, *slot, *block_id, *nonce);
+                        let response = self.repair_handler.run_parent_fec_set_count(
+                            from_addr,
+                            *slot,
+                            block_id.to_hash(),
+                            *nonce,
+                        );
                         if response.is_none() {
                             stats.parent_misses += 1;
                         }
@@ -1104,7 +1101,7 @@ impl ServeRepair {
                         let response = self.repair_handler.run_fec_set_root(
                             from_addr,
                             *slot,
-                            *block_id,
+                            block_id.to_hash(),
                             *fec_set_index,
                             *nonce,
                         );
@@ -1129,7 +1126,7 @@ impl ServeRepair {
                             from_addr,
                             *slot,
                             u64::from(*shred_index),
-                            *block_id,
+                            block_id.to_hash(),
                             *nonce,
                         );
                         if batch.is_none() {
@@ -1997,7 +1994,7 @@ impl ServeRepair {
                 header,
                 slot: *slot,
                 shred_index: *index,
-                block_id: block_id.to_hash(),
+                block_id: *block_id,
             },
         };
         Self::repair_proto_to_bytes(&request_proto, identity_keypair)
@@ -2103,9 +2100,7 @@ mod tests {
             },
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_perf::packet::{
-            Packet, PacketFlags, deserialize_slice_from_packet, packet_from_data,
-        },
+        solana_perf::packet::{PacketFlags, deserialize_slice_from_packet},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
@@ -2129,7 +2124,7 @@ mod tests {
         let keypair = Keypair::new();
         let ping = Ping::new(rng.random(), &keypair);
         let ping = RepairResponse::Ping(ping);
-        let pkt = packet_from_data(None, ping).unwrap();
+        let pkt = bytes_packet_from_data(None, ping).unwrap();
         assert_eq!(pkt.meta().size, REPAIR_RESPONSE_SERIALIZED_PING_BYTES);
     }
 
@@ -2137,9 +2132,8 @@ mod tests {
     fn test_deserialize_shred_as_ping() {
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(123, &keypair);
-        let mut pkt = Packet::default();
-        shred.copy_to_packet(&mut pkt);
-        pkt.meta_mut().size = REPAIR_RESPONSE_SERIALIZED_PING_BYTES;
+        let mut pkt = shred.payload().to_bytes_packet(None);
+        pkt.set_buffer(pkt.buffer().slice(..REPAIR_RESPONSE_SERIALIZED_PING_BYTES));
         let res = deserialize_slice_from_packet::<RepairResponse, _>(&pkt, ..);
         if let Ok(RepairResponse::Ping(ping)) = res {
             assert!(!ping.verify());
@@ -2234,7 +2228,7 @@ mod tests {
             REPAIR_PING_CACHE_CAPACITY,
         );
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let header = |nonce| {
             RepairRequestHeader::new(
                 remote_keypair.pubkey(),
@@ -2282,10 +2276,6 @@ mod tests {
         }
     }
 
-    fn make_remote_request(packet: &Packet) -> BytesPacket {
-        BytesPacket::from(packet)
-    }
-
     #[test]
     fn test_check_well_formed_repair_request() {
         let mut rng = rand::rng();
@@ -2293,13 +2283,13 @@ mod tests {
         let ping = Ping::new(rng.random(), &keypair);
         let pong = Pong::new(&ping, &keypair);
         let request = RepairProtocol::Pong(pong);
-        let mut pkt = packet_from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
+        let mut pkt = bytes_packet_from_data(None, request).unwrap();
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 5;
-        let mut batch = vec![make_remote_request(&pkt)];
+        pkt.set_buffer(pkt.buffer().slice(..5));
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 0);
@@ -2310,13 +2300,13 @@ mod tests {
             slot: 123,
             shred_index: 456,
         };
-        let mut pkt = packet_from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
+        let mut pkt = bytes_packet_from_data(None, request).unwrap();
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 8;
-        let mut batch = vec![make_remote_request(&pkt)];
+        pkt.set_buffer(pkt.buffer().slice(..8));
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 0);
@@ -2326,13 +2316,13 @@ mod tests {
             header: repair_request_header_for_tests(),
             slot: 123,
         };
-        let mut pkt = packet_from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
+        let mut pkt = bytes_packet_from_data(None, request).unwrap();
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 1;
-        let mut batch = vec![make_remote_request(&pkt)];
+        pkt.set_buffer(pkt.buffer().slice(..1));
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 0);
@@ -2342,13 +2332,13 @@ mod tests {
             header: repair_request_header_for_tests(),
             slot: 262_547_696,
         };
-        let mut pkt = packet_from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
+        let mut pkt = bytes_packet_from_data(None, request).unwrap();
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 3;
-        let mut batch = vec![make_remote_request(&pkt)];
+        pkt.set_buffer(pkt.buffer().slice(..3));
+        let mut batch = vec![pkt.clone()];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
         assert_eq!(num_well_formed, 0);
@@ -2537,14 +2527,12 @@ mod tests {
         let my_keypair = Keypair::new();
         let other_keypair = Keypair::new();
 
-        fn sign_packet(packet: &mut Packet, keypair: &Keypair) {
-            let signable_data = [
-                packet.data(..4).unwrap(),
-                packet.data(4 + SIGNATURE_BYTES..).unwrap(),
-            ]
-            .concat();
+        fn sign_packet(packet: &mut BytesPacket, keypair: &Keypair) {
+            let mut buffer = packet.buffer().to_vec();
+            let signable_data = [&buffer[..4], &buffer[4 + SIGNATURE_BYTES..]].concat();
             let signature = keypair.sign_message(&signable_data[..]);
-            packet.buffer_mut()[4..4 + SIGNATURE_BYTES].copy_from_slice(signature.as_ref());
+            buffer[4..4 + SIGNATURE_BYTES].copy_from_slice(signature.as_ref());
+            packet.set_buffer(buffer);
         }
 
         // well formed packet
@@ -2557,7 +2545,7 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = packet_from_data(None, request).unwrap();
+            let mut packet = bytes_packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
@@ -2581,7 +2569,7 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = packet_from_data(None, request).unwrap();
+            let mut packet = bytes_packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
@@ -2607,7 +2595,7 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = packet_from_data(None, request).unwrap();
+            let mut packet = bytes_packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
@@ -2631,7 +2619,7 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = packet_from_data(None, request).unwrap();
+            let mut packet = bytes_packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &other_keypair);
             packet
         };
@@ -2707,7 +2695,7 @@ mod tests {
         assert!(rv.is_none());
         let shredder = Shredder::new(slot, slot - 1, 0, 2).unwrap();
         let keypair = Keypair::new();
-        let index = 1;
+        let index = 32;
         let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &[],
@@ -2738,7 +2726,7 @@ mod tests {
                 Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
             })
             .collect();
-        assert_eq!(rv[0].index(), 1);
+        assert_eq!(rv[0].index(), index as u32);
         assert_eq!(rv[0].slot(), slot);
     }
 
@@ -3141,7 +3129,7 @@ mod tests {
                 &repair_info,
                 BlockIdRepairType::ParentAndFecSetCount {
                     slot,
-                    block_id: Hash::new_unique(),
+                    block_id: BlockId::new_unique(),
                 },
                 &mut peers_cache,
                 &mut outstanding_block_id_requests,
@@ -3430,7 +3418,7 @@ mod tests {
         let tree =
             merkle_tree::MerkleTree::try_new_with_len(leaves.iter().copied().map(Ok), leaves.len())
                 .unwrap();
-        let block_id = *tree.root();
+        let block_id = BlockId::from(*tree.root());
         let real_parent_proof: Vec<u8> = tree
             .make_merkle_proof(fec_set_count as usize, leaves.len())
             .flat_map(|entry| entry.unwrap().iter().copied())
@@ -3464,7 +3452,7 @@ mod tests {
 
     #[test]
     fn test_verify_fec_set_root_rejects_empty_proof() {
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let request = BlockIdRepairType::FecSetRoot {
             slot: 100,
             block_id,
@@ -3472,7 +3460,7 @@ mod tests {
             fec_set_count: 1,
         };
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root: block_id.into(),
+            fec_set_root: FecSetRoot::from(block_id.to_hash()),
             fec_set_proof: vec![],
         };
 
@@ -3487,7 +3475,7 @@ mod tests {
         let tree =
             merkle_tree::MerkleTree::try_new_with_len(leaves.into_iter().map(Ok), leaves.len())
                 .unwrap();
-        let block_id = *tree.root();
+        let block_id = BlockId::from(*tree.root());
         let fec_set_proof: Vec<u8> = tree
             .make_merkle_proof(0, leaves.len())
             .flat_map(|entry| entry.unwrap().iter().copied())
@@ -3506,7 +3494,7 @@ mod tests {
                 hash_as_merkle_proof_entry(&internal_node),
                 0,
                 &shortened_proof,
-                block_id
+                block_id.to_hash()
             )
             .is_ok()
         );
@@ -3569,9 +3557,8 @@ mod tests {
     }
 
     fn pong_packet(pong: Pong, from_addr: &SocketAddr) -> BytesPacket {
-        let packet = packet_from_data(Some(from_addr), RepairProtocol::Pong(pong))
-            .expect("pong must serialize");
-        make_remote_request(&packet)
+        bytes_packet_from_data(Some(from_addr), RepairProtocol::Pong(pong))
+            .expect("pong must serialize")
     }
 
     fn signed_window_index_packet(

@@ -2,7 +2,6 @@ use {
     crate::parse_instruction::{
         ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
-    bincode::deserialize,
     serde_json::{Map, Value, json},
     solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
     solana_pubkey::Pubkey,
@@ -32,7 +31,7 @@ pub fn parse_stake(
     instruction: &CompiledInstruction,
     account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
-    let stake_instruction: StakeInstruction = deserialize(&instruction.data)
+    let stake_instruction: StakeInstruction = wincode::deserialize(&instruction.data)
         .map_err(|_| ParseInstructionError::InstructionNotParsable(ParsableProgram::Stake))?;
     match instruction.accounts.iter().max() {
         Some(index) if (*index as usize) < account_keys.len() => {}

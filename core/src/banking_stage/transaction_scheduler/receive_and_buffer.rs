@@ -23,6 +23,7 @@ use {
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
     solana_clock::{Epoch, Slot},
+    solana_ed25519_program as ed25519,
     solana_message::v0::LoadedAddresses,
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
@@ -31,8 +32,10 @@ use {
         runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
         transaction_meta::TransactionMeta, transaction_with_meta::TransactionWithMeta,
     },
+    solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program},
+    solana_secp256k1_program as secp256k1, solana_secp256r1_program as secp256r1,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
     std::{collections::HashSet, time::Instant},
@@ -52,6 +55,32 @@ pub(crate) enum PacketHandlingError {
     ComputeBudget,
     ALTResolution,
     FilterKey,
+}
+
+/// Check that each precompile instruction can hold the claimed signature offset table.
+fn has_short_precompile_data(message: &impl SVMStaticMessage) -> bool {
+    message.program_instructions_iter().any(|(program_id, ix)| {
+        let (header_len, offset_len) = if *program_id == secp256k1_program::ID {
+            (
+                secp256k1::DATA_START - secp256k1::SIGNATURE_OFFSETS_SERIALIZED_SIZE,
+                secp256k1::SIGNATURE_OFFSETS_SERIALIZED_SIZE,
+            )
+        } else if *program_id == ed25519_program::ID {
+            (
+                ed25519::SIGNATURE_OFFSETS_START,
+                ed25519::SIGNATURE_OFFSETS_SERIALIZED_SIZE,
+            )
+        } else if *program_id == secp256r1_program::ID {
+            (
+                secp256r1::SIGNATURE_OFFSETS_START,
+                secp256r1::SIGNATURE_OFFSETS_SERIALIZED_SIZE,
+            )
+        } else {
+            return false;
+        };
+        let count = usize::from(ix.data.first().copied().unwrap_or_default());
+        ix.data.len() < header_len + count * offset_len
+    })
 }
 
 pub(crate) struct PrecheckedTransaction {
@@ -146,6 +175,10 @@ pub(crate) fn translate_sanitized_to_runtime_view<D: TransactionData>(
     ) else {
         return Err(PacketHandlingError::Sanitization);
     };
+
+    if has_short_precompile_data(&view) {
+        return Err(PacketHandlingError::Sanitization);
+    }
 
     if bank.vote_only_bank() && !view.is_simple_vote_transaction() {
         return Err(PacketHandlingError::Sanitization);
@@ -487,10 +520,12 @@ impl TransactionViewReceiveAndBuffer {
         let priority = state.priority();
 
         // Reject a nonce-like transaction if a higher-or-equal-priority conflict
-        // is queued, or any conflict is already in flight.
+        // is queued, or any conflict is already in flight. We always pass `true`
+        // for `disallow_nonce_as_program_id` in line with our check function's
+        // forcing it on via `strict_nonce_checks`.
         let nonce_priority = state
             .transaction()
-            .get_durable_nonce()
+            .get_durable_nonce(true)
             .map(|address| (*address, priority));
         if Self::should_drop_nonce(nonce_priority, container) {
             stats.num_dropped_on_nonce_dedup += 1;
@@ -555,11 +590,12 @@ mod tests {
             AccountMeta, AddressLookupTableAccount, Instruction, Message, VersionedMessage, v0,
         },
         solana_nonce::{self as nonce, state::DurableNonce},
-        solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{BytesPacket, PacketBatch},
+        solana_packet::PACKET_DATA_SIZE,
+        solana_perf::packet::{BytesPacket, Meta, PacketBatch},
+        solana_poh::poh_recorder::SharedLeaderState,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
-        solana_sdk_ids::system_program,
+        solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program, system_program},
         solana_signer::Signer,
         solana_slot_hashes::get_entries,
         solana_system_interface::instruction as system_instruction,
@@ -642,9 +678,47 @@ mod tests {
 
         assert_runtime_view(state.transaction());
         assert_eq!(state.transaction().data().as_ptr(), bytes_ptr);
-        assert_eq!(state.transaction().get_durable_nonce(), None);
+        assert_eq!(state.transaction().get_durable_nonce(true), None);
         assert_eq!(validated_nonce_address, None);
         assert_eq!(state.nonce_address(), None);
+    }
+
+    #[test]
+    fn test_precheck_drops_short_precompile_data() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(u64::MAX);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        for program_id in [
+            secp256k1_program::ID,
+            ed25519_program::ID,
+            secp256r1_program::ID,
+        ] {
+            let instruction = Instruction {
+                program_id,
+                accounts: vec![],
+                data: vec![255],
+            };
+            let transaction = VersionedTransaction::try_new(
+                VersionedMessage::Legacy(Message::new(
+                    &[instruction],
+                    Some(&mint_keypair.pubkey()),
+                )),
+                &[&mint_keypair],
+            )
+            .unwrap();
+            let packet = BytesPacket::from_data(transaction).unwrap();
+
+            assert!(matches!(
+                precheck_transaction(packet.buffer().clone(), &bank, &bank, &HashSet::new()),
+                Err(IngressCheckError::PacketHandling(
+                    PacketHandlingError::Sanitization
+                ))
+            ));
+        }
     }
 
     const TEST_CONTAINER_CAPACITY: usize = 100;
@@ -678,6 +752,7 @@ mod tests {
             check_work_receiver,
             check_result_sender,
             bank_forks.read().unwrap().sharable_banks(),
+            SharedLeaderState::new(0, None, None),
             filter_keys,
         );
         let receive_and_buffer = TransactionViewReceiveAndBuffer::new(

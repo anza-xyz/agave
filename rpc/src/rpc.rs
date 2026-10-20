@@ -81,7 +81,7 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_storage_bigtable::Error as StorageError,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_transaction::{
         sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
         versioned::VersionedTransaction,
@@ -4055,7 +4055,7 @@ pub mod rpc_full {
                 .unwrap_or(0);
 
             let durable_nonce_info = transaction
-                .get_durable_nonce()
+                .get_durable_nonce(false)
                 .map(|&pubkey| (pubkey, blockhash));
             if durable_nonce_info.is_some() || (skip_preflight && last_valid_block_height == 0) {
                 // While it uses a defined constant, this last_valid_block_height value is chosen arbitrarily.
@@ -4721,10 +4721,7 @@ pub fn populate_blockstore_for_tests(
 
     // Check that process_entries successfully writes can_commit transactions statuses, and
     // that they are matched properly by get_rooted_block
-    assert_eq!(
-        solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries),
-        Ok(())
-    );
+    solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries).unwrap();
 
     transaction_status_service.quiesce_and_join_for_tests(tss_exit);
 }
@@ -4899,9 +4896,7 @@ pub mod tests {
         invoke_context: &mut InvokeContext,
     ) -> std::result::Result<u64, Box<dyn std::error::Error>> {
         let log_collector = invoke_context.get_log_collector();
-        invoke_context
-            .compute_meter
-            .consume_checked(TestBuiltinEntrypoint::COMPUTE_UNITS)?;
+        invoke_context.consume_checked(TestBuiltinEntrypoint::COMPUTE_UNITS)?;
 
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context.get_current_instruction_context()?;

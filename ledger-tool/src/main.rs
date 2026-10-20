@@ -785,6 +785,20 @@ fn record_transactions(
     slots: Arc<Mutex<Vec<SlotDetails>>>,
 ) {
     for tsm in recv {
+        if let TransactionStatusMessage::PurgeTransactionHistory {
+            slot, done_sender, ..
+        } = &tsm
+        {
+            if let Some(recorded_slot) = slots.lock().unwrap().iter_mut().find(|f| f.slot == *slot)
+            {
+                recorded_slot.transactions.clear();
+            }
+            if let Some(done_sender) = done_sender {
+                let _ = done_sender.send(());
+            }
+            continue;
+        }
+
         if let TransactionStatusMessage::Batch((batch, _work_sequence)) = tsm {
             assert_eq!(batch.transactions.len(), batch.commit_results.len());
 
@@ -1317,7 +1331,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
                 &keypair,
                 &tick_entries,
                 /*is_last_in_slot:*/ true,
-                chained_merkle_root,
+                chained_merkle_root.to_hash(),
                 /*next_shred_index:*/ 0,
                 /*next_code_index:*/ 0,
                 &mut ProcessShredsStats::default(),

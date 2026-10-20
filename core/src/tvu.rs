@@ -546,7 +546,7 @@ impl Tvu {
             highest_finalized: highest_finalized.clone(),
             bank_forks_controller,
             bls_sender: bls_sender.clone(),
-            commitment_sender: votor_commitment_sender,
+            commitment_sender: votor_commitment_sender.clone(),
             bank_notification_sender: bank_notification_sender.clone(),
             leader_window_info_sender,
             highest_parent_ready: highest_parent_ready.clone(),
@@ -584,6 +584,7 @@ impl Tvu {
             footer_certs_sender,
             optimistic_parent_sender,
             lockouts_sender,
+            votor_commitment_sender,
         };
 
         let replay_receivers = ReplayReceivers {

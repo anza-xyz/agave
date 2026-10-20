@@ -1153,9 +1153,9 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(!server.is_finished());
 
-        // Resuming reads exposes the aborted response, rather than a successful truncated body.
+        // Hyper may already have observed the body abort and closed the connection. Whether
+        // it finishes before or after reads resume, the response must be incomplete.
         let mut received = Vec::new();
         timeout(Duration::from_secs(5), client_io.read_to_end(&mut received))
             .await

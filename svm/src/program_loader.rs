@@ -3,7 +3,7 @@ use qualifier_attr::qualifiers;
 #[cfg(feature = "metrics")]
 use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::Slot,
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -50,7 +50,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     } else if bpf_loader_upgradeable::check_id(program_account.owner()) {
         if let Ok(UpgradeableLoaderState::Program {
             programdata_address,
-        }) = wincode::deserialize(program_account.data())
+        }) = program_account.state()
         {
             if let Some(programdata_account) =
                 callbacks.get_account_shared_data(&programdata_address)
@@ -59,7 +59,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
                     if let Ok(UpgradeableLoaderState::ProgramData {
                         slot,
                         upgrade_authority_address: _,
-                    }) = wincode::deserialize(programdata_account.data())
+                    }) = programdata_account.state()
                     {
                         ProgramAccountLoadResult::ProgramOfLoaderV3(
                             program_account,
@@ -184,7 +184,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 
     #[cfg(feature = "metrics")]
     load_program_metrics.submit_datapoint(&mut execute_timings.details);
-    loaded_program.update_access_slot(current_slot);
     Some(Arc::new(loaded_program))
 }
 
@@ -208,7 +207,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
             // a valid ProgramData account.
             if let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
-            }) = wincode::deserialize(program.data())
+            }) = program.state()
             {
                 let programdata = callbacks
                     .get_account_shared_data(&programdata_address)
@@ -219,7 +218,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
                 if let Ok(UpgradeableLoaderState::ProgramData {
                     slot,
                     upgrade_authority_address: _,
-                }) = wincode::deserialize(programdata.data())
+                }) = programdata.state()
                 {
                     return Ok(slot);
                 }
@@ -334,33 +333,29 @@ pub mod test_utils {
     }
 
     pub fn loader_v3_program_account(programdata_address: Pubkey) -> AccountSharedData {
-        let mut account = AccountSharedData::default();
-        account.set_owner(bpf_loader_upgradeable::id());
-        account.set_data_from_slice(
-            &wincode::serialize(&UpgradeableLoaderState::Program {
+        AccountSharedData::new_data(
+            0,
+            &UpgradeableLoaderState::Program {
                 programdata_address,
-            })
-            .unwrap(),
-        );
-        account
+            },
+            &bpf_loader_upgradeable::id(),
+        )
+        .unwrap()
     }
 
     pub fn loader_v3_programdata_account(slot: Slot, elf: &[u8]) -> AccountSharedData {
         let offset = UpgradeableLoaderState::size_of_programdata_metadata();
-        let mut data = vec![0u8; offset];
-        wincode::serialize_into(
-            &mut data[..offset],
+        let mut account = AccountSharedData::new_data_with_space(
+            0,
             &UpgradeableLoaderState::ProgramData {
                 slot,
                 upgrade_authority_address: None,
             },
+            offset + elf.len(),
+            &bpf_loader_upgradeable::id(),
         )
         .unwrap();
-        data.extend_from_slice(elf);
-
-        let mut account = AccountSharedData::default();
-        account.set_owner(bpf_loader_upgradeable::id());
-        account.set_data_from_slice(&data);
+        account.data_as_mut_slice()[offset..].copy_from_slice(elf);
         account
     }
 
@@ -860,13 +855,11 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(bpf_loader_upgradeable::id());
-
         let state = UpgradeableLoaderState::Program {
             programdata_address: key2,
         };
-        account_data.set_data_from_slice(&wincode::serialize(&state).unwrap());
+        let mut account_data =
+            AccountSharedData::new_data(0, &state, &bpf_loader_upgradeable::id()).unwrap();
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -876,8 +869,7 @@ mod tests {
             slot: 0,
             upgrade_authority_address: None,
         };
-        let mut account_data2 = AccountSharedData::default();
-        account_data2.set_data_from_slice(&wincode::serialize(&state).unwrap());
+        let account_data2 = AccountSharedData::new_data(0, &state, &Pubkey::default()).unwrap();
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -1267,8 +1259,7 @@ mod tests {
         let state = UpgradeableLoaderState::Program {
             programdata_address,
         };
-        let mut program = AccountSharedData::new(1, 1, &loader_ids[2]);
-        program.set_data_from_slice(&wincode::serialize(&state).unwrap());
+        let program = AccountSharedData::new_data(1, &state, &loader_ids[2]).unwrap();
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -1277,8 +1268,7 @@ mod tests {
             slot: 0,
             upgrade_authority_address: None,
         };
-        let mut programdata = AccountSharedData::new(1, 1, &loader_ids[2]);
-        programdata.set_data_from_slice(&wincode::serialize(&state).unwrap());
+        let programdata = AccountSharedData::new_data(1, &state, &loader_ids[2]).unwrap();
         mock_bank
             .account_shared_data
             .borrow_mut()

@@ -3,6 +3,7 @@ use {
     agave_math_utils::welford_stats::WelfordStats,
     solana_clock::Slot,
     solana_metrics::datapoint_info,
+    solana_runtime::block_component_processor::VoteAccountUpdateStats,
     std::time::{Duration, Instant},
 };
 
@@ -116,6 +117,7 @@ pub(crate) struct SlotMetrics {
     pub(super) slot_delay_us: u64,
     pub(super) replay_is_behind_us: u64,
     pub(super) reward_certs_skipped: u64,
+    pub(super) vote_accounts_update_stats: Option<VoteAccountUpdateStats>,
 }
 
 impl SlotMetrics {
@@ -129,6 +131,7 @@ impl SlotMetrics {
             slot_delay_us: 0,
             replay_is_behind_us: 0,
             reward_certs_skipped: 0,
+            vote_accounts_update_stats: None,
         }
     }
 
@@ -142,6 +145,7 @@ impl SlotMetrics {
             slot_delay_us,
             replay_is_behind_us,
             reward_certs_skipped,
+            vote_accounts_update_stats,
         } = self;
         datapoint_info!(
             "slot-metrics",
@@ -153,6 +157,8 @@ impl SlotMetrics {
             ("slot_delay_us", slot_delay_us, i64),
             ("replay_is_behind_us", replay_is_behind_us, i64),
             ("reward_certs_skipped", reward_certs_skipped, i64),
+            ("vote_accounts_update_us", vote_accounts_update_stats.as_ref().map(|s| s.update_us), Option<i64>),
+            ("vote_accounts_updated", vote_accounts_update_stats.as_ref().map(|s| s.vote_accounts_updated), Option<i64>),
         );
     }
 }

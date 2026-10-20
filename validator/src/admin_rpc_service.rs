@@ -1,4 +1,5 @@
 use {
+    agave_event_system::stream_policy::StreamPolicy,
     agave_votor::{
         event::VotorEvent, vote_history::VoteHistory, vote_history_storage::VoteHistoryStorage,
     },
@@ -217,6 +218,9 @@ pub trait AdminRpc {
     #[rpc(name = "setLogFilter")]
     fn set_log_filter(&self, filter: String) -> Result<()>;
 
+    #[rpc(meta, name = "setEventFilter")]
+    fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()>;
+
     #[rpc(meta, name = "startTime")]
     fn start_time(&self, meta: Self::Metadata) -> Result<SystemTime>;
 
@@ -267,7 +271,7 @@ pub trait AdminRpc {
     fn repair_shred_from_peer(
         &self,
         meta: Self::Metadata,
-        pubkey: Option<Pubkey>,
+        pubkey: Pubkey,
         slot: u64,
         shred_index: u64,
     ) -> Result<()>;
@@ -538,6 +542,16 @@ impl AdminRpc for AdminRpcImpl {
         Ok(())
     }
 
+    fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()> {
+        let stream_policy = filter
+            .parse::<StreamPolicy>()
+            .map_err(|err| jsonrpc_core::Error::invalid_params(err.to_string()))?;
+        meta.with_post_init(|post_init| {
+            post_init.event_system.set_stream_policy(stream_policy);
+            Ok(())
+        })
+    }
+
     fn start_time(&self, meta: Self::Metadata) -> Result<SystemTime> {
         debug!("start_time admin rpc request received");
         Ok(meta.start_time)
@@ -697,23 +711,28 @@ impl AdminRpc for AdminRpcImpl {
     fn repair_shred_from_peer(
         &self,
         meta: Self::Metadata,
-        pubkey: Option<Pubkey>,
+        pubkey: Pubkey,
         slot: u64,
         shred_index: u64,
     ) -> Result<()> {
         debug!("repair_shred_from_peer request received");
 
         meta.with_post_init(|post_init| {
-            repair_service::RepairService::request_repair_for_shred_from_peer(
+            let sent = repair_service::RepairService::request_repair_for_shred_from_peer(
                 post_init.cluster_info.clone(),
-                post_init.cluster_slots.clone(),
                 pubkey,
                 slot,
                 shred_index,
                 &post_init.repair_socket,
                 post_init.outstanding_repair_requests.clone(),
             );
-            Ok(())
+            if sent {
+                Ok(())
+            } else {
+                Err(jsonrpc_core::error::Error::invalid_params(format!(
+                    "No valid repair socket found for {pubkey}"
+                )))
+            }
         })
     }
 
@@ -1281,6 +1300,7 @@ mod tests {
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
+                    event_system: agave_event_system::EventSystem::stub(),
                     cluster_info,
                     bank_forks,
                     vote_account,
@@ -1290,9 +1310,6 @@ mod tests {
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),
-                    cluster_slots: Arc::new(
-                        solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default_for_tests(),
-                    ),
                     node: None,
                     banking_control_sender: mpsc::channel(1).0,
                     snapshot_controller,

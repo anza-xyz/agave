@@ -120,6 +120,7 @@ mod tests {
         super::*,
         agave_votor_messages::{
             consensus_message::{Block, BlockId},
+            stake::NonZeroStake,
             vote::Vote,
             wire::{VotePayloadToSign, get_vote_payload_to_sign},
         },
@@ -134,7 +135,7 @@ mod tests {
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         solana_signer_store::{Decoded, decode},
-        std::{collections::HashMap, num::NonZero},
+        std::collections::HashMap,
     };
 
     pub(crate) fn validate_bitmap(bitmap: &[u8], num_set: usize, max_len: usize) {
@@ -155,8 +156,8 @@ mod tests {
         let serialized = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypairs[rank].sign(&serialized).into();
         let stake = match stakes {
-            None => NonZero::new(123).unwrap(),
-            Some(stakes) => NonZero::new(stakes[rank]).unwrap(),
+            None => NonZeroStake::new(123).unwrap(),
+            Some(stakes) => NonZeroStake::new(stakes[rank]).unwrap(),
         };
         let vote_msg = VoteMessage {
             vote,
@@ -181,7 +182,7 @@ mod tests {
             ranks_and_stakes.iter().map(|(rank, stake)| {
                 (
                     *rank,
-                    NonZero::new(*stake).expect("test stake must be nonzero"),
+                    NonZeroStake::new(*stake).expect("test stake must be nonzero"),
                 )
             }),
             SignatureProjective::identity(),

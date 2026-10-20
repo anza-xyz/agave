@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT;
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
@@ -21,6 +23,46 @@ use {
     crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
     solana_pubkey::Pubkey,
 };
+
+#[derive(Debug)]
+pub struct ComputeMeter(Cell<u64>);
+
+impl ComputeMeter {
+    /// Consume compute units
+    pub fn consume_unchecked(&self, amount: u64) {
+        let compute_meter = self.0.get();
+        self.0.set(compute_meter.saturating_sub(amount));
+    }
+
+    /// Consume compute units and check for ComputationalBudgetExceeded
+    pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn std::error::Error>> {
+        let compute_meter = self.0.get();
+        let exceeded = compute_meter < amount;
+        self.0.set(compute_meter.saturating_sub(amount));
+        if exceeded {
+            return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
+        }
+        Ok(())
+    }
+
+    /// Set compute units
+    ///
+    /// Only use for tests and benchmarks
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn mock_set_remaining(&self, remaining: u64) {
+        self.0.set(remaining);
+    }
+
+    /// Returns the remaining compute units
+    pub fn get_remaining(&self) -> u64 {
+        self.0.get()
+    }
+
+    /// Construct from compute units
+    pub fn new(remaining: u64) -> Self {
+        Self(Cell::new(remaining))
+    }
+}
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
 pub type InstructionTrace<'ix_data> = (
@@ -85,6 +127,12 @@ pub struct TransactionContext<'ix_data> {
     transaction_frame: TransactionFrame,
     return_data_bytes: Vec<u8>,
     next_top_level_instruction_index: usize,
+    /// Instruction compute meter, for tracking compute units consumed against
+    /// the designated compute budget during program execution.
+    #[cfg(not(target_os = "solana"))]
+    pub compute_meter: ComputeMeter,
+    #[cfg(not(target_os = "solana"))]
+    pub(crate) lamports_delta: Cell<i128>,
     #[cfg(not(target_os = "solana"))]
     pub(crate) rent: Rent,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
@@ -107,6 +155,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
         number_of_top_level_instructions: usize,
+        compute_meter: ComputeMeter,
         drop_on_bail_out: DropOnBailOut,
     ) -> Self {
         let transaction_frame = TransactionFrame {
@@ -150,6 +199,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
             return_data_bytes: Vec::new(),
             transaction_frame,
             next_top_level_instruction_index: 0,
+            compute_meter,
+            lamports_delta: Cell::new(0),
             rent,
             instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
             deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
@@ -172,6 +223,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_stack_capacity,
             instruction_trace_capacity,
             number_of_top_level_instructions,
+            ComputeMeter::new(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64),
             DropOnBailOut::Disabled,
         )
     }
@@ -187,6 +239,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .deconstruct_into_account_shared_data();
 
         Ok(accounts)
+    }
+
+    pub(crate) fn add_lamports_delta(&self, balance: i128) -> Result<(), InstructionError> {
+        let delta = self.lamports_delta.get();
+        self.lamports_delta.set(
+            delta
+                .checked_add(balance)
+                .ok_or(InstructionError::ArithmeticOverflow)?,
+        );
+        Ok(())
     }
 
     pub fn accounts(&self) -> &Rc<TransactionAccounts> {
@@ -479,7 +541,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Pushes the next instruction
     pub fn push(&mut self, detect_overflow_early: bool) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_stack_height();
-        if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
+        if !self.instruction_stack.is_empty() && self.lamports_delta.get() != 0 {
             return Err(InstructionError::UnbalancedInstruction);
         }
         {
@@ -570,7 +632,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                                 err
                             }
                         })?;
-                    Ok(self.accounts.get_lamports_delta() != 0)
+                    Ok(self.lamports_delta.get() != 0)
                 });
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();

@@ -626,7 +626,7 @@ impl BlockIdRepairService {
                         let fec_set_index = i * DATA_SHREDS_PER_FEC_BLOCK as u32;
                         OutgoingMessage::Metadata(BlockIdRepairType::FecSetRoot {
                             slot,
-                            block_id: block_id.to_hash(),
+                            block_id,
                             fec_set_index,
                             fec_set_count,
                         })
@@ -844,7 +844,7 @@ impl BlockIdRepairService {
                     .push(OutgoingMessage::Metadata(
                         BlockIdRepairType::ParentAndFecSetCount {
                             slot: block.slot,
-                            block_id: block.block_id.to_hash(),
+                            block_id: block.block_id,
                         },
                     ));
                 state.requested_blocks.insert(block);
@@ -1299,7 +1299,7 @@ mod tests {
         // 1. Expired metadata request (ParentAndFecSetCount) - should retry
         let expired_metadata = OutgoingMessage::Metadata(BlockIdRepairType::ParentAndFecSetCount {
             slot: 100,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         });
         state
             .sent_requests
@@ -1308,14 +1308,14 @@ mod tests {
         // 2. Recent metadata request - should stay in sent_requests
         let recent_metadata = OutgoingMessage::Metadata(BlockIdRepairType::ParentAndFecSetCount {
             slot: 101,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         });
         state.sent_requests.insert(recent_metadata.clone(), now);
 
         // 3. Expired metadata request (FecSetRoot) - should retry
         let expired_fec_set_root = OutgoingMessage::Metadata(BlockIdRepairType::FecSetRoot {
             slot: 102,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
             fec_set_index: 0,
             fec_set_count: 1,
         });
@@ -1405,6 +1405,7 @@ mod tests {
         let mut leaves = fec_set_roots.clone();
         leaves.push(parent_info_leaf);
         let (block_id, proofs) = build_merkle_tree(&leaves);
+        let block_id = BlockId::from(block_id);
         let parent_proof = proofs[fec_set_count_usize].clone();
 
         // Create the request that would have been sent
@@ -1480,6 +1481,7 @@ mod tests {
         let mut leaves = fec_set_roots.clone();
         leaves.push(parent_info_leaf);
         let (block_id, proofs) = build_merkle_tree(&leaves);
+        let block_id = BlockId::from(block_id);
 
         // The FEC set root for fec_set_index=32 corresponds to leaf index 1 (32/32=1)
         let fec_set_leaf_index = fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
@@ -1544,7 +1546,7 @@ mod tests {
                             && index < fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32
                     );
                     assert_eq!(fec_set_merkle_root, fec_set_root);
-                    assert_eq!(b.to_hash(), block_id);
+                    assert_eq!(b, block_id);
                 }
                 _ => panic!("Expected ShredForBlockId request"),
             }
@@ -1619,6 +1621,7 @@ mod tests {
         let mut leaves = fec_set_roots.clone();
         leaves.push(parent_info_leaf);
         let (block_id, proofs) = build_merkle_tree(&leaves);
+        let block_id = BlockId::from(block_id);
         let parent_proof = proofs[usize::try_from(fec_set_count).unwrap()].clone();
 
         // Create the request that would have been sent. It is registered in
@@ -1787,7 +1790,7 @@ mod tests {
                 block_id: b,
             }) => {
                 assert_eq!(s, slot);
-                assert_eq!(b, block_id.to_hash());
+                assert_eq!(b, block_id);
             }
             _ => panic!("Expected ParentAndFecSetCount request"),
         }
@@ -1862,7 +1865,7 @@ mod tests {
                 block_id: b,
             }) => {
                 assert_eq!(s, slot);
-                assert_eq!(b, requested_block_id.to_hash());
+                assert_eq!(b, requested_block_id);
             }
             _ => panic!("Expected ParentAndFecSetCount request"),
         }

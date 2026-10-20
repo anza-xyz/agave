@@ -602,7 +602,7 @@ mod tests {
         assert_matches::assert_matches,
         itertools::Itertools,
         solana_leader_schedule::SlotLeader,
-        solana_perf::packet::{BytesPacket, Packet, PacketFlags},
+        solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::{
             bank::Bank,
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},
@@ -614,6 +614,10 @@ mod tests {
         },
         test_case::test_case,
     };
+
+    fn to_packet(payload: &[u8]) -> BytesPacket {
+        BytesPacket::from_bytes(None, payload.to_vec())
+    }
 
     fn new_test_bank(slot: Slot) -> Arc<Bank> {
         let genesis_config = create_genesis_config(1).genesis_config;
@@ -693,133 +697,124 @@ mod tests {
         let root_bank = new_test_bank(0);
         let parent_exceeded_root_bank = new_test_bank(parent_slot + 1);
         let slot_root_bank = new_test_bank(slot);
-        let mut packet = Packet::default();
+        let mut payload = shreds[0].payload().to_vec();
 
         {
-            let shred = shreds.first().unwrap();
-            assert_eq!(shred.shred_type(), ShredType::Data);
-            shred.copy_to_packet(&mut packet);
+            assert_eq!(shreds[0].shred_type(), ShredType::Data);
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(!shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(!shred_filter_context.should_discard_packet(&to_packet(&payload)));
         }
         {
-            let mut packet = packet.clone();
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            packet.meta_mut().size = OFFSET_OF_SHRED_VARIANT;
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            let packet = to_packet(&payload[..OFFSET_OF_SHRED_VARIANT]);
+            assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 1);
 
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX;
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX]);
+            assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 2);
 
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + 1;
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + 1]);
+            assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 3);
 
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX - 1;
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX - 1]);
+            assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 4);
 
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + 2;
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + 2]);
+            assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 5);
         }
         {
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version.wrapping_add(1));
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.shred_version_mismatch, 1);
         }
         {
             let mut shred_filter_context =
                 ShredFilterContext::new(parent_exceeded_root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.slot_out_of_range, 1);
         }
         {
             let parent_offset = 0u16;
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut payload[..]);
                 cursor.seek(SeekFrom::Start(83)).unwrap();
                 cursor.write_all(&parent_offset.to_le_bytes()).unwrap();
             }
-            assert_eq!(
-                layout::get_parent_offset(packet.data(..).unwrap()),
-                Some(parent_offset)
-            );
+            assert_eq!(layout::get_parent_offset(&payload), Some(parent_offset));
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.slot_out_of_range, 1);
         }
         {
             let parent_offset = u16::try_from(slot + 1).unwrap();
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut payload[..]);
                 cursor.seek(SeekFrom::Start(83)).unwrap();
                 cursor.write_all(&parent_offset.to_le_bytes()).unwrap();
             }
-            assert_eq!(
-                layout::get_parent_offset(packet.data(..).unwrap()),
-                Some(parent_offset)
-            );
+            assert_eq!(layout::get_parent_offset(&payload), Some(parent_offset));
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.bad_parent_offset, 1);
         }
         {
             let index = u32::MAX - 10;
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
                     .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&index.to_le_bytes()).unwrap();
             }
-            assert_eq!(layout::get_index(packet.data(..).unwrap()), Some(index));
+            assert_eq!(layout::get_index(&payload), Some(index));
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.index_out_of_bounds, 1);
         }
 
         {
             let shred = shreds.last().unwrap();
             assert_eq!(shred.shred_type(), ShredType::Code);
-            shreds.last().unwrap().copy_to_packet(&mut packet);
+            payload = shred.payload().to_vec();
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(!shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(!shred_filter_context.should_discard_packet(&to_packet(&payload)));
         }
         {
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version.wrapping_add(1));
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.shred_version_mismatch, 1);
         }
         {
             let mut shred_filter_context =
                 ShredFilterContext::new(slot_root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.slot_out_of_range, 1);
         }
         {
             let index = u32::try_from(MAX_CODE_SHREDS_PER_SLOT).unwrap();
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
                     .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&index.to_le_bytes()).unwrap();
             }
-            assert_eq!(layout::get_index(packet.data(..).unwrap()), Some(index));
+            assert_eq!(layout::get_index(&payload), Some(index));
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.index_out_of_bounds, 1);
         }
     }
@@ -859,7 +854,7 @@ mod tests {
         let mut recovered_shreds = Vec::new();
         let mut recovered_data_shreds = Vec::new();
 
-        // Recovery sees insufficient parity shreds and cannot recover the FEC.
+        // Recovery sees insufficient shreds and cannot recover the FEC.
         assert_matches!(
             shred_recovery_context.recover(
                 coding_shreds,
@@ -867,7 +862,7 @@ mod tests {
                 &mut recovered_data_shreds,
             ),
             Err(Error::Erasure(
-                reed_solomon_erasure::Error::TooFewParityShards
+                reed_solomon_erasure::Error::TooFewShardsPresent
             ))
         );
         assert!(recovered_shreds.is_empty());
@@ -889,29 +884,28 @@ mod tests {
         let shred = shreds[0].clone();
         let shred_version = shred.common_header().version;
         let turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
-        let mut packet = Packet::default();
-        shred.copy_to_packet(&mut packet);
+        let mut packet = shred.payload().to_bytes_packet(None);
 
         let mut shred_filter_context = ShredFilterContext::new_with_turbine_mode(
             root_bank.clone(),
             shred_version,
             Some(turbine_mode.clone()),
         );
-        assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+        assert!(shred_filter_context.should_discard_packet(&packet));
 
         packet.meta_mut().flags.insert(PacketFlags::REPAIR);
-        assert!(!shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+        assert!(!shred_filter_context.should_discard_packet(&packet));
 
         turbine_mode.set(TurbineModeKind::TurbineAndRepairDisabled);
         shred_filter_context.last_updated = Instant::now() - Duration::from_secs(1);
         shred_filter_context.maybe_update(root_bank.clone());
-        assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+        assert!(shred_filter_context.should_discard_packet(&packet));
 
         packet.meta_mut().flags.remove(PacketFlags::REPAIR);
         turbine_mode.set(TurbineModeKind::Enabled);
         shred_filter_context.last_updated = Instant::now() - Duration::from_secs(1);
         shred_filter_context.maybe_update(root_bank.clone());
-        assert!(!shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+        assert!(!shred_filter_context.should_discard_packet(&packet));
     }
 
     #[test]
@@ -933,12 +927,11 @@ mod tests {
         let root_bank = new_test_bank(0);
 
         {
-            let mut packet = Packet::default();
-            shreds[0].copy_to_packet(&mut packet);
+            let mut payload = shreds[0].payload().to_vec();
 
             let bad_fec_set_index = 5u32;
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
                     .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
                     .unwrap();
@@ -947,18 +940,17 @@ mod tests {
 
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.misaligned_fec_set, 1);
         }
 
         {
-            let mut packet = Packet::default();
-            shreds[0].copy_to_packet(&mut packet);
+            let mut payload = shreds[0].payload().to_vec();
 
             let fec_set_index = 64u32;
             let bad_index = 100u32;
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
                     .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                     .unwrap();
@@ -971,7 +963,7 @@ mod tests {
 
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.misaligned_fec_set, 1);
         }
 
@@ -980,12 +972,11 @@ mod tests {
                 .iter()
                 .find(|s| s.shred_type() == ShredType::Code)
                 .unwrap();
-            let mut packet = Packet::default();
-            code_shred.copy_to_packet(&mut packet);
+            let mut payload = code_shred.payload().to_vec();
 
             let bad_num_data = 16u16;
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
                     .seek(SeekFrom::Start(OFFSET_OF_NUM_DATA as u64))
                     .unwrap();
@@ -994,7 +985,7 @@ mod tests {
 
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.misaligned_erasure_config, 1);
         }
 
@@ -1012,14 +1003,13 @@ mod tests {
             .collect();
         let last_data_shred = data_shreds.last().unwrap();
         assert!(last_data_shred.last_in_slot());
-        let mut packet = Packet::default();
-        last_data_shred.copy_to_packet(&mut packet);
+        let mut payload = last_data_shred.payload().to_vec();
 
         // Keep DATA_COMPLETE placement valid so this isolates LAST_SHRED_IN_SLOT alignment.
         let fec_set_index = 1u32;
         let bad_last_index = fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32 - 1;
         {
-            let mut cursor = Cursor::new(packet.buffer_mut());
+            let mut cursor = Cursor::new(&mut payload[..]);
             cursor
                 .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                 .unwrap();
@@ -1031,7 +1021,7 @@ mod tests {
         }
 
         let mut shred_filter_context = ShredFilterContext::new(root_bank.clone(), shred_version);
-        assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+        assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
         assert_eq!(shred_filter_context.stats.misaligned_last_data_index, 1);
     }
 
@@ -1138,9 +1128,8 @@ mod tests {
         let shred_version = shreds[0].common_header().version;
         let mut shred_filter_context = ShredFilterContext::new(root_bank, shred_version);
         for shred in &shreds {
-            let mut packet = Packet::default();
-            shred.copy_to_packet(&mut packet);
-            assert!(!shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            let packet = shred.payload().to_bytes_packet(None);
+            assert!(!shred_filter_context.should_discard_packet(&packet));
         }
     }
 
@@ -1171,21 +1160,20 @@ mod tests {
                 .iter()
                 .find(|shred| shred.shred_type() == shred_type)
                 .unwrap();
-            let mut packet = Packet::default();
-            shred.copy_to_packet(&mut packet);
+            let mut payload = shred.payload().to_vec();
             assert_eq!(
                 shred.common_header().shred_variant.proof_size(),
                 PROOF_ENTRIES_FOR_32_32_BATCH
             );
-            override_proof_size(packet.buffer_mut(), bad_proof_size);
+            override_proof_size(&mut payload, bad_proof_size);
 
             let mut shred_filter_context =
                 ShredFilterContext::new(permissive_bank.clone(), shred_version);
-            assert!(!shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(!shred_filter_context.should_discard_packet(&to_packet(&payload)));
 
             let mut shred_filter_context =
                 ShredFilterContext::new(enforcing_bank.clone(), shred_version);
-            assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+            assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
             assert_eq!(shred_filter_context.stats.invalid_proof_size, 1);
         }
     }
@@ -1210,18 +1198,17 @@ mod tests {
             .iter()
             .find(|shred| shred.shred_type() == ShredType::Data)
             .unwrap();
-        let mut packet = Packet::default();
-        shred.copy_to_packet(&mut packet);
+        let mut payload = shred.payload().to_vec();
         // Larger than the data buffer of a shred in a 32:32 erasure set.
         let bad_size = u16::MAX;
-        packet.buffer_mut()[OFFSET_OF_DATA_SIZE..][..2].copy_from_slice(&bad_size.to_le_bytes());
+        payload[OFFSET_OF_DATA_SIZE..][..2].copy_from_slice(&bad_size.to_le_bytes());
 
         // Rejecting a shred the rest of the cluster still accepts would fork it,
         // so the bound only applies once the feature is active.
         for (root_bank, expect_discard) in [(permissive_bank, false), (enforcing_bank, true)] {
             let mut shred_filter_context = ShredFilterContext::new(root_bank, shred_version);
             assert_eq!(
-                shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)),
+                shred_filter_context.should_discard_packet(&to_packet(&payload)),
                 expect_discard,
                 "bad data size is discarded only under the feature gate"
             );
@@ -1337,14 +1324,13 @@ mod tests {
 
         let shred_version = data_shred.common_header().version;
 
-        let mut packet = Packet::default();
-        data_shred.copy_to_packet(&mut packet);
+        let mut payload = data_shred.payload().to_vec();
 
         let fec_set_index = 64u32;
         let wrong_index = fec_set_index + 10;
 
         {
-            let mut cursor = Cursor::new(packet.buffer_mut());
+            let mut cursor = Cursor::new(&mut payload[..]);
             cursor
                 .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                 .unwrap();
@@ -1362,12 +1348,12 @@ mod tests {
         }
 
         let mut shred_filter_context = ShredFilterContext::new(root_bank.clone(), shred_version);
-        assert!(shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+        assert!(shred_filter_context.should_discard_packet(&to_packet(&payload)));
         assert_eq!(shred_filter_context.stats.unexpected_data_complete_shred, 1);
 
         let correct_index = fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32 - 1;
         {
-            let mut cursor = Cursor::new(packet.buffer_mut());
+            let mut cursor = Cursor::new(&mut payload[..]);
             cursor
                 .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                 .unwrap();
@@ -1375,7 +1361,7 @@ mod tests {
         }
 
         let mut shred_filter_context = ShredFilterContext::new(root_bank, shred_version);
-        assert!(!shred_filter_context.should_discard_packet(&BytesPacket::from(&packet)));
+        assert!(!shred_filter_context.should_discard_packet(&to_packet(&payload)));
         assert_eq!(shred_filter_context.stats.unexpected_data_complete_shred, 0);
     }
 }

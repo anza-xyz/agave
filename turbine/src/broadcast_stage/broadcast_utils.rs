@@ -1,7 +1,7 @@
 use {
     super::{Error, Result},
     agave_votor::event::{CompletedBlock, VotorEvent, VotorEventSender},
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     crossbeam_channel::Receiver,
     solana_clock::Slot,
     solana_entry::{
@@ -262,7 +262,7 @@ pub(super) fn set_block_id_and_send(
     bank: Arc<Bank>,
     block_id: Hash,
 ) -> Result<()> {
-    bank.set_block_id(Some(block_id));
+    bank.set_block_id(Some(BlockId::from(block_id)));
     if bank.is_frozen() && migration_status.should_send_votor_event(bank.slot()) {
         votor_event_sender.send(VotorEvent::Block(CompletedBlock {
             slot: bank.slot(),

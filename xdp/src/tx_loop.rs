@@ -33,6 +33,27 @@ use {
     },
 };
 
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum TxLoopError {
+    #[error("failed to read MAC address of {interface}: {source}")]
+    ReadMacAddress {
+        interface: String,
+        source: io::Error,
+    },
+    #[error("failed to allocate UMEM for {interface} queue {queue_id:?}")]
+    AllocateUmem {
+        interface: String,
+        queue_id: QueueId,
+    },
+    #[error("failed to create AF_XDP TX socket for queue {queue_id:?} on CPU {cpu_id}: {source}")]
+    CreateSocket {
+        queue_id: QueueId,
+        cpu_id: usize,
+        source: io::Error,
+    },
+}
+
 pub struct TxLoopConfigBuilder {
     zero_copy: bool,
     maybe_src_mac: Option<MacAddress>,
@@ -56,20 +77,27 @@ impl TxLoopConfigBuilder {
         self
     }
 
-    pub fn build_with_src_device(self, src_device: &NetworkDevice) -> TxLoopConfig {
+    pub fn build_with_src_device(
+        self,
+        src_device: &NetworkDevice,
+    ) -> Result<TxLoopConfig, TxLoopError> {
         let Self {
             zero_copy,
             maybe_src_mac,
         } = self;
 
-        let src_mac = maybe_src_mac.unwrap_or_else(|| {
-            // if no source MAC is provided, use the device's MAC address
-            src_device
+        // If no source MAC is provided, use the device's MAC address.
+        let src_mac = match maybe_src_mac {
+            Some(src_mac) => src_mac,
+            None => src_device
                 .mac_addr()
-                .expect("no src_mac provided, device must have a MAC address")
-        });
+                .map_err(|source| TxLoopError::ReadMacAddress {
+                    interface: src_device.name().to_string(),
+                    source,
+                })?,
+        };
 
-        TxLoopConfig { zero_copy, src_mac }
+        Ok(TxLoopConfig { zero_copy, src_mac })
     }
 }
 
@@ -100,7 +128,7 @@ impl TxLoopBuilder<OwnedUmem> {
         queue_id: QueueId,
         config: TxLoopConfig,
         dev: &NetworkDevice,
-    ) -> TxLoopBuilder<OwnedUmem> {
+    ) -> Result<TxLoopBuilder<OwnedUmem>, TxLoopError> {
         let TxLoopConfig { zero_copy, src_mac } = config;
 
         log::info!(
@@ -114,9 +142,7 @@ impl TxLoopBuilder<OwnedUmem> {
         // some drivers require frame_size=page_size
         let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
 
-        let queue = dev
-            .open_queue(queue_id)
-            .expect("failed to open queue for AF_XDP socket");
+        let queue = dev.open_queue(queue_id);
         let ring_sizes = queue.ring_sizes().unwrap_or_else(|| {
             log::info!(
                 "using default ring sizes for {} queue {queue_id:?}",
@@ -156,20 +182,23 @@ impl TxLoopBuilder<OwnedUmem> {
                     log::warn!("huge page alloc failed, falling back to regular page size");
                     PageAlignedMemory::alloc(frame_size, frame_count)
                 })
-                .unwrap();
-        let umem = OwnedUmem::new(memory, frame_size as u32).unwrap();
+                .map_err(|_| TxLoopError::AllocateUmem {
+                    interface: dev.name().to_string(),
+                    queue_id,
+                })?;
+        let umem = OwnedUmem::new(memory, frame_size as u32);
 
-        TxLoopBuilder {
+        Ok(TxLoopBuilder {
             cpu_id,
             zero_copy,
             src_mac,
             queue,
             tx_size,
             umem,
-        }
+        })
     }
 
-    pub fn build(self) -> Result<TxLoop<OwnedUmem>, io::Error> {
+    pub fn build(self) -> Result<TxLoop<OwnedUmem>, TxLoopError> {
         let TxLoopBuilder {
             cpu_id,
             zero_copy,
@@ -181,12 +210,12 @@ impl TxLoopBuilder<OwnedUmem> {
 
         let queue_id = queue.id();
         let (socket, tx) =
-            Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size).map_err(|err| {
-                log::error!(
-                    "failed to create AF_XDP TX socket for queue {queue_id:?} on CPU {cpu_id}: \
-                     {err}"
-                );
-                err
+            Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size).map_err(|source| {
+                TxLoopError::CreateSocket {
+                    queue_id,
+                    cpu_id,
+                    source,
+                }
             })?;
 
         let Tx {
@@ -195,7 +224,7 @@ impl TxLoopBuilder<OwnedUmem> {
             // this is where we'll get completion events once frames have been picked up by the NIC
             completion,
         } = tx;
-        let ring = ring.unwrap();
+        let ring = ring.expect("Socket::tx always creates a TX ring");
 
         Ok(TxLoop {
             cpu_id,

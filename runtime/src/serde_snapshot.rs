@@ -22,8 +22,6 @@ use {
     log::*,
     smallvec::SmallVec,
     solana_accounts_db::{
-        ObsoleteAccounts,
-        account_storage_entry::AccountStorageEntry,
         accounts::Accounts,
         accounts_db::{
             AccountsDb, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo,
@@ -76,15 +74,13 @@ mod types;
 pub use startup_hints::StartupHints;
 #[cfg(feature = "dev-context-only-utils")]
 pub use status_cache::serialize_status_cache_into;
-#[cfg(test)]
-pub(crate) use storages_list::StorageListItem;
 pub(crate) use {
     obsolete_accounts::{
         LegacyObsoleteAccountsMap, SerdeObsoleteAccounts, SerdeObsoleteAccountsMap,
     },
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
-    storages_list::StoragesList,
+    storages_list::{LegacyStoragesList, StorageListItem, StoragesList},
 };
 
 const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
@@ -479,7 +475,7 @@ pub struct ExtraFieldsToSerialize {
     pub unused_epoch_accounts_hash: Option<Hash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    pub block_id: Option<Hash>,
+    pub block_id: Option<BlockId>,
 }
 
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads
@@ -805,42 +801,6 @@ pub(crate) fn reconstruct_bank_from_fields(
     ))
 }
 
-pub(crate) fn reconstruct_single_storage(
-    slot: &Slot,
-    append_vec_file_info: FileInfo,
-    id: AccountsFileId,
-    obsolete_accounts: Option<(ObsoleteAccounts, AccountsFileId, usize)>,
-) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    // The storage length is taken directly from the on-disk file size (see
-    // `AccountsFile::new_for_startup`). When restoring from an archive the obsolete accounts have
-    // been physically removed during serialization, and when restoring from a snapshot directory
-    // they are still present in the file. In both cases the file size already reflects the exact
-    // number of bytes the storage spans, so there is no need to carry the length separately in the
-    // snapshot fields.
-    //
-    // When restoring from an archive, obsolete accounts will always be `None`.
-    // When restoring from fastboot, obsolete accounts will be 'Some' if the storage contained
-    // accounts marked obsolete at the time the snapshot was taken.
-    let obsolete_accounts =
-        if let Some((obsolete_accounts, obsolete_id, _obsolete_bytes)) = obsolete_accounts {
-            if obsolete_id != id {
-                return Err(SnapshotError::MismatchedAccountsFileId(id, obsolete_id));
-            }
-
-            obsolete_accounts
-        } else {
-            ObsoleteAccounts::default()
-        };
-
-    let accounts_file = AccountsFile::new_for_startup(append_vec_file_info)?;
-    Ok(Arc::new(AccountStorageEntry::new_existing(
-        *slot,
-        id,
-        accounts_file,
-        obsolete_accounts,
-    )))
-}
-
 // Remap the AppendVec ID to handle any duplicate IDs that may previously existed
 // due to full snapshots and incremental snapshots generated from different
 // nodes
@@ -921,29 +881,6 @@ pub(crate) fn remap_append_vec_file(
             ..append_vec_file_info
         },
     ))
-}
-
-pub(crate) fn remap_and_reconstruct_single_storage(
-    slot: Slot,
-    old_append_vec_id: SerializedAccountsFileId,
-    append_vec_file_info: FileInfo,
-    next_append_vec_id: &AtomicAccountsFileId,
-    num_collisions: &mut usize,
-) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    let (remapped_append_vec_id, remapped_append_vec_file_info) = remap_append_vec_file(
-        slot,
-        old_append_vec_id,
-        append_vec_file_info,
-        next_append_vec_id,
-        num_collisions,
-    )?;
-    let storage = reconstruct_single_storage(
-        &slot,
-        remapped_append_vec_file_info,
-        remapped_append_vec_id,
-        None,
-    )?;
-    Ok(storage)
 }
 
 /// This struct contains side-info while reconstructing the accounts DB from fields.

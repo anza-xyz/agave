@@ -3,26 +3,28 @@ use {
         parse_account_data::{ParsableAccount, ParseAccountError},
         validator_info,
     },
-    bincode::deserialize,
     serde::{Deserialize, Serialize},
     serde_json::Value,
+    solana_account::{WINCODE_CONFIG, WincodeConfig},
     solana_config_interface::state::{ConfigKeys, get_config_data},
     solana_pubkey::Pubkey,
 };
 
 pub fn parse_config(data: &[u8], _pubkey: &Pubkey) -> Result<ConfigAccountType, ParseAccountError> {
-    let parsed_account = deserialize::<ConfigKeys>(data).ok().and_then(|key_list| {
-        if !key_list.keys.is_empty() && key_list.keys[0].0 == validator_info::id() {
-            parse_config_data::<String>(data, key_list.keys).and_then(|validator_info| {
-                Some(ConfigAccountType::ValidatorInfo(UiConfig {
-                    keys: validator_info.keys,
-                    config_data: serde_json::from_str(&validator_info.config_data).ok()?,
-                }))
-            })
-        } else {
-            None
-        }
-    });
+    let parsed_account = wincode::config::deserialize::<ConfigKeys, _>(data, WINCODE_CONFIG)
+        .ok()
+        .and_then(|key_list| {
+            if !key_list.keys.is_empty() && key_list.keys[0].0 == validator_info::id() {
+                parse_config_data::<String>(data, key_list.keys).and_then(|validator_info| {
+                    Some(ConfigAccountType::ValidatorInfo(UiConfig {
+                        keys: validator_info.keys,
+                        config_data: serde_json::from_str(&validator_info.config_data).ok()?,
+                    }))
+                })
+            } else {
+                None
+            }
+        });
     parsed_account.ok_or(ParseAccountError::AccountNotParsable(
         ParsableAccount::Config,
     ))
@@ -30,9 +32,10 @@ pub fn parse_config(data: &[u8], _pubkey: &Pubkey) -> Result<ConfigAccountType, 
 
 fn parse_config_data<T>(data: &[u8], keys: Vec<(Pubkey, bool)>) -> Option<UiConfig<T>>
 where
-    T: serde::de::DeserializeOwned,
+    T: for<'de> wincode::SchemaRead<'de, WincodeConfig, Dst = T>,
 {
-    let config_data: T = deserialize(get_config_data(data).ok()?).ok()?;
+    let config_data: T =
+        wincode::config::deserialize(get_config_data(data).ok()?, WINCODE_CONFIG).ok()?;
     let keys = keys
         .iter()
         .map(|key| UiConfigKey {
@@ -68,24 +71,21 @@ mod test {
     use {
         super::*,
         crate::validator_info::ValidatorInfo,
-        bincode::serialize,
         serde_json::json,
-        solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     };
 
-    fn create_config_account<T: serde::Serialize>(
+    fn create_config_account(
         keys: Vec<(Pubkey, bool)>,
-        config_data: &T,
+        validator_info: ValidatorInfo,
         lamports: u64,
     ) -> AccountSharedData {
-        let mut data = serialize(&ConfigKeys { keys }).unwrap();
-        data.extend_from_slice(&serialize(config_data).unwrap());
-        AccountSharedData::from(Account {
+        AccountSharedData::new_data(
             lamports,
-            data,
-            owner: solana_sdk_ids::config::id(),
-            ..Account::default()
-        })
+            &(ConfigKeys { keys }, validator_info),
+            &solana_sdk_ids::config::id(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -99,7 +99,7 @@ mod test {
         let info_pubkey = solana_pubkey::new_rand();
         let validator_info_config_account = create_config_account(
             vec![(validator_info::id(), false), (info_pubkey, true)],
-            &validator_info,
+            validator_info,
             10,
         );
         assert_eq!(

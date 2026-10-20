@@ -3,10 +3,10 @@
 use {
     crate::device::NetworkDevice,
     aya::{
-        Ebpf, EbpfLoader,
-        programs::{Xdp, xdp::XdpMode},
+        Ebpf, EbpfError, EbpfLoader,
+        programs::{ProgramError, Xdp, xdp::XdpMode},
     },
-    std::io::{Cursor, Write},
+    std::io::{self, Cursor, Write},
 };
 
 macro_rules! write_fields {
@@ -43,19 +43,44 @@ const XDP_PROG: &[u8] = &[
 // the string table
 const STRTAB: &[u8] = b"\0xdp\0.symtab\0.strtab\0agave_xdp\0";
 
-pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum LoadXdpProgramError {
+    #[error(transparent)]
+    ReadDriver(io::Error),
+    #[error("failed to load XDP object: {0}")]
+    LoadObject(#[source] EbpfError),
+    #[error("failed to load XDP program into the kernel: {0}")]
+    LoadProgram(#[source] ProgramError),
+    #[error("failed to attach XDP program to {interface}: {source}")]
+    AttachProgram {
+        interface: String,
+        source: ProgramError,
+    },
+}
+
+pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, LoadXdpProgramError> {
     let mut loader = EbpfLoader::new();
-    let broken_frags = dev.driver()? == "i40e";
+    let broken_frags = dev.driver().map_err(LoadXdpProgramError::ReadDriver)? == "i40e";
     let mut ebpf = if broken_frags {
         loader.override_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
         loader.load(agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)
     } else {
         loader.load(&generate_xdp_elf())
-    }?;
-    let p: &mut Xdp = ebpf.program_mut("agave_xdp").unwrap().try_into().unwrap();
-    p.load()?;
+    }
+    .map_err(LoadXdpProgramError::LoadObject)?;
+    let p: &mut Xdp = ebpf
+        .program_mut("agave_xdp")
+        .expect("both XDP objects define the agave_xdp program")
+        .try_into()
+        .expect("agave_xdp is an XDP program");
+    p.load().map_err(LoadXdpProgramError::LoadProgram)?;
 
-    p.attach_to_if_index(dev.if_index(), XdpMode::Driver)?;
+    p.attach_to_if_index(dev.if_index(), XdpMode::Driver)
+        .map_err(|source| LoadXdpProgramError::AttachProgram {
+            interface: dev.name().to_string(),
+            source,
+        })?;
 
     Ok(ebpf)
 }

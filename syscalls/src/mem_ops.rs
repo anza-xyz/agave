@@ -6,7 +6,7 @@ fn mem_op_consume(invoke_context: &mut InvokeContext, n: u64) -> Result<(), Erro
         n.checked_div(compute_cost.cpi_bytes_per_unit)
             .unwrap_or(u64::MAX),
     );
-    invoke_context.compute_meter.consume_checked(cost)
+    invoke_context.consume_checked(cost)
 }
 
 /// Check that two regions do not overlap.

@@ -123,18 +123,29 @@ impl PeerListUpdater {
         let push_enabled =
             peers.contains(my_identity) && !self.migration_status.is_pre_feature_activation();
         let overrides = self.peer_overrides.load();
-        let mut new_peers: HashMap<_, _> = cluster_info
-            .query_contact_infos(peers.iter().chain(overrides.keys()), |node| {
-                node.alpenglow()
-                    .filter(|addr| cluster_info.socket_addr_space().check(addr))
-            })
-            .into_iter()
-            .map(|(pubkey, socket)| (pubkey, socket.flatten()))
-            .collect();
-        // An override that pins an address wins over whatever gossip resolved to.
-        for (pubkey, socket) in overrides.iter().filter(|(_, socket)| socket.is_some()) {
-            new_peers.insert(*pubkey, *socket);
+        // Resolve each peer once. Pinned overrides need no gossip lookup.
+        let mut new_peers = HashMap::with_capacity(peers.len().saturating_add(overrides.len()));
+        let mut gossip_lookups = peers;
+        for (pubkey, socket) in overrides.iter() {
+            if socket.is_some() {
+                gossip_lookups.remove(pubkey);
+                // Pinned addresses bypass the socket address policy used for gossip.
+                new_peers.insert(*pubkey, *socket);
+            } else {
+                gossip_lookups.insert(*pubkey);
+            }
         }
+        new_peers.extend(
+            cluster_info
+                .query_contact_infos(gossip_lookups.iter(), |node| node.alpenglow())
+                .into_iter()
+                .map(|(pubkey, socket)| {
+                    let socket = socket
+                        .flatten()
+                        .filter(|addr| cluster_info.socket_addr_space().check(addr));
+                    (pubkey, socket)
+                }),
+        );
         // Publish the latest version - this neither blocks nor fails.
         self.peer_list_sender.send_replace(Arc::new(PeerList {
             peers: new_peers,
@@ -603,6 +614,52 @@ mod tests {
             snapshot.peers.get(&staked_peer),
             Some(&Some(pinned)),
             "a pinned address replaces the peer's gossip socket"
+        );
+    }
+
+    #[test]
+    fn test_pinned_override_absent_from_gossip_bypasses_address_filter() {
+        let (bank_forks, cluster_info, _) =
+            create_bank_forks_and_cluster_info_with_socket_addr_space(
+                4,
+                0,
+                123456789,
+                SocketAddrSpace::Global,
+            );
+        let absent = Pubkey::new_unique();
+        let pinned = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 65001);
+        let (sender, receiver) = empty_peer_list_channel();
+        let svc = PeerListUpdater::new_for_tests(
+            bank_forks
+                .read()
+                .expect("test bank forks lock should not be poisoned")
+                .sharable_banks(),
+            sender,
+            Arc::new(ArcSwap::from_pointee(HashMap::from([(
+                absent,
+                Some(pinned),
+            )]))),
+        );
+        svc.refresh_peer_list(&cluster_info, &absent);
+
+        let snapshot = receiver.borrow();
+        assert_eq!(
+            snapshot.peers.len(),
+            5,
+            "the pinned override should join all four staked peers"
+        );
+        assert_eq!(
+            snapshot.peers.get(&absent),
+            Some(&Some(pinned)),
+            "a pinned address must be admitted even when absent from gossip"
+        );
+        assert!(!snapshot.push_enabled, "an override does not confer stake");
+        assert!(
+            snapshot
+                .peers
+                .iter()
+                .all(|(pubkey, addr)| *pubkey == absent || addr.is_none()),
+            "gossip loopback addresses must be rejected by the global address policy"
         );
     }
 

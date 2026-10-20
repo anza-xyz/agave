@@ -5,7 +5,8 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use wincode::{ReadError, ReadResult, SchemaRead, config::DefaultConfig};
 pub use {
     bytes,
-    solana_packet::{self, Meta, PACKET_DATA_SIZE, Packet, PacketFlags},
+    meta::{Meta, PacketFlags},
+    solana_packet::{self, PACKET_DATA_SIZE},
 };
 use {
     bytes::Bytes,
@@ -22,6 +23,8 @@ use {
         config::{Config, Configuration},
     },
 };
+
+mod meta;
 
 pub const NUM_PACKETS: usize = 1024 * 8;
 
@@ -44,7 +47,7 @@ pub const fn packet_config() -> impl Config {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-pub fn deserialize_slice_from_packet<'de, T, I>(packet: &'de Packet, index: I) -> ReadResult<T>
+pub fn deserialize_slice_from_packet<'de, T, I>(packet: &'de BytesPacket, index: I) -> ReadResult<T>
 where
     T: SchemaRead<'de, PacketConfig, Dst = T>,
     I: SliceIndex<[u8], Output = [u8]>,
@@ -55,24 +58,10 @@ where
     wincode::config::deserialize(data, packet_config_inner())
 }
 
-pub fn packet_from_data<T>(dest: Option<&SocketAddr>, data: T) -> WriteResult<Packet>
-where
-    T: SchemaWrite<PacketConfig, Src = T>,
-{
-    let mut packet = Packet::default();
-    let mut wr = Cursor::new(packet.buffer_mut());
-    wincode::config::serialize_into(&mut wr, &data, packet_config_inner())?;
-    packet.meta_mut().size = wr.position() as usize;
-    if let Some(dest) = dest {
-        packet.meta_mut().set_socket_addr(dest);
-    }
-    Ok(packet)
-}
-
 /// Serialize `data` into a freshly allocated [`BytesPacket`].
 ///
-/// Like [`packet_from_data`], serialization is bounded to [`PACKET_DATA_SIZE`], so oversized
-/// payloads fail instead of producing a packet that cannot be sent.
+/// Serialization is bounded to [`PACKET_DATA_SIZE`], so oversized payloads fail instead of
+/// producing a packet that cannot be sent.
 pub fn bytes_packet_from_data<T>(dest: Option<&SocketAddr>, data: T) -> WriteResult<BytesPacket>
 where
     T: SchemaWrite<PacketConfig, Src = T>,
@@ -203,14 +192,6 @@ impl BytesPacket {
 pub enum PacketBatch {
     Bytes(BytesPacketBatch),
     Single(BytesPacket),
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl From<&Packet> for BytesPacket {
-    fn from(packet: &Packet) -> Self {
-        let buffer = packet.data(..).map(Bytes::copy_from_slice);
-        Self::new(buffer.unwrap_or_default(), packet.meta().clone())
-    }
 }
 
 impl Deref for PacketBatch {

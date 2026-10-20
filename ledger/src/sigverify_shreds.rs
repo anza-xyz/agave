@@ -94,7 +94,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            shred::{ProcessShredsStats, Shred},
+            shred::{DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred},
             shredder::Shredder,
         },
         assert_matches::assert_matches,
@@ -348,6 +348,8 @@ mod tests {
             .flat_map(|(&slot, keypair)| {
                 let parent_slot = slot - rng.random::<u16>().max(1) as Slot;
                 let num_entries = rng.random_range(64..128);
+                let next_shred_index = rng.random_range(0..83) * DATA_SHREDS_PER_FEC_BLOCK as u32;
+                let next_code_index = next_shred_index;
                 Shredder::new(
                     slot,
                     parent_slot,
@@ -360,8 +362,8 @@ mod tests {
                     &make_entries(rng, num_entries),
                     is_last_in_slot,
                     Hash::new_from_array(rng.random()), // chained_merkle_root
-                    rng.random_range(0..2671),          // next_shred_index
-                    rng.random_range(0..2781),          // next_code_index
+                    next_shred_index,
+                    next_code_index,
                     &mut ProcessShredsStats::default(),
                 )
                 .into_iter()

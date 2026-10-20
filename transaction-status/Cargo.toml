@@ -22,18 +22,17 @@ agave-unstable-api = []
 Inflector = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 base64 = { workspace = true }
-bincode = { workspace = true }
 borsh = { workspace = true }
 bs58 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
-solana-address-lookup-table-interface = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true, features = ["wincode"] }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
-solana-loader-v2-interface = { workspace = true, features = ["bincode"] }
+solana-loader-v2-interface = { workspace = true, features = ["wincode"] }
 solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-message = { workspace = true }
 solana-program-option = { workspace = true }
@@ -41,12 +40,12 @@ solana-pubkey = { workspace = true }
 solana-reward-info = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
-solana-stake-interface = { workspace = true }
-solana-system-interface = { workspace = true }
-solana-transaction = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["serde", "wincode"] }
+solana-system-interface = { workspace = true, features = ["wincode"] }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
-solana-vote-interface = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["serde", "wincode"] }
 solana-zk-sdk-pod = { workspace = true }
 spl-associated-token-account-interface = { workspace = true, features = ["borsh"] }
 spl-memo-interface = { workspace = true }

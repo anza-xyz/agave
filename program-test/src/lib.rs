@@ -121,7 +121,7 @@ pub fn invoke_builtin_function(
     let instruction_account_indices = 0..instruction_context.get_number_of_instruction_accounts();
 
     // mock builtin program must consume units
-    invoke_context.compute_meter.consume_checked(1)?;
+    invoke_context.consume_checked(1)?;
 
     let log_collector = invoke_context.get_log_collector();
     let program_id = instruction_context.get_program_key()?;
@@ -253,7 +253,6 @@ fn get_sysvar<T: Clone>(
 ) -> u64 {
     let invoke_context = get_invoke_context();
     if invoke_context
-        .compute_meter
         .consume_checked(invoke_context.get_execution_cost().sysvar_base_cost + sysvar_size as u64)
         .is_err()
     {
@@ -340,7 +339,6 @@ impl SyscallStubs {
         let sysvar_buf_cost = length.checked_div(cpi_bytes_per_unit).unwrap_or(0);
 
         if invoke_context
-            .compute_meter
             .consume_checked(
                 sysvar_base_cost
                     .saturating_add(sysvar_id_cost)
@@ -1407,7 +1405,12 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarId + Serialize<Src = T>>(&self, sysvar: &T) {
+    pub fn set_sysvar<T>(&self, sysvar: &T)
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
+    {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);

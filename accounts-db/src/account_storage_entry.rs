@@ -286,17 +286,29 @@ impl AccountStorageEntry {
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
         obsolete_slot: Option<Slot>,
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+    ) -> Result<u64, AccountsFileError> {
+        self.accounts.set_file_on_reader(reader)?;
+        self.scan_accounts_with(reader, obsolete_slot, callback)
+    }
+
+    /// Same as [`Self::scan_accounts`], but scans the file already activated on `reader`.
+    pub(crate) fn scan_accounts_with<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
+        obsolete_slot: Option<Slot>,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<u64, AccountsFileError> {
         let excluded_offsets = self.excluded_offsets(obsolete_slot);
         let mut num_excluded = 0;
-        self.accounts.scan_accounts(reader, |offset, account| {
-            if excluded_offsets.contains(&offset) {
-                num_excluded += 1;
-                return;
-            }
-            callback(offset, account);
-        })?;
+        self.accounts
+            .scan_accounts_with(reader, |offset, account| {
+                if excluded_offsets.contains(&offset) {
+                    num_excluded += 1;
+                    return;
+                }
+                callback(offset, account);
+            })?;
         Ok(num_excluded)
     }
 

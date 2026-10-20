@@ -23,7 +23,6 @@ use {
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lazy_lru::LruCache,
-    rand::prelude::IndexedRandom as _,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
@@ -68,12 +67,6 @@ const FEC_REPAIR_DELAY: Duration = Duration::from_millis(250);
 // before making another request. Value is based on reasonable upper bound of
 // expected network delays in requesting repairs and receiving shreds.
 pub(crate) const REPAIR_REQUEST_TIMEOUT_MS: u64 = 150;
-
-// When requesting repair for a specific shred through the admin RPC, we will
-// request up to NUM_PEERS_TO_SAMPLE_FOR_REPAIRS in the event a specific, valid
-// target node is not provided. This number was chosen to provide reasonable
-// chance of sampling duplicate in the event of cluster partition.
-const NUM_PEERS_TO_SAMPLE_FOR_REPAIRS: usize = 10;
 
 // Minimum initial capacity for FEC set observations in a slot. This is to avoid
 // frequent reallocations for typical mainnet blocks while still letting unusually
@@ -1164,100 +1157,36 @@ impl RepairService {
         }
     }
 
-    fn get_repair_peers(
-        cluster_info: Arc<ClusterInfo>,
-        cluster_slots: Arc<ClusterSlots>,
-        slot: u64,
-    ) -> Vec<(Pubkey, SocketAddr)> {
-        // Find the repair peers that have this slot frozen.
-        let Some(peers_with_slot) = cluster_slots.lookup(slot) else {
-            warn!("No repair peers have frozen slot: {slot}");
-            return vec![];
-        };
-
-        // Filter out any peers that don't have a valid repair socket.
-        let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = peers_with_slot
-            .iter()
-            .filter_map(|(pubkey, stake)| {
-                let peer_repair_addr = cluster_info
-                    .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
-                if let Some(Some(peer_repair_addr)) = peer_repair_addr
-                    && cluster_info.socket_addr_space().check(&peer_repair_addr)
-                {
-                    trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
-                    Some((
-                        *pubkey,
-                        peer_repair_addr,
-                        (stake / solana_native_token::LAMPORTS_PER_SOL) as u32,
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Sample a subset of the repair peers weighted by stake.
-        let mut rng = rand::rng();
-        let Ok(weighted_sample_repair_peers) = repair_peers.choose_multiple_weighted(
-            &mut rng,
-            NUM_PEERS_TO_SAMPLE_FOR_REPAIRS,
-            |(_, _, stake)| *stake,
-        ) else {
-            return vec![];
-        };
-
-        // Return the pubkey and repair socket address for the sampled peers.
-        weighted_sample_repair_peers
-            .collect::<Vec<_>>()
-            .iter()
-            .map(|(pubkey, addr, _)| (*pubkey, *addr))
-            .collect()
-    }
-
+    /// Sends a repair request for the shred to `pubkey`.
+    ///
+    /// Returns false without sending if `pubkey` has no valid serve-repair socket.
     pub fn request_repair_for_shred_from_peer(
         cluster_info: Arc<ClusterInfo>,
-        cluster_slots: Arc<ClusterSlots>,
-        pubkey: Option<Pubkey>,
+        pubkey: Pubkey,
         slot: u64,
         shred_index: u64,
         repair_socket: &UdpSocket,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
-    ) {
-        let mut repair_peers = vec![];
-
-        // Check validity of passed in peer.
-        if let Some(pubkey) = pubkey {
-            let peer_repair_addr =
-                cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
-            if let Some(Some(peer_repair_addr)) = peer_repair_addr
-                && cluster_info.socket_addr_space().check(&peer_repair_addr)
-            {
-                trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
-                repair_peers.push((pubkey, peer_repair_addr));
-            }
+    ) -> bool {
+        let peer_repair_addr =
+            cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
+        let Some(Some(peer_repair_addr)) = peer_repair_addr else {
+            return false;
         };
-
-        // Select weighted sample of valid peers if no valid peer was passed in.
-        if repair_peers.is_empty() {
-            debug!(
-                "No pubkey was provided or no valid repair socket was found. Sampling a set of \
-                 repair peers instead."
-            );
-            repair_peers = Self::get_repair_peers(cluster_info.clone(), cluster_slots, slot);
+        if !cluster_info.socket_addr_space().check(&peer_repair_addr) {
+            return false;
         }
-
-        // Send repair request to each peer.
-        for (pubkey, peer_repair_addr) in repair_peers {
-            Self::request_repair_for_shred_from_address(
-                cluster_info.clone(),
-                pubkey,
-                peer_repair_addr,
-                slot,
-                shred_index,
-                repair_socket,
-                outstanding_repair_requests.clone(),
-            );
-        }
+        trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
+        Self::request_repair_for_shred_from_address(
+            cluster_info,
+            pubkey,
+            peer_repair_addr,
+            slot,
+            shred_index,
+            repair_socket,
+            outstanding_repair_requests,
+        );
+        true
     }
 
     fn request_repair_for_shred_from_address(

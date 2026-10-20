@@ -1,11 +1,15 @@
 use {
     agave_feature_set as feature_set,
+    solana_account::Account,
+    solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
     solana_instruction::{AccountMeta, Instruction},
+    solana_message::{AddressLookupTableAccount, VersionedMessage, v0},
     solana_program_test::ProgramTest,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader,
+    solana_sdk_ids::{address_lookup_table, bpf_loader},
     solana_signer::Signer,
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
+    solana_transaction_error::TransactionError,
     test_case::test_case,
 };
 
@@ -59,33 +63,58 @@ async fn test_max_accounts(num_accounts: u8, deactivate_feature: bool, expect_su
         program_test.deactivate_feature(feature_set::increase_tx_account_lock_limit::id());
     }
 
-    let context = program_test.start_with_context().await;
-
     // Subtract 2 to account for the program and fee payer
     let num_extra_accounts = num_accounts.checked_sub(2).unwrap();
     let account_metas = (0..num_extra_accounts)
         .map(|_| AccountMeta::new_readonly(Pubkey::new_unique(), false))
         .collect::<Vec<_>>();
-    let instruction = Instruction::new_with_bytes(program_id, &[], account_metas);
-    let transaction = Transaction::new_signed_with_payer(
-        &[instruction],
-        Some(&context.payer.pubkey()),
-        &[&context.payer],
-        context.last_blockhash,
+    let lookup = AddressLookupTableAccount {
+        key: Pubkey::new_unique(),
+        addresses: account_metas.iter().map(|meta| meta.pubkey).collect(),
+    };
+    let data = AddressLookupTable {
+        meta: LookupTableMeta::default(),
+        addresses: lookup.addresses.clone().into(),
+    }
+    .serialize_for_tests()
+    .unwrap();
+    program_test.add_account(
+        lookup.key,
+        Account {
+            lamports: 1_000_000_000,
+            data,
+            owner: address_lookup_table::id(),
+            ..Account::default()
+        },
     );
+    let context = program_test.start_with_context().await;
+    let instruction = Instruction::new_with_bytes(program_id, &[], account_metas);
+    let message = v0::Message::try_compile(
+        &context.payer.pubkey(),
+        &[instruction],
+        &[lookup],
+        context.last_blockhash,
+    )
+    .unwrap();
+    let transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.payer]).unwrap();
 
     // Invoke the program.
     if expect_success {
         context
             .banks_client
-            .process_transaction(transaction)
+            .process_transaction_with_preflight(transaction)
             .await
             .unwrap();
     } else {
-        context
-            .banks_client
-            .process_transaction(transaction)
-            .await
-            .unwrap_err();
+        assert_eq!(
+            context
+                .banks_client
+                .process_transaction_with_preflight(transaction)
+                .await
+                .unwrap_err()
+                .unwrap(),
+            TransactionError::TooManyAccountLocks
+        );
     }
 }

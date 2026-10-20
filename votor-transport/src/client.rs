@@ -29,11 +29,11 @@ use {
 
 /// How often the outbound loop reconciles its connection table against the
 /// peer_list. Doubles as the retry interval for failed connects.
-const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+pub(crate) const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Upper bound on a single handshake attempt, enforced inside the connect task.
 /// Accommodates any plausible RTT with margin.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// State of a peer's entry in the outbound table.
 #[derive(Debug)]

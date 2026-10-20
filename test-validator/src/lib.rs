@@ -16,7 +16,7 @@ use {
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_index::{AccountsIndexConfig, ScanFilter},
-        utils::create_accounts_run_and_snapshot_dirs,
+        utils::create_accounts_run_dir,
     },
     solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_cli_output::CliAccount,
@@ -31,9 +31,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-    solana_geyser_plugin_manager::{
-        GeyserPluginManagerRequest, geyser_plugin_manager::GeyserPluginManager,
-    },
+    solana_geyser_plugin_manager::{GeyserPluginHost, GeyserPluginManagerRequest},
     solana_gossip::{
         cluster_info::{ClusterInfo, DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig},
         contact_info::Protocol,
@@ -165,7 +163,7 @@ pub struct TestValidatorGenesis {
     compute_unit_limit: Option<u64>,
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
-    pub geyser_plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    pub geyser_plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
     pub admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
 
@@ -198,7 +196,7 @@ impl Default for TestValidatorGenesis {
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
-            geyser_plugin_manager: Arc::new(ArcSwap::new(Arc::new(GeyserPluginManager::default()))),
+            geyser_plugin_manager: Arc::new(ArcSwap::new(Arc::new(GeyserPluginHost::default()))),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
         }
@@ -1168,11 +1166,7 @@ impl TestValidator {
             )),
             rpc_config: config.rpc_config.clone(),
             pubsub_config: config.pubsub_config.clone(),
-            account_paths: vec![
-                create_accounts_run_and_snapshot_dirs(ledger_path.join("accounts"))
-                    .unwrap()
-                    .0,
-            ],
+            account_paths: vec![create_accounts_run_dir(ledger_path.join("accounts")).unwrap()],
             run_verification: false, // Skip PoH verification of ledger on startup for speed
             snapshot_config: SnapshotConfig {
                 full_snapshot_archive_interval: SnapshotInterval::Slots(
@@ -1478,7 +1472,7 @@ mod test {
     fn test_upgradeable_program_deploayment() {
         let program_id = Pubkey::new_unique();
         let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start();
         let rpc_client = test_validator.get_rpc_client();
 
@@ -1505,7 +1499,7 @@ mod test {
     async fn test_nonblocking_upgradeable_program_deploayment() {
         let program_id = Pubkey::new_unique();
         let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start_async()
             .await;
         let rpc_client = test_validator.get_async_rpc_client();
@@ -1665,7 +1659,7 @@ mod test {
     async fn test_wait_for_program_with_unfunded_payer() {
         let program_id = Pubkey::new_unique();
         let (test_validator, _mint_keypair) = TestValidatorGenesis::default_for_tests()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start_async()
             .await;
 

@@ -41,7 +41,7 @@ solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["serde"] }
+solana-loader-v3-interface = { workspace = true, features = ["serde", "wincode"] }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -53,7 +53,7 @@ solana-svm-measure = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["bincode"] }
+solana-transaction-context = { workspace = true, features = ["wincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
@@ -75,7 +75,7 @@ solana-slot-hashes = { workspace = true }
 solana-svm-callback = { path = "../../svm-callback", features = ["agave-unstable-api"] }
 solana-system-program = { workspace = true }
 solana-sysvar-id = { workspace = true }
-solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils", "wincode"] }
 test-case = { workspace = true }
 
 [[bench]]

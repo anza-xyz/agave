@@ -3,12 +3,14 @@ use {
     criterion::{Criterion, criterion_group, criterion_main},
     rand::Rng,
     solana_entry::entry::Entry,
-    solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::create_genesis_config,
-        shred::{ProcessShredsStats, Shred, Shredder, filter::ShredRecoveryContext},
+        shred::{
+            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred, Shredder,
+            filter::ShredRecoveryContext,
+        },
     },
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
@@ -19,10 +21,7 @@ use {
 };
 
 fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
-    let mut genesis_config = create_genesis_config(1).genesis_config;
-    let shred_slot = shreds.first().map(Shred::slot).unwrap_or_default();
-    let slots_per_epoch = shred_slot.max(MINIMUM_SLOTS_PER_EPOCH);
-    genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+    let genesis_config = create_genesis_config(1).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     ShredRecoveryContext::new(
@@ -67,8 +66,7 @@ fn make_dummy_entries<R: Rng>(rng: &mut R, data_size: usize) -> Vec<Entry> {
         .collect()
 }
 
-fn make_shreds_from_entries<R: Rng>(
-    rng: &mut R,
+fn make_shreds_from_entries(
     shredder: &Shredder,
     keypair: &Keypair,
     entries: &[Entry],
@@ -76,13 +74,17 @@ fn make_shreds_from_entries<R: Rng>(
     chained_merkle_root: Hash,
     stats: &mut ProcessShredsStats,
 ) -> (Vec<Shred>, Vec<Shred>) {
+    // Erasure batches are fixed 32:32, so data and code indices start together
+    // at an FEC set boundary.
+    let next_shred_index = 0;
+    let next_code_index = next_shred_index;
     let (data, code) = shredder.entries_to_merkle_shreds_for_tests(
         keypair,
         entries,
         is_last_in_slot,
         chained_merkle_root,
-        rng.random_range(0..2_000), // next_shred_index
-        rng.random_range(0..2_000), // next_code_index
+        next_shred_index,
+        next_code_index,
         stats,
     );
     (black_box(data), black_box(code))
@@ -95,13 +97,13 @@ fn run_make_shreds_from_entries(
     is_last_in_slot: bool,
 ) {
     let mut rng = rand::rng();
-    let slot = 315_892_061 + rng.random_range(0..=100_000);
-    let parent_offset = rng.random_range(1..=u16::MAX);
+    let slot = rng.random_range(1..=400);
+    let parent_offset = 1;
     let shredder = Shredder::new(
         slot,
-        slot - u64::from(parent_offset), // parent_slot
-        rng.random_range(0..64),         // reference_tick
-        rng.random(),                    // shred_version
+        slot - parent_offset,    // parent_slot
+        rng.random_range(0..64), // reference_tick
+        rng.random(),            // shred_version
     )
     .unwrap();
     let keypair = Keypair::new();
@@ -112,7 +114,6 @@ fn run_make_shreds_from_entries(
     // Initialize the thread-pool and the Reed-Solomon encoder.
     for _ in 0..10 {
         make_shreds_from_entries(
-            &mut rng,
             &shredder,
             &keypair,
             &entries,
@@ -124,7 +125,6 @@ fn run_make_shreds_from_entries(
     c.bench_function(name, |b| {
         b.iter(|| {
             let (data, code) = make_shreds_from_entries(
-                &mut rng,
                 &shredder,
                 &keypair,
                 &entries,
@@ -146,13 +146,15 @@ fn run_recover_shreds(
     is_last_in_slot: bool,
 ) {
     let mut rng = rand::rng();
-    let slot = 315_892_061 + rng.random_range(0..=100_000);
-    let parent_offset = rng.random_range(1..=u16::MAX);
+    // The recovery filter drops shreds more than MAX_SHRED_DISTANCE_MINIMUM
+    // (500) slots ahead of the root bank, which is at slot 0.
+    let slot = rng.random_range(1..=400);
+    let parent_offset = 1;
     let shredder = Shredder::new(
         slot,
-        slot - u64::from(parent_offset), // parent_slot
-        rng.random_range(0..64),         // reference_tick
-        rng.random(),                    // shred_version
+        slot - parent_offset,    // parent_slot
+        rng.random_range(0..64), // reference_tick
+        rng.random(),            // shred_version
     )
     .unwrap();
     let keypair = Keypair::new();
@@ -161,7 +163,6 @@ fn run_recover_shreds(
     let chained_merkle_root = make_dummy_hash(&mut rng);
     let mut stats = ProcessShredsStats::default();
     let (data, code) = make_shreds_from_entries(
-        &mut rng,
         &shredder,
         &keypair,
         &entries,
@@ -183,15 +184,34 @@ fn run_recover_shreds(
         let k = rng.random_range(0..data.len());
         data.remove(k);
     }
+    // Keep `num_code` random coding shreds, so that exactly enough shreds are
+    // received to recover the erasure batch.
     for i in 0..num_code {
         let j = rng.random_range(i..code.len());
         code.swap(i, j);
     }
+    code.truncate(num_code);
     code.sort_unstable_by_key(|shred| shred.index());
+    let num_missing_data = DATA_SHREDS_PER_FEC_BLOCK - data.len();
     let mut shreds = data;
     shreds.extend(code);
     c.bench_function(name, |b| {
         let mut shred_recovery_context = new_shred_recovery_context(&shreds);
+        // Guard against the recovery filter silently discarding the input.
+        let mut recovered_shreds = Vec::new();
+        let mut recovered_data_shreds = Vec::new();
+        shred_recovery_context
+            .recover(
+                shreds.clone(),
+                &mut recovered_shreds,
+                &mut recovered_data_shreds,
+            )
+            .expect("erasure batch should be recoverable");
+        assert_eq!(
+            recovered_data_shreds.len(),
+            num_missing_data,
+            "every missing data shred should be recovered"
+        );
         b.iter(|| {
             let mut recovered_shreds = Vec::new();
             let mut recovered_data_shreds = Vec::new();

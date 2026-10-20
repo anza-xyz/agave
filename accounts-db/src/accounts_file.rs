@@ -8,8 +8,10 @@ use {
         storable_accounts::StorableAccounts,
     },
     agave_fs::{
-        FileInfo,
-        buffered_reader::{BufReaderWithOverflow, BufferedReader, RequiredLenBufFileRead},
+        FileInfo, FileSize,
+        buffered_reader::{
+            BufReaderWithOverflow, BufferedReader, FileBufRead, RequiredLenBufFileRead,
+        },
         file_io::open_for_reading,
     },
     solana_account::AccountSharedData,
@@ -62,14 +64,15 @@ pub enum AccountsFile {
 }
 
 impl AccountsFile {
-    /// Creates a new AccountsFile for the underlying storage at `file_info`
-    ///
-    /// This version of `new()` may only be called when reconstructing storages as part of startup.
-    /// The storage length is taken to be the full file size; this is trusted and relies on later
-    /// index generation or accounts verification to ensure it is valid.
-    pub fn new_for_startup(file_info: FileInfo) -> Result<Self> {
+    /// Creates a new AccountsFile by opening an existing AppendVec from `file_info`.
+    pub fn open_append_vec(file_info: FileInfo) -> Result<Self> {
         let av = AppendVec::new_for_startup(file_info)?;
         Ok(Self::AppendVec(av))
+    }
+
+    /// Creates a new AccountsFile by opening an existing SplitFile from `meta` and `data`.
+    pub fn open_split(meta: FileInfo, data: Option<FileInfo>) -> Result<Self> {
+        Ok(Self::Split(SplitFile::open(meta, data)?))
     }
 
     /// if storage is not readonly, reopen another instance that is read only
@@ -213,24 +216,29 @@ impl AccountsFile {
     ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
+    #[cfg(test)]
     pub(crate) fn scan_accounts<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<()> {
-        match self {
-            Self::AppendVec(av) => av.scan_accounts(reader, callback)?,
-            Self::Split(split) => {
-                split.scan_accounts_with_data(reader, |logical_offset, account| {
-                    let split_file::LogicalOffset(offset) = logical_offset;
-                    callback(offset, account)
-                })?
-            }
-        }
-        Ok(())
+        self.set_file_on_reader(reader)?;
+        self.scan_accounts_with(reader, callback)
     }
 
-    /// Scans the file already activated on the reader, preserving archive read-ahead and I/O mode.
+    /// Activates this instance's account data file on `reader`.
+    pub(crate) fn set_file_on_reader<'a>(
+        &'a self,
+        reader: &mut impl FileBufRead<'a>,
+    ) -> io::Result<()> {
+        if let Some((file, read_limit)) = self.account_data_file() {
+            reader.set_file(file, read_limit)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Scans the file already activated on the reader, preserving its read-ahead and I/O mode.
     pub(crate) fn scan_accounts_with<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
@@ -310,34 +318,41 @@ impl AccountsFile {
         }
     }
 
-    /// Returns a file handle suitable for archive-style reads. With
-    /// `use_direct_io = true` a fresh fd is opened with `O_DIRECT`; otherwise
-    /// the `AccountsFile`'s existing fd is borrowed, saving one fd per storage.
-    pub fn open_file_for_archive(&self, use_direct_io: bool) -> io::Result<OpenFileForArchive<'_>> {
-        if use_direct_io {
+    /// Returns the file holding the account data and its length.
+    fn account_data_file(&self) -> Option<(&File, FileSize)> {
+        match self {
+            Self::AppendVec(av) => Some((av.file(), av.len() as FileSize)),
+            Self::Split(split) => split
+                .data_file()
+                .map(|data_file| (data_file, split.data_len())),
+        }
+    }
+
+    /// Returns a file handle for a bulk read (one sequential pass over the whole file) in batch
+    /// work like archiving or index generation, rather than for account loads.
+    /// With `use_direct_io = true` a fresh fd is opened with `O_DIRECT`; otherwise the
+    /// `AccountsFile`'s existing fd is borrowed.
+    /// Returns `None` for a split file with no external account data file.
+    pub fn open_file_for_bulk_read(
+        &self,
+        use_direct_io: bool,
+    ) -> io::Result<Option<OpenFileForBulkRead<'_>>> {
+        let Some((data_file, read_limit)) = self.account_data_file() else {
+            return Ok(None);
+        };
+        let file = if use_direct_io {
             let path = match self {
                 Self::AppendVec(av) => av.path(),
-                Self::Split(split) => split.data_path().unwrap_or_else(|| {
-                    // We're opening a file here to use with AccountStorageReader for archiving
-                    // snapshots.  However, this SplitFile doesn't have a data file, so there's
-                    // nothing to actually read...  Since we need to return something, using
-                    // the meta file here is fine; the AccountStorageReader will never use it.
-                    // Ideal? No.  Safe? Yes.
-                    split.meta_path()
-                }),
-            };
-            open_for_reading(path, true).map(OpenFileForArchive::Owned)
-        } else {
-            Ok(match self {
-                Self::AppendVec(av) => av.open_file_for_archive(),
                 Self::Split(split) => {
-                    OpenFileForArchive::Borrowed(split.data_file().unwrap_or_else(|| {
-                        // See the comment above w.r.t. the Split variant.
-                        split.meta_file()
-                    }))
+                    // SAFETY: A data file implies that its path is present as well.
+                    split.data_path().unwrap()
                 }
-            })
-        }
+            };
+            BulkReadFile::Owned(open_for_reading(path, true)?)
+        } else {
+            BulkReadFile::Borrowed(data_file)
+        };
+        Ok(Some(OpenFileForBulkRead { file, read_limit }))
     }
 }
 
@@ -358,9 +373,9 @@ impl AccountsFileProvider {
     }
 }
 
-/// The access method to use when archiving an AccountsFile
+/// The access method to use when bulk-reading an AccountsFile
 #[derive(Debug)]
-pub enum OpenFileForArchive<'a> {
+enum BulkReadFile<'a> {
     /// Borrowed `AccountsFile` fd; lacks `O_DIRECT`, so reads go through the
     /// kernel page cache (incompatible with direct-I/O reads).
     Borrowed(&'a File),
@@ -368,12 +383,26 @@ pub enum OpenFileForArchive<'a> {
     Owned(File),
 }
 
-impl AsRef<File> for OpenFileForArchive<'_> {
+impl AsRef<File> for OpenFileForBulkRead<'_> {
     fn as_ref(&self) -> &File {
-        match self {
-            Self::Borrowed(f) => f,
-            Self::Owned(f) => f,
+        match &self.file {
+            BulkReadFile::Borrowed(f) => f,
+            BulkReadFile::Owned(f) => f,
         }
+    }
+}
+
+/// The account data file of an AccountsFile, opened for a bulk read
+#[derive(Debug)]
+pub struct OpenFileForBulkRead<'a> {
+    file: BulkReadFile<'a>,
+    read_limit: FileSize,
+}
+
+impl OpenFileForBulkRead<'_> {
+    /// Returns the length of the account data (excludes a split file's metadata).
+    pub fn read_limit(&self) -> FileSize {
+        self.read_limit
     }
 }
 

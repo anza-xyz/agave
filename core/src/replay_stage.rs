@@ -34,6 +34,7 @@ use {
     },
     agave_jemalloc::jemalloc::Arena,
     agave_votor::{
+        commitment::{self, CommitmentAggregationData, CommitmentType},
         event::{
             CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, SwitchBankEvent, VotorEvent,
             VotorEventSender,
@@ -92,7 +93,10 @@ use {
         installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::first_of_consecutive_leader_slots,
         snapshot_controller::SnapshotController,
-        transaction_execution::TransactionStatusSender,
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
+            TransactionStatusSenderError,
+        },
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
@@ -112,6 +116,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    thiserror::Error,
 };
 
 mod dead_slots;
@@ -167,6 +172,19 @@ pub enum HeaviestForkFailures {
 enum ForkReplayMode {
     Serial,
     Parallel(ThreadPool),
+}
+
+#[derive(Debug, Error)]
+enum ReplayStageError {
+    #[error("blockstore operation failed: {0}")]
+    Blockstore(#[from] BlockstoreError),
+
+    #[error("failed to request transaction-history purge for slot {slot}: {source}")]
+    PurgeTransactionHistory {
+        slot: Slot,
+        #[source]
+        source: TransactionStatusSenderError,
+    },
 }
 
 // Implement a destructor for the ReplayStage thread to signal it exited
@@ -276,6 +294,7 @@ struct ProcessBankForksContext {
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     drop_bank_sender: Sender<Vec<BankWithScheduler>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
+    votor_commitment_sender: Sender<CommitmentAggregationData>,
 }
 
 impl ProcessActiveBanksContext {
@@ -326,6 +345,7 @@ struct NewBankForksContext<'a> {
     rpc_subscriptions: Option<&'a RpcSubscriptions>,
     /// Optional slot-status fanout for bank-created notifications.
     slot_status_notifier: &'a Option<SlotStatusNotifier>,
+    transaction_status_sender: Option<&'a TransactionStatusSender>,
     /// Alpenglow migration gates that decide replay offsets and vote-only mode.
     migration_status: &'a MigrationStatus,
     /// This validator's identity, used to leave live own-leader banks to BCL.
@@ -467,6 +487,7 @@ pub struct ReplaySenders {
     pub footer_certs_sender: Sender<SmallVec<[Certificate; 2]>>,
     pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
     pub lockouts_sender: Sender<TowerCommitmentAggregationData>,
+    pub votor_commitment_sender: Sender<CommitmentAggregationData>,
 }
 
 pub struct ReplayReceivers {
@@ -789,6 +810,7 @@ impl ReplayStage {
             lockouts_sender,
             own_votes_sender,
             footer_certs_sender,
+            votor_commitment_sender,
         } = senders;
 
         let ReplayReceivers {
@@ -938,6 +960,7 @@ impl ReplayStage {
                 rpc_subscriptions: rpc_subscriptions.clone(),
                 drop_bank_sender: drop_bank_sender.clone(),
                 leader_schedule_cache: leader_schedule_cache.clone(),
+                votor_commitment_sender,
             };
 
             let poh_shared_leader_state = poh_recorder.read().unwrap().shared_leader_state();
@@ -973,7 +996,7 @@ impl ReplayStage {
                     break;
                 }
 
-                handle_update_parent_interrupts(
+                if let Err(err) = handle_update_parent_interrupts(
                     &my_pubkey,
                     &blockstore,
                     &bank_forks,
@@ -983,23 +1006,31 @@ impl ReplayStage {
                     &replay_vote_sender,
                     migration_status.as_ref(),
                     entry_notification_sender.as_ref(),
-                );
+                    transaction_status_sender.as_ref(),
+                ) {
+                    error!("ReplayStage is stopping because: {err}");
+                    break;
+                }
 
                 let mut generate_new_bank_forks_time =
                     Measure::start("generate_new_bank_forks_time");
-                Self::generate_new_bank_forks(
+                if let Err(err) = Self::generate_new_bank_forks(
                     NewBankForksContext {
                         blockstore: &blockstore,
                         bank_forks: &bank_forks,
                         leader_schedule_cache: &leader_schedule_cache,
                         rpc_subscriptions: rpc_subscriptions.as_deref(),
                         slot_status_notifier: &slot_status_notifier,
+                        transaction_status_sender: transaction_status_sender.as_ref(),
                         migration_status: migration_status.as_ref(),
                         my_pubkey: &my_pubkey,
                     },
                     &mut progress,
                     &mut replay_timing,
-                );
+                ) {
+                    error!("ReplayStage is stopping because: {err}");
+                    break;
+                }
                 generate_new_bank_forks_time.stop();
 
                 // We either have a bank currently, OR there is a pending message to either reset or set
@@ -1012,7 +1043,7 @@ impl ReplayStage {
                     let r_bank_forks = bank_forks.read().unwrap();
                     (r_bank_forks.ancestors(), r_bank_forks.descendants())
                 };
-                let mut new_frozen_slots = Self::process_active_banks(
+                let mut new_frozen_slots = match Self::process_active_banks(
                     cluster_info.my_shred_version(),
                     &process_active_banks_context,
                     &mut progress,
@@ -1025,7 +1056,13 @@ impl ReplayStage {
                     &vote_account,
                     &mut replay_timing,
                     &footer_certs_sender,
-                );
+                ) {
+                    Ok(new_frozen_slots) => new_frozen_slots,
+                    Err(err) => {
+                        error!("ReplayStage is stopping because: {err}");
+                        break;
+                    }
+                };
                 let did_complete_bank = !new_frozen_slots.is_empty();
                 replay_active_banks_time.stop();
 
@@ -1075,7 +1112,7 @@ impl ReplayStage {
                         warn!("Identity changed from {my_old_pubkey} to {my_pubkey}");
                     }
 
-                    process_soft_dead_slots(
+                    if let Err(err) = process_soft_dead_slots(
                         &my_pubkey,
                         &blockstore,
                         &bank_forks,
@@ -1086,7 +1123,11 @@ impl ReplayStage {
                         &replay_vote_sender,
                         migration_status.as_ref(),
                         entry_notification_sender.as_ref(),
-                    );
+                        transaction_status_sender.as_ref(),
+                    ) {
+                        error!("ReplayStage is stopping because: {err}");
+                        break;
+                    }
                     Self::alpenglow_handle_newly_frozen_banks(
                         &new_frozen_slots,
                         &migration_status,
@@ -1108,8 +1149,8 @@ impl ReplayStage {
                         .values()
                         .any(|bank| !bank.is_frozen() && !bank.should_replay_from_blockstore())
                         || poh_shared_leader_state.load().working_bank().is_some();
-                    if !has_active_leader_bank {
-                        Self::process_switch_bank_events(
+                    if !has_active_leader_bank
+                        && let Err(err) = Self::process_switch_bank_events(
                             &my_pubkey,
                             &latest_switch_request,
                             &mut pending_switch,
@@ -1117,8 +1158,11 @@ impl ReplayStage {
                             &bank_forks,
                             &mut progress,
                             &mut async_verification_freelist,
+                            transaction_status_sender.as_ref(),
                         )
-                        .expect("Blockstore operations must succeed");
+                    {
+                        error!("ReplayStage is stopping because: {err}");
+                        break;
                     }
                     process_switch_bank_events_time.stop();
                     replay_timing.process_switch_bank_events_elapsed_us +=
@@ -1713,7 +1757,7 @@ impl ReplayStage {
         );
         assert!(genesis_bank.is_frozen());
 
-        if genesis_bank.block_id() != Some(genesis_block.block_id.to_hash()) {
+        if genesis_bank.block_id() != Some(genesis_block.block_id) {
             panic!(
                 "{my_pubkey}: Attempting to enable alpenglow but we have the wrong version of the \
                  genesis block our version: ({}, {:?}), certified version ({genesis_block:?})",
@@ -2445,7 +2489,8 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-    ) -> Result<(), BlockstoreError> {
+        transaction_status_sender: Option<&TransactionStatusSender>,
+    ) -> Result<(), ReplayStageError> {
         let root = bank_forks.read().unwrap().root();
 
         if let Some(event) = latest_switch_request
@@ -2476,7 +2521,7 @@ impl ReplayStage {
         };
         let block = event.block();
 
-        if bank_forks.read().unwrap().block_id(block.slot) == Some(block.block_id.to_hash()) {
+        if bank_forks.read().unwrap().block_id(block.slot) == Some(block.block_id) {
             // Nothing to switch
             *pending_switch = None;
             return Ok(());
@@ -2519,7 +2564,7 @@ impl ReplayStage {
             let parent_slot = slot_meta
                 .parent_slot
                 .expect("Full slots must have a parent");
-            let parent_block_id = slot_meta.parent_block_id;
+            let parent_block_id = BlockId::from(slot_meta.parent_block_id);
 
             if bank_forks.read().unwrap().block_id(parent_slot) == Some(parent_block_id)
                 // Genesis cannot be duplicate
@@ -2534,14 +2579,32 @@ impl ReplayStage {
             }
 
             // Check the next ancestor
-            ancestor_block_id = parent_block_id;
+            ancestor_block_id = parent_block_id.to_hash();
             ancestor_slot = parent_slot;
         }
 
         let slots_to_clear = blocks_to_switch
             .iter()
             .map(|(slot, _)| *slot)
-            .chain(original_dead_slots_to_clear.iter().copied());
+            .chain(original_dead_slots_to_clear.iter().copied())
+            .collect::<BTreeSet<_>>();
+
+        let unpersisted_leader_slot = transaction_status_sender.and_then(|_| {
+            let (_, banks_to_clear) = bank_forks
+                .read()
+                .unwrap()
+                .slots_to_clear(slots_to_clear.iter().copied());
+            banks_to_clear.into_iter().find_map(|bank| {
+                Self::leader_bank_shreds_pending(&bank, blockstore).then_some(bank.slot())
+            })
+        });
+        if let Some(slot) = unpersisted_leader_slot {
+            trace!(
+                "{my_pubkey}: Waiting for leader bank {slot} shreds to be persisted before \
+                 switching"
+            );
+            return Ok(());
+        }
 
         info!("{my_pubkey}: Clearing banks for switching: {slots_to_clear:?}");
         Self::clear_slots(
@@ -2549,7 +2612,14 @@ impl ReplayStage {
             bank_forks,
             progress,
             async_verification_freelist,
-        );
+            transaction_status_sender.map(|transaction_status_sender| {
+                (
+                    transaction_status_sender,
+                    TransactionHistoryPurgeSource::SwitchBank,
+                    TransactionHistoryPurgeInput::SwitchBank,
+                )
+            }),
+        )?;
 
         // Banks are clear, move shreds in blockstore
         for (slot, location) in blocks_to_switch {
@@ -2570,6 +2640,10 @@ impl ReplayStage {
         Ok(())
     }
 
+    fn leader_bank_shreds_pending(bank: &Bank, blockstore: &Blockstore) -> bool {
+        !bank.should_replay_from_blockstore() && !blockstore.is_full(bank.slot())
+    }
+
     /// Clear the requested slots and their descendants from progress, bank forks, and shared
     /// caches. Requested slots are purged from shared caches even if their banks no longer exist.
     fn clear_slots(
@@ -2577,11 +2651,16 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-    ) {
+        transaction_history_purge: Option<(
+            &TransactionStatusSender,
+            TransactionHistoryPurgeSource,
+            TransactionHistoryPurgeInput,
+        )>,
+    ) -> Result<(), ReplayStageError> {
         let (slots_to_purge, banks_to_clear) =
             bank_forks.read().unwrap().slots_to_clear(slots_to_clear);
         if slots_to_purge.is_empty() {
-            return;
+            return Ok(());
         }
 
         // Wait for async verify to complete
@@ -2638,10 +2717,51 @@ impl ReplayStage {
         // Clear the shared caches even for requested slots whose banks were already removed.
         // Those slots can be revived by an Alpenglow switch, and stale entries from the old block
         // version must not affect replay of the new version.
-        for slot in slots_to_purge {
-            root_bank.clear_slot_signatures(slot);
-            root_bank.prune_program_cache_by_deployment_slot(slot);
+        for slot in &slots_to_purge {
+            root_bank.clear_slot_signatures(*slot);
+            root_bank.prune_program_cache_by_deployment_slot(*slot);
         }
+
+        if let Some((transaction_status_sender, source, input)) = transaction_history_purge {
+            for slot in slots_to_purge {
+                match &input {
+                    TransactionHistoryPurgeInput::ReplayStage => {
+                        // TSS processes the discarded prefix writes, this purge, and restarted
+                        // execution writes in channel order, so replay does not need to wait.
+                        transaction_status_sender
+                            .send_purge_transaction_history_for_slot(
+                                slot,
+                                source,
+                                TransactionHistoryPurgeInput::ReplayStage,
+                                /*wait_until_finished:*/ false,
+                            )
+                            .map_err(|source| ReplayStageError::PurgeTransactionHistory {
+                                slot,
+                                source,
+                            })?;
+                    }
+                    TransactionHistoryPurgeInput::SwitchBank => {
+                        // Wait while the outgoing slot's shreds are still present; the purge must
+                        // reconstruct their deletion keys before SwitchBank replaces those shreds.
+                        transaction_status_sender
+                            .send_purge_transaction_history_for_slot(
+                                slot,
+                                source,
+                                TransactionHistoryPurgeInput::SwitchBank,
+                                /*wait_until_finished:*/ true,
+                            )
+                            .map_err(|source| ReplayStageError::PurgeTransactionHistory {
+                                slot,
+                                source,
+                            })?;
+                    }
+                    TransactionHistoryPurgeInput::Leader(_) => {
+                        unreachable!("leader transaction-history purge cannot clear replay slots")
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn recycle_async_verification(
@@ -3171,6 +3291,9 @@ impl ReplayStage {
         // `finalized` confirmation if a node is materially staked and servicing RPC requests at
         // the same time for development purposes.
         let node_vote_state = (*vote_account_pubkey, tower.vote_state.clone());
+        // Runs after `check_and_handle_new_root` above, so the published root
+        // is already in the blockstore. Alpenglow keeps the same order in
+        // `process_set_root_command`.
         Self::update_commitment_cache(
             bank.clone(),
             bank_forks.read().unwrap().root(),
@@ -3950,7 +4073,7 @@ impl ReplayStage {
         mut tbft_structs: Option<&mut TowerBFTStructures>,
         replay_result_vec: &[ReplaySlotFromBlockstore],
         my_pubkey: &Pubkey,
-    ) -> Vec<Slot> {
+    ) -> Result<Vec<Slot>, ReplayStageError> {
         let bank_forks = &process_active_banks_context.bank_forks;
 
         // TODO: See if processing of blockstore replay results and bank completion can be made thread safe.
@@ -3982,7 +4105,7 @@ impl ReplayStage {
                             duplicate_slots_to_repair,
                             purge_repair_slot_counter,
                             tbft_structs.as_deref_mut(),
-                        );
+                        )?;
                         continue;
                     }
                     Err(BlockstoreProcessorError::BlockComponentProcessor(
@@ -3997,7 +4120,7 @@ impl ReplayStage {
                             "Stopping replay of slot {bank_slot} to enable Alpenglow and rebuild \
                              the bank"
                         );
-                        return vec![];
+                        return Ok(vec![]);
                     }
                     Err(err) => {
                         mark_replay_dead_slot(
@@ -4055,7 +4178,8 @@ impl ReplayStage {
                 let block_id = process_active_banks_context
                     .blockstore
                     .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
-                    .expect("Blockstore operations must succeed");
+                    .expect("Blockstore operations must succeed")
+                    .map(BlockId::from);
                 debug_assert!(block_id.is_some() || !bank.should_replay_from_blockstore());
                 if block_id.is_some() {
                     bank.set_block_id(block_id);
@@ -4313,7 +4437,7 @@ impl ReplayStage {
             }
         }
 
-        new_frozen_slots
+        Ok(new_frozen_slots)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4330,7 +4454,7 @@ impl ReplayStage {
         vote_account: &Pubkey,
         replay_timing: &mut ReplayLoopTiming,
         finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
-    ) -> Vec<Slot> /* completed slots */ {
+    ) -> Result<Vec<Slot>, ReplayStageError> /* completed slots */ {
         let bank_replay_result_trackers = Self::prepare_active_banks_for_replay(
             process_active_banks_context,
             progress,
@@ -4339,7 +4463,7 @@ impl ReplayStage {
             vote_account,
         );
         if bank_replay_result_trackers.is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
 
         // Perform replay execution.
@@ -4418,7 +4542,7 @@ impl ReplayStage {
             end_slot,
             parent_block: Block {
                 slot: bank.slot(),
-                block_id: BlockId::from(block_id),
+                block_id,
             },
             block_timer: Instant::now(),
         };
@@ -4595,10 +4719,10 @@ impl ReplayStage {
 
                         let genesis_block = Block {
                             slot: genesis_slot,
-                            block_id: BlockId::from(genesis_bank.block_id().expect(
+                            block_id: genesis_bank.block_id().expect(
                                 "It is impossible for block id to not be known at this point, as \
                                  a descendant of this block has reached super oc status",
-                            )),
+                            ),
                         };
                         migration_status.set_genesis_block(genesis_block);
                     }
@@ -4755,7 +4879,7 @@ impl ReplayStage {
             progress
                 .get_hash(last_voted_slot)
                 .expect("Must exist for us to have frozen descendant"),
-            block_id,
+            block_id.to_hash(),
         );
         // Since we are updating our tower we need to update associated caches for previously computed
         // slots as well.
@@ -5256,6 +5380,17 @@ impl ReplayStage {
             my_pubkey,
             |bank_forks| progress.handle_new_root(bank_forks),
         );
+
+        // Publish the root only after its root markers are written and bank
+        // forks is rooted, so commitment cache readers never see a root the
+        // blockstore doesn't have yet. TowerBFT keeps the same order in
+        // `handle_votable_bank`.
+        commitment::update_commitment_cache(
+            my_pubkey,
+            CommitmentType::Rooted,
+            new_root,
+            &context.votor_commitment_sender,
+        );
     }
 
     /// Process a bank forks command
@@ -5314,12 +5449,15 @@ impl ReplayStage {
                 slot,
                 response_sender,
             } => {
-                Self::clear_slots(
+                let Ok(()) = Self::clear_slots(
                     [slot],
                     &context.bank_forks,
                     progress,
                     async_verification_freelist,
-                );
+                    None,
+                ) else {
+                    unreachable!("clearing a bank without a transaction-history purge cannot fail")
+                };
                 response_sender.send(()).unwrap_or_else(|_| {
                     warn!("bank forks controller clear-bank response receiver dropped")
                 });
@@ -5331,13 +5469,14 @@ impl ReplayStage {
         ctx: NewBankForksContext<'_>,
         progress: &mut ProgressMap,
         replay_timing: &mut ReplayLoopTiming,
-    ) {
+    ) -> Result<(), ReplayStageError> {
         let NewBankForksContext {
             blockstore,
             bank_forks,
             leader_schedule_cache,
             rpc_subscriptions,
             slot_status_notifier,
+            transaction_status_sender,
             migration_status,
             my_pubkey,
         } = ctx;
@@ -5466,6 +5605,21 @@ impl ReplayStage {
                     continue;
                 };
                 if let Some(num_shreds) = replay_offset {
+                    // Queue the purge before bank insertion to preserve TSS ordering:
+                    // original writes -> purge -> replacement writes.
+                    if let Some(transaction_status_sender) = transaction_status_sender {
+                        transaction_status_sender
+                            .send_purge_transaction_history_for_slot(
+                                slot,
+                                TransactionHistoryPurgeSource::ReplayStart,
+                                TransactionHistoryPurgeInput::ReplayStage,
+                                /*wait_until_finished:*/ false,
+                            )
+                            .map_err(|source| ReplayStageError::PurgeTransactionHistory {
+                                slot,
+                                source,
+                            })?;
+                    }
                     let prev_leader_slot = progress.get_bank_prev_leader_slot(&bank);
                     let fork_progress = ForkProgress::new(
                         parent_bank.last_blockhash(),
@@ -5492,6 +5646,7 @@ impl ReplayStage {
         replay_timing.generate_new_bank_forks_loop_us += generate_new_bank_forks_loop.as_us();
         replay_timing.generate_new_bank_forks_write_lock_us +=
             generate_new_bank_forks_write_lock.as_us();
+        Ok(())
     }
 
     pub(crate) fn new_bank_from_parent_with_notify(

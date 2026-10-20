@@ -270,16 +270,18 @@ mod test {
     #[allow(deprecated)]
     use solana_sysvar::recent_blockhashes::IterItem;
     use {
-        super::*, solana_account::Account, solana_fee_calculator::FeeCalculator, solana_hash::Hash,
+        super::*,
+        solana_account::{Account, state_traits::StateMutWincode as _},
+        solana_fee_calculator::FeeCalculator,
+        solana_hash::Hash,
     };
 
     fn create_account_for_test<T>(value: &T, size: usize) -> Account
     where
-        T: wincode::Serialize<Src = T>,
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>,
     {
-        let mut account = Account::new(1, size, &sysvar::id());
-        wincode::serialize_into(&mut account.data[..], value).unwrap();
-        account
+        Account::new_data_with_space(1, value, size, &sysvar::id()).unwrap()
     }
 
     #[test]
