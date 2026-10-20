@@ -55,6 +55,18 @@ default_cargo_audit_extra_args=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
+
+  # Crate:     webpki-roots
+  # Version:   0.26.11
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0381
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0381
+  # Solution:  Upgrade to >=1.0.10
+  # false positive: webpki-roots 0.26.11 bundles no roots, it re-exports webpki-roots >=1.0.10
+  # need to solve this dependant tree:
+  # tungstenite v0.28.0 -> webpki-roots v0.26.11
+  --ignore RUSTSEC-2026-0381
 )
 
 xtask_cargo_audit_extra_args=(
