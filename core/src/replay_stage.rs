@@ -345,6 +345,7 @@ struct NewBankForksContext<'a> {
     rpc_subscriptions: Option<&'a RpcSubscriptions>,
     /// Optional slot-status fanout for bank-created notifications.
     slot_status_notifier: &'a Option<SlotStatusNotifier>,
+    transaction_status_sender: Option<&'a TransactionStatusSender>,
     /// Alpenglow migration gates that decide replay offsets and vote-only mode.
     migration_status: &'a MigrationStatus,
     /// This validator's identity, used to leave live own-leader banks to BCL.
@@ -1013,19 +1014,23 @@ impl ReplayStage {
 
                 let mut generate_new_bank_forks_time =
                     Measure::start("generate_new_bank_forks_time");
-                Self::generate_new_bank_forks(
+                if let Err(err) = Self::generate_new_bank_forks(
                     NewBankForksContext {
                         blockstore: &blockstore,
                         bank_forks: &bank_forks,
                         leader_schedule_cache: &leader_schedule_cache,
                         rpc_subscriptions: rpc_subscriptions.as_deref(),
                         slot_status_notifier: &slot_status_notifier,
+                        transaction_status_sender: transaction_status_sender.as_ref(),
                         migration_status: migration_status.as_ref(),
                         my_pubkey: &my_pubkey,
                     },
                     &mut progress,
                     &mut replay_timing,
-                );
+                ) {
+                    error!("ReplayStage is stopping because: {err}");
+                    break;
+                }
                 generate_new_bank_forks_time.stop();
 
                 // We either have a bank currently, OR there is a pending message to either reset or set
@@ -5464,13 +5469,14 @@ impl ReplayStage {
         ctx: NewBankForksContext<'_>,
         progress: &mut ProgressMap,
         replay_timing: &mut ReplayLoopTiming,
-    ) {
+    ) -> Result<(), ReplayStageError> {
         let NewBankForksContext {
             blockstore,
             bank_forks,
             leader_schedule_cache,
             rpc_subscriptions,
             slot_status_notifier,
+            transaction_status_sender,
             migration_status,
             my_pubkey,
         } = ctx;
@@ -5599,6 +5605,21 @@ impl ReplayStage {
                     continue;
                 };
                 if let Some(num_shreds) = replay_offset {
+                    // Queue the purge before bank insertion to preserve TSS ordering:
+                    // original writes -> purge -> replacement writes.
+                    if let Some(transaction_status_sender) = transaction_status_sender {
+                        transaction_status_sender
+                            .send_purge_transaction_history_for_slot(
+                                slot,
+                                TransactionHistoryPurgeSource::ReplayStart,
+                                TransactionHistoryPurgeInput::ReplayStage,
+                                /*wait_until_finished:*/ false,
+                            )
+                            .map_err(|source| ReplayStageError::PurgeTransactionHistory {
+                                slot,
+                                source,
+                            })?;
+                    }
                     let prev_leader_slot = progress.get_bank_prev_leader_slot(&bank);
                     let fork_progress = ForkProgress::new(
                         parent_bank.last_blockhash(),
@@ -5625,6 +5646,7 @@ impl ReplayStage {
         replay_timing.generate_new_bank_forks_loop_us += generate_new_bank_forks_loop.as_us();
         replay_timing.generate_new_bank_forks_write_lock_us +=
             generate_new_bank_forks_write_lock.as_us();
+        Ok(())
     }
 
     pub(crate) fn new_bank_from_parent_with_notify(

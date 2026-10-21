@@ -16,6 +16,7 @@ use {
         consensus_message::{Block, VoteMessage},
         migration::MigrationStatus,
         reward_certificate::NUM_SLOTS_FOR_REWARD,
+        stake::NonZeroStake,
         unverified_vote_message::UnverifiedCertificate,
         vote::Vote,
         wire::{VersionedWireConsensusMessage, get_vote_payload_to_sign},
@@ -46,7 +47,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
-        num::{NonZero, NonZeroUsize},
+        num::NonZeroUsize,
         sync::RwLock,
         time::{Duration, Instant},
     },
@@ -922,7 +923,7 @@ fn test_reward_certificate_recovers_vote_lost_on_direct_quic_path_before_cutoff(
         let certificate = accumulator
             .try_build_base2_cert(
                 CertificateType::Notarize(block),
-                NonZero::new(
+                NonZeroStake::new(
                     root.epoch_stakes_from_slot(source_slot)
                         .unwrap()
                         .total_stake(),

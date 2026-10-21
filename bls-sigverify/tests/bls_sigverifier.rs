@@ -20,6 +20,7 @@ use {
         consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
         reward_certificate::NUM_SLOTS_FOR_REWARD,
+        stake::NonZeroStake,
         unverified_vote_message::UnverifiedCertificate,
         vote::Vote,
         wire::{VersionedWireConsensusMessage, get_vote_payload_to_sign},
@@ -49,7 +50,6 @@ use {
     std::{
         collections::HashSet,
         net::{Ipv4Addr, SocketAddr},
-        num::NonZero,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -420,7 +420,7 @@ fn create_signed_vote_message_with_stake(
     shred_version: u16,
     vote: Vote,
     rank: usize,
-    stake: NonZero<u64>,
+    stake: NonZeroStake,
 ) -> VoteMessage {
     let bls_keypair = &validator_keypairs[rank].bls_keypair;
     let payload = get_vote_payload_to_sign(vote, shred_version);
@@ -623,7 +623,7 @@ fn test_blssigverifier_verify_malformed() {
         ctx.cluster_info.my_shred_version(),
         Vote::new_finalization_vote(5_000_000_000), // very high slot
         rank,
-        NonZero::new(123).unwrap(),
+        NonZeroStake::new(123).unwrap(),
     );
     let messages_no_stakes = [(
         ConsensusMessage::Vote(vote_message_no_stakes),
@@ -647,7 +647,7 @@ fn test_blssigverifier_verify_malformed() {
             vote: Vote::new_finalization_vote(5),
             signature,
             rank: 1000, // Invalid rank
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         }),
         Pubkey::new_unique(),
     )];
@@ -788,7 +788,7 @@ fn test_blssigverifier_verify_votes_all_valid() {
             vote,
             signature,
             rank,
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         });
         packets.push(message_to_datagram(
             &consensus_message,
@@ -942,7 +942,7 @@ fn test_blssigverifier_verify_votes_invalid_in_two_distinct_messages() {
             vote,
             signature,
             rank,
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         });
         packets.push(message_to_datagram(
             &consensus_message,
@@ -987,7 +987,7 @@ fn test_blssigverifier_verify_votes_one_invalid_signature() {
             vote,
             signature,
             rank,
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         });
 
         packets.push(message_to_datagram(
@@ -1160,7 +1160,7 @@ fn test_verify_mixed_valid_batch() {
             vote,
             signature,
             rank,
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         });
         packets.push(message_to_datagram(
             &consensus_message,
@@ -1208,7 +1208,7 @@ fn test_verify_vote_with_invalid_rank() {
         vote,
         signature,
         rank: invalid_rank,
-        stake: NonZero::new(123).unwrap(),
+        stake: NonZeroStake::new(123).unwrap(),
     });
 
     let datagrams = messages_to_datagrams(
@@ -1238,7 +1238,7 @@ fn test_verify_old_vote_and_cert() {
         vote,
         signature,
         rank: rank.try_into().unwrap(),
-        stake: NonZero::new(123).unwrap(),
+        stake: NonZeroStake::new(123).unwrap(),
     });
     let datagrams_vote = messages_to_datagrams(
         &[(
@@ -2060,7 +2060,7 @@ fn test_banlist_updates_for_invalid_votes() {
                 vote,
                 signature,
                 rank: i as u16,
-                stake: NonZero::new(123).unwrap(),
+                stake: NonZeroStake::new(123).unwrap(),
             });
             (message, keypair.node_keypair.pubkey())
         })

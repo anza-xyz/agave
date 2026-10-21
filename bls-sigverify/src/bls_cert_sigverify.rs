@@ -230,7 +230,7 @@ fn certificate_cache_action(
             let entry = rank_map
                 .get_pubkey_stake_entry(rank)
                 .expect("ranks are sized by the rank map");
-            stake.saturating_add(entry.stake.get())
+            stake.saturating_add(entry.stake.get().get())
         })
     };
     let mut union = BitVec::<u8>::repeat(false, rank_map.len());

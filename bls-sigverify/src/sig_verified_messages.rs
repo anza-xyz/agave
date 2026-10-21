@@ -2,12 +2,11 @@
 
 use {
     agave_votor_messages::{
-        certificate::Certificate, consensus_message::VoteMessage, vote::Vote,
+        certificate::Certificate, consensus_message::VoteMessage, stake::NonZeroStake, vote::Vote,
         wire::VotePayloadToSign,
     },
     bitvec::vec::BitVec,
     solana_bls_signatures::{SignatureProjective, signature::SignatureAffine},
-    std::num::NonZero,
 };
 
 /// A batch of vote or cert being sent within the node.  They were either sig verified before being
@@ -31,7 +30,7 @@ pub struct VoteAggregate {
     /// The aggregate signature of the votes in the batch.
     signature: SignatureAffine,
     /// The total stake in the batch.
-    stake: NonZero<u64>,
+    stake: NonZeroStake,
     /// Ranks of the various validators whose votes are in the batch.
     ranks: BitVec<u8>,
 }
@@ -58,11 +57,12 @@ impl VoteAggregate {
     /// WARN: this function should not be exposed outside of this crate.  This crate uses it after
     /// it has verified the votes.
     ///
-    /// WARN: this function assumes that there are no duplicates in ranks_and_stakes_iter and each rank in the iter is < max_validators.
+    /// WARN: this function assumes that there are no duplicates in ranks_and_stakes_iter,
+    /// each rank in the iter is < max_validators, and there is at least one element in the iterator.
     pub fn new_from_verified_votes(
         max_validators: usize,
         vote_payload_to_sign: VotePayloadToSign,
-        ranks_and_stakes_iter: impl Iterator<Item = (u16, NonZero<u64>)>,
+        ranks_and_stakes_iter: impl Iterator<Item = (u16, NonZeroStake)>,
         aggregate_signature: SignatureProjective,
     ) -> Self {
         let mut ranks = BitVec::repeat(false, max_validators);
@@ -72,7 +72,7 @@ impl VoteAggregate {
             assert!(!ranks[rank as usize]);
             match total_stake {
                 None => total_stake = Some(stake),
-                Some(t) => total_stake = Some(t.saturating_add(stake.get())),
+                Some(t) => total_stake = Some(t.add(stake)),
             }
             ranks.set(rank as usize, true);
         }
@@ -80,7 +80,7 @@ impl VoteAggregate {
         Self {
             vote,
             signature: aggregate_signature.into(),
-            stake: total_stake.unwrap(),
+            stake: total_stake.expect("assumption: iterator is non-empty"),
             ranks,
         }
     }
@@ -101,7 +101,7 @@ impl VoteAggregate {
     }
 
     /// Accessor for the stake.
-    pub fn stake(&self) -> NonZero<u64> {
+    pub fn stake(&self) -> NonZeroStake {
         self.stake
     }
 

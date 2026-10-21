@@ -144,7 +144,7 @@ impl Candidate {
             return None;
         }
         let stake = ranks.iter_ones().try_fold(0u64, |stake, rank| {
-            Some(stake.saturating_add(rank_map.get_pubkey_stake_entry(rank)?.stake.get()))
+            Some(stake.saturating_add(rank_map.get_pubkey_stake_entry(rank)?.stake.get().get()))
         })?;
         // Selection reads raw bytes. Keep every owned signer set aligned to the first bit of its
         // first byte before encoding as well, since the encoding copies raw bitmap bytes.
@@ -268,6 +268,7 @@ fn stake_of(rank_map: &BLSPubkeyToRankMap, rank: usize) -> u64 {
         .get_pubkey_stake_entry(rank)
         .expect("signer sets are sized by their rank map")
         .stake
+        .get()
         .get()
 }
 
@@ -1427,7 +1428,9 @@ impl Recovery {
             .filter(|key| !baseline_validators.contains(key))
             .filter_map(|key| state.rank_map.get_rank_for_vote_pubkey(key))
             .filter_map(|&rank| state.rank_map.get_pubkey_stake_entry(usize::from(rank)))
-            .fold(0u64, |stake, entry| stake.saturating_add(entry.stake.get()));
+            .fold(0u64, |stake, entry| {
+                stake.saturating_add(entry.stake.get().get())
+            });
         response
     }
 }

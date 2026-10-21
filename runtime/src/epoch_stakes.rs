@@ -4,17 +4,17 @@ use qualifier_attr::qualifiers;
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::{stake_history::StakeHistory, stakes::SerdeStakesToStakeFormat},
+    agave_votor_messages::stake::{NonZeroStake, Stake as StakeType},
     solana_bls_signatures::pubkey::{
         PopVerified, PubkeyAffine as BLSPubkeyAffine, PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Stake,
+    solana_stake_interface::state::Stake as InterfaceStake,
     solana_vote::vote_account::{VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     std::{
         collections::HashMap,
-        num::NonZero,
         sync::{Arc, OnceLock},
     },
     wincode::{SchemaRead, SchemaWrite, WriteResult, adapter::DiscardSeq, len::BincodeLen},
@@ -35,7 +35,7 @@ pub struct BLSPubkeyStakeEntry {
     /// The bls pubkey of the validator specified in the vote account
     pub bls_pubkey: PopVerified<BLSPubkeyAffine>,
     /// The stake of the validator
-    pub stake: NonZero<u64>,
+    pub stake: NonZeroStake,
 }
 
 /// Container to store a mapping from validator [`BLSPubkeyAffine`] to rank.
@@ -52,7 +52,7 @@ pub struct BLSPubkeyToRankMap {
     /// a mapping from the node identity pubkey to the node's rank.
     node_pubkey_to_rank: HashMap<Pubkey, u16>,
     /// Total stake delegated to this validator.
-    total_stake: NonZero<u64>,
+    total_stake: NonZeroStake,
 }
 
 pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
@@ -73,7 +73,7 @@ impl BLSPubkeyToRankMap {
         let mut bls_pubkey_counts = HashMap::new();
         let mut node_pubkey_counts = HashMap::new();
         for (&vote_account_pubkey, (stake, account)) in epoch_vote_accounts_hash_map {
-            let Some(stake) = NonZero::new(*stake) else {
+            let Some(stake) = NonZeroStake::new(*stake) else {
                 continue;
             };
             let node_pubkey = *account.vote_state_view().node_pubkey();
@@ -105,10 +105,10 @@ impl BLSPubkeyToRankMap {
                 .collect();
         let total_stake = keys_stake_entry_with_compressed
             .iter()
-            .fold(0u64, |stake, (entry, _)| {
-                stake.saturating_add(entry.stake.get())
+            .fold(StakeType(0), |stake, (entry, _)| {
+                stake.add(StakeType::from(entry.stake))
             });
-        let total_stake = NonZero::new(total_stake).expect("total stakes should not be 0");
+        let total_stake = NonZeroStake::new(total_stake.0).expect("total stakes should not be 0");
         keys_stake_entry_with_compressed.sort_by(
             |(a_entry, a_pubkey_compressed), (b_entry, b_pubkey_compressed)| {
                 b_entry
@@ -146,7 +146,7 @@ impl BLSPubkeyToRankMap {
         self.sorted_pubkeys.len()
     }
 
-    pub fn total_stake(&self) -> NonZero<u64> {
+    pub fn total_stake(&self) -> NonZeroStake {
         self.total_stake
     }
 
@@ -423,7 +423,7 @@ impl EpochStakes {
 #[derive(SchemaWrite)]
 struct SerializableEpochStakes<'a> {
     vote_accounts: &'a VoteAccounts,
-    stake_delegations: Vec<(Pubkey, Stake)>,
+    stake_delegations: Vec<(Pubkey, InterfaceStake)>,
     unused: u64,
     epoch: Epoch,
     stake_history: &'a StakeHistory,
@@ -479,8 +479,8 @@ impl From<SerdeStakesToStakeFormat> for EpochStakes {
 pub(crate) struct DeserializableEpochStakes {
     vote_accounts: VoteAccounts,
     // Read-and-discarded (always empty); the serialize side writes it empty too.
-    #[wincode(with = "DiscardSeq<(Pubkey, Stake), BincodeLen>")]
-    _stake_delegations: Vec<(Pubkey, Stake)>,
+    #[wincode(with = "DiscardSeq<(Pubkey, InterfaceStake), BincodeLen>")]
+    _stake_delegations: Vec<(Pubkey, InterfaceStake)>,
     _unused: u64,
     epoch: Epoch,
     stake_history: StakeHistory,
@@ -707,11 +707,8 @@ pub(crate) mod tests {
         }
         let expected_num_vote_accounts = num_vote_accounts;
         assert_eq!(bls_pubkey_to_rank_map.len(), expected_num_vote_accounts);
-        let expected_total_stake = epoch_stakes.total_stake();
-        assert_eq!(
-            bls_pubkey_to_rank_map.total_stake().get(),
-            expected_total_stake
-        );
+        let expected_total_stake = NonZeroStake::new(epoch_stakes.total_stake()).unwrap();
+        assert_eq!(bls_pubkey_to_rank_map.total_stake(), expected_total_stake);
         for expected_rank in 0..bls_pubkey_to_rank_map.len() {
             let expected_entry = bls_pubkey_to_rank_map
                 .get_pubkey_stake_entry(expected_rank)
@@ -889,7 +886,7 @@ pub(crate) mod tests {
         let rank_map = BLSPubkeyToRankMap::new(&epoch_vote_accounts);
 
         assert_eq!(rank_map.len(), 3);
-        assert_eq!(rank_map.total_stake().get(), 250);
+        assert_eq!(rank_map.total_stake(), NonZeroStake::new(250).unwrap());
         for vote_pubkey in [
             duplicate_bls_vote_pubkey,
             duplicate_bls_vote_pubkey_2,
@@ -935,7 +932,7 @@ pub(crate) mod tests {
         #[derive(SchemaRead)]
         struct SerializedEpochStakes {
             vote_accounts: VoteAccounts,
-            stake_delegations: Vec<(Pubkey, Stake)>,
+            stake_delegations: Vec<(Pubkey, InterfaceStake)>,
             unused: u64,
             epoch: Epoch,
             stake_history: StakeHistory,

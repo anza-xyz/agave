@@ -1747,6 +1747,8 @@ mod tests {
         let mut simulated_bank =
             Bank::new_from_parent(bank.clone(), SlotLeader::default(), bank.slot() + 1);
         simulated_bank.slot = bank.slot() + slots_per_epoch;
+        // A bank stores at one slot, so moving the slot makes it a different bank
+        simulated_bank.bank_id = simulated_bank.rc.bank_id_generator.next();
         simulated_bank.epoch += 1;
 
         // Simulate the steps in `compute_new_epoch_caches_and_rewards`

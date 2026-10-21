@@ -934,7 +934,14 @@ fn test_weighted_byte_selection_matches_naive_selection() {
                     continue;
                 }
                 let stake = union.iter_ones().fold(0u64, |sum, rank| {
-                    sum.saturating_add(rank_map.get_pubkey_stake_entry(rank).unwrap().stake.get())
+                    sum.saturating_add(
+                        rank_map
+                            .get_pubkey_stake_entry(rank)
+                            .unwrap()
+                            .stake
+                            .get()
+                            .get(),
+                    )
                 });
                 if stake > best_stake {
                     best_stake = stake;
@@ -2024,7 +2031,14 @@ fn test_cached_coverage_scores_match_direct_scoring_for_every_retained_subset() 
             }
         }
         let covered = ranks.iter_ones().fold(0u64, |stake, rank| {
-            stake.saturating_add(rank_map.get_pubkey_stake_entry(rank).unwrap().stake.get())
+            stake.saturating_add(
+                rank_map
+                    .get_pubkey_stake_entry(rank)
+                    .unwrap()
+                    .stake
+                    .get()
+                    .get(),
+            )
         });
         (best, covered, total)
     }

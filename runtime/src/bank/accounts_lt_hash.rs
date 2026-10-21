@@ -63,7 +63,7 @@ impl Bank {
             let prev_account = self
                 .rc
                 .accounts
-                .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, address)
+                .load_do_not_populate_read_cache(&self.ancestors, address)
                 .map(|(account, _slot)| account);
             let curr_account = accounts.account(index, |account| {
                 (account.lamports() != 0).then(|| account.take_account())
@@ -137,7 +137,7 @@ impl Bank {
             let prev_account = self
                 .rc
                 .accounts
-                .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, address)
+                .load_do_not_populate_read_cache(&self.ancestors, address)
                 .map(|(account, _slot)| account);
             let curr_account = accounts.account(index, |account| {
                 (account.lamports() != 0).then(|| account.take_account())
