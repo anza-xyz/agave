@@ -193,7 +193,7 @@ pub(crate) fn args(default_args: &DefaultArgs) -> Vec<Arg<'_, '_>> {
             .help("Use DIR as full snapshot archives location [default: --snapshots value]"),
         Arg::with_name("incremental_snapshot_archive_path")
             .long("incremental-snapshot-archive-path")
-            .conflicts_with("no-incremental-snapshots")
+            .conflicts_with("no_incremental_snapshots")
             .value_name("DIR")
             .takes_value(true)
             .help("Use DIR as incremental snapshot archives location [default: --snapshots value]"),
