@@ -7,6 +7,7 @@ use {
         ops::{Deref, DerefMut},
         ptr::{self, NonNull},
         slice,
+        sync::Once,
     },
 };
 
@@ -120,9 +121,7 @@ impl PageAlignedMemory {
         let end = start.strict_add(aligned_size);
         // Safety:
         // the trimmed head and tail lie inside the mapping above and nothing references them.
-        // The advice only affects how the kernel backs the range, so its failure (e.g. a kernel
-        // without THP) leaves a valid buffer of base pages.
-        unsafe {
+        let advised = unsafe {
             if start > map_start {
                 libc::munmap(ptr, start.strict_sub(map_start));
             }
@@ -133,7 +132,20 @@ impl PageAlignedMemory {
                 start as *mut libc::c_void,
                 aligned_size,
                 libc::MADV_HUGEPAGE,
-            );
+            )
+        };
+        // The advice only affects how the kernel backs the range, so the buffer stays valid in
+        // base pages when it fails.
+        if advised != 0 {
+            static WARN_ONCE: Once = Once::new();
+            let error = io::Error::last_os_error();
+            WARN_ONCE.call_once(|| {
+                log::warn!(
+                    "io_uring buffers use base pages, because madvise(MADV_HUGEPAGE) failed: \
+                     {error}; the kernel likely lacks transparent huge page support \
+                     (CONFIG_TRANSPARENT_HUGEPAGE), which slows reads out of the buffers"
+                );
+            });
         }
 
         Ok(Self {
