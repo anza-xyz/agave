@@ -63,6 +63,8 @@ Release channels have their own copy of this changelog:
 
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
+* `cargo-install-all.sh` no longer installs `cargo-build-sbf` or `cargo-test-sbf`. These tools must
+  now be installed separately. The `--no-build-platform-tools` option is deprecated and has no effect.
 
 #### Changes
 
