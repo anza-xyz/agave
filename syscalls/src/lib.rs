@@ -13,10 +13,7 @@ pub use self::{
 };
 use {
     crate::mem_ops::is_nonoverlapping,
-    solana_big_mod_exp::{
-        BIG_MOD_EXP_MAX_BYTES, BIG_MOD_EXP_MIN_EXPONENT_LENGTH,
-        BIG_MOD_EXP_MOD_REDUCTION_COMPLEXITY_FACTOR, BigModExpParams, big_mod_exp,
-    },
+    solana_big_mod_exp::{BIG_MOD_EXP_MAX_BYTES, BigModExpParams, big_mod_exp},
     solana_blake3_hasher as blake3,
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
@@ -2255,22 +2252,16 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
     }
 }
 
+const BIG_MOD_EXP_MULT_COMPLEXITY_CONSTANT: u64 = 22;
+const BIG_MOD_EXP_SETUP_MULTIPLICATIONS: u64 = 12;
+const BIG_MOD_EXP_MULTIPLICATIONS_PER_EXPONENT_WORD: u64 = 80;
+const BIG_MOD_EXP_MOD_REDUCTION_CU_DIVISOR: u64 = 15;
+
 fn big_mod_exp_mult_complexity(input_len: u64) -> Option<u128> {
-    let input_len = input_len as u128;
-    let input_len_squared = input_len.checked_mul(input_len)?;
-    if input_len <= 64 {
-        Some(input_len_squared)
-    } else if input_len <= 1024 {
-        input_len_squared
-            .checked_div(4)?
-            .checked_add(96_u128.checked_mul(input_len)?)?
-            .checked_sub(3_072)
-    } else {
-        input_len_squared
-            .checked_div(16)?
-            .checked_add(480_u128.checked_mul(input_len)?)?
-            .checked_sub(199_680)
-    }
+    let operand_words = u128::from(input_len.div_ceil(8));
+    operand_words
+        .checked_mul(operand_words)?
+        .checked_add(u128::from(BIG_MOD_EXP_MULT_COMPLEXITY_CONSTANT))
 }
 
 fn big_mod_exp_highest_set_bit_index_le(bytes: &[u8]) -> Option<u64> {
@@ -2310,14 +2301,21 @@ fn big_mod_exp_operation_cost(
 ) -> Option<u64> {
     let input_len = params.base_len.max(params.modulus_len);
     let mult_complexity = big_mod_exp_mult_complexity(input_len)?;
-    let operation_complexity = if big_mod_exp_is_one_le(exponent) {
-        mult_complexity.checked_mul(u128::from(BIG_MOD_EXP_MOD_REDUCTION_COMPLEXITY_FACTOR))?
+    let (operation_complexity, divisor) = if big_mod_exp_is_one_le(exponent) {
+        (mult_complexity, BIG_MOD_EXP_MOD_REDUCTION_CU_DIVISOR)
     } else {
-        let adjusted_exponent_length =
-            big_mod_exp_adjusted_exponent_length(exponent).max(BIG_MOD_EXP_MIN_EXPONENT_LENGTH);
-        mult_complexity.checked_mul(u128::from(adjusted_exponent_length))?
+        let exponent_words = big_mod_exp_adjusted_exponent_length(exponent)
+            .checked_div(64)?
+            .checked_add(1)?;
+        let multiplications = BIG_MOD_EXP_MULTIPLICATIONS_PER_EXPONENT_WORD
+            .checked_mul(exponent_words)?
+            .checked_add(BIG_MOD_EXP_SETUP_MULTIPLICATIONS)?;
+        (
+            mult_complexity.checked_mul(u128::from(multiplications))?,
+            cost_divisor,
+        )
     };
-    let divisor = u128::from(cost_divisor);
+    let divisor = u128::from(divisor);
     if divisor == 0 {
         return None;
     }
@@ -6267,6 +6265,40 @@ mod tests {
             result,
             Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::InvalidLength
         );
+    }
+
+    #[test]
+    fn test_big_mod_exp_cost() {
+        let compute_cost = SVMTransactionExecutionCost::default();
+        let cost = |base_len: u64, modulus_len: u64, exponent: &[u8]| {
+            let params = BigModExpParams {
+                base: 0,
+                base_len,
+                exponent: 0,
+                exponent_len: exponent.len() as u64,
+                modulus: 0,
+                modulus_len,
+            };
+            compute_cost.big_modular_exponentiation_base_cost
+                + big_mod_exp_operation_cost(
+                    compute_cost.big_modular_exponentiation_cost_divisor,
+                    &params,
+                    exponent,
+                )
+                .unwrap()
+        };
+
+        // Costs listed in SIMD-0529
+        let exponent_65537 = [0x01, 0x00, 0x01];
+        assert_eq!(cost(256, 256, &exponent_65537), 24_108);
+        assert_eq!(cost(512, 512, &exponent_65537), 94_764);
+        assert_eq!(cost(512, 512, &[0xff; 128]), 1_330_164);
+        assert_eq!(cost(8, 8, &[0xff; 512]), 29_559);
+        assert_eq!(cost(512, 256, &[0x01]), 325);
+
+        // The reduction path is chosen by the exponent value, not its encoded or adjusted length
+        assert_eq!(cost(512, 256, &[0x01, 0x00, 0x00]), 325);
+        assert_eq!(cost(512, 256, &[0x00]), cost(512, 256, &[0x01, 0x01]));
     }
 
     #[test]

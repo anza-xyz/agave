@@ -155,10 +155,11 @@ pub struct SVMTransactionExecutionCost {
     /// Big integer modular exponentiation base cost
     pub big_modular_exponentiation_base_cost: u64,
     /// Big integer modular exponentiation cost divisor.
-    /// The modular exponentiation cost is computed from SIMD-0529 operand
-    /// complexity and adjusted exponent bit length, divided by this divisor,
-    /// plus
-    /// `big_modular_exponentiation_base_cost`.
+    /// The modular exponentiation cost is the SIMD-0529 operand complexity
+    /// times the number of multiplications for the exponent's 64-bit words,
+    /// divided by this divisor and rounded up, plus
+    /// `big_modular_exponentiation_base_cost`. An exponent of 1 is priced as a
+    /// single modular reduction with a fixed divisor of 15 instead.
     pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
@@ -237,8 +238,8 @@ impl Default for SVMTransactionExecutionCost {
             alt_bn128_g2_multiplication_cost: 15_670,
             alt_bn128_pairing_one_pair_cost_first: 36_364,
             alt_bn128_pairing_one_pair_cost_other: 12_121,
-            big_modular_exponentiation_base_cost: 422,
-            big_modular_exponentiation_cost_divisor: 189,
+            big_modular_exponentiation_base_cost: 50,
+            big_modular_exponentiation_cost_divisor: 4,
             poseidon_cost_coefficient_a: 61,
             poseidon_cost_coefficient_c: 542,
             get_remaining_compute_units_cost: 100,
