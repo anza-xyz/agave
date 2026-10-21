@@ -63,8 +63,17 @@ Release channels have their own copy of this changelog:
 
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
-* `cargo-install-all.sh` no longer installs `cargo-build-sbf` or `cargo-test-sbf`. These tools must
-  now be installed separately. The `--no-build-platform-tools` option is deprecated and has no effect.
+* **`cargo-build-sbf` and `cargo-test-sbf` are no longer bundled with the Agave
+  release.** Installing or updating via `agave-install` (including the
+  `release.anza.xyz/<version>/install` script) no longer puts them in
+  `active_release/bin`. After upgrading, `cargo build-sbf` and `cargo test-sbf`
+  will fail with `no such command`, or silently use an older copy found
+  elsewhere on your `PATH`. Install them separately with
+  `cargo install cargo-build-sbf --locked` (this installs both), and run
+  `which cargo-build-sbf` to confirm which copy you're using. Releases are
+  published in the
+  [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+
 
 #### Changes
 
