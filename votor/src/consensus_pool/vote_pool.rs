@@ -12,13 +12,13 @@ use {
     agave_bls_sigverify::bls_sigverifier::MAX_VOTE_SLOT_DISTANCE_FROM_ROOT,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
+        stake::{NonZeroStake, Stake},
         vote::Vote,
     },
     bitvec::vec::BitVec,
     solana_clock::Slot,
     std::{
         collections::{BTreeMap, HashMap},
-        num::NonZero,
         sync::Arc,
     },
     thiserror::Error,
@@ -40,7 +40,7 @@ impl VotePool {
 
     fn try_produce_cert(
         &self,
-        total_stake: NonZero<u64>,
+        total_stake: NonZeroStake,
         vote: Vote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
         acc: &AggregateAccumulator,
@@ -148,10 +148,10 @@ impl VotePool {
     fn add_pool_vote(
         &mut self,
         freelist: &mut AccumulatorsFreeList,
-        total_stake: NonZero<u64>,
+        total_stake: NonZeroStake,
         msg: &PoolVote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<(u64, Option<Certificate>), AggregateAccumulatorError> {
+    ) -> Result<(Stake, Option<Certificate>), AggregateAccumulatorError> {
         let vote = *msg.vote();
         let acc = self
             .accumulators
@@ -211,10 +211,10 @@ impl VotePools {
     pub(super) fn add_pool_vote(
         &mut self,
         max_validators: usize,
-        total_stake: NonZero<u64>,
+        total_stake: NonZeroStake,
         msg: &PoolVote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<(u64, Option<Certificate>), VotePoolError> {
+    ) -> Result<(Stake, Option<Certificate>), VotePoolError> {
         let vote_slot = msg.vote().slot();
         if vote_slot < self.root_slot {
             return Err(VotePoolError::OldVoteReceived {
@@ -325,7 +325,7 @@ mod tests {
         pools: &mut VotePools,
         slot: Slot,
         rank: usize,
-    ) -> Result<(u64, u64), VotePoolError> {
+    ) -> Result<(Stake, u64), VotePoolError> {
         let bank = ctx.bank_forks.read().unwrap().root_bank();
         let total_stake = bank.get_rank_map(0).unwrap().total_stake();
         // Use the same validator set across distant slots without needing
@@ -341,7 +341,7 @@ mod tests {
             msg.vote,
             ctx.pool.cluster_info.my_shred_version(),
         )));
-        let stake = msg.stake.get();
+        let stake = msg.stake.get().get();
         let (accumulated, _) = pools.add_pool_vote(
             ctx.validators.len(),
             total_stake,
@@ -362,25 +362,25 @@ mod tests {
         pools.purge(127);
         for slot in [127, 254, 255, 1024] {
             let (accumulated, stake) = add_vote(&mut pools, slot, 0);
-            assert_eq!(accumulated, stake);
+            assert_eq!(accumulated.0, stake);
         }
         for slot in [127, 254, 255, 1024] {
             let (accumulated, stake) = add_vote(&mut pools, slot, 1);
-            assert_eq!(accumulated, 2 * stake);
+            assert_eq!(accumulated.0, 2 * stake);
         }
 
         // Partial purges retain the new root's votes.
         pools.purge(1024);
         assert_eq!(pools.freelist.freelist.len(), 3);
         let (accumulated, stake) = add_vote(&mut pools, 1024, 2);
-        assert_eq!(accumulated, 3 * stake);
+        assert_eq!(accumulated.0, 3 * stake);
 
         // Advancing by the full capacity clears all previous accumulators.
         let new_root = 1024 + pools.pools.len() as Slot;
         pools.purge(new_root);
         assert_eq!(pools.freelist.freelist.len(), 4);
         let (accumulated, stake) = add_vote(&mut pools, new_root, 0);
-        assert_eq!(accumulated, stake);
+        assert_eq!(accumulated.0, stake);
     }
 
     #[test]
@@ -409,12 +409,12 @@ mod tests {
 
         for vote in [Vote::new_skip_vote(11), Vote::new_skip_fallback_vote(11)] {
             let vote_msg = ctx.new_vote_msg(0, vote);
-            let stake = vote_msg.stake.get();
+            let stake = vote_msg.stake.get().get();
             let msg = PoolVote::Own(vote_msg);
             let (accumulated, _) = pools
                 .add_pool_vote(ctx.validators.len(), total_stake, &msg, &BTreeMap::new())
                 .unwrap();
-            assert_eq!(accumulated, stake);
+            assert_eq!(accumulated.0, stake);
         }
         assert!(pools.freelist.freelist.is_empty());
     }
@@ -452,12 +452,12 @@ mod tests {
         assert_eq!(pools.pools.len(), len);
         assert_eq!(pools.pools.iter().filter(|pool| pool.is_some()).count(), 1);
         let (accumulated, stake) = add_vote(&ctx, &mut pools, len as Slot + 1, 1).unwrap();
-        assert_eq!(accumulated, 2 * stake);
+        assert_eq!(accumulated.0, 2 * stake);
 
         // Reuse each cleared position with a new slot and the original validator.
         for slot in [2 * len - 2, 2 * len - 1, 2 * len] {
             let (accumulated, stake) = add_vote(&ctx, &mut pools, slot as Slot, 0).unwrap();
-            assert_eq!(accumulated, stake);
+            assert_eq!(accumulated.0, stake);
         }
         assert_eq!(pools.pools.len(), len);
     }
@@ -481,7 +481,7 @@ mod tests {
                 usize::from(!full_purge),
             );
             let (accumulated, stake) = add_vote(&ctx, &mut pools, root, 1).unwrap();
-            assert_eq!(accumulated, if full_purge { stake } else { 2 * stake });
+            assert_eq!(accumulated.0, if full_purge { stake } else { 2 * stake });
         }
     }
 
@@ -502,7 +502,7 @@ mod tests {
             assert_eq!(pools.pools.len(), len);
             for slot in [10, 12] {
                 let (accumulated, stake) = add_vote(&ctx, &mut pools, slot, rank).unwrap();
-                assert_eq!(accumulated, (rank as u64 + 1) * stake);
+                assert_eq!(accumulated.0, (rank as u64 + 1) * stake);
             }
         }
     }
@@ -531,7 +531,7 @@ mod tests {
         assert_eq!(pools.pools.len(), len);
         for slot in [10, last_slot] {
             let (accumulated, stake) = add_vote(&ctx, &mut pools, slot, 1).unwrap();
-            assert_eq!(accumulated, 2 * stake);
+            assert_eq!(accumulated.0, 2 * stake);
         }
     }
 

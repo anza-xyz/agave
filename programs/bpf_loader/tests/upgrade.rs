@@ -55,43 +55,40 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         ));
         let (programdata_address, _) =
             Pubkey::find_program_address(&[program_address.as_ref()], &loader_id);
-        let mut buffer_account = AccountSharedData::new(
+        let mut buffer_account = AccountSharedData::new_data_with_space(
             1,
+            &UpgradeableLoaderState::Buffer {
+                authority_address: Some(*buffer_authority),
+            },
             UpgradeableLoaderState::size_of_buffer(elf_new.len()),
             &bpf_loader_upgradeable::id(),
-        );
-        buffer_account
-            .set_state(&UpgradeableLoaderState::Buffer {
-                authority_address: Some(*buffer_authority),
-            })
-            .unwrap();
+        )
+        .unwrap();
         buffer_account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
             .unwrap()
             .copy_from_slice(elf_new);
-        let mut programdata_account = AccountSharedData::new(
+        let programdata_account = AccountSharedData::new_data_with_space(
             min_programdata_balance,
-            UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
-            &bpf_loader_upgradeable::id(),
-        );
-        programdata_account
-            .set_state(&UpgradeableLoaderState::ProgramData {
+            &UpgradeableLoaderState::ProgramData {
                 slot: SLOT,
                 upgrade_authority_address: Some(*upgrade_authority_address),
-            })
-            .unwrap();
-        let mut program_account = AccountSharedData::new(
+            },
+            UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
+            &bpf_loader_upgradeable::id(),
+        )
+        .unwrap();
+        let mut program_account = AccountSharedData::new_data_with_space(
             min_program_balance,
+            &UpgradeableLoaderState::Program {
+                programdata_address,
+            },
             UpgradeableLoaderState::size_of_program(),
             &bpf_loader_upgradeable::id(),
-        );
+        )
+        .unwrap();
         program_account.set_executable(true);
-        program_account
-            .set_state(&UpgradeableLoaderState::Program {
-                programdata_address,
-            })
-            .unwrap();
         let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
         let rent_account = create_sysvar_account(&rent);
         let clock_account = create_sysvar_account(&Clock {
@@ -545,19 +542,15 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         &elf_orig,
         &elf_new,
     );
-    transaction_accounts.get_mut(2).unwrap().1 = AccountSharedData::new(
+    transaction_accounts.get_mut(2).unwrap().1 = AccountSharedData::new_data_with_space(
         1,
+        &UpgradeableLoaderState::Buffer {
+            authority_address: Some(upgrade_authority_address),
+        },
         UpgradeableLoaderState::size_of_buffer(elf_orig.len().max(elf_new.len()).saturating_add(1)),
         &bpf_loader_upgradeable::id(),
-    );
-    transaction_accounts
-        .get_mut(2)
-        .unwrap()
-        .1
-        .set_state(&UpgradeableLoaderState::Buffer {
-            authority_address: Some(upgrade_authority_address),
-        })
-        .unwrap();
+    )
+    .unwrap();
     process_instruction(
         transaction_accounts,
         instruction_accounts,
@@ -706,12 +699,15 @@ fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
         let (programdata_address, _) =
             Pubkey::find_program_address(&[program_address.as_ref()], &loader_id);
 
-        let mut buffer_account = AccountSharedData::new(buffer_lamports, buffer_len, &loader_id);
-        buffer_account
-            .set_state(&UpgradeableLoaderState::Buffer {
+        let mut buffer_account = AccountSharedData::new_data_with_space(
+            buffer_lamports,
+            &UpgradeableLoaderState::Buffer {
                 authority_address: Some(*upgrade_authority_address),
-            })
-            .unwrap();
+            },
+            buffer_len,
+            &loader_id,
+        )
+        .unwrap();
         let buffer_data_offset = UpgradeableLoaderState::size_of_buffer_metadata();
         buffer_account
             .data_as_mut_slice()
@@ -719,14 +715,16 @@ fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
             .unwrap()
             .copy_from_slice(elf_new);
 
-        let mut programdata_account =
-            AccountSharedData::new(programdata_lamports, programdata_len, &loader_id);
-        programdata_account
-            .set_state(&UpgradeableLoaderState::ProgramData {
+        let mut programdata_account = AccountSharedData::new_data_with_space(
+            programdata_lamports,
+            &UpgradeableLoaderState::ProgramData {
                 slot: SLOT,
                 upgrade_authority_address: Some(*upgrade_authority_address),
-            })
-            .unwrap();
+            },
+            programdata_len,
+            &loader_id,
+        )
+        .unwrap();
         let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
         programdata_account
             .data_as_mut_slice()
@@ -736,17 +734,16 @@ fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
             .unwrap()
             .copy_from_slice(elf_orig);
 
-        let mut program_account = AccountSharedData::new(
+        let mut program_account = AccountSharedData::new_data_with_space(
             rent.minimum_balance(UpgradeableLoaderState::size_of_program()),
+            &UpgradeableLoaderState::Program {
+                programdata_address,
+            },
             UpgradeableLoaderState::size_of_program(),
             &loader_id,
-        );
+        )
+        .unwrap();
         program_account.set_executable(true);
-        program_account
-            .set_state(&UpgradeableLoaderState::Program {
-                programdata_address,
-            })
-            .unwrap();
 
         let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
         let rent_account = create_sysvar_account(&rent);

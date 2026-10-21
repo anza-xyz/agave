@@ -601,6 +601,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         itertools::Itertools,
+        solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_leader_schedule::SlotLeader,
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::{
@@ -646,7 +647,9 @@ mod tests {
         activate: impl IntoIterator<Item = Pubkey>,
         deactivate: impl IntoIterator<Item = Pubkey>,
     ) -> Arc<Bank> {
-        let genesis_config = create_genesis_config(1).genesis_config;
+        let mut genesis_config = create_genesis_config(1).genesis_config;
+        genesis_config.poh_config.target_tick_duration =
+            Duration::from_nanos(DEFAULT_NS_PER_TICK_400_MS);
         let mut root_bank = Bank::new_for_tests(&genesis_config);
         deactivate_slot_time_features(&mut root_bank);
         for feature_id in activate {

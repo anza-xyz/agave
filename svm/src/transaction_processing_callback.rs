@@ -1,1 +1,1 @@
-pub use solana_svm_callback::TransactionProcessingCallback;
+pub use solana_svm_callback::{AccountLoadCallback, TransactionProcessingCallback};

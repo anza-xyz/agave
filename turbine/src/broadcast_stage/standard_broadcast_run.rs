@@ -710,6 +710,7 @@ mod test {
         super::*,
         assert_matches::assert_matches,
         rand::Rng,
+        solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_entry::entry::create_ticks,
         solana_genesis_config::GenesisConfig,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -923,6 +924,8 @@ mod test {
             Blockstore::open(&ledger_path).expect("Expected to be able to open database ledger"),
         );
         let mut genesis_config = create_genesis_config(10_000).genesis_config;
+        genesis_config.poh_config.target_tick_duration =
+            Duration::from_nanos(DEFAULT_NS_PER_TICK_400_MS);
         let slot_time_features = slot_time_feature_ids().to_vec();
         deactivate_features(&mut genesis_config, &slot_time_features);
         for feature_id in feature_ids {

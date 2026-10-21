@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use {
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode},
     solana_bpf_loader_program::{Entrypoint, test_utils},
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
@@ -43,9 +43,12 @@ fn setup_features(feature_set: &mut SVMFeatureSet, loader_v3_features: LoaderV3F
 
 pub fn create_sysvar_account<T>(value: &T) -> AccountSharedData
 where
-    T: wincode::Serialize<Src = T> + SysvarId,
+    T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+        + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+        + SysvarId,
 {
-    let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+    let serialized_len =
+        wincode::config::serialized_size(value, solana_account::WINCODE_CONFIG).unwrap() as usize;
     let canonical_data_len = match T::id() {
         sysvar::clock::ID => solana_clock::SIZE,
         sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
@@ -53,9 +56,7 @@ where
         id => panic!("unsupported sysvar: {id}"),
     };
     let required_data_len = canonical_data_len.max(serialized_len);
-    let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-    wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-    account
+    AccountSharedData::new_data_with_space(1, value, required_data_len, &sysvar::id()).unwrap()
 }
 
 // 10 iterations is intentionally low: `mock_process_instruction` runs on a

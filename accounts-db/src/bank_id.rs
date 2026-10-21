@@ -7,10 +7,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct BankId(u64);
 
 impl BankId {
+    /// The id of the first bank in the process (genesis or the snapshot bank), the oldest root
+    pub const FIRST: Self = Self(0);
+
     pub const fn new(bank_id: u64) -> Self {
         Self(bank_id)
     }
 }
+
+/// Hashes as its one `u64`
+impl solana_nohash_hasher::IsEnabled for BankId {}
 
 impl From<BankId> for u64 {
     fn from(bank_id: BankId) -> Self {
