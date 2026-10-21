@@ -82,6 +82,7 @@ pub struct FeatureSnapshot {
     pub increase_tx_v1_account_lock_limit: bool,
     pub invoke_signed_v2: bool,
     pub loaderv3_programdata_size_floor: bool,
+    pub disallow_nonce_as_program_id: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -187,6 +188,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
             invoke_signed_v2: is_active(&invoke_signed_v2::ID),
             loaderv3_programdata_size_floor: is_active(&loaderv3_programdata_size_floor::ID),
+            disallow_nonce_as_program_id: is_active(&disallow_nonce_as_program_id::ID),
         }
     }
 }
@@ -1607,6 +1609,10 @@ pub mod loaderv3_programdata_size_floor {
     solana_pubkey::declare_id!("8whkDenELnfwYLirBc4Wb4H2Z1z5K7tiykpdxJS7cWg1");
 }
 
+pub mod disallow_nonce_as_program_id {
+    solana_pubkey::declare_id!("BadNcMPPh9X6ikRHp8Wcz352YRhdSjawVj2bVHNNjDqQ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2752,6 +2758,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loaderv3_programdata_size_floor::id(),
             "Apply a minimum loaded data size to loader-v3 ProgramData accounts",
+        ),
+        (
+            disallow_nonce_as_program_id::id(),
+            "SIMD-0602: Disallow Nonce Account as Program ID",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
