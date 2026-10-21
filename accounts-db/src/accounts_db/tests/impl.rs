@@ -3414,7 +3414,7 @@ fn test_store_flush_load_cached() {
     let account0 = AccountSharedData::new(1, 0, &key);
     let slot = 0;
     db.store_for_tests((slot, &[(&key, &account0)][..]));
-    db.mark_slot_frozen(slot);
+    db.mark_bank_frozen(BankId::new(slot));
 
     // No root was added yet, requires an ancestor to find
     // the account
@@ -3449,7 +3449,7 @@ fn test_flush_accounts_cache() {
     db.store_for_tests((root5, &[(&key5, &account0)][..]));
     db.store_for_tests((root6, &[(&key6, &account0)][..]));
     for slot in &[unrooted_slot, root5, root6] {
-        db.mark_slot_frozen(*slot);
+        db.mark_bank_frozen(BankId::new(*slot));
     }
     db.add_root_for_tests(root5);
     db.add_root_for_tests(root6);
@@ -3506,7 +3506,7 @@ fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize
         let key = Pubkey::new_unique();
         db.store_for_tests((i as Slot, &[(&key, &account0)][..]));
         keys.push(key);
-        db.mark_slot_frozen(i as Slot);
+        db.mark_bank_frozen(BankId::new(i as Slot));
         if i < num_roots {
             db.add_root_for_tests(i as Slot);
         }

@@ -3166,8 +3166,8 @@ impl AccountsDb {
         sink
     }
 
-    pub fn mark_slot_frozen(&self, slot: Slot) {
-        if let Some(slot_cache) = self.accounts_cache.slot_cache(slot) {
+    pub fn mark_bank_frozen(&self, bank_id: BankId) {
+        if let Some(slot_cache) = self.accounts_cache.bank_cache(bank_id) {
             slot_cache.mark_slot_frozen();
             slot_cache.report_slot_store_metrics();
         }

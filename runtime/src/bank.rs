@@ -3192,7 +3192,10 @@ impl Bank {
             // that rehash() can be called and *not* modify self.accounts_lt_hash.
             self.finish_accounts_lt_hash_updates();
             *hash = self.hash_internal_state();
-            self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
+            self.rc
+                .accounts
+                .accounts_db
+                .mark_bank_frozen(self.bank_id());
         }
     }
 
