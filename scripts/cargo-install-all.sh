@@ -96,6 +96,7 @@ while [[ -n $1 ]]; do
       noBuildEndUserBins=true
       shift
     elif [[ $1 = --no-build-platform-tools ]]; then
+      echo "WARNING: $1 has been deprecated, Solana CLI no longer builds platform tools by default"
       shift
     elif [[ $1 = --no-build-validator-bins ]]; then
       noBuildValidatorBins=true
@@ -109,6 +110,7 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --help ]]; then
       usage
     elif [[ $1 = --validator-only ]]; then
+      echo "WARNING: $1 has been deprecated, use a combination of --no-build-{dev,deprecated}-bins instead"
       noBuildDevBins=true
       noBuildDeprecatedBins=true
       shift
