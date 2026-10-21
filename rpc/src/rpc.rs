@@ -4048,7 +4048,12 @@ pub mod rpc_full {
                 .unwrap_or(0);
 
             let durable_nonce_info = transaction
-                .get_durable_nonce(false)
+                .get_durable_nonce(
+                    preflight_bank
+                        .feature_set
+                        .snapshot()
+                        .disallow_nonce_as_program_id,
+                )
                 .map(|&pubkey| (pubkey, blockhash));
             if durable_nonce_info.is_some() || (skip_preflight && last_valid_block_height == 0) {
                 // While it uses a defined constant, this last_valid_block_height value is chosen arbitrarily.
