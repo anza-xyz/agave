@@ -18,7 +18,7 @@ use {
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
         ancestors::Ancestors,
     },
-    solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Slot},
+    solana_clock::{DEFAULT_HASHES_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
         blockstore::{
@@ -370,7 +370,8 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
         parent_slot,
         tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(root_slot),
         max_tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(root_slot.saturating_add(1)),
-        hashes_per_tick: Some(DEFAULT_HASHES_PER_TICK),
+        // Fixtures are generated with 400ms slots.
+        hashes_per_tick: Some(DEFAULT_HASHES_PER_TICK_400_MS),
         ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         slot: root_slot,
         block_height: root_slot,
