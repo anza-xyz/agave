@@ -321,7 +321,6 @@ fn rent_exempt_check(stake_lamports: u64, exempt: u64) -> io::Result<()> {
 #[allow(deprecated)]
 #[allow(clippy::cognitive_complexity)]
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let default_faucet_pubkey = solana_cli_config::Config::default().keypair_path;
     let fee_rate_governor = FeeRateGovernor::default();
     let (
         default_target_lamports_per_signature,
@@ -420,7 +419,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .validator(is_pubkey_or_keypair)
                 .requires("faucet_lamports")
-                .default_value(&default_faucet_pubkey)
                 .help("Path to file containing the faucet's pubkey"),
         )
         .arg(
