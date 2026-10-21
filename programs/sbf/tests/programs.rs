@@ -134,6 +134,30 @@ fn default_program_cache_with_program(
     program_cache
 }
 
+/// Add a number of accounts with mixed sizes and roles.
+#[cfg(feature = "sbf_rust")]
+#[allow(clippy::arithmetic_side_effects)]
+fn add_mixed_accounts(
+    accounts: &mut Vec<(Pubkey, Account)>,
+    account_metas: &mut Vec<AccountMeta>,
+    owner: &Pubkey,
+    num_accounts: usize,
+) {
+    for i in 0..num_accounts {
+        let pubkey = Pubkey::new_unique();
+
+        // Mixed account sizes.
+        accounts.push((pubkey, Account::new(0, 100 + (i * 50), owner)));
+
+        // Mixed account roles.
+        if i % 2 == 0 {
+            account_metas.push(AccountMeta::new(pubkey, false));
+        } else {
+            account_metas.push(AccountMeta::new_readonly(pubkey, false));
+        }
+    }
+}
+
 fn upgradeable_program_accounts(program_id: &Pubkey, program_elf: &[u8]) -> Vec<(Pubkey, Account)> {
     solana_program_binaries::bpf_loader_upgradeable_program_accounts(
         program_id,
@@ -1790,22 +1814,7 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
     let mut accounts = Vec::new();
     let mut account_metas = Vec::new();
 
-    for i in 0..num_accounts {
-        let pubkey = Pubkey::new_unique();
-
-        // Mixed account sizes.
-        accounts.push((
-            pubkey,
-            Account::new_with_data(0, vec![0; 100 + (i * 50)], &program_id),
-        ));
-
-        // Mixed account roles.
-        if i % 2 == 0 {
-            account_metas.push(AccountMeta::new(pubkey, false));
-        } else {
-            account_metas.push(AccountMeta::new_readonly(pubkey, false));
-        }
-    }
+    add_mixed_accounts(&mut accounts, &mut account_metas, &program_id, num_accounts);
 
     accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
 
@@ -5482,22 +5491,7 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
     let mut accounts = Vec::new();
     let mut account_metas = Vec::new();
 
-    for i in 0..num_accounts {
-        let pubkey = Pubkey::new_unique();
-
-        // Mixed account sizes.
-        accounts.push((
-            pubkey,
-            Account::new_with_data(0, vec![0; 100 + (i * 50)], &program_id),
-        ));
-
-        // Mixed account roles.
-        if i % 2 == 0 {
-            account_metas.push(AccountMeta::new(pubkey, false));
-        } else {
-            account_metas.push(AccountMeta::new_readonly(pubkey, false));
-        }
-    }
+    add_mixed_accounts(&mut accounts, &mut account_metas, &program_id, num_accounts);
 
     // Add `num_accounts` duplicated accounts.
     for i in 0..num_accounts {
@@ -5627,22 +5621,12 @@ fn test_program_sbf_invoke_signed_v2() {
     let mut account_metas = Vec::new();
     account_metas.push(AccountMeta::new_readonly(noop_program_id, false));
 
-    for i in 0..10 {
-        let pubkey = Pubkey::new_unique();
-
-        // Mixed account sizes.
-        accounts.push((
-            pubkey,
-            Account::new(0, 100 + (i * 50), &invoke_signed_v2_program_id),
-        ));
-
-        // Mixed account roles.
-        if i % 2 == 0 {
-            account_metas.push(AccountMeta::new(pubkey, false));
-        } else {
-            account_metas.push(AccountMeta::new_readonly(pubkey, false));
-        }
-    }
+    add_mixed_accounts(
+        &mut accounts,
+        &mut account_metas,
+        &invoke_signed_v2_program_id,
+        10,
+    );
 
     let instruction =
         Instruction::new_with_bytes(invoke_signed_v2_program_id, &[100], account_metas);
@@ -5696,22 +5680,12 @@ fn test_program_sbf_invoke_signed_v2_fail() {
     let mut account_metas = Vec::new();
     account_metas.push(AccountMeta::new_readonly(noop_program_id, false));
 
-    for i in 0..10 {
-        let pubkey = Pubkey::new_unique();
-
-        // Mixed account sizes.
-        accounts.push((
-            pubkey,
-            Account::new(0, 100 + (i * 50), &invoke_signed_v2_program_id),
-        ));
-
-        // Mixed account roles.
-        if i % 2 == 0 {
-            account_metas.push(AccountMeta::new(pubkey, false));
-        } else {
-            account_metas.push(AccountMeta::new_readonly(pubkey, false));
-        }
-    }
+    add_mixed_accounts(
+        &mut accounts,
+        &mut account_metas,
+        &invoke_signed_v2_program_id,
+        10,
+    );
 
     let instruction =
         Instruction::new_with_bytes(invoke_signed_v2_program_id, &[100], account_metas);
@@ -5721,8 +5695,6 @@ fn test_program_sbf_invoke_signed_v2_fail() {
     let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
 
     assert!(effects.result.is_some());
-
-    println!("effects: {:?}", effects.logs);
 
     assert!(effects.logs.iter().any(|log| log
         == &format!(
