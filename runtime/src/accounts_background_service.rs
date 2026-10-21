@@ -208,14 +208,14 @@ impl SnapshotRequestHandler {
             .map(|idx| requests.swap_remove(idx));
         let handled_request_slot = snapshot_request
             .as_ref()
-            .map_or(max_snapshot_slot, |snapshot_request| {
-                snapshot_request.snapshot_root_bank.slot()
-            });
+            .map(|snapshot_request| snapshot_request.snapshot_root_bank.slot());
         // re-enqueue any remaining requests for slots GREATER-THAN the one that will be handled
         let num_re_enqueued_requests = requests
             .into_iter()
             .filter(|snapshot_request| {
-                snapshot_request.snapshot_root_bank.slot() > handled_request_slot
+                handled_request_slot.is_none_or(|handled_request_slot| {
+                    snapshot_request.snapshot_root_bank.slot() > handled_request_slot
+                })
             })
             .map(|snapshot_request| {
                 self.snapshot_controller
@@ -225,7 +225,8 @@ impl SnapshotRequestHandler {
             })
             .count();
 
-        Some((snapshot_request?, requests_len, num_re_enqueued_requests))
+        snapshot_request
+            .map(|snapshot_request| (snapshot_request, requests_len, num_re_enqueued_requests))
     }
 
     fn handle_snapshot_request(
