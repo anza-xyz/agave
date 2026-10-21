@@ -5762,6 +5762,7 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
 #[test]
 fn test_get_sorted_potential_ancient_slots() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
     // Ensure all slots are considered for ancients
     db.max_cleaned_root.store(Slot::MAX, Ordering::Relaxed);
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap();
@@ -5772,11 +5773,11 @@ fn test_get_sorted_potential_ancient_slots() {
             .is_empty()
     );
     let root1 = DEFAULT_MAX_ANCIENT_STORAGES as u64 + ancient_append_vec_offset as u64 + 1;
-    let store1 = db.create_store(root1, 4096);
-    db.storage.insert(Arc::new(store1));
+    db.store_for_tests((root1, [(&Pubkey::new_unique(), &account)].as_slice()));
+    db.add_root_and_flush_write_cache(root1);
     let root2 = root1 + 1;
-    let store2 = db.create_store(root2, 4096);
-    db.storage.insert(Arc::new(store2));
+    db.store_for_tests((root2, [(&Pubkey::new_unique(), &account)].as_slice()));
+    db.add_root_and_flush_write_cache(root2);
     let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, root2);
     assert!(
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
@@ -5823,13 +5824,15 @@ fn test_get_sorted_potential_ancient_slots() {
 #[test]
 fn test_get_sorted_potential_ancient_slots_bounded_by_max_cleaned_root() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap();
     let epoch_schedule = EpochSchedule::default();
 
     let root1 = DEFAULT_MAX_ANCIENT_STORAGES as u64 + ancient_append_vec_offset as u64 + 1;
     let root2 = root1 + 1;
     for root in [root1, root2] {
-        db.storage.insert(Arc::new(db.create_store(root, 4096)));
+        db.store_for_tests((root, [(&Pubkey::new_unique(), &account)].as_slice()));
+        db.add_root_and_flush_write_cache(root);
     }
     // put both roots more than an epoch behind, so only the cleaned root bound is in play
     let completed_root = AccountsDb::apply_offset_to_slot(
