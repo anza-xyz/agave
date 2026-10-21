@@ -484,16 +484,6 @@ impl AccountsCache {
             .collect()
     }
 
-    pub fn cached_frozen_slots(&self) -> Vec<Slot> {
-        self.cache
-            .iter()
-            .filter_map(|item| {
-                let slot_cache = item.value();
-                slot_cache.is_frozen().then_some(slot_cache.slot)
-            })
-            .collect()
-    }
-
     pub fn contains(&self, slot: Slot) -> bool {
         self.bank_ids.read().unwrap().contains_key(&slot)
     }
@@ -566,27 +556,6 @@ mod tests {
         let removed = cache.remove_slots_le(0);
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0].0, inserted_slot);
-    }
-
-    #[test]
-    fn test_cached_frozen_slots() {
-        let cache = AccountsCache::default();
-        // Cache is empty, should return nothing
-        assert!(cache.cached_frozen_slots().is_empty());
-        let inserted_slot = 0;
-        cache.store(
-            inserted_slot,
-            BankId::new(inserted_slot),
-            &Pubkey::new_unique(),
-            AccountSharedData::new(1, 0, &Pubkey::default()),
-        );
-
-        // If the cache is told the size limit is 0, it should return nothing, because there's no
-        // frozen slots
-        assert!(cache.cached_frozen_slots().is_empty());
-        cache.slot_cache(inserted_slot).unwrap().mark_slot_frozen();
-        // If the cache is told the size limit is 0, it should return the one frozen slot
-        assert_eq!(cache.cached_frozen_slots(), vec![inserted_slot]);
     }
 
     #[test]
