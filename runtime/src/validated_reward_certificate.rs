@@ -60,7 +60,7 @@ fn extract_slot(
         }
     };
     if slot.saturating_add(NUM_SLOTS_FOR_REWARD) != current_slot
-        || slot <= bank.get_alpenglow_migration_slot().unwrap_or(slot)
+        || slot <= bank.get_alpenglow_migration_slot()
     {
         return Err(Error::InvalidSlotNumbers {
             current_slot: bank.slot(),

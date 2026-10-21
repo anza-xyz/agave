@@ -936,16 +936,16 @@ impl JsonRpcRequestProcessor {
         bank.epoch_schedule().clone()
     }
 
-    pub fn get_ag_genesis_cert(&self) -> Option<WireBlockCertMessage> {
+    pub fn get_ag_genesis_cert(&self) -> WireBlockCertMessage {
         let bank = self.bank(Some(CommitmentConfig::finalized()));
-        bank.get_alpenglow_genesis_certificate()
-            .map(|c| WireBlockCertMessage {
-                block: c.block,
-                signature: WireCertSignature {
-                    signature: c.signature.signature,
-                    bitmap: c.signature.bitmap,
-                },
-            })
+        let cert = bank.get_alpenglow_genesis_certificate();
+        WireBlockCertMessage {
+            block: cert.block,
+            signature: WireCertSignature {
+                signature: cert.signature.signature,
+                bitmap: cert.signature.bitmap,
+            },
+        }
     }
 
     pub async fn get_rank_map(
@@ -3272,7 +3272,7 @@ pub mod rpc_bank {
             meta: Self::Metadata,
         ) -> Result<Option<WireBlockCertMessage>> {
             debug!("get_ag_genesis_cert rpc request received");
-            Ok(meta.get_ag_genesis_cert())
+            Ok(Some(meta.get_ag_genesis_cert()))
         }
 
         fn get_rank_map(

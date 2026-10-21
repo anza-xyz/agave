@@ -153,7 +153,12 @@ impl BankForks {
             .activated_slot(&agave_feature_set::alpenglow::id());
         let genesis_cert = root_bank.get_alpenglow_genesis_certificate();
 
-        MigrationStatus::initialize(root_epoch, ff_activation_slot, genesis_cert, epoch_schedule)
+        MigrationStatus::initialize(
+            root_epoch,
+            ff_activation_slot,
+            Some(genesis_cert),
+            epoch_schedule,
+        )
     }
 
     pub fn banks(&self) -> &HashMap<Slot, BankWithScheduler> {
@@ -1062,7 +1067,7 @@ mod tests {
             Some(genesis_cert.clone()),
         );
         assert_eq!(
-            root_bank.get_alpenglow_genesis_certificate().unwrap(),
+            root_bank.get_alpenglow_genesis_certificate(),
             genesis_cert.clone()
         );
         let migration_status = BankForks::initialize_migration_status(&root_bank);
@@ -1083,7 +1088,6 @@ mod tests {
             Some(ff_activation_slot),
             Some(genesis_cert),
         );
-        assert!(root_bank.get_alpenglow_genesis_certificate().is_some());
         let migration_status = BankForks::initialize_migration_status(&root_bank);
         assert!(migration_status.is_alpenglow_enabled());
         assert!(migration_status.is_full_alpenglow_epoch());

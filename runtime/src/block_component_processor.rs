@@ -12,12 +12,7 @@ use {
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_transaction_view::transaction_data::TransactionData,
-    agave_votor_messages::{
-        certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
-        consensus_message::Block,
-        migration::MigrationStatus,
-        unverified_vote_message::UnverifiedCertificate,
-    },
+    agave_votor_messages::{certificate::Certificate, migration::MigrationStatus},
     crossbeam_channel::{Sender, TrySendError},
     log::*,
     smallvec::{SmallVec, smallvec},
@@ -434,9 +429,7 @@ impl BlockComponentProcessor {
             {
                 self.on_genesis_cert_block_marker(
                     bank.clone_without_scheduler(),
-                    shred_version,
                     genesis_cert_block_marker.into_inner(),
-                    migration_status,
                 )
             }
 
@@ -468,17 +461,10 @@ impl BlockComponentProcessor {
     pub fn on_genesis_cert_block_marker(
         &mut self,
         bank: Arc<Bank>,
-        shred_version: u16,
         genesis_block_marker: GenesisCertBlockMarker,
-        migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
         self.stage.on_genesis_certificate()?;
-        self.process_unvalidated_genesis_cert_block_marker(
-            bank,
-            genesis_block_marker,
-            migration_status,
-            Some(shred_version),
-        )?;
+        self.process_unvalidated_genesis_cert_block_marker(bank, genesis_block_marker)?;
         Ok(())
     }
 
@@ -487,14 +473,8 @@ impl BlockComponentProcessor {
         &mut self,
         bank: Arc<Bank>,
         genesis_block_marker: GenesisCertBlockMarker,
-        migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
-        self.process_unvalidated_genesis_cert_block_marker(
-            bank,
-            genesis_block_marker,
-            migration_status,
-            None,
-        )?;
+        self.process_unvalidated_genesis_cert_block_marker(bank, genesis_block_marker)?;
         Ok(())
     }
 
@@ -503,8 +483,6 @@ impl BlockComponentProcessor {
         &mut self,
         bank: Arc<Bank>,
         genesis_block_marker: GenesisCertBlockMarker,
-        migration_status: &MigrationStatus,
-        shred_version: Option<u16>,
     ) -> Result<(), BlockComponentProcessorError> {
         // Genesis Certificate is only allowed for direct child of genesis
         if bank.parent_slot() == 0 {
@@ -520,75 +498,7 @@ impl BlockComponentProcessor {
             return Err(BlockComponentProcessorError::GenesisCertificateOnNonChild);
         }
 
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            return Err(BlockComponentProcessorError::GenesisCertificateAlreadyPopulated);
-        }
-
-        let genesis_cert = GenesisCert {
-            block: Block {
-                slot: genesis_block_marker.slot,
-                block_id: genesis_block_marker.block_id,
-            },
-            signature: CertSignature {
-                signature: genesis_block_marker.bls_signature,
-                bitmap: genesis_block_marker.bitmap,
-            },
-        };
-        if let Some(shred_version) = shred_version {
-            Self::verify_genesis_certificate(&bank, &genesis_cert, shred_version)?;
-        }
-
-        bank.set_alpenglow_genesis_certificate(&genesis_cert);
-        self.has_genesis_certificate_marker = true;
-
-        if migration_status.is_alpenglow_enabled() {
-            // We participated in the migration, nothing to do
-            bank.set_hashes_per_tick(None);
-            return Ok(());
-        }
-
-        // We missed the migration however we ingested the first alpenglow block.
-        // This is either a result of startup replay, or in some weird cases steady state replay after a network partition.
-        // Either way we ingest the genesis block details moving us to `ReadyToEnable`.
-        // Since this is a direct child of genesis, and we are replaying, we know we have frozen the genesis block.
-        // Then `load_frozen_forks` or `replay_stage` will take care of the rest.
-        warn!(
-            "{}: Alpenglow genesis marker processed during replay of {}. Transitioning Alpenglow \
-             to ReadyToEnable",
-            migration_status.my_pubkey(),
-            bank.slot()
-        );
-        migration_status.set_genesis_block(genesis_cert.block);
-        migration_status.set_genesis_certificate(Arc::new(genesis_cert));
-        assert!(migration_status.is_ready_to_enable());
-
-        // This bank was created with TowerBFT tick configuration. Stop processing it immediately;
-        // replay will discard it, enable Alpenglow, and rebuild it with Alpenglow tick rules.
-        Err(BlockComponentProcessorError::AlpenglowMigrationTransition)
-    }
-
-    fn verify_genesis_certificate(
-        bank: &Bank,
-        cert: &GenesisCert,
-        shred_version: u16,
-    ) -> Result<(), BlockComponentProcessorError> {
-        let cert_slot = cert.block.slot;
-        let unverified_cert = UnverifiedCertificate {
-            cert_type: CertificateType::Genesis(cert.block),
-            signature: cert.signature.signature,
-            bitmap: cert.signature.bitmap.clone(),
-            shred_version,
-        };
-        bank.verify_certificate(unverified_cert, None)
-            .map_err(|_| {
-                warn!(
-                    "Failed to verify genesis certificate for slot {cert_slot} in bank slot {}",
-                    bank.slot()
-                );
-                BlockComponentProcessorError::GenesisCertificateFailedVerification
-            })?;
-
-        Ok(())
+        Err(BlockComponentProcessorError::GenesisCertificateAlreadyPopulated)
     }
 
     fn on_footer(
@@ -821,7 +731,10 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, create_genesis_config_with_tower_leader},
         },
-        agave_votor_messages::consensus_message::BlockId,
+        agave_votor_messages::{
+            certificate::{CertSignature, GenesisCert},
+            consensus_message::{Block, BlockId},
+        },
         bytes::Bytes,
         rand::Rng,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
@@ -938,7 +851,7 @@ mod tests {
         assert!(bank.hashes_per_tick().is_some());
 
         processor
-            .on_genesis_cert_block_marker_leader(bank.clone(), genesis_marker, &migration_status)
+            .on_genesis_cert_block_marker_leader(bank.clone(), genesis_marker)
             .unwrap();
         assert!(bank.hashes_per_tick().is_none());
         processor.stage = BlockComponentStage::Done;
@@ -966,17 +879,12 @@ mod tests {
         assert!(tower_hashes_per_tick.is_some());
 
         assert_matches!(
-            processor.on_genesis_cert_block_marker_leader(
-                bank.clone(),
-                genesis_marker,
-                &migration_status,
-            ),
+            processor.on_genesis_cert_block_marker_leader(bank.clone(), genesis_marker,),
             Err(BlockComponentProcessorError::AlpenglowMigrationTransition)
         );
 
         assert!(migration_status.is_ready_to_enable());
         assert_eq!(bank.hashes_per_tick(), tower_hashes_per_tick);
-        assert!(bank.get_alpenglow_genesis_certificate().is_some());
     }
 
     #[test]

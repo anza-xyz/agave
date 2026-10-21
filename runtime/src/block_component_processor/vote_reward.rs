@@ -211,11 +211,7 @@ impl<'a> RewardState<'a> {
                 .get_epoch_state(current_epoch)
                 .ok_or(RewardStateError::MissingEpochInflationState { bank_slot })?
         };
-        let migration_epoch =
-            get_migration_epoch(bank).ok_or(RewardStateError::GenesisCertNotFound {
-                reward_slot,
-                bank_slot,
-            })?;
+        let migration_epoch = get_migration_epoch(bank);
         let reward_slot_timestamp_ns =
             calc_slot_timestamp(bank, reward_slot, block_producer_time_nanos);
         Ok(Self {
@@ -517,10 +513,9 @@ fn calc_slot_timestamp(bank: &Bank, slot: Slot, block_producer_time_nanos: i64) 
     )
 }
 
-fn get_migration_epoch(bank: &Bank) -> Option<Epoch> {
-    let migration_slot = bank.get_alpenglow_migration_slot()?;
-    let migration_epoch = bank.epoch_schedule.get_epoch(migration_slot);
-    Some(migration_epoch)
+fn get_migration_epoch(bank: &Bank) -> Epoch {
+    let migration_slot = bank.get_alpenglow_migration_slot();
+    bank.epoch_schedule.get_epoch(migration_slot)
 }
 
 fn ensure_marker(epoch_credits: &mut Vec<(Epoch, u64, u64)>) {

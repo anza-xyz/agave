@@ -1457,15 +1457,6 @@ mod test {
 
         let active_features = FEATURE_NAMES.keys().copied().collect::<Vec<_>>();
         assert_feature_accounts(&rpc_client, &active_features, &[]).await;
-        assert!(
-            test_validator
-                .bank_forks()
-                .read()
-                .unwrap()
-                .root_bank()
-                .get_alpenglow_genesis_certificate()
-                .is_some()
-        );
     }
 
     #[test]

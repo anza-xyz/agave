@@ -173,7 +173,6 @@ mod tests {
         activate_all_features(&mut genesis_config);
         let (bank0, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        assert!(bank0.get_alpenglow_genesis_certificate().is_some());
         assert!(bank0.is_alpenglow());
 
         let parent_clock = bank0.clock();

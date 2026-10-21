@@ -1506,11 +1506,7 @@ fn maybe_include_genesis_certificate(
     let bank = poh_recorder.bank().expect("Bank cannot have been cleared");
     let mut processor = bank.block_component_processor.write().unwrap();
     processor
-        .on_genesis_cert_block_marker_leader(
-            bank.clone(),
-            ctx.genesis_cert_block_marker.clone(),
-            &ctx.bank_forks.read().unwrap().migration_status(),
-        )
+        .on_genesis_cert_block_marker_leader(bank.clone(), ctx.genesis_cert_block_marker.clone())
         .expect("Recording genesis certificate should not fail");
     Ok(())
 }

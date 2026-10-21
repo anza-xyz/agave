@@ -175,9 +175,8 @@ pub(crate) enum AlpenglowEpochType<'a> {
 impl<'a> AlpenglowEpochType<'a> {
     pub(crate) fn is_alpenglow_or_migration_epoch(bank: &Bank, epoch: Epoch) -> bool {
         debug_assert!(epoch < bank.epoch());
-        bank.get_alpenglow_migration_slot()
-            .map(|migration_slot| bank.epoch_schedule().get_epoch(migration_slot) <= epoch)
-            .unwrap_or(false)
+        let migration_slot = bank.get_alpenglow_migration_slot();
+        bank.epoch_schedule().get_epoch(migration_slot) <= epoch
     }
 
     /// Returns `AlpenglowEpochType` for the given `epoch`.
@@ -190,9 +189,7 @@ impl<'a> AlpenglowEpochType<'a> {
         reward_epoch_delegated_stakes: Option<&'a RewardEpochDelegatedStakes>,
     ) -> Self {
         debug_assert!(epoch < bank.epoch());
-        let Some(migration_slot) = bank.get_alpenglow_migration_slot() else {
-            return Self::Tower;
-        };
+        let migration_slot = bank.get_alpenglow_migration_slot();
         let migration_epoch = bank.epoch_schedule().get_epoch(migration_slot);
         match migration_epoch.cmp(&epoch) {
             Ordering::Less => {

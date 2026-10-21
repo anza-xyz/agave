@@ -277,7 +277,7 @@ mod tests {
                 .unwrap();
             let epoch_inflation = epoch_rewards.total_rewards;
             let total_points = epoch_rewards.total_points;
-            let genesis_cert = payout_bank.get_alpenglow_genesis_certificate().unwrap();
+            let genesis_cert = payout_bank.get_alpenglow_genesis_certificate();
             let first_slot_in_reward_epoch = payout_bank
                 .epoch_schedule
                 .get_first_slot_in_epoch(reward_bank.epoch());

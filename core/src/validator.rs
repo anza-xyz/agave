@@ -2132,11 +2132,7 @@ pub fn should_require_vote_history_file(
     vote_account: &Pubkey,
     identity: &Pubkey,
 ) -> bool {
-    let Some(genesis_certificate) = bank.get_alpenglow_genesis_certificate() else {
-        // Vote history is only used when Alpenglow is active
-        return false;
-    };
-
+    let genesis_certificate = bank.get_alpenglow_genesis_certificate();
     let Some(Ok(vote_state)) = bank
         .get_account(vote_account)
         .map(|acct| wincode::config::deserialize(acct.data(), WINCODE_CONFIG))

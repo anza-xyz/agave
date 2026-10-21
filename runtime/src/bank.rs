@@ -1431,9 +1431,6 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            bank.set_is_alpenglow();
-        }
         bank
     }
 
@@ -2334,10 +2331,6 @@ impl Bank {
             is_alpenglow: AtomicBool::new(false),
             transaction_execution_gate: CachePadded::new(TransactionExecutionGate::default()),
         };
-
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            bank.set_is_alpenglow();
-        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -3579,30 +3572,21 @@ impl Bank {
     }
 
     /// Query the alpenglow genesis certificate account.
-    /// All frozen alpenglow banks will have this account populated and TowerBFT banks will not.
-    ///
-    /// The same is true for alpenglow banks yet to be frozen except for the first alpenglow bank:
-    /// - The first alpenglow bank will contain a special marker that populates this account
-    /// - If `get_alpenglow_genesis_certificate` is called before the marker is processed by replay
-    ///   this account will be empty.
-    /// - If `get_alpenglow_genesis_certificate` is called after the marker is processed, we return the certificate
-    pub fn get_alpenglow_genesis_certificate(&self) -> Option<GenesisCert> {
-        let acct = self.get_account(&GENESIS_CERTIFICATE_ACCOUNT)?;
-        (!acct.data().is_empty()).then(|| {
-            // The address is known in advance, so the account could already exist if it was prefunded.
-            // However this account cannot be written to except by us in `set_alpenglow_genesis_certificate`,
-            // so this deserialize is safe if the account is non-empty
-            let cert: WireBlockCertMessage = acct
-                .state()
-                .expect("Programmer error deserializing genesis certificate");
-            GenesisCert {
-                block: cert.block,
-                signature: CertSignature {
-                    signature: cert.signature.signature,
-                    bitmap: cert.signature.bitmap,
-                },
-            }
-        })
+    pub fn get_alpenglow_genesis_certificate(&self) -> GenesisCert {
+        let acct = self
+            .get_account(&GENESIS_CERTIFICATE_ACCOUNT)
+            .expect("account must exist");
+        assert!(!acct.data().is_empty());
+        let cert: WireBlockCertMessage = acct
+            .state()
+            .expect("Programmer error deserializing genesis certificate");
+        GenesisCert {
+            block: cert.block,
+            signature: CertSignature {
+                signature: cert.signature.signature,
+                bitmap: cert.signature.bitmap,
+            },
+        }
     }
 
     pub fn is_alpenglow(&self) -> bool {
@@ -6822,9 +6806,8 @@ impl Bank {
         bank.set_block_id(Some(block_id));
     }
 
-    pub(crate) fn get_alpenglow_migration_slot(&self) -> Option<Slot> {
-        let genesis_cert = self.get_alpenglow_genesis_certificate()?;
-        Some(genesis_cert.block.slot)
+    pub(crate) fn get_alpenglow_migration_slot(&self) -> Slot {
+        self.get_alpenglow_genesis_certificate().block.slot
     }
 
     /// Signals to the accounts lt hash manager that this bank has reached the end
@@ -7033,10 +7016,6 @@ impl Bank {
             StakesCache::new(stakes),
             accounts_data_size_initial,
         );
-
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            bank.set_is_alpenglow();
-        }
 
         bank.apply_activated_features();
         if bank.feature_set.snapshot().remove_inactive_stakes {

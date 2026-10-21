@@ -2045,11 +2045,9 @@ mod tests {
                     ));
                     // Slot 0 is the only Tower slot in the default test genesis, so credits
                     // synthesized there precede the migration marker. Later credits are AG.
+                    let migration_slot = bank.get_alpenglow_migration_slot();
                     let is_migration_epoch =
-                        bank.get_alpenglow_migration_slot()
-                            .is_some_and(|migration_slot| {
-                                bank.epoch_schedule().get_epoch(migration_slot) == bank.epoch()
-                            });
+                        bank.epoch_schedule().get_epoch(migration_slot) == bank.epoch();
                     if is_migration_epoch
                         && !vote_state
                             .epoch_credits
