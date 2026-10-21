@@ -272,6 +272,7 @@ pub(crate) fn args(default_args: &DefaultArgs) -> Vec<Arg<'_, '_>> {
             .default_value(&default_args.snapshot_zstd_compression_level)
             .value_name("LEVEL")
             .takes_value(true)
+            .validator(is_parsable::<i32>)
             .help("The compression level to use when archiving with zstd")
             .long_help(
                 "The compression level to use when archiving with zstd. Higher compression levels \

@@ -347,6 +347,7 @@ pub(crate) fn args(default_args: &DefaultArgs) -> Vec<Arg<'_, '_>> {
             .takes_value(true)
             .value_name("BOOLEAN")
             .default_value(&default_args.accounts_shrink_optimize_total_space)
+            .validator(is_parsable::<bool>)
             .help(
                 "When this is set to true, the system will shrink the most sparse accounts and \
                  when the overall shrink ratio is above the specified accounts-shrink-ratio, the \
@@ -357,6 +358,7 @@ pub(crate) fn args(default_args: &DefaultArgs) -> Vec<Arg<'_, '_>> {
             .takes_value(true)
             .value_name("RATIO")
             .default_value(&default_args.accounts_shrink_ratio)
+            .validator(is_parsable::<f64>)
             .help(
                 "Specifies the shrink ratio for the accounts to be shrunk. The shrink ratio is \
                  defined as the ratio of the bytes alive over the  total bytes used. If the \
