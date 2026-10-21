@@ -210,6 +210,7 @@ async fn setup_extend_program_test<'a>(
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -291,6 +292,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -341,6 +343,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -402,6 +405,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -430,6 +434,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -510,6 +515,7 @@ async fn test_cli_program_deploy_no_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -541,6 +547,7 @@ async fn test_cli_program_deploy_no_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -626,6 +633,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -658,6 +666,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
             max_sign_attempts: 5,
             auto_extend: true,
             use_rpc: false,
+            generate_ephemeral_program_id: true,
             skip_feature_verification: true,
         });
 
@@ -774,6 +783,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -926,6 +936,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -959,6 +970,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
 
@@ -991,6 +1003,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
 
@@ -1065,6 +1078,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1121,6 +1135,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1168,6 +1183,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1247,6 +1263,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1330,6 +1347,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -1356,6 +1374,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1492,6 +1511,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1517,6 +1537,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: false, // --no-auto-extend flag is present
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     if set_programdata_to_elf_length {
@@ -1547,6 +1568,7 @@ async fn test_cli_program_upgrade_auto_extend(
             max_sign_attempts: 5,
             auto_extend: false, // --no-auto-extend flag is present
             use_rpc: false,
+            generate_ephemeral_program_id: false,
             skip_feature_verification: true,
         });
         process_command(&config).await.unwrap();
@@ -1603,6 +1625,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: true, // --no-auto-extend flag is absent
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1736,6 +1759,7 @@ async fn test_cli_program_close_program() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1870,6 +1894,7 @@ async fn test_cli_program_extend_program() {
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
 
@@ -1925,6 +1950,7 @@ async fn test_cli_program_extend_program() {
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2482,6 +2508,7 @@ async fn test_cli_program_write_buffer() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2726,6 +2753,7 @@ async fn test_cli_program_set_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2787,6 +2815,7 @@ async fn test_cli_program_set_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2883,6 +2912,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -2913,6 +2943,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -3005,6 +3036,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3285,6 +3317,7 @@ async fn test_cli_program_show() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3607,6 +3640,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
