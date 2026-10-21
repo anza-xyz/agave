@@ -676,10 +676,7 @@ fn test_snapshots_with_background_services(request_fastboot: bool) {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
-<<<<<<< HEAD
             bank.set_block_id(Some(Hash::default()));
-=======
-            bank.set_block_id(Some(BlockId::default()));
             if slot == LAST_SLOT {
                 last_snapshot_bank = Some(bank);
             }
@@ -687,7 +684,6 @@ fn test_snapshots_with_background_services(request_fastboot: bool) {
 
         if request_fastboot && slot == FASTBOOT_SLOT {
             snapshot_controller.request_fastboot_snapshot();
->>>>>>> 1d8182c (Keep 32 slots in write cache  (#16061))
         }
 
         // Call `BankForks::set_root()` to cause snapshots to be taken
