@@ -29,6 +29,7 @@ use {
         AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
     },
     solana_clap_utils::{
+        hidden_unless_forced,
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
@@ -1387,6 +1388,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
     };
 
     let minimize_snapshot_possibly_incomplete = if is_minimized {
+        warn!("Creating minimized snapshots (i.e. `--minimized`) is deprecated.");
         minimize_bank_for_snapshot(
             &blockstore,
             &bank,
@@ -2127,37 +2129,45 @@ fn main() {
                         .conflicts_with("no_snapshot"),
                 )
                 .arg(
+                    // deprecated in v4.5.0
                     Arg::with_name("minimized")
                         .long("minimized")
                         .takes_value(false)
                         .help(
-                            "Create a minimized snapshot instead of a full snapshot. This \
-                             snapshot will only include information needed to replay the ledger \
-                             from the snapshot slot to the ending slot.",
+                            "DEPRECATED: Create a minimized snapshot instead of a full snapshot. \
+                             This snapshot will only include information needed to replay the \
+                             ledger from the snapshot slot to the ending slot.",
                         )
+                        .hidden(hidden_unless_forced())
                         .conflicts_with("incremental")
                         .requires("ending_slot"),
                 )
                 .arg(
+                    // deprecated in v4.5.0
                     Arg::with_name("ending_slot")
                         .long("ending-slot")
                         .takes_value(true)
                         .value_name("ENDING_SLOT")
-                        .help("Ending slot for minimized snapshot creation"),
+                        .help("DEPRECATED: Ending slot for minimized snapshot creation")
+                        .hidden(hidden_unless_forced()),
                 )
                 .arg(
+                    // deprecated in v4.5.0
                     Arg::with_name("recalculate_accounts_lt_hash")
                         .long("recalculate-accounts-lt-hash")
                         .takes_value(false)
-                        .help("Recalculate the accounts lt hash for minimized snapshots")
-                        .long_help(
-                            "Recalculate the accounts lt hash for minimized snapshots. Without \
-                             this flag, loading the minimized snapshot will fail startup accounts \
-                             verification because the accounts lt hash will not match due to the \
-                             pruned account state. If not recalculating the accounts lt hash, \
-                             pass `--accounts-db-skip-initial-hash-calculation` to `leder-tool \
-                             verify` in order to bypass this check.",
+                        .help(
+                            "DEPRECATED: Recalculate the accounts lt hash for minimized snapshots",
                         )
+                        .long_help(
+                            "DEPRECATED: Recalculate the accounts lt hash for minimized \
+                             snapshots. Without this flag, loading the minimized snapshot will \
+                             fail startup accounts verification because the accounts lt hash will \
+                             not match due to the pruned account state. If not recalculating the \
+                             accounts lt hash, pass `--accounts-db-skip-initial-hash-calculation` \
+                             to `leder-tool verify` in order to bypass this check.",
+                        )
+                        .hidden(hidden_unless_forced())
                         .requires("minimized"),
                 )
                 .arg(
