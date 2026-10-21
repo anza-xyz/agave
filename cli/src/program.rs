@@ -49,7 +49,8 @@ use {
     solana_net_utils::bind_to_unspecified,
     solana_packet::PACKET_DATA_SIZE,
     solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+        deploy::morph_into_deployment_environment, execution_budget::SVMTransactionExecutionBudget,
+        invoke_context::InvokeContext,
     },
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -3075,8 +3076,9 @@ fn verify_elf(
     feature_set: FeatureSet,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Verify the program
+    let runtime_features = feature_set.runtime_features();
     let program_runtime_environment = create_program_runtime_environment(
-        &feature_set.runtime_features(),
+        &runtime_features,
         &SVMTransactionExecutionBudget::new_with_defaults(
             feature_set.snapshot().raise_cpi_nesting_limit_to_8,
         ),
@@ -3084,10 +3086,14 @@ fn verify_elf(
         false,
     )
     .unwrap();
-    let config = program_runtime_environment.get_config();
+    let deployment_program_runtime_environment = Arc::new(morph_into_deployment_environment(
+        program_runtime_environment,
+        runtime_features.disable_sbpf_v0_v1_v2_deployment,
+    )?);
+    let config = deployment_program_runtime_environment.get_config();
     let executable = Executable::<InvokeContext>::from_elf(
         program_data,
-        Arc::clone(&*program_runtime_environment),
+        Arc::clone(&deployment_program_runtime_environment),
     )
     .map_err(|err| explain_elf_error(&err, program_data, config))?;
 
@@ -3438,9 +3444,6 @@ mod tests {
         solana_cli_output::OutputFormat,
         solana_hash::Hash,
         solana_keypair::write_keypair_file,
-        solana_sbpf::elf_parser::consts::{
-            EI_OSABI, ELFCLASS64, ELFDATA2LSB, ELFMAG, ELFOSABI_NONE, EV_CURRENT,
-        },
     };
 
     fn make_tmp_path(name: &str) -> String {
@@ -4661,33 +4664,25 @@ mod tests {
         );
     }
 
-    /// Minimal ELF64 header buffer with a valid `e_ident` and `e_flags`
-    /// (which encodes the SBPF version).
-    fn fake_elf(e_flags: u32) -> Vec<u8> {
-        let mut bytes = vec![0u8; 64];
-        bytes[..4].copy_from_slice(&ELFMAG);
-        bytes[4] = ELFCLASS64;
-        bytes[5] = ELFDATA2LSB;
-        bytes[6] = EV_CURRENT as u8;
-        bytes[EI_OSABI as usize] = ELFOSABI_NONE;
-        bytes[48..52].copy_from_slice(&e_flags.to_le_bytes());
-        bytes
-    }
-
-    fn deploy_config(versions: std::ops::RangeInclusive<SBPFVersion>) -> Config {
-        Config {
-            enabled_sbpf_versions: versions,
-            ..Config::default()
-        }
-    }
-
     #[test]
-    fn test_explain_unsupported_sbpf_version() {
-        let elf = fake_elf(1); // e_flags=1 -> SBPF v1
-        let config = deploy_config(SBPFVersion::V3..=SBPFVersion::V3);
-        let err = EbpfError::ElfError(ElfError::UnsupportedSBPFVersion);
-        let msg = explain_elf_error(&err, &elf, &config);
-        assert!(msg.contains("SBPF v1"), "got: {msg}");
-        assert!(msg.contains("enabled: v3"), "got: {msg}");
+    fn test_verify_elf_sbpf_v0_deployment() {
+        let elf = std::fs::read("../programs/bpf_loader/test_elfs/out/noop_aligned.so").unwrap();
+        assert_eq!(get_sbpf_version(&elf).unwrap(), SBPFVersion::V0);
+        let feature_id = agave_feature_set::disable_sbpf_v0_v1_v2_deployment::id();
+        let mut feature_set = FeatureSet::default();
+
+        // Fail - SIMD-0500: SBPFv0 deployment disabled.
+        feature_set.activate(&feature_id, 0);
+        assert_eq!(
+            verify_elf(&elf, feature_set.clone())
+                .unwrap_err()
+                .to_string(),
+            "program targets SBPF v0, which this CLI does not have enabled (enabled: v3–v3). \
+             Rebuild the program targeting v3.",
+        );
+
+        // Success - SBPFv0 deployment enabled.
+        feature_set.deactivate(&feature_id);
+        verify_elf(&elf, feature_set).unwrap();
     }
 }
