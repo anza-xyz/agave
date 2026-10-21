@@ -1287,14 +1287,13 @@ pub async fn process_program_subcommand(
 }
 
 fn get_default_program_keypair(program_location: &Option<String>) -> Result<Keypair, CliError> {
-    let program_location = program_location
-        .as_ref()
-        .ok_or_else(|| CliError::BadParameter("Program id keypair not provided".to_string()))?;
+    let Some(program_location) = program_location else {
+        return Err(CliError::BadParameter("Program id keypair not provided".to_string()))
+    };
     let mut keypair_file = PathBuf::from(program_location);
-    let mut filename = keypair_file
-        .file_stem()
-        .ok_or_else(|| CliError::BadParameter("Invalid program location".to_string()))?
-        .to_os_string();
+    let Some(mut filename) = keypair_file.file_stem().map(|stem| stem.to_os_string()) else {
+        return Err(CliError::BadParameter("Invalid program location".to_string()))
+    };
     filename.push("-keypair");
     keypair_file.set_file_name(filename);
     keypair_file.set_extension("json");
