@@ -2,7 +2,7 @@
 //!
 //! According to the cargo documentation, integration tests are compiled as individual crates.
 //!
-//!   https://doc.rust-lang.org/book/ch11-03-test-organization.html#the-tests-directory
+//!   <https://doc.rust-lang.org/book/ch11-03-test-organization.html#the-tests-directory>
 //!
 //! Putting shared code into the `tests/` folder, causes it to be recompiled for every test, rather
 //! than being compiled once when it is part of the main crate.  And, at the same time, unused code
