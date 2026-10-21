@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    criterion::{Criterion, criterion_group, criterion_main},
+    criterion::{criterion_group, criterion_main, Criterion},
     rand::Rng,
     solana_entry::entry::Entry,
     solana_hash::Hash,
@@ -8,8 +8,8 @@ use {
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
-            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred, Shredder,
-            filter::ShredRecoveryContext,
+            filter::ShredRecoveryContext, ProcessShredsStats, Shred, Shredder,
+            DATA_SHREDS_PER_FEC_BLOCK,
         },
     },
     solana_packet::PACKET_DATA_SIZE,
@@ -195,6 +195,7 @@ fn run_recover_shreds(
     let num_missing_data = DATA_SHREDS_PER_FEC_BLOCK - data.len();
     let mut shreds = data;
     shreds.extend(code);
+
     c.bench_function(name, |b| {
         let mut shred_recovery_context = new_shred_recovery_context(&shreds);
         // Guard against the recovery filter silently discarding the input.

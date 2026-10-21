@@ -218,8 +218,6 @@ pub enum Error {
     WincodeRead(#[from] wincode::ReadError),
     #[error(transparent)]
     WincodeWrite(#[from] wincode::WriteError),
-    #[error(transparent)]
-    Erasure(#[from] reed_solomon_erasure::Error),
     #[error("Invalid data size: {size}, payload: {payload}")]
     InvalidDataSize { size: u16, payload: usize },
     #[error("Invalid deshred set")]
@@ -262,6 +260,20 @@ pub enum Error {
     UnknownProofSize,
     #[error("Empty shreds list")]
     EmptyIterator,
+    #[error("Invalid shred index")]
+    InvalidIndex,
+    #[error("Too few data shards")]
+    TooFewDataShards,
+    #[error("Too few parity shards")]
+    TooFewParityShards,
+    #[error("Too many erased shards")]
+    TooManyErasures,
+    #[error("Invalid num data shreds: {0}")]
+    InvalidNumDataShreds(u16),
+    #[error("Invalid Merkle proof node for index {0} and nodes count {1}")]
+    InvalidMerkleProofNode(usize, usize),
+    #[error("Invalid Merkle proof shape with offset {0} and nodes count {1}")]
+    InvalidMerkleProofShape(usize, usize),
 }
 
 #[repr(u8)]
@@ -618,7 +630,6 @@ impl Shred {
 
     dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
-    #[cfg(test)]
     dispatch!(pub(crate) fn erasure_shard(&self) -> Result<&[u8], Error>);
 
     pub(super) fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>

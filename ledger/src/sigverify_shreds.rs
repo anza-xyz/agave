@@ -94,12 +94,12 @@ mod tests {
     use {
         super::*,
         crate::{
-            shred::{DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred},
+            shred::{ProcessShredsStats, Shred, DATA_SHREDS_PER_FEC_BLOCK},
             shredder::Shredder,
         },
         assert_matches::assert_matches,
         itertools::Itertools,
-        rand::{Rng, seq::SliceRandom},
+        rand::{seq::SliceRandom, Rng},
         rayon::{ThreadPool, ThreadPoolBuilder},
         solana_entry::entry::Entry,
         solana_hash::Hash,
@@ -176,33 +176,27 @@ mod tests {
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
         let mut batches = [make_packet_batch(&keypair, slot)];
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
-        assert!(
-            batches
-                .iter()
-                .flatten()
-                .all(|packet| !packet.meta().discard())
-        );
+        assert!(batches
+            .iter()
+            .flatten()
+            .all(|packet| !packet.meta().discard()));
 
         let wrong_keypair = Keypair::new();
         let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
         let mut batches = [make_packet_batch(&keypair, slot)];
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
-        assert!(
-            batches
-                .iter()
-                .flatten()
-                .all(|packet| packet.meta().discard())
-        );
+        assert!(batches
+            .iter()
+            .flatten()
+            .all(|packet| packet.meta().discard()));
 
         let leader_slots: SlotPubkeys = HashMap::default();
         let mut batches = [make_packet_batch(&keypair, slot)];
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
-        assert!(
-            batches
-                .iter()
-                .flatten()
-                .all(|packet| packet.meta().discard())
-        );
+        assert!(batches
+            .iter()
+            .flatten()
+            .all(|packet| packet.meta().discard()));
 
         let mut batches = [make_packet_batch(&keypair, slot)];
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
@@ -211,12 +205,10 @@ mod tests {
             packet_ref.meta_mut().size = 0;
         });
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
-        assert!(
-            batches
-                .iter()
-                .flatten()
-                .all(|packet| packet.meta().discard())
-        );
+        assert!(batches
+            .iter()
+            .flatten()
+            .all(|packet| packet.meta().discard()));
     }
 
     #[test]
@@ -235,12 +227,10 @@ mod tests {
             .collect();
         let mut batches = [make_packet_batch(&keypair, slot)];
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
-        assert!(
-            batches
-                .iter()
-                .flatten()
-                .all(|packet| !packet.meta().discard())
-        );
+        assert!(batches
+            .iter()
+            .flatten()
+            .all(|packet| !packet.meta().discard()));
 
         let wrong_keypair = Keypair::new();
         let leader_slots: SlotPubkeys = [
@@ -251,22 +241,18 @@ mod tests {
         .collect();
         let mut batches = [make_packet_batch(&keypair, slot)];
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
-        assert!(
-            batches
-                .iter()
-                .flatten()
-                .all(|packet| packet.meta().discard())
-        );
+        assert!(batches
+            .iter()
+            .flatten()
+            .all(|packet| packet.meta().discard()));
 
         let leader_slots: SlotPubkeys = [(u64::MAX, Pubkey::default())].into_iter().collect();
         let mut batches = [make_packet_batch(&keypair, slot)];
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
-        assert!(
-            batches
-                .iter()
-                .flatten()
-                .all(|packet| packet.meta().discard())
-        );
+        assert!(batches
+            .iter()
+            .flatten()
+            .all(|packet| packet.meta().discard()));
 
         let mut batches = [make_packet_batch(&keypair, slot)];
         batches[0].iter_mut().for_each(|packet_ref| {
@@ -277,12 +263,10 @@ mod tests {
             .into_iter()
             .collect();
         verify_shreds(thread_pool, &mut batches, &leader_slots, &cache);
-        assert!(
-            batches
-                .iter()
-                .flatten()
-                .all(|packet| packet.meta().discard())
-        );
+        assert!(batches
+            .iter()
+            .flatten()
+            .all(|packet| packet.meta().discard()));
     }
 
     fn make_packet_batch(keypair: &Keypair, slot: u64) -> PacketBatch {
@@ -424,12 +408,10 @@ mod tests {
             .collect();
         let mut packets = make_packets(&mut rng, &shreds);
         verify_shreds(&thread_pool, &mut packets, &pubkeys, &cache);
-        assert!(
-            packets
-                .iter()
-                .flatten()
-                .all(|packet| !packet.meta().discard())
-        );
+        assert!(packets
+            .iter()
+            .flatten()
+            .all(|packet| !packet.meta().discard()));
         // Invalidate signatures for a random number of packets.
         let expected_discards = packets
             .iter_mut()
@@ -447,17 +429,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
         verify_shreds(&thread_pool, &mut packets, &pubkeys, &cache);
-        assert!(
-            packets
-                .iter()
-                .zip(expected_discards.iter())
-                .all(|(batch, expected)| {
-                    batch
-                        .iter()
-                        .zip(expected)
-                        .all(|(packet, should_discard)| packet.meta().discard() == *should_discard)
-                })
-        );
+        assert!(packets
+            .iter()
+            .zip(expected_discards.iter())
+            .all(|(batch, expected)| {
+                batch
+                    .iter()
+                    .zip(expected)
+                    .all(|(packet, should_discard)| packet.meta().discard() == *should_discard)
+            }));
     }
 
     #[test_case(true)]
@@ -486,12 +466,10 @@ mod tests {
         let mut packets = make_packets(&mut rng, &shreds);
         // Assert that initially all signatures are invalid.
         verify_shreds(&thread_pool, &mut packets, &pubkeys, &cache);
-        assert!(
-            packets
-                .iter()
-                .flatten()
-                .all(|packet| packet.meta().discard())
-        );
+        assert!(packets
+            .iter()
+            .flatten()
+            .all(|packet| packet.meta().discard()));
         // Sign and verify shreds signatures.
         packets.iter_mut().for_each(|batch| {
             batch
@@ -500,11 +478,9 @@ mod tests {
         });
         sign_shreds(&thread_pool, &keypair, &mut packets);
         verify_shreds(&thread_pool, &mut packets, &pubkeys, &cache);
-        assert!(
-            packets
-                .iter()
-                .flatten()
-                .all(|packet| !packet.meta().discard())
-        );
+        assert!(packets
+            .iter()
+            .flatten()
+            .all(|packet| !packet.meta().discard()));
     }
 }

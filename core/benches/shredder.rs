@@ -1,18 +1,18 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    criterion::{Criterion, criterion_group, criterion_main},
+    criterion::{criterion_group, criterion_main, Criterion},
     rand::Rng,
-    solana_entry::entry::{Entry, create_ticks},
+    solana_entry::entry::{create_ticks, Entry},
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred,
-            Shredder, filter::ShredRecoveryContext, get_data_shred_bytes_per_batch_typical,
-            max_entries_per_n_shred, max_ticks_per_n_shreds,
+            filter::ShredRecoveryContext, get_data_shred_bytes_per_batch_typical,
+            max_entries_per_n_shred, max_ticks_per_n_shreds, ProcessShredsStats, Shred, Shredder,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
         },
     },
     solana_perf::test_tx,

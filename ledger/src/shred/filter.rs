@@ -864,9 +864,7 @@ mod tests {
                 &mut recovered_shreds,
                 &mut recovered_data_shreds,
             ),
-            Err(Error::Erasure(
-                reed_solomon_erasure::Error::TooFewShardsPresent
-            ))
+            Err(Error::TooFewParityShards)
         );
         assert!(recovered_shreds.is_empty());
         assert!(recovered_data_shreds.is_empty());
