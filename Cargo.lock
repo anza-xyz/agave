@@ -1290,8 +1290,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes 0.14.100",
- "rand 0.8.6",
- "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -7609,6 +7607,7 @@ dependencies = [
  "log",
  "num-traits",
  "pretty-hex",
+ "rand 0.9.4",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -8941,6 +8940,7 @@ dependencies = [
  "clap 3.2.23",
  "dirs-next",
  "num_cpus",
+ "rand 0.9.4",
  "serde_json",
  "solana-bls-signatures",
  "solana-clap-v3-utils",
