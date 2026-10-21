@@ -2252,80 +2252,6 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
     }
 }
 
-const BIG_MOD_EXP_MULT_COMPLEXITY_CONSTANT: u64 = 22;
-const BIG_MOD_EXP_SETUP_MULTIPLICATIONS: u64 = 12;
-const BIG_MOD_EXP_MULTIPLICATIONS_PER_EXPONENT_WORD: u64 = 80;
-const BIG_MOD_EXP_MOD_REDUCTION_CU_DIVISOR: u64 = 15;
-
-fn big_mod_exp_mult_complexity(input_len: u64) -> Option<u128> {
-    let operand_words = u128::from(input_len.div_ceil(8));
-    operand_words
-        .checked_mul(operand_words)?
-        .checked_add(u128::from(BIG_MOD_EXP_MULT_COMPLEXITY_CONSTANT))
-}
-
-fn big_mod_exp_highest_set_bit_index_le(bytes: &[u8]) -> Option<u64> {
-    bytes.iter().enumerate().rev().find_map(|(index, byte)| {
-        (*byte != 0).then(|| {
-            (index as u64)
-                .saturating_mul(u64::from(u8::BITS))
-                .saturating_add(u64::from(7_u32.saturating_sub(byte.leading_zeros())))
-        })
-    })
-}
-
-fn big_mod_exp_adjusted_exponent_length(exponent: &[u8]) -> u64 {
-    if exponent.len() <= 32 {
-        big_mod_exp_highest_set_bit_index_le(exponent).unwrap_or(0)
-    } else {
-        let trailing_bytes = exponent.len().saturating_sub(32);
-        let most_significant_32_bytes = &exponent[trailing_bytes..];
-        (trailing_bytes as u64)
-            .saturating_mul(u64::from(u8::BITS))
-            .saturating_add(
-                big_mod_exp_highest_set_bit_index_le(most_significant_32_bytes).unwrap_or(0),
-            )
-    }
-}
-
-fn big_mod_exp_is_one_le(bytes: &[u8]) -> bool {
-    matches!(bytes.first(), Some(1)) && bytes[1..].iter().all(|byte| *byte == 0)
-}
-
-/// Compute the operation cost of a big integer modular exponentiation, i.e. the
-/// cost charged on top of the flat `big_modular_exponentiation_base_cost`.
-fn big_mod_exp_operation_cost(
-    cost_divisor: u64,
-    params: &BigModExpParams,
-    exponent: &[u8],
-) -> Option<u64> {
-    let input_len = params.base_len.max(params.modulus_len);
-    let mult_complexity = big_mod_exp_mult_complexity(input_len)?;
-    let (operation_complexity, divisor) = if big_mod_exp_is_one_le(exponent) {
-        (mult_complexity, BIG_MOD_EXP_MOD_REDUCTION_CU_DIVISOR)
-    } else {
-        let exponent_words = big_mod_exp_adjusted_exponent_length(exponent)
-            .checked_div(64)?
-            .checked_add(1)?;
-        let multiplications = BIG_MOD_EXP_MULTIPLICATIONS_PER_EXPONENT_WORD
-            .checked_mul(exponent_words)?
-            .checked_add(BIG_MOD_EXP_SETUP_MULTIPLICATIONS)?;
-        (
-            mult_complexity.checked_mul(u128::from(multiplications))?,
-            cost_divisor,
-        )
-    };
-    let divisor = u128::from(divisor);
-    if divisor == 0 {
-        return None;
-    }
-
-    let operation_cost = operation_complexity
-        .checked_add(divisor.checked_sub(1)?)?
-        .checked_div(divisor)?;
-    u64::try_from(operation_cost).ok()
-}
-
 /// Big integer modular exponentiation
 pub struct SyscallBigModExp {}
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallBigModExp {
@@ -2344,7 +2270,6 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallBigModExp {
         // translation or work that could fail without being paid for.
         let execution_cost = invoke_context.get_execution_cost();
         let base_cost = execution_cost.big_modular_exponentiation_base_cost;
-        let cost_divisor = execution_cost.big_modular_exponentiation_cost_divisor;
         invoke_context.consume_checked(base_cost)?;
 
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
@@ -2367,7 +2292,11 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallBigModExp {
             params.exponent_len,
             check_aligned,
         )?;
-        let Some(cost) = big_mod_exp_operation_cost(cost_divisor, &params, exponent) else {
+        let Some(cost) = execution_cost.big_mod_exp_operation_cost(
+            params.base_len,
+            params.modulus_len,
+            exponent,
+        ) else {
             // The operation cost cannot be represented as a `u64`, so it can
             // never be paid for; drain the remaining budget and fail.
             invoke_context.consume_checked(u64::MAX)?;
@@ -6097,12 +6026,9 @@ mod tests {
             .mock_set_mapping_abi_v1(memory_mapping);
         let budget = invoke_context.get_execution_cost();
         let cost = budget.big_modular_exponentiation_base_cost
-            + big_mod_exp_operation_cost(
-                budget.big_modular_exponentiation_cost_divisor,
-                &params,
-                &exponent,
-            )
-            .unwrap();
+            + budget
+                .big_mod_exp_operation_cost(params.base_len, params.modulus_len, &exponent)
+                .unwrap();
         invoke_context.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
@@ -6154,12 +6080,9 @@ mod tests {
             .mock_set_mapping_abi_v1(memory_mapping);
         let budget = invoke_context.get_execution_cost();
         let cost = budget.big_modular_exponentiation_base_cost
-            + big_mod_exp_operation_cost(
-                budget.big_modular_exponentiation_cost_divisor,
-                &params,
-                &exponent,
-            )
-            .unwrap();
+            + budget
+                .big_mod_exp_operation_cost(params.base_len, params.modulus_len, &exponent)
+                .unwrap();
         invoke_context.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
@@ -6211,12 +6134,9 @@ mod tests {
             .mock_set_mapping_abi_v1(memory_mapping);
         let budget = invoke_context.get_execution_cost();
         let cost = budget.big_modular_exponentiation_base_cost
-            + big_mod_exp_operation_cost(
-                budget.big_modular_exponentiation_cost_divisor,
-                &params,
-                &exponent,
-            )
-            .unwrap();
+            + budget
+                .big_mod_exp_operation_cost(params.base_len, params.modulus_len, &exponent)
+                .unwrap();
         invoke_context.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_BASE, 0, 0, 0);
@@ -6265,40 +6185,6 @@ mod tests {
             result,
             Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::InvalidLength
         );
-    }
-
-    #[test]
-    fn test_big_mod_exp_cost() {
-        let compute_cost = SVMTransactionExecutionCost::default();
-        let cost = |base_len: u64, modulus_len: u64, exponent: &[u8]| {
-            let params = BigModExpParams {
-                base: 0,
-                base_len,
-                exponent: 0,
-                exponent_len: exponent.len() as u64,
-                modulus: 0,
-                modulus_len,
-            };
-            compute_cost.big_modular_exponentiation_base_cost
-                + big_mod_exp_operation_cost(
-                    compute_cost.big_modular_exponentiation_cost_divisor,
-                    &params,
-                    exponent,
-                )
-                .unwrap()
-        };
-
-        // Costs listed in SIMD-0529
-        let exponent_65537 = [0x01, 0x00, 0x01];
-        assert_eq!(cost(256, 256, &exponent_65537), 24_108);
-        assert_eq!(cost(512, 512, &exponent_65537), 94_764);
-        assert_eq!(cost(512, 512, &[0xff; 128]), 1_330_164);
-        assert_eq!(cost(8, 8, &[0xff; 512]), 29_559);
-        assert_eq!(cost(512, 256, &[0x01]), 325);
-
-        // The reduction path is chosen by the exponent value, not its encoded or adjusted length
-        assert_eq!(cost(512, 256, &[0x01, 0x00, 0x00]), 325);
-        assert_eq!(cost(512, 256, &[0x00]), cost(512, 256, &[0x01, 0x01]));
     }
 
     #[test]
