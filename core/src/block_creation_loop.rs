@@ -8,7 +8,8 @@ use {
     crate::{
         banking_trace::{BankingPacketSender, BankingTracer},
         block_creation_loop::rewards::{
-            certs_requestor::CertsRequestor, msg_types::RewardRespSucc,
+            certs_requestor::CertsRequestor,
+            msg_types::{RewardRequestToken, RewardRespSucc},
             reward_certs_service::RewardCertsService,
         },
         replay_stage::{Finalizer, ReplayStage},
@@ -603,6 +604,10 @@ fn produce_first_slot(
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     let mut slot_metrics = SlotMetrics::new(slot, fast_leader_handover);
+    // Request the reward certs before waiting for the parent. That wait can use up most of the
+    // slot's budget, and the footer doesn't wait for the reply, so requesting afterwards can
+    // leave the rewards service no time to answer.
+    let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
     let res = start_leader_wait_for_parent_replay(
         ctx,
         &mut slot_metrics,
@@ -618,6 +623,7 @@ fn produce_first_slot(
             &mut slot_metrics,
             slot,
             fast_leader_handover.then_some(parent_block),
+            reward_cert_request,
             block_timer,
             working_bank,
         )
@@ -642,11 +648,13 @@ fn produce_intra_window_slot(
         /* entry_bytes_consumed */ 0,
     )
     .and_then(|working_bank| {
+        let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
         produce_slot(
             ctx,
             &mut slot_metrics,
             slot,
             None,
+            reward_cert_request,
             block_timer,
             working_bank,
         )
@@ -655,11 +663,33 @@ fn produce_intra_window_slot(
     res
 }
 
+/// Asks the rewards service to build the reward certs for `slot`'s footer.
+fn request_reward_certs(
+    ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
+    slot: Slot,
+) -> Result<Option<RewardRequestToken>, StartLeaderError> {
+    // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
+    // would be tower slots.
+    if slot
+        <= ctx
+            .genesis_cert_block_marker
+            .slot
+            .saturating_add(NUM_SLOTS_FOR_REWARD)
+    {
+        return Ok(None);
+    }
+    ctx.reward_certs_requestor
+        .request_reward_certs(slot_metrics, ctx.my_pubkey, slot)
+        .map_err(|()| StartLeaderError::PohRecorder(PohRecorderError::ChannelDisconnected))
+}
+
 fn produce_slot(
     ctx: &mut LeaderContext,
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     optimistic_parent: Option<Block>,
+    reward_cert_request: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     working_bank: Arc<Bank>,
 ) -> Result<(), StartLeaderError> {
@@ -676,6 +706,7 @@ fn produce_slot(
         slot_metrics,
         slot,
         optimistic_parent,
+        reward_cert_request,
         block_timer,
         timeout,
     ) {
@@ -747,23 +778,10 @@ fn record_and_complete_block(
     slot_metrics: &mut SlotMetrics,
     bank_slot: Slot,
     mut optimistic_parent: Option<Block>,
+    reward_cert_request: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
-    // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
-    // would be tower slots.
-    let reward_cert_request = if bank_slot
-        > ctx
-            .genesis_cert_block_marker
-            .slot
-            .saturating_add(NUM_SLOTS_FOR_REWARD)
-    {
-        ctx.reward_certs_requestor
-            .request_reward_certs(slot_metrics, ctx.my_pubkey, bank_slot)
-            .map_err(|()| PohRecorderError::ChannelDisconnected)?
-    } else {
-        None
-    };
     let mut accumulated_txs = vec![];
     let mut records_shutdown = false;
     let window_has_moved_on = loop {
@@ -1839,6 +1857,88 @@ mod tests {
     }
 
     #[test]
+    fn test_reward_certs_requested_before_parent_replay() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let my_pubkey = Pubkey::new_unique();
+        let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
+        let root_bank = Bank::new_for_tests(&genesis.genesis_config);
+        root_bank.freeze();
+        let bank_forks = BankForks::new_rw_arc(root_bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+            root_bank.tick_height(),
+            root_bank.last_blockhash(),
+            root_bank.clone(),
+            Some((1, 1)),
+            root_bank.ticks_per_slot(),
+            blockstore.clone(),
+            &leader_schedule_cache,
+            &PohConfig::default(),
+            exit.clone(),
+        );
+        poh_recorder.enable_alpenglow();
+
+        let (_record_sender, record_receiver) = record_channels(false);
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
+        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let (reward_certs_requestor, reward_request_receiver) = CertsRequestor::new();
+        let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
+        let mut ctx = LeaderContext {
+            exit,
+            my_pubkey,
+            leader_window_info_receiver,
+            pending_parent_ready: None,
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
+            highest_finalized: Arc::new(RwLock::new(None)),
+            blockstore,
+            record_receiver,
+            poh_recorder: Arc::new(RwLock::new(poh_recorder)),
+            leader_schedule_cache,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
+            bank_forks_controller,
+            rpc_subscriptions: None,
+            slot_status_notifier: None,
+            entry_notification_sender: None,
+            transaction_status_sender: None,
+            banking_tracer: BankingTracer::new_disabled(),
+            replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
+            reward_certs_requestor,
+            banking_stage_sender,
+            metrics: LoopMetrics::default(),
+            genesis_cert_block_marker: GenesisCertBlockMarker {
+                slot: 0,
+                ..test_genesis_cert_block_marker()
+            },
+        };
+
+        // Slot 12 opens a leader window, and its parent (slot 11) never finishes
+        // replay. Only a few ms of the slot's budget are left.
+        let slot = 12;
+        let mut block_timer = Instant::now()
+            .checked_sub(block_timeout(&root_bank, slot) - Duration::from_millis(20))
+            .unwrap();
+        let err = produce_first_slot(
+            false,
+            slot,
+            Block::new_unique(slot - 1),
+            &mut block_timer,
+            &mut ctx,
+        )
+        .unwrap_err();
+        assert!(matches!(err, StartLeaderError::ReplayIsBehind(11, 12)));
+
+        // The reward certs were already requested while we waited for the parent.
+        let request = reward_request_receiver.try_recv().unwrap();
+        assert_eq!(request.bank_slot, slot);
+    }
+
+    #[test]
     fn test_abort_failed_working_bank() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -2102,6 +2202,7 @@ mod tests {
             &mut ctx,
             &mut SlotMetrics::new(1, true),
             1,
+            None,
             None,
             &mut Instant::now(),
             Duration::ZERO,
