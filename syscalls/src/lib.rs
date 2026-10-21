@@ -322,7 +322,6 @@ pub fn create_program_runtime_environment(
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
     let blake3_syscall_enabled = feature_set.blake3_syscall_enabled;
     let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
-    let enable_bls12_381_syscall = feature_set.enable_bls12_381_syscall;
     let enable_sha512_syscall = feature_set.enable_sha512_syscall;
     let disable_fees_sysvar = feature_set.disable_fees_sysvar;
     let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar;
@@ -423,18 +422,8 @@ pub fn create_program_runtime_environment(
         "sol_curve_multiscalar_mul",
         SyscallCurveMultiscalarMultiplication
     )?;
-    register_feature_gated_function!(
-        result,
-        enable_bls12_381_syscall,
-        "sol_curve_decompress",
-        SyscallCurveDecompress
-    )?;
-    register_feature_gated_function!(
-        result,
-        enable_bls12_381_syscall,
-        "sol_curve_pairing_map",
-        SyscallCurvePairingMap
-    )?;
+    SyscallCurveDecompress::register(&mut result, "sol_curve_decompress")?;
+    SyscallCurvePairingMap::register(&mut result, "sol_curve_pairing_map")?;
 
     // Sysvars
     SyscallGetClockSysvar::register(&mut result, "sol_get_clock_sysvar")?;
@@ -1011,16 +1000,6 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
             solana_define_syscall::curve_constants::*,
         };
 
-        // SIMD-0388: BLS12-381 syscalls
-        if !invoke_context.get_feature_set().enable_bls12_381_syscall
-            && matches!(
-                curve_id,
-                BLS12_381_G1_BE | BLS12_381_G1_LE | BLS12_381_G2_BE | BLS12_381_G2_LE
-            )
-        {
-            return Err(SyscallError::InvalidAttribute.into());
-        }
-
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         match curve_id {
@@ -1254,15 +1233,6 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
             },
             solana_define_syscall::curve_constants::*,
         };
-
-        if !invoke_context.get_feature_set().enable_bls12_381_syscall
-            && matches!(
-                curve_id,
-                BLS12_381_G1_BE | BLS12_381_G1_LE | BLS12_381_G2_BE | BLS12_381_G2_LE
-            )
-        {
-            return Err(SyscallError::InvalidAttribute.into());
-        }
 
         let check_aligned = invoke_context.get_check_aligned();
         match curve_id {
