@@ -3332,15 +3332,18 @@ impl Bank {
 
         //this bank and all its parents are now on the rooted path
         let mut roots = Vec::with_capacity(self.ancestors.len());
-        roots.push(self.slot());
-        roots.extend(self.parents_iter().map(|parent| parent.slot()));
+        roots.push((self.bank_id(), self.slot()));
+        roots.extend(
+            self.parents_iter()
+                .map(|parent| (parent.bank_id(), parent.slot())),
+        );
 
         let mut total_cache_us = 0;
 
         let mut squash_accounts_time = Measure::start("squash_accounts_time");
-        for slot in roots.iter().rev() {
+        for (bank_id, _) in roots.iter().rev() {
             // root forks cannot be purged
-            let add_root_timing = self.rc.accounts.add_root(*slot);
+            let add_root_timing = self.rc.accounts.add_root(*bank_id);
             total_cache_us += add_root_timing.cache_us;
         }
         squash_accounts_time.stop();
@@ -3351,7 +3354,7 @@ impl Bank {
         self.status_cache
             .write()
             .unwrap()
-            .add_roots(roots.iter().copied());
+            .add_roots(roots.iter().map(|(_, slot)| slot).copied());
         squash_cache_time.stop();
 
         SquashTiming {

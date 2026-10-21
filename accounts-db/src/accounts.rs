@@ -526,9 +526,9 @@ impl Accounts {
         accounts_db.store_accounts_unfrozen(accounts, bank_id, ancestors);
     }
 
-    /// Add a slot to root.  Root slots cannot be purged
-    pub fn add_root(&self, slot: Slot) -> AccountsAddRootTiming {
-        self.accounts_db.add_root(slot)
+    /// Root a bank.  Rooted banks cannot be purged
+    pub fn add_root(&self, bank_id: BankId) -> AccountsAddRootTiming {
+        self.accounts_db.add_root(bank_id)
     }
 }
 

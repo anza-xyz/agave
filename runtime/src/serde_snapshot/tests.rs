@@ -980,7 +980,7 @@ mod serde_snapshot_tests {
         let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
         bank.set_block_id(Some(BlockId::default()));
         bank.freeze();
-        bank.rc.accounts.add_root(bank.slot());
+        bank.rc.accounts.add_root(bank.bank_id());
         bank.force_flush_accounts_cache();
 
         // Set extra fields

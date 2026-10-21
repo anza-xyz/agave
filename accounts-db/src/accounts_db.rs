@@ -4498,12 +4498,14 @@ impl AccountsDb {
         }
     }
 
-    pub fn add_root(&self, slot: Slot) -> AccountsAddRootTiming {
+    pub fn add_root(&self, bank_id: BankId) -> AccountsAddRootTiming {
         let mut cache_time = Measure::start("cache_add_root");
-        self.accounts_cache.add_root(slot);
+        let slot = self.accounts_cache.add_root(bank_id);
         cache_time.stop();
 
-        self.max_root.fetch_max(slot, Ordering::Relaxed);
+        if let Some(slot) = slot {
+            self.max_root.fetch_max(slot, Ordering::Relaxed);
+        }
 
         AccountsAddRootTiming {
             cache_us: cache_time.as_us(),
@@ -5321,7 +5323,15 @@ impl AccountsDb {
     }
 
     pub fn add_root_for_tests(&self, slot: Slot) -> AccountsAddRootTiming {
-        self.add_root(slot)
+        let bank_id = BankId::new(slot);
+        // Test stores cache a slot under `BankId::new(slot)`; any other id would skip this root
+        assert!(
+            self.accounts_cache
+                .bank_id(slot)
+                .is_none_or(|cached_bank_id| cached_bank_id == bank_id),
+            "slot {slot} is cached under a different bank id"
+        );
+        self.add_root(bank_id)
     }
 
     /// note this returns Some for accounts with zero lamports

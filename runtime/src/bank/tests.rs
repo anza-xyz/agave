@@ -6061,7 +6061,7 @@ fn test_add_builtin_account() {
 /// useful to adapt tests written prior to introduction of the write cache
 /// to use the write cache
 fn add_root_and_flush_write_cache(bank: &Bank) {
-    bank.rc.accounts.add_root(bank.slot());
+    bank.rc.accounts.add_root(bank.bank_id());
     bank.force_flush_accounts_cache();
 }
 
@@ -12363,7 +12363,7 @@ fn test_new_for_txn_tests_system_transfer() {
     bank_rc
         .accounts
         .store_accounts((parent_slot, refs.as_slice()), bank_id, None, &ancestors);
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(bank_id);
 
     let mut epoch_stakes = HashMap::new();
     for key in [epoch, epoch.saturating_add(1)] {
@@ -12543,7 +12543,7 @@ fn test_new_for_block_tests_with_vote_account() {
     bank_rc
         .accounts
         .store_accounts((parent_slot, refs.as_slice()), bank_id, None, &ancestors);
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(bank_id);
 
     let vote_accounts_map = HashMap::from([(vote_pubkey, (1_000_000, vote_acct))]);
     let mut epoch_stakes = HashMap::new();
