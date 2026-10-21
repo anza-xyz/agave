@@ -65,7 +65,7 @@ use {
     solana_rent::Rent,
     solana_runtime::{
         bank::{
-            Bank, RewardCalculationEvent,
+            Bank, RewardCalculationEvent, SlotLeaders,
             bank_hash_details::{self, SlotDetails, TransactionDetails},
         },
         bank_forks::BankForks,
@@ -1067,13 +1067,13 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
 
     if child_bank_required {
         let child_slot = bank.slot() + 1;
-        let child_leader = LeaderScheduleCache::new_from_bank(&bank)
-            .slot_leader_at(child_slot, Some(&bank))
+        let child_leaders = LeaderScheduleCache::new_from_bank(&bank)
+            .slot_leaders_at(child_slot, Some(&bank))
             .unwrap_or_else(|| {
-                eprintln!("Error: Unable to determine the leader of child slot {child_slot}");
+                eprintln!("Error: Unable to determine the leaders of child slot {child_slot}");
                 exit(1);
             });
-        let mut child_bank = Bank::new_from_parent(bank, child_leader, child_slot);
+        let mut child_bank = Bank::new_from_parent(bank, child_leaders, child_slot);
 
         if let Ok(rent_burn_percentage) = rent_burn_percentage {
             child_bank.set_rent_burn_percentage(rent_burn_percentage);
@@ -1377,9 +1377,14 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
         // of order.
         bank.squash();
         bank.force_flush_accounts_cache();
+        // The warp slot can be epochs past `bank`, beyond what its epoch
+        // stakes cover, so keep `bank`'s leader for both slots.
         Arc::new(Bank::warp_from_parent(
             bank.clone(),
-            *bank.leader(),
+            SlotLeaders {
+                leader: *bank.leader(),
+                next_leader: *bank.leader(),
+            },
             warp_slot,
         ))
     } else {
@@ -3006,9 +3011,14 @@ fn main() {
                             }
                             }
                         };
+                        // Only the reward calculation matters here, so keep
+                        // the base bank's leader for both slots.
                         let warped_bank = Bank::new_from_parent_with_tracer(
                             base_bank.clone(),
-                            *base_bank.leader(),
+                            SlotLeaders {
+                                leader: *base_bank.leader(),
+                                next_leader: *base_bank.leader(),
+                            },
                             next_epoch,
                             tracer,
                         );

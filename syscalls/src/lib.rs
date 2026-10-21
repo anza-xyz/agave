@@ -23,7 +23,9 @@ use {
     solana_hash_512::Hash512,
     solana_instruction::{AccountMeta, ProcessedSiblingInstruction},
     solana_instruction_error::InstructionError,
-    solana_keccak_hasher as keccak, solana_poseidon as poseidon,
+    solana_keccak_hasher as keccak,
+    solana_leader_info::LeaderInfo,
+    solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS},
     solana_program_runtime::{
         cpi::CpiError,
@@ -45,7 +47,6 @@ use {
     },
     solana_sha256_hasher::Hasher,
     solana_sha512_hasher as sha512,
-    solana_svm_callback::LeaderInfo,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_type_overrides::sync::Arc,
@@ -2862,11 +2863,6 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochStake {
     }
 }
 
-/// Compute units charged by `sol_get_leader` (SIMD-0558):
-/// `sysvar_base_cost + max(mem_op_base_cost, size_of::<LeaderInfo>() / cpi_bytes_per_unit)`
-/// = `100 + max(10, 128 / 250)` = 110.
-pub const SOL_GET_LEADER_COMPUTE_UNITS: u64 = 110;
-
 /// Get the current and next leader.
 pub struct SyscallGetLeader {}
 impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
@@ -2879,7 +2875,21 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
         _arg4: u64,
         _arg5: u64,
     ) -> Result<u64, Error> {
-        invoke_context.consume_checked(SOL_GET_LEADER_COMPUTE_UNITS)?;
+        // As specified by SIMD-0558:
+        //
+        // Compute units:
+        //
+        // ```
+        // sysvar_base + max(mem_op_base, floor(size_of::<LeaderInfo>() / cpi_bytes_per_unit))
+        // ```
+        let compute_cost = invoke_context.get_execution_cost();
+        let compute_units = compute_cost.sysvar_base_cost.saturating_add(
+            (size_of::<LeaderInfo>() as u64)
+                .checked_div(compute_cost.cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX)
+                .max(compute_cost.mem_op_base_cost),
+        );
+        invoke_context.consume_checked(compute_units)?;
 
         let check_aligned = invoke_context.get_check_aligned();
         if !check_aligned {
@@ -2890,18 +2900,17 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
             return Err(SyscallError::InvalidPointer.into());
         }
 
-        let var_ptr = {
-            let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-            translate_mut!(
-                memory_mapping,
-                check_aligned,
-                let var: (&mut MaybeUninit<LeaderInfo>) = map(var_addr)?;
-            );
-            var.as_mut_ptr()
-        };
-
+        // Read before borrowing the memory mapping. The lookup has no side
+        // effects, so taking it ahead of the translation is not observable.
         let leader_info = invoke_context.get_leader_info();
-        unsafe { var_ptr.write(leader_info) };
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+        translate_mut!(
+            memory_mapping,
+            check_aligned,
+            let var: (&mut MaybeUninit<LeaderInfo>) = map(var_addr)?;
+        );
+        var.write(leader_info);
 
         Ok(SUCCESS)
     }
@@ -4771,8 +4780,6 @@ mod tests {
 
     #[test]
     fn test_syscall_get_leader() {
-        use solana_svm_callback::LeaderInfo;
-
         const LEADER_INFO: LeaderInfo = LeaderInfo {
             leader_identity: Pubkey::new_from_array([1; 32]),
             leader_vote: Pubkey::new_from_array([2; 32]),
@@ -4791,7 +4798,19 @@ mod tests {
             }
         }
 
-        let expected_cus = SOL_GET_LEADER_COMPUTE_UNITS;
+        // Compute units, as specified by SIMD-0558.
+        // cu = sysvar_base_cost
+        //     + max(mem_op_base_cost, floor(128/cpi_bytes_per_unit))
+        let compute_cost = SVMTransactionExecutionCost::default();
+        let expected_cus = compute_cost.sysvar_base_cost
+            + compute_cost
+                .mem_op_base_cost
+                .max(size_of::<LeaderInfo>() as u64 / compute_cost.cpi_bytes_per_unit);
+        // The value SIMD-0558 quotes for the default cost table.
+        assert_eq!(expected_cus, 110);
+
+        // Set the compute budget to the expected CUs to ensure the syscall
+        // doesn't exceed the expected usage.
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
@@ -4831,6 +4850,9 @@ mod tests {
             SyscallGetLeader::rust(&mut invoke_context, got_leader_info_obj_va, 0, 0, 0, 0);
         assert_eq!(result.unwrap(), 0);
         assert_eq!(got_leader_info_obj, LEADER_INFO);
+        // ...and doesn't charge less than expected either.
+        use solana_sbpf::vm::ContextObject;
+        assert_eq!(invoke_context.get_remaining(), 0);
     }
 
     #[test_case(false; "partial")]

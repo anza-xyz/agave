@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 solana-account-info = { workspace = true }
-solana-define-syscall = { workspace = true }
+solana-leader-info = { workspace = true }
 solana-program = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }

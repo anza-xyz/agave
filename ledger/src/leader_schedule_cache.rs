@@ -95,11 +95,11 @@ impl LeaderScheduleCache {
 
     /// Returns the leader of `slot` together with the leader of `slot + 1`,
     /// for creating the bank at `slot`. The next leader may belong to the
-    /// following epoch; it is `None` only if that epoch's schedule is not
-    /// available yet, in which case the bank derives it from its own stakes.
+    /// following epoch. With a `bank`, that epoch's schedule is always
+    /// computable, since the bank holds stakes up to its leader schedule epoch.
     pub fn slot_leaders_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<SlotLeaders> {
         let leader = self.slot_leader_at(slot, bank)?;
-        let next_leader = self.slot_leader_at(slot.saturating_add(1), bank);
+        let next_leader = self.slot_leader_at(slot.saturating_add(1), bank)?;
         Some(SlotLeaders {
             leader,
             next_leader,
@@ -624,17 +624,14 @@ mod tests {
             cache.slot_leader_at(last_slot, Some(&bank))
         );
         assert_eq!(
-            leaders.next_leader,
+            Some(leaders.next_leader),
             cache.slot_leader_at(last_slot + 1, Some(&bank))
         );
-        assert!(leaders.next_leader.is_some());
 
-        // A bank created with the pair reports it as-is; one created with
-        // only the leader derives the same next leader from its epoch stakes.
-        let seeded = Bank::new_from_parent(bank.clone(), leaders, last_slot);
-        let derived = Bank::new_from_parent(bank, leaders.leader, last_slot);
-        assert_eq!(Some(*seeded.next_leader()), leaders.next_leader);
-        assert_eq!(seeded.next_leader(), derived.next_leader());
+        // A bank created with the pair reports it as-is.
+        let bank = Bank::new_from_parent(bank, leaders, last_slot);
+        assert_eq!(bank.leader(), &leaders.leader);
+        assert_eq!(bank.next_leader(), &leaders.next_leader);
     }
 
     #[test]

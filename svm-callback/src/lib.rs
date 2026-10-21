@@ -1,6 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 use {
     solana_account::{AccountSharedData, ReadableAccount},
+    solana_leader_info::LeaderInfo,
     solana_precompile_error::PrecompileError,
     solana_pubkey::Pubkey,
 };
@@ -55,16 +56,4 @@ pub trait TransactionProcessingCallback: AccountLoadCallback {
             load_filter(account.lamports(), account.owner(), account.data().len())
         })
     }
-}
-
-/// The block producer of the current slot and of the slot after it, as written
-/// by the `sol_get_leader` syscall (SIMD-0558). This is the syscall's ABI:
-/// four pubkeys, 128 bytes, in this order.
-#[repr(C)]
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct LeaderInfo {
-    pub leader_identity: Pubkey,
-    pub leader_vote: Pubkey,
-    pub next_leader_identity: Pubkey,
-    pub next_leader_vote: Pubkey,
 }

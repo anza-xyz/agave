@@ -21,6 +21,7 @@ agave-unstable-api = []
 [dependencies]
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
+solana-leader-info = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-pubkey = { workspace = true }
 

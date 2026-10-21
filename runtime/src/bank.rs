@@ -144,6 +144,7 @@ use {
     solana_inflation::Inflation,
     solana_keypair::Keypair,
     solana_lattice_hash::lt_hash::LtHash,
+    solana_leader_info::LeaderInfo,
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_message::{
         AccountKeys, SanitizedMessage, inner_instruction::InnerInstructions, v0::LoadedAddresses,
@@ -190,7 +191,7 @@ use {
         },
     },
     solana_svm_callback::{
-        AccountLoadCallback, InvokeContextCallback, LeaderInfo, TransactionProcessingCallback,
+        AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
@@ -976,9 +977,10 @@ pub struct Bank {
     /// The leader who produced this block
     leader: SlotLeader,
 
-    /// The leader of `slot + 1`. Seeded by the creator of this bank from the
-    /// leader schedule cache; derived from epoch stakes on first use otherwise.
-    next_leader: OnceLock<SlotLeader>,
+    /// The leader of `slot + 1`, supplied with [`Self::leader`] by whoever
+    /// creates this bank, or computed from epoch stakes at genesis and on
+    /// snapshot restore.
+    next_leader: SlotLeader,
 
     /// Track cluster signature throughput and adjust fee rate
     pub(crate) fee_rate_governor: FeeRateGovernor,
@@ -1321,7 +1323,7 @@ impl Bank {
             epoch: Epoch::default(),
             block_height: u64::default(),
             leader: SlotLeader::default(),
-            next_leader: OnceLock::new(),
+            next_leader: SlotLeader::default(),
             fee_rate_governor: FeeRateGovernor::default(),
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
@@ -1432,6 +1434,26 @@ impl Bank {
             }
             bank.update_stake_history(None);
         }
+
+        // Genesis has no parent to supply the next leader, so take it from the
+        // epoch stakes inserted above. The genesis leader itself stays the
+        // highest staked node set by `process_genesis_config`.
+        let next_leader = Self::slot_leaders_from_epoch_stakes(
+            bank.slot,
+            &bank.epoch_schedule,
+            &bank.epoch_stakes,
+        )
+        .map(|leaders| leaders.next_leader);
+        #[cfg(not(feature = "dev-context-only-utils"))]
+        {
+            bank.next_leader =
+                next_leader.expect("genesis processing failed because no staked nodes exist");
+        }
+        // Test genesis configs may have no staked node; reuse the leader then.
+        #[cfg(feature = "dev-context-only-utils")]
+        {
+            bank.next_leader = next_leader.unwrap_or(bank.leader);
+        }
         bank.update_clock(None);
         bank.update_rent();
         bank.update_epoch_schedule();
@@ -1446,10 +1468,13 @@ impl Bank {
     }
 
     /// Create a new bank that points to an immutable checkpoint of another bank.
-    pub fn new_from_parent(parent: Arc<Bank>, leader: impl Into<SlotLeaders>, slot: Slot) -> Self {
+    ///
+    /// Outside of `dev-context-only-utils` builds `leaders` must be a
+    /// [`SlotLeaders`]; tests may pass a bare [`SlotLeader`].
+    pub fn new_from_parent(parent: Arc<Bank>, leaders: impl Into<SlotLeaders>, slot: Slot) -> Self {
         Self::_new_from_parent(
             parent,
-            leader,
+            leaders.into(),
             slot,
             null_tracer(),
             NewBankOptions::default(),
@@ -1458,22 +1483,22 @@ impl Bank {
 
     pub fn new_from_parent_with_options(
         parent: Arc<Bank>,
-        leader: impl Into<SlotLeaders>,
+        leaders: SlotLeaders,
         slot: Slot,
         new_bank_options: NewBankOptions,
     ) -> Self {
-        Self::_new_from_parent(parent, leader, slot, null_tracer(), new_bank_options)
+        Self::_new_from_parent(parent, leaders, slot, null_tracer(), new_bank_options)
     }
 
     pub fn new_from_parent_with_tracer(
         parent: Arc<Bank>,
-        leader: impl Into<SlotLeaders>,
+        leaders: SlotLeaders,
         slot: Slot,
         reward_calc_tracer: impl RewardCalcTracer,
     ) -> Self {
         Self::_new_from_parent(
             parent,
-            leader,
+            leaders,
             slot,
             Some(reward_calc_tracer),
             NewBankOptions::default(),
@@ -1486,7 +1511,7 @@ impl Bank {
 
     fn _new_from_parent(
         parent: Arc<Bank>,
-        leader: impl Into<SlotLeaders>,
+        leaders: SlotLeaders,
         slot: Slot,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_bank_options: NewBankOptions,
@@ -1496,7 +1521,7 @@ impl Bank {
         let SlotLeaders {
             leader,
             next_leader,
-        } = leader.into();
+        } = leaders;
 
         parent.freeze();
         assert_ne!(slot, parent.slot());
@@ -1590,7 +1615,7 @@ impl Bank {
             parent_hash: parent.hash(),
             parent_slot: parent.slot(),
             leader,
-            next_leader: next_leader.map_or_else(OnceLock::new, OnceLock::from),
+            next_leader,
             ancestors: Ancestors::default(),
             hash: RwLock::new(Hash::default()),
             is_delta: AtomicBool::new(false),
@@ -2231,29 +2256,37 @@ impl Bank {
             "should be populated (from fields.versioned_epoch_stakes)"
         );
 
-        // Compute and validate the slot leader from epoch stakes.
-        let compute_leader = || {
+        // Compute and validate the slot leaders from epoch stakes.
+        let compute_leaders = || {
+            let mut leaders =
+                Self::slot_leaders_from_epoch_stakes(slot, &fields.epoch_schedule, &epoch_stakes)
+                    .expect(
+                        "snapshot epoch stakes should contain at least one staked vote account",
+                    );
             if slot == 0 {
                 // Genesis snapshot has no leader for the genesis block.
                 // Instead the leader is set to the maximum delegated vote account.
-                stakes
+                leaders.leader = stakes
                     .highest_staked_node()
-                    .expect("genesis snapshot should contain at least one staked vote account")
-            } else {
-                Self::slot_leader_from_epoch_stakes(
-                    fields.slot,
-                    &fields.epoch_schedule,
-                    &epoch_stakes,
-                )
+                    .expect("genesis snapshot should contain at least one staked vote account");
             }
+            leaders
         };
         #[cfg(not(feature = "dev-context-only-utils"))]
-        let leader = {
+        let SlotLeaders {
+            leader,
+            next_leader,
+        } = {
             _ = leader_for_tests;
-            compute_leader()
+            compute_leaders()
         };
         #[cfg(feature = "dev-context-only-utils")]
-        let leader = leader_for_tests.unwrap_or_else(compute_leader);
+        let SlotLeaders {
+            leader,
+            next_leader,
+        } = leader_for_tests
+            .map(SlotLeaders::from)
+            .unwrap_or_else(compute_leaders);
         assert_eq!(
             fields.leader_id, leader.id,
             "snapshot leader_id does not match computed slot leader"
@@ -2300,7 +2333,7 @@ impl Bank {
             epoch,
             block_height: fields.block_height,
             leader,
-            next_leader: OnceLock::new(),
+            next_leader,
             fee_rate_governor: fields.fee_rate_governor,
             rent_collector: RentCollector::new(
                 epoch,
@@ -2390,22 +2423,50 @@ impl Bank {
         bank
     }
 
-    /// Compute the slot leader from epoch stakes during snapshot restoration.
-    fn slot_leader_from_epoch_stakes(
+    /// Compute the leaders of `slot` and `slot + 1` from epoch stakes, for the
+    /// banks that have no parent to supply them: genesis and snapshot
+    /// restoration.
+    ///
+    /// `epoch_stakes` must contain the epochs of both slots. A bank holds
+    /// stakes up to its leader schedule epoch, which covers `slot + 1` even
+    /// when it starts a new epoch. Returns `None` if either epoch has no
+    /// staked vote account, since no schedule can be built from it.
+    fn slot_leaders_from_epoch_stakes(
         slot: Slot,
         epoch_schedule: &EpochSchedule,
         epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
-    ) -> SlotLeader {
-        let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(slot);
-        let epoch_vote_accounts = epoch_stakes
-            .get(&epoch)
-            .expect("epoch stakes should contain current epoch")
-            .stakes()
-            .vote_accounts();
-        let leader_schedule =
+    ) -> Option<SlotLeaders> {
+        let leader_schedule = |epoch: Epoch| {
+            let epoch_vote_accounts = epoch_stakes
+                .get(&epoch)
+                .expect("epoch stakes should contain the epoch of the slot and the next slot")
+                .stakes()
+                .vote_accounts();
+            // `LeaderSchedule::new` panics without any staked vote account
+            if !epoch_vote_accounts
+                .as_ref()
+                .values()
+                .any(|(stake, _)| *stake > 0)
+            {
+                return None;
+            }
             leader_schedule_from_vote_accounts(epoch, epoch_schedule, epoch_vote_accounts.as_ref())
-                .expect("leader schedule should be computable from epoch stakes");
-        leader_schedule.get_slot_leader_at_index(slot_index as usize)
+        };
+
+        let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(slot);
+        let (next_epoch, next_slot_index) =
+            epoch_schedule.get_epoch_and_slot_index(slot.saturating_add(1));
+        let schedule = leader_schedule(epoch)?;
+        let leader = schedule.get_slot_leader_at_index(slot_index as usize);
+        let next_leader = if next_epoch == epoch {
+            schedule.get_slot_leader_at_index(next_slot_index as usize)
+        } else {
+            leader_schedule(next_epoch)?.get_slot_leader_at_index(next_slot_index as usize)
+        };
+        Some(SlotLeaders {
+            leader,
+            next_leader,
+        })
     }
 
     /// Return subset of bank fields representing serializable state
@@ -2450,34 +2511,8 @@ impl Bank {
     }
 
     /// The leader of the slot after this bank's slot.
-    ///
-    /// Normally seeded by whoever created this bank, from the same leader
-    /// schedule cache that supplied [`Self::leader`]. A bank created without
-    /// it derives the value here from the epoch stakes it already holds; those
-    /// cover `leader_schedule_epoch`, so the lookup also works when the next
-    /// slot starts a new epoch.
     pub fn next_leader(&self) -> &SlotLeader {
-        self.next_leader.get_or_init(|| {
-            let next_slot = self.slot.saturating_add(1);
-            let (epoch, slot_index) = self.epoch_schedule().get_epoch_and_slot_index(next_slot);
-            let next_leader = self
-                .epoch_vote_accounts(epoch)
-                // `LeaderSchedule::new` panics without any staked vote account
-                .filter(|vote_accounts| vote_accounts.values().any(|(stake, _)| *stake > 0))
-                .and_then(|vote_accounts| {
-                    leader_schedule_from_vote_accounts(epoch, self.epoch_schedule(), vote_accounts)
-                })
-                .map(|leader_schedule| {
-                    leader_schedule.get_slot_leader_at_index(slot_index as usize)
-                })
-                .unwrap_or_default();
-            warn!(
-                "bank {}: next leader (slot {next_slot}) was not provided at creation; derived it \
-                 from epoch stakes",
-                self.slot
-            );
-            next_leader
-        })
+        &self.next_leader
     }
 
     pub fn genesis_creation_time(&self) -> UnixTimestamp {
@@ -6964,7 +6999,7 @@ impl fmt::Debug for Bank {
 impl Bank {
     /// Shared bank constructor used by `new_for_txn_tests` and
     /// `new_for_block_tests`. Builds only the `Bank` struct from deserialized
-    /// fields with the supplied `leader`, `stakes_cache`, and
+    /// fields with the supplied `leaders`, `stakes_cache`, and
     /// `accounts_data_size_initial`. All post-init (feature application,
     /// sysvar cache fill, partitioned rewards recalc,
     /// `prepare_for_block_execution`, etc.) is the caller's responsibility.
@@ -6973,7 +7008,7 @@ impl Bank {
         fields: BankFieldsToDeserialize,
         feature_set: FeatureSet,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
-        leader: SlotLeader,
+        leaders: SlotLeaders,
         stakes_cache: StakesCache,
         accounts_data_size_initial: u64,
     ) -> Self {
@@ -7001,7 +7036,8 @@ impl Bank {
         bank.slot = slot;
         bank.epoch = epoch;
         bank.block_height = fields.block_height;
-        bank.leader = leader;
+        bank.leader = leaders.leader;
+        bank.next_leader = leaders.next_leader;
         bank.fee_rate_governor = fields.fee_rate_governor;
         bank.rent_collector = RentCollector::new(
             epoch,
@@ -7047,6 +7083,8 @@ impl Bank {
         feature_set: FeatureSet,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     ) -> Self {
+        // The fixture only carries the leader's identity; it stands in for
+        // the next leader too.
         let leader = SlotLeader {
             id: fields.leader_id,
             vote_address: Pubkey::default(),
@@ -7056,7 +7094,7 @@ impl Bank {
             fields,
             feature_set,
             epoch_stakes,
-            leader,
+            SlotLeaders::from(leader),
             StakesCache::default(), /* Irrelevant for txn tests */
             0,                      /* Irrelevant to txn execution */
         );
@@ -7087,15 +7125,19 @@ impl Bank {
     ) -> Self {
         let parent_epoch = fields.epoch_schedule.get_epoch(fields.parent_slot);
         let parent_capitalization = fields.capitalization;
-        let leader =
-            Self::slot_leader_from_epoch_stakes(fields.slot, &fields.epoch_schedule, &epoch_stakes);
+        let leaders = Self::slot_leaders_from_epoch_stakes(
+            fields.slot,
+            &fields.epoch_schedule,
+            &epoch_stakes,
+        )
+        .expect("block test epoch stakes should contain a staked vote account");
 
         let mut bank = Self::new_from_fields_for_tests(
             bank_rc,
             fields,
             feature_set,
             epoch_stakes,
-            leader,
+            leaders,
             StakesCache::new(stakes),
             accounts_data_size_initial,
         );

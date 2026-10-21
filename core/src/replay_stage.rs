@@ -5655,7 +5655,7 @@ impl ReplayStage {
         parent: Arc<Bank>,
         slot: u64,
         root_slot: u64,
-        leader: impl Into<SlotLeaders>,
+        leaders: SlotLeaders,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         new_bank_options: NewBankOptions,
@@ -5664,7 +5664,7 @@ impl ReplayStage {
             rpc_subscriptions.notify_slot(slot, parent.slot(), root_slot);
         }
         let parent_slot = parent.slot();
-        let bank = Bank::new_from_parent_with_options(parent, leader, slot, new_bank_options);
+        let bank = Bank::new_from_parent_with_options(parent, leaders, slot, new_bank_options);
         if let Some(slot_status_notifier) = slot_status_notifier {
             slot_status_notifier.read().unwrap().notify_created_bank(
                 slot,

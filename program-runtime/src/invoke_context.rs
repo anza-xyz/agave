@@ -24,6 +24,7 @@ use {
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
+    solana_leader_info::LeaderInfo,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -36,7 +37,7 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_svm_callback::{InvokeContextCallback, LeaderInfo},
+    solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{LogCollector, ic_msg},
     solana_svm_measure::{measure::Measure, measure_us},

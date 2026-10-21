@@ -6638,8 +6638,7 @@ checksum = "57e5b1c0bc1d4a4d10c88a4100499d954c09d3fecfae4912c1a074dff68b1738"
 [[package]]
 name = "solana-define-syscall"
 version = "5.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf8209ece2bd9f1450e672858ffc0e5c8c786ff6916d2a862b126dd0128f380f"
+source = "git+https://github.com/soundsonacid/solana-sdk?rev=31ae1202a9baf296b71728e016cf5ace1394a053#31ae1202a9baf296b71728e016cf5ace1394a053"
 
 [[package]]
 name = "solana-derivation-path"
@@ -7182,6 +7181,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-leader-info"
+version = "0.1.0"
+source = "git+https://github.com/soundsonacid/solana-sdk?rev=31ae1202a9baf296b71728e016cf5ace1394a053#31ae1202a9baf296b71728e016cf5ace1394a053"
+dependencies = [
+ "solana-address 2.9.0",
+ "solana-define-syscall 5.2.0",
+]
+
+[[package]]
 name = "solana-leader-schedule"
 version = "4.5.0-alpha.2"
 dependencies = [
@@ -7656,6 +7664,7 @@ dependencies = [
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
  "solana-last-restart-slot",
+ "solana-leader-info",
  "solana-loader-v3-interface",
  "solana-message",
  "solana-program-entrypoint",
@@ -8057,6 +8066,7 @@ dependencies = [
  "solana-instruction-error 3.1.0",
  "solana-keypair",
  "solana-lattice-hash",
+ "solana-leader-info",
  "solana-leader-schedule",
  "solana-loader-v3-interface",
  "solana-measure",
@@ -8628,6 +8638,7 @@ version = "4.5.0-alpha.2"
 dependencies = [
  "solana-account",
  "solana-clock",
+ "solana-leader-info",
  "solana-precompile-error",
  "solana-pubkey 4.4.0",
 ]
@@ -8721,6 +8732,7 @@ dependencies = [
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
  "solana-keccak-hasher",
+ "solana-leader-info",
  "solana-poseidon",
  "solana-program-entrypoint",
  "solana-program-runtime",
@@ -8732,6 +8744,7 @@ dependencies = [
  "solana-sha512-hasher",
  "solana-stable-layout 4.0.0",
  "solana-stake-history",
+ "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-type-overrides",

@@ -44,6 +44,7 @@ solana-hash-512 = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
+solana-leader-info = { workspace = true }
 solana-poseidon = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-runtime = { workspace = true }

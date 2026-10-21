@@ -965,6 +965,10 @@ mod serde_snapshot_tests {
         assert_eq!(dbank.get_balance(&key3), 0);
         assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
         assert_eq!(&dbank, bank2.as_ref());
+        // The leaders are not serialized. Restore recomputes them from epoch
+        // stakes, and with a single staked node that node leads every slot.
+        assert_eq!(dbank.leader(), bank2.leader());
+        assert_eq!(dbank.next_leader(), bank2.next_leader());
     }
 
     #[test]

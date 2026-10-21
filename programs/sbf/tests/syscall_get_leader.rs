@@ -44,7 +44,7 @@ fn test_syscall_get_leader() {
     // replay stage supply them from the leader schedule cache.
     let leaders = SlotLeaders {
         leader: SlotLeader::new_unique(),
-        next_leader: Some(SlotLeader::new_unique()),
+        next_leader: SlotLeader::new_unique(),
     };
     let mut bank_client = BankClient::new_shared(bank);
     let bank = bank_client.advance_slot(1, &bank_forks, leaders).unwrap();
@@ -67,7 +67,7 @@ fn test_syscall_get_leader() {
 
     // `LeaderInfo` layout (SIMD-0558): leader identity, leader vote, next
     // leader identity, next leader vote.
-    let next_leader = leaders.next_leader.unwrap();
+    let next_leader = leaders.next_leader;
     let data = &result.return_data.unwrap().data;
     assert_eq!(data.len(), 128);
     assert_eq!(read_pubkey(data, 0), leaders.leader.id);

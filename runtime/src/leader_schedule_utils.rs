@@ -146,23 +146,17 @@ mod tests {
         genesis_config.epoch_schedule.warmup = false;
         let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        // Provided at creation: reported as-is.
-        let provided = SlotLeaders {
-            leader: SlotLeader::new_unique(),
-            next_leader: Some(SlotLeader::new_unique()),
-        };
-        let bank = Bank::new_from_parent(bank0.clone(), provided, 1);
-        assert_eq!(bank.leader(), &provided.leader);
-        assert_eq!(Some(*bank.next_leader()), provided.next_leader);
+        // Genesis has no parent, so it takes slot 1's leader from the schedule.
+        assert_eq!(bank0.next_leader(), &leader_schedule(0, &bank0).unwrap()[1]);
 
-        // Not provided: derived from the schedule, also across the epoch boundary.
-        let last_slot = genesis_config.epoch_schedule.get_last_slot_in_epoch(0);
-        for slot in [1, 2, last_slot] {
-            let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), slot);
-            let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot + 1);
-            let expected = leader_schedule(epoch, &bank).unwrap()[slot_index];
-            assert_eq!(bank.next_leader(), &expected);
-        }
+        // A child bank reports the leaders it was created with.
+        let leaders = SlotLeaders {
+            leader: SlotLeader::new_unique(),
+            next_leader: SlotLeader::new_unique(),
+        };
+        let bank = Bank::new_from_parent(bank0, leaders, 1);
+        assert_eq!(bank.leader(), &leaders.leader);
+        assert_eq!(bank.next_leader(), &leaders.next_leader);
     }
 
     #[test]

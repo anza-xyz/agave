@@ -81,7 +81,7 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_leader_schedule::{FixedSchedule, SlotLeader},
+    solana_leader_schedule::{FixedSchedule, SlotLeaders},
     solana_ledger::{
         bank_forks_utils,
         blockstore::{
@@ -2826,7 +2826,9 @@ fn maybe_warp_slot(
         // Do not call `Bank::warp_from_parent` while holding `bank_forks.write()`: child bank
         // construction runs `ProgramCache::extract`, which takes `fork_graph.read()` on this same
         // `RwLock<BankForks>` (deadlock with an exclusive lock).
-        let warp_bank = Bank::warp_from_parent(root_bank, SlotLeader::default(), warp_slot);
+        // The warp slot can be epochs past the root, beyond what its epoch
+        // stakes cover, so there is no schedule to read the leaders from.
+        let warp_bank = Bank::warp_from_parent(root_bank, SlotLeaders::default(), warp_slot);
 
         let mut bank_forks = bank_forks.write().unwrap();
         bank_forks.insert(warp_bank);
