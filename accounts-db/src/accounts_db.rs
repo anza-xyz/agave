@@ -90,7 +90,7 @@ use {
     std::{
         borrow::Cow,
         boxed::Box,
-        collections::{BTreeSet, HashSet, VecDeque},
+        collections::{BTreeMap, HashSet, VecDeque},
         io, iter, mem,
         num::Saturating,
         ops::RangeBounds,
@@ -3327,9 +3327,8 @@ impl AccountsDb {
         should_clean: FlushShouldClean,
     ) -> (usize, usize, FlushStats) {
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
-        let flushed_roots: BTreeSet<Slot> =
-            self.accounts_cache.roots_to_flush(requested_flush_root);
-        let max_flush_root = flushed_roots.last().copied();
+        let flushed_roots = self.accounts_cache.roots_to_flush(requested_flush_root);
+        let max_flush_root = flushed_roots.keys().last().copied();
         let num_new_roots = flushed_roots.len();
 
         // For each root being flushed, which of its cached accounts to write to storage.
@@ -3340,7 +3339,7 @@ impl AccountsDb {
             // Not cleaning: every root writes all of its accounts.
             FlushShouldClean::No => (
                 flushed_roots
-                    .iter()
+                    .keys()
                     .map(|&root| (root, PubkeysToStore::All))
                     .collect(),
                 0,
@@ -3352,8 +3351,8 @@ impl AccountsDb {
             select_pubkeys_us: Saturating(select_pubkeys_us),
             ..FlushStats::default()
         };
-        for root in flushed_roots {
-            let stats = self.flush_slot_cache(root, &pubkeys_to_store[&root]);
+        for (root, bank_id) in flushed_roots {
+            let stats = self.flush_slot_cache(bank_id, &pubkeys_to_store[&root]);
             num_roots_flushed += 1;
             flush_stats.accumulate(&stats);
         }
@@ -3369,7 +3368,7 @@ impl AccountsDb {
     /// versions; `None` means there is no bound and every flushed root is cleaned.
     fn select_pubkeys_to_store(
         &self,
-        flushed_roots: &BTreeSet<Slot>,
+        flushed_roots: &BTreeMap<Slot, BankId>,
         max_clean_root: Option<Slot>,
     ) -> IntMap<Slot, PubkeysToStore> {
         let mut pubkeys_to_store = IntMap::with_capacity(flushed_roots.len());
@@ -3377,19 +3376,20 @@ impl AccountsDb {
         // Presize the dedup set from the newest root (flushed first), doubled to leave room
         // for unique accounts contributed by older roots.
         let dedup_capacity = flushed_roots
+            .values()
             .last()
-            .and_then(|&root| self.accounts_cache.slot_cache(root))
+            .and_then(|&bank_id| self.accounts_cache.bank_cache(bank_id))
             .map_or(0, |slot_cache| slot_cache.len() * 2);
         let mut written_accounts = ahash::HashSet::with_capacity(dedup_capacity);
 
         // Iterate from newest root to oldest root being flushed in this batch
-        for &root in flushed_roots.iter().rev() {
+        for (&root, &bank_id) in flushed_roots.iter().rev() {
             let cleaned = max_clean_root.is_none_or(|max_clean_root| root <= max_clean_root);
             let to_flush = if !cleaned {
                 PubkeysToStore::All
             } else {
                 let mut flush_keys = ahash::HashSet::default();
-                if let Some(slot_cache) = self.accounts_cache.slot_cache(root) {
+                if let Some(slot_cache) = self.accounts_cache.bank_cache(bank_id) {
                     for entry in slot_cache.iter() {
                         let pubkey = *entry.key();
                         // If not seen in a newer root, this is the newest version, so flush it.
@@ -3407,11 +3407,12 @@ impl AccountsDb {
 
     fn do_flush_slot_cache(
         &self,
-        slot: Slot,
+        bank_id: BankId,
         slot_cache: &SlotCache,
         pubkeys_to_store: &PubkeysToStore,
     ) -> FlushStats {
-        debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
+        debug_assert!(self.accounts_cache.contains_unflushed_bank(bank_id));
+        let slot = slot_cache.slot();
         let mut flush_stats = FlushStats::default();
         let mut skipped_zero_lamport_pubkeys = Vec::new();
         let iter_items: Vec<_> = slot_cache.iter().collect();
@@ -3486,7 +3487,7 @@ impl AccountsDb {
         // atomic switch from the cache to storage.
         let pubkeys_removed = self
             .accounts_cache
-            .remove_slot(slot)
+            .remove_bank(bank_id)
             .expect("slot must be in the cache when flushing");
 
         // Zero-lamport accounts that were skipped above were never added to the primary
@@ -3522,15 +3523,15 @@ impl AccountsDb {
     /// `pubkeys_to_store` selects which accounts are written to storage: `Only(set)` stores
     /// just the pubkeys in the set, dropping the rest with the cache, while `All` stores every
     /// account in the slot.
-    fn flush_slot_cache(&self, slot: Slot, pubkeys_to_store: &PubkeysToStore) -> FlushStats {
-        let slot_cache = self.accounts_cache.slot_cache(slot);
+    fn flush_slot_cache(&self, bank_id: BankId, pubkeys_to_store: &PubkeysToStore) -> FlushStats {
+        let slot_cache = self.accounts_cache.bank_cache(bank_id);
         // Only roots with a slot cache are tracked, and nothing else removes a root's slot cache
         debug_assert!(
             slot_cache.is_some(),
-            "unflushed root {slot} has no slot cache"
+            "unflushed root {bank_id:?} has no slot cache"
         );
         slot_cache.map_or_else(FlushStats::default, |slot_cache| {
-            self.do_flush_slot_cache(slot, &slot_cache, pubkeys_to_store)
+            self.do_flush_slot_cache(bank_id, &slot_cache, pubkeys_to_store)
         })
     }
 
@@ -5310,8 +5311,9 @@ impl AccountsDb {
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
-        assert!(self.accounts_cache.contains_unflushed_root(slot));
-        self.flush_slot_cache(slot, &PubkeysToStore::All);
+        let bank_id = BankId::new(slot);
+        assert!(self.accounts_cache.contains_unflushed_bank(bank_id));
+        self.flush_slot_cache(bank_id, &PubkeysToStore::All);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache

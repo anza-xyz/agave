@@ -3904,9 +3904,9 @@ fn test_select_pubkeys_to_store() {
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
 
     // The same account is written in all three roots.
-    let roots = BTreeSet::from([5, 10, 15]);
+    let roots = BTreeMap::from([5, 10, 15].map(|slot| (slot, BankId::new(slot))));
     let shared = Pubkey::new_unique();
-    for &slot in &roots {
+    for &slot in roots.keys() {
         db.accounts_cache
             .store(slot, BankId::new(slot), &shared, account.clone());
     }
@@ -4405,7 +4405,9 @@ fn setup_accounts_db_cache_clean(
         }
     }
 
-    let _ = accounts_db.accounts_cache.remove_slot(stall_slot);
+    let _ = accounts_db
+        .accounts_cache
+        .remove_bank(BankId::new(stall_slot));
 
     // If there's <= max_cache_slots(), no slots should be flushed
     if accounts_db.accounts_cache.num_slots() <= max_cache_slots() {
