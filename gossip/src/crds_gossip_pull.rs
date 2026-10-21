@@ -74,6 +74,8 @@ pub struct CrdsFilter {
 }
 
 pub(crate) const MIN_NUM_BLOOM_ITEMS: usize = 65_536;
+/// Max number of pull-request bloom filters built per round.
+pub(crate) const MAX_NUM_FILTERS: usize = 1024;
 
 // Loosest mask_bits floor accepted for incoming pull requests.
 // `PACKET_DATA_SIZE` avoids rejecting honest smaller bloom filters.
@@ -208,7 +210,6 @@ pub const SAMPLE_RATE: usize = 8;
 
 impl CrdsFilterSet {
     fn new<R: Rng>(rng: &mut R, num_items: usize, max_bytes: usize) -> Self {
-        const MAX_NUM_FILTERS: usize = 1024;
         let max_bits = (max_bytes * 8) as f64;
         let max_items = CrdsFilter::max_items(max_bits, FALSE_RATE, KEYS);
         let mask_bits = CrdsFilter::mask_bits(num_items as f64, max_items);
