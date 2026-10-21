@@ -30,6 +30,9 @@ pub enum AllocError {
 
     #[error("libc mmap failed")]
     MMapFailed,
+
+    #[error("libc munmap failed trimming the mapping: {0}")]
+    MUnmapFailed(io::Error),
 }
 
 impl From<AllocError> for io::Error {
@@ -121,13 +124,24 @@ impl PageAlignedMemory {
         let end = start.strict_add(aligned_size);
         // Safety:
         // the trimmed head and tail lie inside the mapping above and nothing references them.
+        let trimmed = unsafe {
+            (start == map_start || libc::munmap(ptr, start.strict_sub(map_start)) == 0)
+                && (end == map_end
+                    || libc::munmap(end as *mut libc::c_void, map_end.strict_sub(end)) == 0)
+        };
+        if !trimmed {
+            // A trim splits the mapping when the kernel merged it with a neighbor, which fails
+            // when the process runs out of mappings (`vm.max_map_count`).
+            let error = io::Error::last_os_error();
+            // Safety:
+            // the whole range came from the mmap above, and unmapping its trimmed parts again is
+            // a no-op.
+            unsafe { libc::munmap(ptr, map_len) };
+            return Err(AllocError::MUnmapFailed(error));
+        }
+        // Safety:
+        // the buffer range lies inside the mapping above and nothing references it yet.
         let advised = unsafe {
-            if start > map_start {
-                libc::munmap(ptr, start.strict_sub(map_start));
-            }
-            if map_end > end {
-                libc::munmap(end as *mut libc::c_void, map_end.strict_sub(end));
-            }
             libc::madvise(
                 start as *mut libc::c_void,
                 aligned_size,
@@ -175,9 +189,10 @@ impl Drop for PageAlignedMemory {
                 // Safety:
                 // ptr starts the mapping kept by `new_huge_page_aligned`, and munmap rounds len up
                 // to the page size it was mapped with
-                unsafe {
-                    libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
-                }
+                let unmapped =
+                    unsafe { libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len) };
+                // Release builds leak the buffer rather than panic in drop.
+                debug_assert_eq!(unmapped, 0, "munmap failed: {}", io::Error::last_os_error());
             }
         }
     }
