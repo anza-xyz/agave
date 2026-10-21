@@ -5261,7 +5261,7 @@ fn test_load_account_and_shrink_race() {
     let ancestors = Ancestors::default();
 
     // Leave a dead account in storage so shrinking actually rewrites the live account.
-    let account = AccountSharedData::new(42, 64, &Pubkey::new_unique());
+    let account = AccountSharedData::new(42, 64, &Pubkey::default());
     let mut dead_account = AccountSharedData::new(1, 0, &Pubkey::default());
     db.store_for_tests((
         slot,
@@ -5271,7 +5271,6 @@ fn test_load_account_and_shrink_race() {
     dead_account.set_lamports(2);
     db.store_for_tests((slot + 1, [(&dead_pubkey, &dead_account)].as_slice()));
     db.add_root_and_flush_write_cache(slot + 1);
-    db.clean_accounts_for_tests();
 
     // Build the accessor under the index entry's lock, just as do_load does.
     let (loaded_slot, storage_location, mut accessor) = db
