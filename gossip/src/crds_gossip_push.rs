@@ -15,7 +15,9 @@ use {
     crate::{
         cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY,
         cluster_info_metrics::{log_gossip_crds_sample_egress, should_report_message_signature},
-        crds::{Crds, CrdsError, Cursor, GossipRoute, SIGNATURE_SAMPLE_LEADING_ZEROS},
+        crds::{
+            Crds, CrdsError, Cursor, GossipRoute, LOCK_CHUNK_SIZE, SIGNATURE_SAMPLE_LEADING_ZEROS,
+        },
         crds_gossip,
         crds_value::CrdsValue,
         protocol::{Ping, PingCache},
@@ -35,7 +37,7 @@ use {
         collections::{HashMap, HashSet},
         iter::repeat,
         net::SocketAddr,
-        ops::{DerefMut, RangeBounds},
+        ops::RangeBounds,
         sync::{
             Mutex,
             atomic::{AtomicUsize, Ordering},
@@ -172,7 +174,8 @@ impl CrdsGossipPush {
         crds: &RwLock<Crds>,
         now: u64,
         stakes: &HashMap<Pubkey, u64>,
-        // Predicate returning false if the CRDS value should be discarded.
+        // Cheap predicate returning false if the CRDS value should be discarded.
+        // Runs under a bounded CRDS read lock before copying payloads.
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
         Vec<CrdsValue>, // unique CrdsValues pushed out to peers
@@ -185,39 +188,70 @@ impl CrdsGossipPush {
         let mut values = Vec::new();
         let mut push_messages = HashMap::<Pubkey, Vec</*index:*/ usize>>::new();
         let wallclock_window = self.wallclock_window(now);
+        let mut batch = Vec::with_capacity(LOCK_CHUNK_SIZE);
         let active_set = self.active_set.read();
+        let has_active_peers = !active_set.is_empty();
         let mut crds_cursor = self.crds_cursor.lock().unwrap();
         // crds should be locked last after self.{active_set,crds_cursor}.
-        let crds = crds.read();
-        let entries = crds
-            .get_entries(crds_cursor.deref_mut())
-            .map(|entry| &entry.value)
-            .filter(|value| wallclock_window.contains(&value.wallclock()))
-            .filter(|value| should_retain_crds_value(value));
-        'outer: for value in entries {
-            let origin = value.pubkey();
-            let mut nodes = active_set
-                .get_nodes(pubkey, &origin, stakes)
-                .take(self.push_fanout)
-                .peekable();
-            let index = values.len();
-            if nodes.peek().is_some() {
-                values.push(value.clone())
+        // Defer concurrent inserts to the next call, bounding this scan even
+        // when every value is discarded or all of its peers have pruned it.
+        let end = crds.read().cursor();
+        'outer: loop {
+            let mut num_scanned = 0;
+            let mut next_cursor = *crds_cursor;
+            {
+                let crds = crds.read();
+                for (cursor, value) in crds
+                    .get_entries_until(*crds_cursor, end)
+                    .take(LOCK_CHUNK_SIZE)
+                {
+                    num_scanned += 1;
+                    next_cursor = cursor;
+                    // Reject before copying: discarded values and an empty
+                    // active set should not allocate or clone payloads.
+                    if wallclock_window.contains(&value.wallclock())
+                        && should_retain_crds_value(value)
+                        && has_active_peers
+                    {
+                        batch.push((cursor, value.clone()));
+                    }
+                }
             }
-            let should_report =
-                should_report_message_signature(value.signature(), SIGNATURE_SAMPLE_LEADING_ZEROS);
-            for &node in nodes {
-                if should_report {
-                    log_gossip_crds_sample_egress(value, &node);
+            for (cursor, value) in batch.drain(..) {
+                // Commit only consumed entries: hitting MAX_NUM_PUSHES must
+                // leave the rest of this batch pending for the next call.
+                *crds_cursor = cursor;
+                let origin = value.pubkey();
+                let mut nodes = active_set
+                    .get_nodes(pubkey, &origin, stakes)
+                    .take(self.push_fanout)
+                    .peekable();
+                if nodes.peek().is_none() {
+                    continue;
                 }
-                push_messages.entry(node).or_default().push(index);
-                num_pushes += 1;
-                if num_pushes >= MAX_NUM_PUSHES {
-                    break 'outer;
+                let index = values.len();
+                values.push(value);
+                let value = &values[index];
+                let should_report = should_report_message_signature(
+                    value.signature(),
+                    SIGNATURE_SAMPLE_LEADING_ZEROS,
+                );
+                for &node in nodes {
+                    if should_report {
+                        log_gossip_crds_sample_egress(value, &node);
+                    }
+                    push_messages.entry(node).or_default().push(index);
+                    num_pushes += 1;
+                    if num_pushes >= MAX_NUM_PUSHES {
+                        break 'outer;
+                    }
                 }
+            }
+            *crds_cursor = next_cursor;
+            if num_scanned < LOCK_CHUNK_SIZE {
+                break;
             }
         }
-        drop(crds);
         drop(crds_cursor);
         drop(active_set);
         self.num_pushes.fetch_add(num_pushes, Ordering::Relaxed);
@@ -296,7 +330,7 @@ mod tests {
             contact_info::ContactInfo,
             crds_data::CrdsData,
         },
-        std::time::Instant,
+        std::{cell::Cell, time::Instant},
     };
 
     fn new_ping_cache() -> PingCache {
@@ -305,6 +339,87 @@ mod tests {
             GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             128, // capacity (small for tests)
         )
+    }
+
+    fn new_push_with_peers(num_peers: usize) -> (CrdsGossipPush, Pubkey) {
+        let push = CrdsGossipPush::default();
+        let pubkey = Pubkey::new_unique();
+        push.active_set.write().rotate(
+            &mut rand::rng(),
+            num_peers,
+            num_peers,
+            (0..num_peers).map(|_| (0, Pubkey::new_unique())),
+        );
+        (push, pubkey)
+    }
+
+    #[test]
+    fn test_new_push_messages_limit_keeps_unconsumed_batch_pending() {
+        let (push, pubkey) = new_push_with_peers(CRDS_GOSSIP_PUSH_FANOUT);
+        let stakes = HashMap::new();
+        let now = timestamp();
+        let mut crds = Crds::default();
+        let mut expected = Vec::new();
+        while expected.len() < 600 {
+            let origin = Pubkey::new_unique();
+            // Ensure each origin has exactly nine peers, avoiding Bloom false
+            // positives in the fanout-limit assertions below.
+            if push
+                .active_set
+                .read()
+                .get_nodes(&pubkey, &origin, &stakes)
+                .count()
+                != CRDS_GOSSIP_PUSH_FANOUT
+            {
+                continue;
+            }
+            let value =
+                CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&origin, now)));
+            crds.insert(value.clone(), now, GossipRoute::LocalMessage)
+                .unwrap();
+            expected.push(value);
+        }
+        let crds = RwLock::new(crds);
+        let (mut values, messages, num_pushes) =
+            push.new_push_messages(&pubkey, &crds, now, &stakes, |_| true);
+        assert_eq!(num_pushes, 1 << 12);
+        assert_eq!(messages.values().map(Vec::len).sum::<usize>(), num_pushes);
+        assert_eq!(values.len(), 456);
+        assert_eq!(push.num_pending(&crds), expected.len() - values.len());
+        let (remaining, messages, num_pushes) =
+            push.new_push_messages(&pubkey, &crds, now, &stakes, |_| true);
+        assert_eq!(num_pushes, remaining.len() * CRDS_GOSSIP_PUSH_FANOUT);
+        assert_eq!(messages.values().map(Vec::len).sum::<usize>(), num_pushes);
+        values.extend(remaining);
+        assert_eq!(values, expected);
+        assert_eq!(push.num_pending(&crds), 0);
+    }
+
+    #[test]
+    fn test_new_push_messages_consumes_rejected_batches() {
+        let (push, pubkey) = new_push_with_peers(1);
+        let now = timestamp();
+        let mut crds = Crds::default();
+        for ix in 0..3 * LOCK_CHUNK_SIZE {
+            let wallclock = if ix < LOCK_CHUNK_SIZE { 0 } else { now };
+            let value = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+                &Pubkey::new_unique(),
+                wallclock,
+            )));
+            crds.insert(value, now, GossipRoute::LocalMessage).unwrap();
+        }
+        let crds = RwLock::new(crds);
+        let calls = Cell::new(0);
+        let (values, messages, num_pushes) =
+            push.new_push_messages(&pubkey, &crds, now, &HashMap::new(), |_| {
+                calls.set(calls.get() + 1);
+                false
+            });
+        assert_eq!(calls.get(), 2 * LOCK_CHUNK_SIZE);
+        assert!(values.is_empty());
+        assert!(messages.is_empty());
+        assert_eq!(num_pushes, 0);
+        assert_eq!(push.num_pending(&crds), 0);
     }
 
     impl CrdsGossipPush {
