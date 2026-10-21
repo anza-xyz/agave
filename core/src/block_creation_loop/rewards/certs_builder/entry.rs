@@ -115,7 +115,7 @@ impl Entry {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use {
         super::*,
         agave_votor_messages::{

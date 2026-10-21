@@ -8,7 +8,8 @@ use {
     crate::{
         banking_trace::{BankingPacketSender, BankingTracer},
         block_creation_loop::rewards::{
-            certs_requestor::CertsRequestor, msg_types::RewardRespSucc,
+            certs_builder::{self, CertsBuilder},
+            msg_types::RewardRespSucc,
             reward_certs_service::RewardCertsService,
         },
         replay_stage::{Finalizer, ReplayStage},
@@ -101,7 +102,7 @@ pub struct BlockCreationLoop {
 
 impl BlockCreationLoop {
     pub(crate) fn new(config: BlockCreationLoopConfig) -> (Self, Sender<RewardInput>) {
-        let (reward_certs_service, certs_requestor, reward_aggregates_sender) =
+        let (reward_certs_service, reward_certs_builder, reward_aggregates_sender) =
             RewardCertsService::new(
                 config.cluster_info.clone(),
                 config.sharable_banks.clone(),
@@ -111,7 +112,7 @@ impl BlockCreationLoop {
             .name("solBlkCreatLoop".to_string())
             .spawn(move || {
                 info!("BlockCreationLoop has started");
-                start_loop(config, certs_requestor);
+                start_loop(config, reward_certs_builder);
                 info!("BlockCreationLoop has stopped");
             })
             .unwrap();
@@ -190,7 +191,7 @@ struct LeaderContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
-    reward_certs_requestor: CertsRequestor,
+    reward_certs_builder: Arc<Mutex<CertsBuilder>>,
     /// Banking-stage ingress used to reschedule transactions after sad handover.
     banking_stage_sender: BankingPacketSender,
 
@@ -260,7 +261,7 @@ enum StartLeaderError {
 /// The `votor::consensus_pool_service` tracks when it is our leader window, and
 /// communicates the skip timer and parent slot for our window. This loop takes the responsibility
 /// of creating our `NUM_CONSECUTIVE_LEADER_SLOTS` blocks and finishing them within the required timeout.
-fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequestor) {
+fn start_loop(config: BlockCreationLoopConfig, reward_certs_builder: Arc<Mutex<CertsBuilder>>) {
     let BlockCreationLoopConfig {
         exit,
         bank_forks,
@@ -333,7 +334,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         transaction_status_sender,
         banking_tracer,
         replay_highest_frozen,
-        reward_certs_requestor,
+        reward_certs_builder,
         banking_stage_sender,
         metrics: LoopMetrics::default(),
         highest_finalized,
@@ -750,20 +751,6 @@ fn record_and_complete_block(
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
-    // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
-    // would be tower slots.
-    let reward_cert_request = if bank_slot
-        > ctx
-            .genesis_cert_block_marker
-            .slot
-            .saturating_add(NUM_SLOTS_FOR_REWARD)
-    {
-        ctx.reward_certs_requestor
-            .request_reward_certs(slot_metrics, ctx.my_pubkey, bank_slot)
-            .map_err(|()| PohRecorderError::ChannelDisconnected)?
-    } else {
-        None
-    };
     let mut accumulated_txs = vec![];
     let mut records_shutdown = false;
     let window_has_moved_on = loop {
@@ -888,10 +875,23 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
-        let reward_certs = ctx
-            .reward_certs_requestor
-            .recv_reward_certs(slot_metrics, ctx.my_pubkey, reward_cert_request)
-            .map_err(|()| PohRecorderError::ChannelDisconnected)?;
+        // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward
+        // slots would be tower slots.
+        let reward_certs = if bank_slot
+            > ctx
+                .genesis_cert_block_marker
+                .slot
+                .saturating_add(NUM_SLOTS_FOR_REWARD)
+        {
+            certs_builder::build_reward_certs(&ctx.reward_certs_builder, bank_slot, slot_metrics)
+                .unwrap_or_else(|err| {
+                    error!("{} building reward cert failed with {err:?}", ctx.my_pubkey);
+                    slot_metrics.reward_certs_skipped += 1;
+                    RewardRespSucc::default()
+                })
+        } else {
+            RewardRespSucc::default()
+        };
         let RewardRespSucc {
             skip,
             notar,
@@ -1753,7 +1753,7 @@ mod tests {
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
-        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
+        let reward_certs_builder = Arc::<Mutex<CertsBuilder>>::default();
 
         let mut ctx = LeaderContext {
             exit,
@@ -1776,7 +1776,7 @@ mod tests {
             transaction_status_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            reward_certs_requestor,
+            reward_certs_builder,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
@@ -1870,7 +1870,7 @@ mod tests {
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
-        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
+        let reward_certs_builder = Arc::<Mutex<CertsBuilder>>::default();
 
         let mut ctx = LeaderContext {
             exit,
@@ -1893,7 +1893,7 @@ mod tests {
             transaction_status_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            reward_certs_requestor,
+            reward_certs_builder,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
@@ -1986,7 +1986,7 @@ mod tests {
         let mut genesis_cert_block_marker = test_genesis_cert_block_marker();
         genesis_cert_block_marker.slot = parent_bank.slot();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
-        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
+        let reward_certs_builder = Arc::<Mutex<CertsBuilder>>::default();
 
         let mut ctx = LeaderContext {
             exit,
@@ -2009,7 +2009,7 @@ mod tests {
             transaction_status_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            reward_certs_requestor,
+            reward_certs_builder,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker,
@@ -2058,7 +2058,7 @@ mod tests {
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
-        let (reward_certs_requestor, _reward_request_receiver) = CertsRequestor::new();
+        let reward_certs_builder = Arc::<Mutex<CertsBuilder>>::default();
 
         let mut ctx = LeaderContext {
             exit,
@@ -2081,7 +2081,7 @@ mod tests {
             transaction_status_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            reward_certs_requestor,
+            reward_certs_builder,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
@@ -2172,7 +2172,7 @@ mod tests {
         let (leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
-        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
+        let reward_certs_builder = Arc::<Mutex<CertsBuilder>>::default();
         let (entry_notification_sender, entry_notification_receiver) = bounded(1);
         let (transaction_status_sender, purge_response_thread) =
             transaction_history_purge_responder();
@@ -2204,7 +2204,7 @@ mod tests {
             transaction_status_sender: Some(transaction_status_sender),
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
-            reward_certs_requestor,
+            reward_certs_builder,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),

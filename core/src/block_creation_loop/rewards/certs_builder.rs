@@ -1,19 +1,19 @@
 use {
-    crate::block_creation_loop::rewards::msg_types::{
-        RewardRequest, RewardRespSucc, RewardResponse,
+    crate::block_creation_loop::{SlotMetrics, rewards::msg_types::RewardRespSucc},
+    agave_bls_sigverify::{rewards::RewardInput, sig_verified_messages::VoteAggregate},
+    agave_votor::aggregate_accumulator::AggregateAccumulatorError,
+    agave_votor_messages::{
+        consensus_message::VoteMessage,
+        reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
     },
-    agave_bls_sigverify::rewards::RewardInput,
-    agave_math_utils::welford_stats::WelfordStats,
-    agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
-    crossbeam_channel::RecvError,
     entry::Entry,
     solana_clock::Slot,
-    solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure_us,
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::{
         collections::BTreeMap,
-        sync::Arc,
+        sync::Mutex,
         time::{Duration, Instant},
     },
 };
@@ -24,171 +24,131 @@ const REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
 struct Metrics {
     last_report: Instant,
-    build_us: WelfordStats,
     purged_state: u64,
-    queue_waited_us: WelfordStats,
 }
 
 impl Default for Metrics {
     fn default() -> Self {
         Self {
             last_report: Instant::now(),
-            build_us: WelfordStats::default(),
             purged_state: 0,
-            queue_waited_us: WelfordStats::default(),
         }
     }
 }
 
 impl Metrics {
     fn maybe_report(&mut self) {
-        let Self {
-            last_report,
-            build_us,
-            purged_state,
-            queue_waited_us,
-        } = self;
-        if last_report.elapsed() > REPORT_INTERVAL {
+        if self.last_report.elapsed() > REPORT_INTERVAL {
             datapoint_info!(
                 "reward-certs-builder",
-                ("build_us_count", build_us.count(), i64),
-                ("build_us_max", build_us.maximum::<u64>(), Option<i64>),
-                ("build_us_mean", build_us.mean::<u64>(), Option<i64>),
-                ("queue_waited_us_count", queue_waited_us.count(), i64),
-                ("queue_waited_us_max", queue_waited_us.maximum::<u64>(), Option<i64>),
-                ("queue_waited_us_mean", queue_waited_us.mean::<u64>(), Option<i64>),
-                ("purged_state", *purged_state, i64),
+                ("purged_state", self.purged_state, i64)
             );
             *self = Self::default();
         }
     }
 }
 
-/// Container to store state needed to generate reward certificates.
-pub(super) struct CertsBuilder {
+/// Votes for building reward certificates.
+///
+/// Shared between the rewards service, which adds votes as they arrive, and the block creation
+/// loop, which builds a block's reward certificates when it produces the block's footer.
+#[derive(Default)]
+pub(crate) struct CertsBuilder {
     /// Per [`Slot`], stores the skip and notar votes.
     aggregates: BTreeMap<Slot, Entry>,
-    /// Stores the latest pubkey for the current node.
-    cluster_info: Arc<ClusterInfo>,
     metrics: Metrics,
 }
 
 impl CertsBuilder {
-    /// Constructs a new instance of [`CertsBuilder`].
-    pub(super) fn new(cluster_info: Arc<ClusterInfo>) -> Self {
-        Self {
-            aggregates: BTreeMap::default(),
-            cluster_info,
-            metrics: Metrics::default(),
-        }
-    }
-
     pub(super) fn maybe_report(&mut self) {
         self.metrics.maybe_report();
     }
 
-    /// Builds reward certificates.
-    fn build_certs(
-        &mut self,
-        bank_slot: Slot,
-    ) -> Result<RewardRespSucc, BuildRewardCertsRespError> {
-        let Some(reward_slot) = bank_slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
-            return Ok(RewardRespSucc::default());
-        };
-        // we assume that the block creation loop will only ever request to build reward certs in a
-        // strictly increasing order so we can drop older state
-        self.aggregates = self.aggregates.split_off(&reward_slot);
-        match self.aggregates.remove(&reward_slot) {
-            None => Ok(RewardRespSucc::default()),
-            Some(entry) => entry.build_certs(reward_slot),
-        }
-    }
-
-    pub(super) fn build_request(
-        &mut self,
-        request: Result<RewardRequest, RecvError>,
-    ) -> Result<(), ()> {
-        let my_pubkey = self.cluster_info.id();
-        match request {
-            Ok(RewardRequest {
-                bank_slot,
-                reply_sender,
-                request_sent,
-            }) => {
-                let queue_waited_us = request_sent
-                    .elapsed()
-                    .as_micros()
-                    .try_into()
-                    .unwrap_or(u64::MAX);
-                let (result, build_us) = measure_us!(self.build_certs(bank_slot));
-                let resp = RewardResponse { result };
-                let _ = reply_sender.send(resp).inspect_err(|_| {
-                    info!(
-                        "{my_pubkey}: channel to send reply for bank_slot={bank_slot} disconnected"
-                    );
-                });
-                self.metrics.build_us.add_sample(build_us);
-                self.metrics.queue_waited_us.add_sample(queue_waited_us);
-                self.metrics.maybe_report();
-                Ok(())
-            }
-            Err(_) => {
-                error!("{my_pubkey}: build reward certs channel is disconnected; exiting.");
-                Err(())
-            }
-        }
-    }
-
-    pub(super) fn handle_input(&mut self, root_bank: &Bank, input: RewardInput) {
-        let root_slot = root_bank.slot();
-        // drop state that is too old based on how the root slot has progressed
-        // if this actually drops state, that probably indicates that the leader missed its
-        // window.
-        let new_aggregates = self
-            .aggregates
-            .split_off(&root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD));
+    /// Drops the votes for slots before `slot`.
+    fn purge_before(&mut self, slot: Slot) {
+        let new_aggregates = self.aggregates.split_off(&slot);
         if !self.aggregates.is_empty() {
             self.metrics.purged_state += 1;
         }
         self.aggregates = new_aggregates;
+    }
 
-        match input {
-            RewardInput::External(aggregates) => {
-                for aggregate in aggregates {
-                    let vote = *aggregate.vote();
-                    let vote_slot = vote.slot();
-                    let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
-                        warn!(
-                            "failed to look up rank_map for slot {vote_slot} using bank for slot \
-                             {}",
-                            root_bank.slot()
-                        );
-                        return;
-                    };
-                    let max_validators = rank_map.len();
-                    let mut vote_account_pubkeys = vec![];
-                    for rank in aggregate.ranks().iter_ones() {
-                        let Some(stake_entry) = rank_map.get_pubkey_stake_entry(rank) else {
-                            return;
-                        };
-                        vote_account_pubkeys.push(stake_entry.vote_account_pubkey);
-                    }
+    fn add_aggregate(
+        &mut self,
+        vote_slot: Slot,
+        max_validators: usize,
+        aggregate: VoteAggregate,
+        vote_account_pubkeys: Vec<Pubkey>,
+    ) -> Result<(), AggregateAccumulatorError> {
+        self.aggregates
+            .entry(vote_slot)
+            .or_insert_with(|| Entry::new(max_validators))
+            .add_aggregate(aggregate, vote_account_pubkeys)
+    }
 
-                    match self
-                        .aggregates
-                        .entry(vote_slot)
-                        .or_insert_with(|| Entry::new(max_validators))
-                        .add_aggregate(aggregate, vote_account_pubkeys)
-                    {
-                        Ok(()) => (),
-                        Err(e) => {
-                            warn!("Adding aggregate with vote {vote:?} failed with {e}");
-                        }
-                    }
-                }
-            }
-            RewardInput::Own(vote_msg) => {
-                let vote = vote_msg.vote;
+    fn add_own_msg(
+        &mut self,
+        vote_slot: Slot,
+        max_validators: usize,
+        vote_msg: VoteMessage,
+        vote_account_pubkey: Pubkey,
+    ) -> Result<(), AggregateAccumulatorError> {
+        self.aggregates
+            .entry(vote_slot)
+            .or_insert_with(|| Entry::new(max_validators))
+            .add_own_msg(vote_msg, vote_account_pubkey)
+    }
+
+    /// Removes the votes for `reward_slot`, dropping those for older slots too.
+    ///
+    /// The block creation loop builds reward certs for strictly increasing slots, so older votes
+    /// are no longer needed.
+    fn take(&mut self, reward_slot: Slot) -> Option<Entry> {
+        self.aggregates = self.aggregates.split_off(&reward_slot);
+        self.aggregates.remove(&reward_slot)
+    }
+}
+
+/// Builds the reward certificates for the footer of the block at `bank_slot`, from every vote added
+/// so far.
+///
+/// The lock is held only to take the reward slot's votes; the certificates are built after it is
+/// released.
+pub(crate) fn build_reward_certs(
+    builder: &Mutex<CertsBuilder>,
+    bank_slot: Slot,
+    slot_metrics: &mut SlotMetrics,
+) -> Result<RewardRespSucc, BuildRewardCertsRespError> {
+    let Some(reward_slot) = bank_slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
+        return Ok(RewardRespSucc::default());
+    };
+    let (entry, take_us) = measure_us!(builder.lock().unwrap().take(reward_slot));
+    slot_metrics.reward_certs_take_us = take_us;
+    let Some(entry) = entry else {
+        return Ok(RewardRespSucc::default());
+    };
+    let (result, build_us) = measure_us!(entry.build_certs(reward_slot));
+    slot_metrics.reward_certs_build_us = build_us;
+    result
+}
+
+/// Adds the votes in `input` to `builder`.
+///
+/// The lock is taken once per vote, so the block creation loop never waits behind a whole batch.
+pub(super) fn handle_input(builder: &Mutex<CertsBuilder>, root_bank: &Bank, input: RewardInput) {
+    let root_slot = root_bank.slot();
+    // drop state that is too old based on how the root slot has progressed
+    // if this actually drops state, that probably indicates that the leader missed its
+    // window.
+    builder
+        .lock()
+        .unwrap()
+        .purge_before(root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD));
+
+    match input {
+        RewardInput::External(aggregates) => {
+            for aggregate in aggregates {
+                let vote = *aggregate.vote();
                 let vote_slot = vote.slot();
                 let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
                     warn!(
@@ -198,24 +158,97 @@ impl CertsBuilder {
                     return;
                 };
                 let max_validators = rank_map.len();
-                let Some(stake_entry) = rank_map.get_pubkey_stake_entry(vote_msg.rank as usize)
-                else {
-                    return;
-                };
+                let mut vote_account_pubkeys = vec![];
+                for rank in aggregate.ranks().iter_ones() {
+                    let Some(stake_entry) = rank_map.get_pubkey_stake_entry(rank) else {
+                        return;
+                    };
+                    vote_account_pubkeys.push(stake_entry.vote_account_pubkey);
+                }
 
-                match self
-                    .aggregates
-                    .entry(vote_msg.vote.slot())
-                    .or_insert_with(|| Entry::new(max_validators))
-                    .add_own_msg(vote_msg, stake_entry.vote_account_pubkey)
-                {
-                    Ok(()) => (),
-                    Err(e) => {
-                        warn!("Adding aggregate with vote {vote:?} failed with {e}");
-                    }
+                if let Err(e) = builder.lock().unwrap().add_aggregate(
+                    vote_slot,
+                    max_validators,
+                    aggregate,
+                    vote_account_pubkeys,
+                ) {
+                    warn!("Adding aggregate with vote {vote:?} failed with {e}");
                 }
             }
         }
-        self.metrics.maybe_report();
+        RewardInput::Own(vote_msg) => {
+            let vote = vote_msg.vote;
+            let vote_slot = vote.slot();
+            let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
+                warn!(
+                    "failed to look up rank_map for slot {vote_slot} using bank for slot {}",
+                    root_bank.slot()
+                );
+                return;
+            };
+            let max_validators = rank_map.len();
+            let Some(stake_entry) = rank_map.get_pubkey_stake_entry(vote_msg.rank as usize) else {
+                return;
+            };
+
+            if let Err(e) = builder.lock().unwrap().add_own_msg(
+                vote_slot,
+                max_validators,
+                vote_msg,
+                stake_entry.vote_account_pubkey,
+            ) {
+                warn!("Adding aggregate with vote {vote:?} failed with {e}");
+            }
+        }
+    }
+    builder.lock().unwrap().maybe_report();
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        agave_votor_messages::{
+            consensus_message::{Block, BlockId},
+            vote::Vote,
+        },
+        entry::tests::{get_keypairs, new_reward_vote_aggregate},
+    };
+
+    #[test]
+    fn test_build_reward_certs_from_votes_added_so_far() {
+        let reward_slot = 100;
+        let bank_slot = reward_slot + NUM_SLOTS_FOR_REWARD;
+        let keypairs = get_keypairs(4, reward_slot);
+        let builder = Mutex::<CertsBuilder>::default();
+        let add_notar_vote = |slot, rank| {
+            let vote = Vote::new_notarization_vote(Block {
+                slot,
+                block_id: BlockId::default(),
+            });
+            let (aggregate, pubkeys) = new_reward_vote_aggregate(vote, rank, &keypairs, None, 0);
+            builder
+                .lock()
+                .unwrap()
+                .add_aggregate(slot, keypairs.len(), aggregate, pubkeys)
+                .unwrap();
+        };
+        add_notar_vote(reward_slot - 1, 0);
+        for rank in 0..3 {
+            add_notar_vote(reward_slot, rank);
+        }
+
+        // The footer gets every vote added so far, without asking ahead of time.
+        let mut slot_metrics = SlotMetrics::new(bank_slot, false);
+        let certs = build_reward_certs(&builder, bank_slot, &mut slot_metrics).unwrap();
+        assert!(certs.notar.is_some());
+        assert_eq!(certs.validators.len(), 3);
+
+        // The reward slot's votes are taken, and older slots are dropped.
+        assert!(builder.lock().unwrap().aggregates.is_empty());
+        assert_eq!(
+            build_reward_certs(&builder, bank_slot, &mut slot_metrics).unwrap(),
+            RewardRespSucc::default()
+        );
     }
 }
