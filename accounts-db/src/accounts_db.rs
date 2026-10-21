@@ -5316,8 +5316,12 @@ impl AccountsDb {
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
-        self.add_root(slot);
+        self.add_root_for_tests(slot);
         self.flush_root_write_cache(slot);
+    }
+
+    pub fn add_root_for_tests(&self, slot: Slot) -> AccountsAddRootTiming {
+        self.add_root(slot)
     }
 
     /// note this returns Some for accounts with zero lamports
