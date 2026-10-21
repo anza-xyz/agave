@@ -321,7 +321,6 @@ pub fn create_program_runtime_environment(
     let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
     let blake3_syscall_enabled = feature_set.blake3_syscall_enabled;
-    let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
     let enable_sha512_syscall = feature_set.enable_sha512_syscall;
     let disable_fees_sysvar = feature_set.disable_fees_sysvar;
     let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar;
@@ -404,24 +403,9 @@ pub fn create_program_runtime_environment(
     )?;
 
     // Elliptic Curve Operations
-    register_feature_gated_function!(
-        result,
-        curve25519_syscall_enabled,
-        "sol_curve_validate_point",
-        SyscallCurvePointValidation
-    )?;
-    register_feature_gated_function!(
-        result,
-        curve25519_syscall_enabled,
-        "sol_curve_group_op",
-        SyscallCurveGroupOps
-    )?;
-    register_feature_gated_function!(
-        result,
-        curve25519_syscall_enabled,
-        "sol_curve_multiscalar_mul",
-        SyscallCurveMultiscalarMultiplication
-    )?;
+    SyscallCurvePointValidation::register(&mut result, "sol_curve_validate_point")?;
+    SyscallCurveGroupOps::register(&mut result, "sol_curve_group_op")?;
+    SyscallCurveMultiscalarMultiplication::register(&mut result, "sol_curve_multiscalar_mul")?;
     SyscallCurveDecompress::register(&mut result, "sol_curve_decompress")?;
     SyscallCurvePairingMap::register(&mut result, "sol_curve_pairing_map")?;
 
