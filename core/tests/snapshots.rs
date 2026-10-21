@@ -721,7 +721,7 @@ fn test_snapshots_with_background_services(request_fastboot: bool) {
         {
             continue;
         }
-        if snapshot_slot % FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS == 0 {
+        if snapshot_slot.is_multiple_of(FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS) {
             let timer = Instant::now();
             while snapshot_paths::get_highest_full_snapshot_archive_slot(
                 &snapshot_test_config
@@ -737,7 +737,7 @@ fn test_snapshots_with_background_services(request_fastboot: bool) {
                 std::thread::sleep(Duration::from_secs(1));
             }
             latest_full_snapshot_slot = Some(snapshot_slot);
-        } else if snapshot_slot % INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS == 0
+        } else if snapshot_slot.is_multiple_of(INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS)
             && latest_full_snapshot_slot.is_some()
         {
             let timer = Instant::now();
