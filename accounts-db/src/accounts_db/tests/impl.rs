@@ -5662,11 +5662,10 @@ fn test_sweep_get_oldest_non_ancient_slot_max() {
             epoch_schedule.slots_per_epoch * 2,
             epoch_schedule.slots_per_epoch * 10,
         ] {
-            db.add_root(max_root_inclusive);
             // oldest non-ancient will never exceed max_root_inclusive, even if the offset is so large it would mathematically move ancient PAST the newest root
             assert_eq!(
                 max_root_inclusive,
-                db.get_oldest_non_ancient_slot(&epoch_schedule)
+                db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, max_root_inclusive)
             );
         }
     }
@@ -5687,15 +5686,16 @@ fn test_sweep_get_oldest_non_ancient_slot() {
     assert_eq!(0, db.get_oldest_non_ancient_slot(&epoch_schedule));
     // adding roots until slots_per_epoch +/- ancient_append_vec_offset should still saturate to 0 as oldest non ancient slot
     let max_root_inclusive = AccountsDb::apply_offset_to_slot(0, ancient_append_vec_offset - 1);
-    db.add_root(max_root_inclusive);
     // oldest non-ancient will never exceed max_root_inclusive
-    assert_eq!(0, db.get_oldest_non_ancient_slot(&epoch_schedule));
+    assert_eq!(
+        0,
+        db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, max_root_inclusive)
+    );
     for offset in 0..3u64 {
         let max_root_inclusive = ancient_append_vec_offset as u64 + offset;
-        db.add_root(max_root_inclusive);
         assert_eq!(
             0,
-            db.get_oldest_non_ancient_slot(&epoch_schedule),
+            db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, max_root_inclusive),
             "offset: {offset}"
         );
     }
@@ -5704,10 +5704,9 @@ fn test_sweep_get_oldest_non_ancient_slot() {
             epoch_schedule.slots_per_epoch - 1,
             -ancient_append_vec_offset,
         ) + offset;
-        db.add_root(max_root_inclusive);
         assert_eq!(
             offset,
-            db.get_oldest_non_ancient_slot(&epoch_schedule),
+            db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, max_root_inclusive),
             "offset: {offset}, max_root_inclusive: {max_root_inclusive}"
         );
     }
@@ -5743,8 +5742,7 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
                 // oldest non-ancient slot is 1 greater than first ancient slot
                 let completed_slot = epoch_schedule.slots_per_epoch + inc + starting_slot_offset;
 
-                // test get_oldest_non_ancient_slot, which is based off the largest root
-                db.add_root(completed_slot);
+                // test get_oldest_non_ancient_slot_from_slot, which is based off the largest root
                 let expected_oldest_non_ancient_slot = AccountsDb::apply_offset_to_slot(
                     AccountsDb::apply_offset_to_slot(
                         completed_slot,
@@ -5754,7 +5752,7 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
                 );
                 assert_eq!(
                     expected_oldest_non_ancient_slot,
-                    db.get_oldest_non_ancient_slot(&epoch_schedule)
+                    db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, completed_slot)
                 );
             }
         }
@@ -5774,24 +5772,21 @@ fn test_get_sorted_potential_ancient_slots() {
             .is_empty()
     );
     let root1 = DEFAULT_MAX_ANCIENT_STORAGES as u64 + ancient_append_vec_offset as u64 + 1;
-    db.add_root(root1);
     let store1 = db.create_store(root1, 4096);
     db.storage.insert(Arc::new(store1));
     let root2 = root1 + 1;
-    db.add_root(root2);
     let store2 = db.create_store(root2, 4096);
     db.storage.insert(Arc::new(store2));
-    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, root2);
     assert!(
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
             .is_empty()
     );
     let completed_slot = epoch_schedule.slots_per_epoch;
-    db.add_root(AccountsDb::apply_offset_to_slot(
-        completed_slot,
-        ancient_append_vec_offset,
-    ));
-    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+    let completed_root =
+        AccountsDb::apply_offset_to_slot(completed_slot, ancient_append_vec_offset);
+    let oldest_non_ancient_slot =
+        db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, completed_root);
     // get_sorted_potential_ancient_slots uses 'less than' as opposed to 'less or equal'
     // so, we need to get more than an epoch away to get the first valid root
     assert!(
@@ -5799,27 +5794,24 @@ fn test_get_sorted_potential_ancient_slots() {
             .is_empty()
     );
     let completed_slot = epoch_schedule.slots_per_epoch + root1;
-    db.add_root(AccountsDb::apply_offset_to_slot(
-        completed_slot,
-        ancient_append_vec_offset,
-    ));
-    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+    let completed_root =
+        AccountsDb::apply_offset_to_slot(completed_slot, ancient_append_vec_offset);
+    let oldest_non_ancient_slot =
+        db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, completed_root);
     assert_eq!(
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
         vec![root1, root2]
     );
     let completed_slot = epoch_schedule.slots_per_epoch + root2;
-    db.add_root(AccountsDb::apply_offset_to_slot(
-        completed_slot,
-        ancient_append_vec_offset,
-    ));
-    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+    let completed_root =
+        AccountsDb::apply_offset_to_slot(completed_slot, ancient_append_vec_offset);
+    let oldest_non_ancient_slot =
+        db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, completed_root);
     assert_eq!(
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
         vec![root1, root2]
     );
     db.storage.remove(&root1, false);
-    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
     assert_eq!(
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
         vec![root2]
@@ -5837,15 +5829,15 @@ fn test_get_sorted_potential_ancient_slots_bounded_by_max_cleaned_root() {
     let root1 = DEFAULT_MAX_ANCIENT_STORAGES as u64 + ancient_append_vec_offset as u64 + 1;
     let root2 = root1 + 1;
     for root in [root1, root2] {
-        db.add_root(root);
         db.storage.insert(Arc::new(db.create_store(root, 4096)));
     }
     // put both roots more than an epoch behind, so only the cleaned root bound is in play
-    db.add_root(AccountsDb::apply_offset_to_slot(
+    let completed_root = AccountsDb::apply_offset_to_slot(
         epoch_schedule.slots_per_epoch + root2,
         ancient_append_vec_offset,
-    ));
-    let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+    );
+    let oldest_non_ancient_slot =
+        db.get_oldest_non_ancient_slot_from_slot(&epoch_schedule, completed_root);
 
     // clean has not run
     assert!(
