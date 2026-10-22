@@ -153,9 +153,9 @@ pub fn attach(
     let (sender, receiver) = channel(capacity);
     cluster_info.set_contact_info_sender(sender);
     let initial_state: Vec<ContactInfoSnapshot> = cluster_info
-        .all_peers()
+        .collect_contact_infos(|info| ContactInfoSnapshot::from(info))
         .into_iter()
-        .map(|(info, _)| ContactInfoSnapshot::from(&info))
+        .map(|(snapshot, _)| snapshot)
         .collect();
     Some(ContactInfoNotifier::spawn(
         plugin_manager,

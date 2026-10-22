@@ -3867,45 +3867,56 @@ pub mod rpc_full {
             let cluster_info = &meta.cluster_info;
             let socket_addr_space = cluster_info.socket_addr_space();
             Ok(cluster_info
-                .all_peers()
-                .iter()
-                .filter_map(|(contact_info, _)| {
-                    if contact_info
-                        .gossip()
+                .collect_contact_infos(|node| {
+                    (
+                        *node.pubkey(),
+                        node.version().clone(),
+                        node.shred_version(),
+                        [
+                            node.gossip(),
+                            node.tvu(Protocol::UDP),
+                            node.tpu(Protocol::QUIC),
+                            node.tpu_forwards(Protocol::QUIC),
+                            node.tpu_vote(Protocol::UDP),
+                            node.serve_repair(Protocol::UDP),
+                            node.rpc(),
+                            node.rpc_pubsub(),
+                        ],
+                    )
+                })
+                .into_iter()
+                .filter_map(|((pubkey, version, shred_version, sockets), _)| {
+                    let [
+                        gossip,
+                        tvu,
+                        tpu_quic,
+                        tpu_forwards_quic,
+                        tpu_vote,
+                        serve_repair,
+                        rpc,
+                        pubsub,
+                    ] = sockets;
+                    if gossip
                         .map(|addr| socket_addr_space.check(&addr))
                         .unwrap_or_default()
                     {
-                        let version = contact_info.version();
                         Some(RpcContactInfo {
-                            pubkey: contact_info.pubkey().to_string(),
-                            gossip: contact_info.gossip(),
-                            tvu: contact_info
-                                .tvu(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
+                            pubkey: pubkey.to_string(),
+                            gossip,
+                            tvu: tvu.filter(|addr| socket_addr_space.check(addr)),
                             tpu: None,
-                            tpu_quic: contact_info
-                                .tpu(Protocol::QUIC)
-                                .filter(|addr| socket_addr_space.check(addr)),
+                            tpu_quic: tpu_quic.filter(|addr| socket_addr_space.check(addr)),
                             tpu_forwards: None,
-                            tpu_forwards_quic: contact_info
-                                .tpu_forwards(Protocol::QUIC)
+                            tpu_forwards_quic: tpu_forwards_quic
                                 .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_vote: contact_info
-                                .tpu_vote(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            serve_repair: contact_info
-                                .serve_repair(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            rpc: contact_info
-                                .rpc()
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            pubsub: contact_info
-                                .rpc_pubsub()
-                                .filter(|addr| socket_addr_space.check(addr)),
+                            tpu_vote: tpu_vote.filter(|addr| socket_addr_space.check(addr)),
+                            serve_repair: serve_repair.filter(|addr| socket_addr_space.check(addr)),
+                            rpc: rpc.filter(|addr| socket_addr_space.check(addr)),
+                            pubsub: pubsub.filter(|addr| socket_addr_space.check(addr)),
                             version: Some(version.to_string()),
                             client_id: Some(version.client().to_string()),
                             feature_set: Some(version.feature_set()),
-                            shred_version: Some(contact_info.shred_version()),
+                            shred_version: Some(shred_version),
                         })
                     } else {
                         None // Exclude spy nodes
