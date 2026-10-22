@@ -51,7 +51,6 @@ bv = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 ed25519-dalek = { workspace = true }
-flate2 = { workspace = true }
 indexmap = { workspace = true, features = ["rayon"] }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }

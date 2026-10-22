@@ -8,12 +8,11 @@ use {
     bv::Bits,
     prost::Message,
     protosol::protos::{
-        GossipBloom, GossipCompressedSlots, GossipContactInfo, GossipCrdsData, GossipCrdsFilter,
-        GossipCrdsValue, GossipDuplicateShred, GossipEffects, GossipEpochSlots,
-        GossipIncrementalHash, GossipIpAddr, GossipIpv6Addr, GossipLowestSlot, GossipMsg,
-        GossipPing, GossipPong, GossipPruneData, GossipPruneMessage, GossipPullRequest,
+        GossipBloom, GossipContactInfo, GossipCrdsData, GossipCrdsFilter, GossipCrdsValue,
+        GossipDuplicateShred, GossipEffects, GossipIncrementalHash, GossipIpAddr, GossipIpv6Addr,
+        GossipMsg, GossipPing, GossipPong, GossipPruneData, GossipPruneMessage, GossipPullRequest,
         GossipPullResponse, GossipPushMessage, GossipSnapshotHashes, GossipSocketEntry, GossipVote,
-        gossip_compressed_slots, gossip_crds_data, gossip_ip_addr, gossip_msg,
+        gossip_crds_data, gossip_ip_addr, gossip_msg,
     },
     solana_gossip::{
         Ping, Protocol, PruneData, crds_data::CrdsData,
@@ -120,47 +119,6 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> GossipEffects {
                     transaction: tx_bytes,
                 }))
             }
-            CrdsData::LowestSlot(_, ls) => {
-                Some(gossip_crds_data::Data::LowestSlot(GossipLowestSlot {
-                    index: 0,
-                    from: ls.from().to_bytes().to_vec(),
-                    lowest: ls.lowest,
-                    wallclock: ls.wallclock(),
-                }))
-            }
-            CrdsData::EpochSlots(idx, es) => {
-                use solana_gossip::epoch_slots::CompressedSlots;
-                let slots = es
-                    .slots
-                    .iter()
-                    .map(|cs| match cs {
-                        CompressedSlots::Uncompressed(u) => {
-                            let mut bits = Vec::new();
-                            for i in 0..u.slots.block_len() {
-                                bits.extend_from_slice(&u.slots.get_block(i).to_le_bytes());
-                            }
-                            GossipCompressedSlots {
-                                first_slot: u.first_slot,
-                                num: u.num as u64,
-                                data: Some(gossip_compressed_slots::Data::Uncompressed(bits)),
-                            }
-                        }
-                        CompressedSlots::Flate2(f) => GossipCompressedSlots {
-                            first_slot: f.first_slot,
-                            num: f.num as u64,
-                            data: Some(gossip_compressed_slots::Data::Flate2(
-                                f.compressed.to_vec(),
-                            )),
-                        },
-                    })
-                    .collect();
-                Some(gossip_crds_data::Data::EpochSlots(GossipEpochSlots {
-                    index: *idx as u32,
-                    from: es.from.to_bytes().to_vec(),
-                    wallclock: es.wallclock,
-                    slots,
-                }))
-            }
             CrdsData::SnapshotHashes(sh) => Some(gossip_crds_data::Data::SnapshotHashes(
                 GossipSnapshotHashes {
                     from: sh.from.to_bytes().to_vec(),
@@ -190,7 +148,9 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> GossipEffects {
                     chunk: ds.chunk().to_vec(),
                 },
             )),
-            CrdsData::LegacyContactInfo(..)
+            CrdsData::LowestSlot(..)
+            | CrdsData::EpochSlots(..)
+            | CrdsData::LegacyContactInfo(..)
             | CrdsData::LegacySnapshotHashes(..)
             | CrdsData::AccountsHashes(..)
             | CrdsData::LegacyVersion(..)

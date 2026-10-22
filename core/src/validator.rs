@@ -1693,13 +1693,6 @@ impl Validator {
 
         let outstanding_repair_requests =
             Arc::<RwLock<repair::repair_service::OutstandingShredRepairs>>::default();
-        let root_bank = bank_forks.read().unwrap().root_bank();
-        let cluster_slots = Arc::new({
-            crate::cluster_slots_service::cluster_slots::ClusterSlots::new(
-                &root_bank,
-                &cluster_info,
-            )
-        });
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
@@ -1765,7 +1758,6 @@ impl Validator {
             Some(snapshot_controller.clone()),
             banking_tracer,
             outstanding_repair_requests.clone(),
-            cluster_slots,
             slot_status_notifier,
             vote_connection_cache,
             AlpenglowInitializationState {

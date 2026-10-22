@@ -2,7 +2,7 @@ use {
     crate::{
         contact_info::ContactInfo,
         crds::VersionedCrdsValue,
-        crds_data::{CrdsData, LowestSlot, SnapshotHashes},
+        crds_data::{CrdsData, SnapshotHashes},
         crds_value::{CrdsValue, CrdsValueLabel},
     },
     indexmap::IndexMap,
@@ -13,7 +13,7 @@ type CrdsTable = IndexMap<CrdsValueLabel, VersionedCrdsValue>;
 
 /// Represents types which can be looked up from crds table given a key. e.g.
 ///   CrdsValueLabel -> VersionedCrdsValue, CrdsValue, CrdsData
-///   Pubkey -> ContactInfo, LowestSlot, SnapshotHashes, ...
+///   Pubkey -> ContactInfo, SnapshotHashes, ...
 pub trait CrdsEntry<'a, 'b>: Sized {
     type Key; // Lookup key.
     fn get_entry(table: &'a CrdsTable, key: Self::Key) -> Option<Self>;
@@ -52,7 +52,6 @@ impl_crds_entry!(VersionedCrdsValue, |entry| entry);
 
 // Lookup by Pubkey.
 impl_crds_entry!(ContactInfo, CrdsData::ContactInfo(node), node);
-impl_crds_entry!(LowestSlot, CrdsData::LowestSlot(_, slot), slot);
 impl_crds_entry!(
     SnapshotHashes,
     CrdsData::SnapshotHashes(snapshot_hashes),
@@ -101,9 +100,6 @@ mod tests {
             match entry.data() {
                 CrdsData::ContactInfo(node) => {
                     assert_eq!(crds.get::<&ContactInfo>(key), Some(node))
-                }
-                CrdsData::LowestSlot(_, slot) => {
-                    assert_eq!(crds.get::<&LowestSlot>(key), Some(slot))
                 }
                 CrdsData::SnapshotHashes(hash) => {
                     assert_eq!(crds.get::<&SnapshotHashes>(key), Some(hash))

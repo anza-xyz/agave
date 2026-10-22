@@ -7,7 +7,6 @@ use {
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
         },
-        cluster_slots_service::{ClusterSlotsUpdateSender, cluster_slots::ClusterSlots},
         commitment_service::TowerCommitmentAggregationData,
         consensus::{
             BlockhashStatus, ComputedBankState, SWITCH_FORK_THRESHOLD, Stake, SwitchForkDecision,
@@ -276,7 +275,6 @@ struct ProcessActiveBanksContext {
     bank_notification_sender: Option<BankNotificationSenderConfig>,
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
-    cluster_slots_update_sender: ClusterSlotsUpdateSender,
     cost_update_sender: Sender<CostUpdate>,
     ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
@@ -458,7 +456,6 @@ pub struct ReplayStageConfig {
     pub poh_controller: PohController,
     pub tower: Tower,
     pub vote_tracker: Arc<VoteTracker>,
-    pub cluster_slots: Arc<ClusterSlots>,
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
@@ -475,7 +472,6 @@ pub struct ReplaySenders {
     pub ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     pub retransmit_slots_sender: Sender<u64>,
     pub replay_vote_sender: ReplayVoteSender,
-    pub cluster_slots_update_sender: Sender<Vec<u64>>,
     pub cost_update_sender: Sender<CostUpdate>,
     pub voting_sender: Sender<VoteOp>,
     pub bls_sender: Sender<BLSOp>,
@@ -781,7 +777,6 @@ impl ReplayStage {
             mut poh_controller,
             mut tower,
             vote_tracker,
-            cluster_slots,
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
@@ -798,7 +793,6 @@ impl ReplayStage {
             ancestor_hashes_replay_update_sender,
             retransmit_slots_sender,
             replay_vote_sender,
-            cluster_slots_update_sender,
             cost_update_sender,
             voting_sender,
             bls_sender,
@@ -943,7 +937,6 @@ impl ReplayStage {
                 bank_notification_sender: bank_notification_sender.clone(),
                 rpc_subscriptions: rpc_subscriptions.clone(),
                 slot_status_notifier: slot_status_notifier.clone(),
-                cluster_slots_update_sender: cluster_slots_update_sender.clone(),
                 cost_update_sender: cost_update_sender.clone(),
                 ancestor_hashes_replay_update_sender: ancestor_hashes_replay_update_sender.clone(),
                 block_metadata_notifier: block_metadata_notifier.clone(),
@@ -1285,7 +1278,6 @@ impl ReplayStage {
                         &mut tower,
                         &mut progress,
                         &vote_tracker,
-                        &cluster_slots,
                         &bank_forks,
                         &mut tbft_structs.heaviest_subtree_fork_choice,
                         &mut latest_validator_votes_for_frozen_banks,
@@ -4246,15 +4238,6 @@ impl ReplayStage {
                     r_replay_stats.batch_execute.totals
                 );
                 new_frozen_slots.push(bank.slot());
-                if process_active_banks_context
-                    .migration_status
-                    .should_publish_epoch_slots(bank_slot)
-                {
-                    let _ = process_active_banks_context
-                        .cluster_slots_update_sender
-                        .send(vec![bank_slot]);
-                }
-
                 if let Some(transaction_status_sender) = process_active_banks_context
                     .transaction_status_sender
                     .as_ref()
@@ -4633,7 +4616,6 @@ impl ReplayStage {
         tower: &mut Tower,
         progress: &mut ProgressMap,
         vote_tracker: &VoteTracker,
-        cluster_slots: &ClusterSlots,
         bank_forks: &RwLock<BankForks>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
@@ -4755,13 +4737,7 @@ impl ReplayStage {
                 }
             }
 
-            Self::update_propagation_status(
-                progress,
-                bank_slot,
-                bank_forks,
-                vote_tracker,
-                cluster_slots,
-            );
+            Self::update_propagation_status(progress, bank_slot, bank_forks, vote_tracker);
 
             Self::cache_tower_stats(progress, tower, bank_slot, ancestors);
         }
@@ -4922,7 +4898,6 @@ impl ReplayStage {
         slot: Slot,
         bank_forks: &RwLock<BankForks>,
         vote_tracker: &VoteTracker,
-        cluster_slots: &ClusterSlots,
     ) {
         // We would only reach here if the bank is in bank_forks, so it
         // isn't dumped and should exist in progress map.
@@ -4941,11 +4916,6 @@ impl ReplayStage {
         }
         let slot_vote_tracker = propagated_stats.slot_vote_tracker.clone();
 
-        if propagated_stats.cluster_slot_pubkeys.is_none() {
-            propagated_stats.cluster_slot_pubkeys = cluster_slots.lookup(slot);
-        }
-        let cluster_slot_pubkeys = propagated_stats.cluster_slot_pubkeys.clone();
-
         let newly_voted_pubkeys = slot_vote_tracker
             .as_ref()
             .and_then(|slot_vote_tracker| {
@@ -4953,14 +4923,10 @@ impl ReplayStage {
             })
             .unwrap_or_default();
 
-        let cluster_slot_pubkeys = cluster_slot_pubkeys
-            .map(|v| v.keys().cloned().collect())
-            .unwrap_or_default();
-
         Self::update_fork_propagated_threshold_from_votes(
             progress,
             newly_voted_pubkeys,
-            cluster_slot_pubkeys,
+            Vec::new(),
             slot,
             &bank_forks.read().unwrap(),
         );
@@ -4969,7 +4935,7 @@ impl ReplayStage {
     fn update_fork_propagated_threshold_from_votes(
         progress: &mut ProgressMap,
         mut newly_voted_pubkeys: Vec<Pubkey>,
-        mut cluster_slot_pubkeys: Vec<Pubkey>,
+        mut leader_pubkeys: Vec<Pubkey>,
         fork_tip: Slot,
         bank_forks: &BankForks,
     ) {
@@ -4998,7 +4964,7 @@ impl ReplayStage {
                 // newly achieved threshold, then there's no further
                 // information to propagate backwards to past leader blocks
                 newly_voted_pubkeys.is_empty()
-                    && cluster_slot_pubkeys.is_empty()
+                    && leader_pubkeys.is_empty()
                     && !did_newly_reach_threshold
             } {
                 break;
@@ -5015,7 +4981,7 @@ impl ReplayStage {
 
             did_newly_reach_threshold = Self::update_slot_propagated_threshold_from_votes(
                 &mut newly_voted_pubkeys,
-                &mut cluster_slot_pubkeys,
+                &mut leader_pubkeys,
                 &leader_bank,
                 leader_propagated_stats,
                 did_newly_reach_threshold,
@@ -5028,7 +4994,7 @@ impl ReplayStage {
 
     fn update_slot_propagated_threshold_from_votes(
         newly_voted_pubkeys: &mut Vec<Pubkey>,
-        cluster_slot_pubkeys: &mut Vec<Pubkey>,
+        leader_pubkeys: &mut Vec<Pubkey>,
         leader_bank: &Bank,
         leader_propagated_stats: &mut PropagatedStats,
         did_child_reach_threshold: bool,
@@ -5072,7 +5038,7 @@ impl ReplayStage {
             !exists
         });
 
-        cluster_slot_pubkeys.retain(|node_pubkey| {
+        leader_pubkeys.retain(|node_pubkey| {
             let exists = leader_propagated_stats
                 .propagated_node_ids
                 .contains(node_pubkey);

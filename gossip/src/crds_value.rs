@@ -5,9 +5,8 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{
         contact_info::ContactInfo,
-        crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
+        crds_data::{CrdsData, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
-        epoch_slots::EpochSlots,
         sigverify_cache::SigVerifyCache,
     },
     rand::Rng,
@@ -30,7 +29,7 @@ use {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "4ABukH5bS69APB3bu1hbMiGyeKPw21nzXAVzCRMtKPih",
+        abi_digest = "3FUpauSVP6D6Tj1LnFExPxVJi3QoL5fTnLxRtErqyiEx",
         abi_serializer = ["wincode"],
         // `hash` is recomputed from [signature, data] on deserialize, so it can't
         // match an independently-sampled value; verify the wire round-trip only.
@@ -87,8 +86,6 @@ impl Signable for CrdsValue {
 #[derive(PartialEq, Hash, Eq, Clone, Debug)]
 pub enum CrdsValueLabel {
     Vote(VoteIndex, Pubkey),
-    LowestSlot(Pubkey),
-    EpochSlots(EpochSlotsIndex, Pubkey),
     DuplicateShred(DuplicateShredIndex, Pubkey),
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
@@ -100,8 +97,6 @@ impl CrdsValueLabel {
     pub fn pubkey(&self) -> Pubkey {
         match self {
             CrdsValueLabel::Vote(_, p) => *p,
-            CrdsValueLabel::LowestSlot(p) => *p,
-            CrdsValueLabel::EpochSlots(_, p) => *p,
             CrdsValueLabel::DuplicateShred(_, p) => *p,
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
@@ -212,8 +207,6 @@ impl CrdsValue {
         let pubkey = self.data.pubkey();
         match self.data {
             CrdsData::Vote(ix, _) => CrdsValueLabel::Vote(ix, pubkey),
-            CrdsData::LowestSlot(_, _) => CrdsValueLabel::LowestSlot(pubkey),
-            CrdsData::EpochSlots(ix, _) => CrdsValueLabel::EpochSlots(ix, pubkey),
             CrdsData::DuplicateShred(ix, _) => CrdsValueLabel::DuplicateShred(ix, pubkey),
             CrdsData::SnapshotHashes(_) => CrdsValueLabel::SnapshotHashes(pubkey),
             CrdsData::ContactInfo(_) => CrdsValueLabel::ContactInfo(pubkey),
@@ -222,7 +215,9 @@ impl CrdsValue {
             }
             CrdsData::RestartHeaviestFork(_) => CrdsValueLabel::RestartHeaviestFork(pubkey),
             // Deprecated: sanitize() rejects these before any caller reaches here.
-            CrdsData::LegacyContactInfo(_)
+            CrdsData::LowestSlot(_)
+            | CrdsData::EpochSlots(_)
+            | CrdsData::LegacyContactInfo(_)
             | CrdsData::LegacySnapshotHashes(_)
             | CrdsData::AccountsHashes(_)
             | CrdsData::LegacyVersion(_)
@@ -236,13 +231,6 @@ impl CrdsValue {
             return None;
         };
         Some(node)
-    }
-
-    pub(crate) fn epoch_slots(&self) -> Option<&EpochSlots> {
-        let CrdsData::EpochSlots(_, epoch_slots) = &self.data else {
-            return None;
-        };
-        Some(epoch_slots)
     }
 
     /// Returns the serialized size (in bytes) of the CrdsValue.
@@ -298,7 +286,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for CrdsValue {
 mod test {
     use {
         super::*,
-        crate::crds_data::{LowestSlot, Vote},
+        crate::crds_data::{SnapshotHashes, Vote},
         rand::SeedableRng as _,
         rand_chacha::ChaChaRng,
         solana_keypair::Keypair,
@@ -385,16 +373,18 @@ mod test {
         };
         assert_eq!(v.label(), CrdsValueLabel::Vote(0, key));
 
-        let v = CrdsValue::new_unsigned(CrdsData::LowestSlot(
-            0,
-            LowestSlot::new(Pubkey::default(), 0, 0),
-        ));
+        let v = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
+            from: Pubkey::default(),
+            full: (0, Hash::default()),
+            incremental: vec![],
+            wallclock: 0,
+        }));
         assert_eq!(v.wallclock(), 0);
         let key = match &v.data {
-            CrdsData::LowestSlot(_, data) => data.from,
+            CrdsData::SnapshotHashes(data) => data.from,
             _ => panic!(),
         };
-        assert_eq!(v.label(), CrdsValueLabel::LowestSlot(key));
+        assert_eq!(v.label(), CrdsValueLabel::SnapshotHashes(key));
     }
 
     #[test]
@@ -410,10 +400,12 @@ mod test {
         let v = Vote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
         let mut v = CrdsValue::new_unsigned(CrdsData::Vote(0, v));
         verify_signatures(&mut v, &keypair, &wrong_keypair);
-        v = CrdsValue::new_unsigned(CrdsData::LowestSlot(
-            0,
-            LowestSlot::new(keypair.pubkey(), 0, timestamp()),
-        ));
+        v = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
+            from: keypair.pubkey(),
+            full: (0, Hash::default()),
+            incremental: vec![],
+            wallclock: timestamp(),
+        }));
         verify_signatures(&mut v, &keypair, &wrong_keypair);
     }
 

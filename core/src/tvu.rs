@@ -9,7 +9,6 @@ use {
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
         },
-        cluster_slots_service::{ClusterSlotsService, cluster_slots::ClusterSlots},
         commitment_service::AggregateCommitmentService,
         completed_data_sets_service::CompletedDataSetsSender,
         consensus::{Tower, tower_storage::TowerStorage},
@@ -121,7 +120,6 @@ pub struct Tvu {
     shred_sigverify: JoinHandle<()>,
     retransmit_stage: RetransmitStage,
     window_service: WindowService,
-    cluster_slots_service: ClusterSlotsService,
     replay_stage: ReplayStage,
     blockstore_cleanup_service: BlockstoreCleanupService,
     cost_update_service: CostUpdateService,
@@ -258,7 +256,6 @@ impl Tvu {
         snapshot_controller: Option<Arc<SnapshotController>>,
         banking_tracer: Arc<BankingTracer>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
-        cluster_slots: Arc<ClusterSlots>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         votor_init: AlpenglowInitializationState,
@@ -473,7 +470,6 @@ impl Tvu {
                 repair_validators: tvu_config.repair_validators,
                 repair_whitelist: tvu_config.repair_whitelist,
                 cluster_info: cluster_info.clone(),
-                cluster_slots: cluster_slots.clone(),
             };
             let repair_service_channels = RepairServiceChannels::new(
                 verified_voter_slots_receiver,
@@ -502,16 +498,6 @@ impl Tvu {
                 tvu_config.repair_xdp_sender,
             )
         };
-
-        let (cluster_slots_update_sender, cluster_slots_update_receiver) = unbounded();
-        let cluster_slots_service = ClusterSlotsService::new(
-            blockstore.clone(),
-            cluster_slots.clone(),
-            bank_forks.clone(),
-            cluster_info.clone(),
-            cluster_slots_update_receiver,
-            exit.clone(),
-        );
 
         let (cost_update_sender, cost_update_receiver) = unbounded();
         let (drop_bank_sender, drop_bank_receiver) = unbounded();
@@ -572,7 +558,6 @@ impl Tvu {
             ancestor_hashes_replay_update_sender,
             retransmit_slots_sender,
             replay_vote_sender,
-            cluster_slots_update_sender,
             cost_update_sender,
             voting_sender,
             bls_sender,
@@ -618,7 +603,6 @@ impl Tvu {
             poh_controller,
             tower,
             vote_tracker,
-            cluster_slots,
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
@@ -678,7 +662,6 @@ impl Tvu {
             shred_sigverify,
             retransmit_stage,
             window_service,
-            cluster_slots_service,
             replay_stage,
             blockstore_cleanup_service,
             cost_update_service,
@@ -701,7 +684,6 @@ impl Tvu {
         self.votor_transport_endpoint.stop();
         self.retransmit_stage.join()?;
         self.window_service.join()?;
-        self.cluster_slots_service.join()?;
         self.fetch_stage.join()?;
         self.shred_sigverify.join()?;
         self.blockstore_cleanup_service.join()?;
@@ -842,7 +824,6 @@ pub mod tests {
         let (_, gossip_confirmed_slots_receiver) = bounded(1024);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
-        let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
             ConnectionCache::new_quic_for_tests(
                 "connection_cache_vote_quic",
@@ -921,7 +902,6 @@ pub mod tests {
             None, // snapshot_controller
             BankingTracer::new_disabled(),
             outstanding_repair_requests,
-            cluster_slots,
             None, // slot_status_notifier
             Arc::new(connection_cache),
             AlpenglowInitializationState {

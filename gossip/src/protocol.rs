@@ -24,7 +24,6 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
-pub(crate) const MAX_CRDS_OBJECT_SIZE: usize = 928;
 /// Max size of serialized crds-values in a Protocol::PushMessage packet. This
 /// is equal to PACKET_DATA_SIZE minus serialized size of an empty push
 /// message: Protocol::PushMessage(Pubkey::default(), Vec::default())
@@ -63,7 +62,7 @@ pub(crate) type GossipProtocolWincodeConfig =
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
+        abi_digest = "683t6zEAXMjkHQdHvM3bVMJ8MRSqV3JJUibJ3o1YZTHy",
         abi_serializer = ["wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
@@ -325,12 +324,11 @@ pub(crate) mod tests {
         super::*,
         crate::{
             contact_info::ContactInfo,
-            crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
+            crds_data::{self, CrdsData, Deprecated, SnapshotHashes, Vote as CrdsVote},
             duplicate_shred::{
                 self, MAX_DUPLICATE_SHREDS,
                 tests::{new_rand_fec_set_index, new_rand_shred},
             },
-            epoch_slots::EpochSlots,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         rand::Rng,
@@ -582,10 +580,10 @@ pub(crate) mod tests {
         let variants: [CrdsData; CrdsData::COUNT] = [
             CrdsData::LegacyContactInfo(Deprecated {}),
             CrdsData::Vote(0, vote),
-            CrdsData::LowestSlot(0, LowestSlot::new(Pubkey::new_unique(), 0, timestamp())),
+            CrdsData::LowestSlot(Deprecated {}),
             CrdsData::LegacySnapshotHashes(Deprecated {}),
             CrdsData::AccountsHashes(Deprecated {}),
-            CrdsData::EpochSlots(0, EpochSlots::new_rand(&mut rng, None)),
+            CrdsData::EpochSlots(Deprecated {}),
             CrdsData::LegacyVersion(Deprecated {}),
             CrdsData::Version(Deprecated {}),
             CrdsData::NodeInstance(Deprecated {}),
@@ -630,10 +628,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_split_messages_large() {
-        let value = CrdsValue::new_unsigned(CrdsData::LowestSlot(
-            0,
-            LowestSlot::new(Pubkey::default(), 0, 0),
-        ));
+        let value = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
+            from: Pubkey::default(),
+            full: (0, Hash::default()),
+            incremental: vec![],
+            wallclock: 0,
+        }));
         test_split_messages(value);
     }
 

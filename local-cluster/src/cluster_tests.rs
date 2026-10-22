@@ -906,7 +906,7 @@ pub fn start_gossip_voter(
 ) -> GossipVoter {
     let exit = Arc::new(AtomicBool::new(false));
     let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_node(
-        // Need to use our validator's keypair to gossip EpochSlots and votes for our
+        // Need to use our validator's keypair to gossip votes for our
         // node later.
         node_keypair.insecure_clone(),
         &[*gossip_addr],

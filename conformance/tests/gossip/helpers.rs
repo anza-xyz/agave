@@ -20,10 +20,10 @@
 // CrdsData variant indices:
 //   0 = LegacyContactInfo    (deprecated)
 //   1 = Vote(u8, Vote)
-//   2 = LowestSlot(u8, LowestSlot)
+//   2 = LowestSlot (deprecated)
 //   3 = LegacySnapshotHashes (deprecated)
 //   4 = AccountsHashes       (deprecated)
-//   5 = EpochSlots(u8, EpochSlots)
+//   5 = EpochSlots (deprecated)
 //   6 = LegacyVersion        (deprecated)
 //   7 = Version              (deprecated)
 //   8 = NodeInstance          (deprecated)
@@ -151,27 +151,29 @@ pub(crate) fn make_snapshot_hashes_crds_data(
     buf
 }
 
-/// Build an EpochSlots CrdsData (variant 5).
+/// Build a legacy EpochSlots payload (deprecated variant 5) for rejection tests.
 pub(crate) fn make_epoch_slots_crds_data(index: u8, from: &[u8; 32], wallclock: u64) -> Vec<u8> {
-    // EpochSlots is serialized by wincode. Build and serialize.
-    use solana_gossip::{crds_data::CrdsData, epoch_slots::EpochSlots};
-    let es = EpochSlots::new(solana_pubkey::Pubkey::from(*from), wallclock);
-    wincode::serialize(&CrdsData::EpochSlots(index, es)).unwrap()
+    wincode::serialize(&(5u32, index, *from, Vec::<u8>::new(), wallclock)).unwrap()
 }
 
-/// Build a LowestSlot CrdsData (variant 2).
+/// Build a legacy LowestSlot payload (deprecated variant 2) for rejection tests.
 pub(crate) fn make_lowest_slot_crds_data(
     index: u8,
     from: &[u8; 32],
     lowest: u64,
     wallclock: u64,
 ) -> Vec<u8> {
-    use solana_gossip::crds_data::{CrdsData, LowestSlot};
-    let ls = LowestSlot::new(solana_pubkey::Pubkey::from(*from), lowest, wallclock);
-    let mut data = wincode::serialize(&CrdsData::LowestSlot(0, ls)).unwrap();
-    // Patch the index byte (offset 4 in the serialized CrdsData)
-    data[4] = index;
-    data
+    wincode::serialize(&(
+        2u32,
+        index,
+        *from,
+        0u64,
+        lowest,
+        Vec::<u64>::new(),
+        Vec::<u8>::new(),
+        wallclock,
+    ))
+    .unwrap()
 }
 
 /// Build a PullRequest (variant 0) from raw CrdsFilter + CrdsValue bytes.
