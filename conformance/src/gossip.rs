@@ -8,12 +8,11 @@ use {
     bv::Bits,
     prost::Message,
     protosol::protos::{
-        GossipBloom, GossipCompressedSlots, GossipContactInfo, GossipCrdsData, GossipCrdsFilter,
-        GossipCrdsValue, GossipDuplicateShred, GossipEffects, GossipEpochSlots,
-        GossipIncrementalHash, GossipIpAddr, GossipIpv6Addr, GossipLowestSlot, GossipMsg,
-        GossipPing, GossipPong, GossipPruneData, GossipPruneMessage, GossipPullRequest,
-        GossipPullResponse, GossipPushMessage, GossipSnapshotHashes, GossipSocketEntry, GossipVote,
-        gossip_compressed_slots, gossip_crds_data, gossip_ip_addr, gossip_msg,
+        GossipBloom, GossipContactInfo, GossipCrdsData, GossipCrdsFilter, GossipCrdsValue,
+        GossipEffects, GossipIncrementalHash, GossipIpAddr, GossipIpv6Addr, GossipMsg, GossipPing,
+        GossipPong, GossipPruneData, GossipPruneMessage, GossipPullRequest, GossipPullResponse,
+        GossipPushMessage, GossipSnapshotHashes, GossipSocketEntry, gossip_crds_data,
+        gossip_ip_addr, gossip_msg,
     },
     solana_gossip::{
         Ping, Protocol, PruneData, crds_data::CrdsData,
@@ -110,57 +109,6 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> GossipEffects {
                     extensions: vec![],
                 }))
             }
-            CrdsData::Vote(idx, vote) => {
-                let tx_bytes =
-                    wincode::serialize(vote.transaction()).expect("vote transaction serialization");
-                Some(gossip_crds_data::Data::Vote(GossipVote {
-                    index: *idx as u32,
-                    from: vote.from().to_bytes().to_vec(),
-                    wallclock: vote.wallclock(),
-                    transaction: tx_bytes,
-                }))
-            }
-            CrdsData::LowestSlot(_, ls) => {
-                Some(gossip_crds_data::Data::LowestSlot(GossipLowestSlot {
-                    index: 0,
-                    from: ls.from().to_bytes().to_vec(),
-                    lowest: ls.lowest,
-                    wallclock: ls.wallclock(),
-                }))
-            }
-            CrdsData::EpochSlots(idx, es) => {
-                use solana_gossip::epoch_slots::CompressedSlots;
-                let slots = es
-                    .slots
-                    .iter()
-                    .map(|cs| match cs {
-                        CompressedSlots::Uncompressed(u) => {
-                            let mut bits = Vec::new();
-                            for i in 0..u.slots.block_len() {
-                                bits.extend_from_slice(&u.slots.get_block(i).to_le_bytes());
-                            }
-                            GossipCompressedSlots {
-                                first_slot: u.first_slot,
-                                num: u.num as u64,
-                                data: Some(gossip_compressed_slots::Data::Uncompressed(bits)),
-                            }
-                        }
-                        CompressedSlots::Flate2(f) => GossipCompressedSlots {
-                            first_slot: f.first_slot,
-                            num: f.num as u64,
-                            data: Some(gossip_compressed_slots::Data::Flate2(
-                                f.compressed.to_vec(),
-                            )),
-                        },
-                    })
-                    .collect();
-                Some(gossip_crds_data::Data::EpochSlots(GossipEpochSlots {
-                    index: *idx as u32,
-                    from: es.from.to_bytes().to_vec(),
-                    wallclock: es.wallclock,
-                    slots,
-                }))
-            }
             CrdsData::SnapshotHashes(sh) => Some(gossip_crds_data::Data::SnapshotHashes(
                 GossipSnapshotHashes {
                     from: sh.from.to_bytes().to_vec(),
@@ -177,20 +125,11 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> GossipEffects {
                     wallclock: sh.wallclock,
                 },
             )),
-            CrdsData::DuplicateShred(idx, ds) => Some(gossip_crds_data::Data::DuplicateShred(
-                GossipDuplicateShred {
-                    index: *idx as u32,
-                    from: ds.from().to_bytes().to_vec(),
-                    wallclock: ds.wallclock(),
-                    slot: ds.slot(),
-                    shred_index: 0,
-                    shred_type: 0,
-                    num_chunks: ds.num_chunks() as u32,
-                    chunk_index: ds.chunk_index() as u32,
-                    chunk: ds.chunk().to_vec(),
-                },
-            )),
-            CrdsData::LegacyContactInfo(..)
+            CrdsData::Vote(..)
+            | CrdsData::LowestSlot(..)
+            | CrdsData::EpochSlots(..)
+            | CrdsData::DuplicateShred(..)
+            | CrdsData::LegacyContactInfo(..)
             | CrdsData::LegacySnapshotHashes(..)
             | CrdsData::AccountsHashes(..)
             | CrdsData::LegacyVersion(..)

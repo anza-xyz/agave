@@ -98,7 +98,7 @@ pub enum TracedEvent {
 pub enum ChannelLabel {
     NonVote,
     TpuVote,
-    GossipVote,
+    GossipVote, // Deprecated; retained for historical trace discriminants.
     Dummy,
 }
 
@@ -201,8 +201,6 @@ pub struct Channels {
     pub non_vote_receiver: BankingPacketReceiver,
     pub tpu_vote_sender: BankingPacketSender,
     pub tpu_vote_receiver: BankingPacketReceiver,
-    pub gossip_vote_sender: BankingPacketSender,
-    pub gossip_vote_receiver: BankingPacketReceiver,
 }
 
 impl BankingTracer {
@@ -275,19 +273,11 @@ impl BankingTracer {
             VOTE_CHANNEL_CAPACITY,
             self.active_tracer.as_ref().cloned(),
         );
-        let (gossip_vote_sender, gossip_vote_receiver) = Self::channel(
-            ChannelLabel::GossipVote,
-            VOTE_CHANNEL_CAPACITY,
-            self.active_tracer.as_ref().cloned(),
-        );
-
         Channels {
             non_vote_sender,
             non_vote_receiver,
             tpu_vote_sender,
             tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
         }
     }
 
@@ -371,7 +361,7 @@ impl BankingTracer {
 /// A small wrapper around the sender of crossbeam channels to message banking packet batches.
 ///
 /// The underlying channels are used by the banking stage to receive packets from multiple sources.
-/// The sources are labelled as non-vote, tpu-vote, and gossip-vote respectively. As such, traced
+/// The sources are labelled as non-vote and tpu-vote. As such, traced
 /// senders are separately constructed for each of these sources, then all are grouped under the
 /// `Channels` struct transiently during setup.
 ///

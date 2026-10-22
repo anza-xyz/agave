@@ -148,20 +148,6 @@ impl VotingService {
             // Send to our own tpu vote socket if we cannot find a leader to send to
             let _ = send_vote_transaction(cluster_info, vote_op.tx(), None, &connection_cache);
         }
-
-        match vote_op {
-            VoteOp::PushVote {
-                tx, tower_slots, ..
-            } => {
-                cluster_info.push_vote(&tower_slots, tx);
-            }
-            VoteOp::RefreshVote {
-                tx,
-                last_voted_slot,
-            } => {
-                cluster_info.refresh_vote(tx, last_voted_slot);
-            }
-        }
     }
 
     pub fn join(self) -> thread::Result<()> {

@@ -41,7 +41,7 @@
 //!
 //! - When in `AlpenglowEnabled` various TowerBFT threads stop processsing alpenglow slots while still processing
 //!   TowerBFT slots pre alpenglow genesis in order to help other cluster participants catchup.
-//! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads (AncestorHashesService and ClusterSlotsService)
+//! - When in `FullAlpenglowEpoch` we shut down the remaining TowerBFT ancestor hashes service
 #[cfg(feature = "dev-context-only-utils")]
 use {
     crate::{certificate::CertSignature, consensus_message::BlockId},

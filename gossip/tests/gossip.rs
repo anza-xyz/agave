@@ -7,7 +7,8 @@ use {
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
-        crds::Cursor,
+        crds_data::CrdsData,
+        crds_value::CrdsValueLabel,
         epoch_specs::{EpochSpecs, TestEpochSpecs},
         gossip_service::GossipService,
         node::Node,
@@ -16,12 +17,9 @@ use {
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
     solana_perf::packet::PACKET_DATA_SIZE,
-    solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
-    solana_transaction::Transaction,
-    solana_vote_program::{vote_instruction, vote_state::Vote},
     std::{
         net::UdpSocket,
         sync::{
@@ -284,7 +282,6 @@ pub fn cluster_info_retransmit() {
 pub fn cluster_info_scale() {
     use {
         solana_measure::measure::Measure,
-        solana_perf::test_tx::test_tx,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -309,12 +306,8 @@ pub fn cluster_info_scale() {
     let bank0 = Bank::new_for_tests(&genesis_config_info.genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
     let root_bank = bank_forks.read().unwrap().root_bank();
-    let slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
     let epoch_specs: Box<dyn EpochSpecs> = Box::new(TestEpochSpecs {
-        slots_in_epoch,
         staked_nodes: root_bank.current_epoch_staked_nodes(),
-        enforce_correct_proof_size: true,
-        root_slot: root_bank.slot(),
     });
 
     let nodes: Vec<_> = vote_keypairs
@@ -353,25 +346,11 @@ pub fn cluster_info_scale() {
     time.stop();
     warn!("found {num_nodes} nodes in {time} success: {success}");
 
-    for num_votes in 1..1000 {
-        let mut time = Measure::start("votes");
-        let tx = test_tx();
-        warn!("tx.message.account_keys: {:?}", tx.message.account_keys);
-        let vote = Vote::new(
-            vec![1, 3, num_votes + 5], // slots
-            Hash::default(),
-        );
-        let ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            vote,
-        );
-        let tx = Transaction::new_with_payer(
-            &[ix], // instructions
-            None,  // payer
-        );
-        let tower = vec![num_votes + 5];
-        nodes[0].0.push_vote(&tower, tx.clone());
+    for slot in 1..1000 {
+        let mut time = Measure::start("snapshot hashes");
+        let full = (slot, Hash::new_unique());
+        nodes[0].0.push_snapshot_hashes(full, vec![]).unwrap();
+        let snapshot_label = CrdsValueLabel::SnapshotHashes(nodes[0].0.id());
         let mut success = false;
         for _ in 0..(30 * 5) {
             let mut not_done = 0;
@@ -380,17 +359,15 @@ pub fn cluster_info_scale() {
             let mut num_pushes = 0;
             let mut num_pulls = 0;
             for (node, _, _) in nodes.iter() {
-                //if node.0.get_votes(0).1.len() != (num_nodes * num_votes) {
-                let has_tx = node
-                    .get_votes(&mut Cursor::default())
-                    .iter()
-                    .filter(|v| v.message.account_keys == tx.message.account_keys)
-                    .count();
+                let has_snapshot = matches!(
+                    node.gossip.crds.read().get::<&CrdsData>(&snapshot_label),
+                    Some(CrdsData::SnapshotHashes(hashes)) if hashes.full == full
+                );
                 num_old += node.gossip.push.num_old.load(Ordering::Relaxed);
                 num_push_total += node.gossip.push.num_total.load(Ordering::Relaxed);
                 num_pushes += node.gossip.push.num_pushes.load(Ordering::Relaxed);
                 num_pulls += node.gossip.pull.num_pulls.load(Ordering::Relaxed);
-                if has_tx == 0 {
+                if !has_snapshot {
                     not_done += 1;
                 }
             }
@@ -406,7 +383,7 @@ pub fn cluster_info_scale() {
             sleep(Duration::from_millis(200));
         }
         time.stop();
-        warn!("propagated vote {num_votes} in {time} success: {success}");
+        warn!("propagated snapshot hashes for slot {slot} in {time} success: {success}");
         sleep(Duration::from_millis(200));
         for (node, _, _) in nodes.iter() {
             node.gossip.push.num_old.store(0, Ordering::Relaxed);

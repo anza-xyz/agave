@@ -10,8 +10,7 @@ use {
         },
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
-            ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
-            VoteTracker,
+            ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, VoteTracker,
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
@@ -136,7 +135,6 @@ impl Tpu {
         bank_forks: Arc<RwLock<BankForks>>,
         alpenglow_slot_clock: SharedAlpenglowSlotClock,
         verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
-        gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -202,8 +200,6 @@ impl Tpu {
             non_vote_receiver,
             tpu_vote_sender,
             tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
         } = banking_tracer_channels;
 
         // Streamer for Votes:
@@ -280,7 +276,7 @@ impl Tpu {
         // below-floor packets ahead of signature verification.
         let scheduler_priority_floor = Arc::new(SchedulerPriorityFloor::new());
 
-        let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        let sigverify_stage = SigVerifyStage::new(
             packet_receiver,
             vote_packet_receiver,
             non_vote_sender,
@@ -294,14 +290,10 @@ impl Tpu {
 
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
-            cluster_info.clone(),
-            gossip_sigverify_handle,
-            gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
             subscriptions,
             verified_voter_slots_sender,
-            gossip_verified_vote_hash_sender,
             replay_vote_receiver,
             blockstore.clone(),
             bank_notification_sender,
@@ -314,7 +306,6 @@ impl Tpu {
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
-            gossip_vote_receiver,
             banking_control_receiver,
             block_production_num_workers,
             block_production_scheduler_config,

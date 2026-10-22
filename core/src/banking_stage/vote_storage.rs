@@ -21,17 +21,12 @@ const MAX_NUM_VOTES_RECEIVE: usize = 1_000;
 
 #[derive(Default, Debug)]
 pub(crate) struct VoteInsertionMetrics {
-    pub(crate) num_dropped_gossip: usize,
     pub(crate) num_dropped_tpu: usize,
 }
 
 impl VoteInsertionMetrics {
     pub fn total_dropped_packets(&self) -> usize {
-        self.num_dropped_gossip + self.num_dropped_tpu
-    }
-
-    pub fn dropped_gossip_packets(&self) -> usize {
-        self.num_dropped_gossip
+        self.num_dropped_tpu
     }
 
     pub fn dropped_tpu_packets(&self) -> usize {
@@ -252,14 +247,7 @@ impl VoteStorage {
 
         if let Some(vote) = self.update_latest_vote(vote, should_replenish_taken_votes) {
             match vote.source() {
-                VoteSource::Gossip => VoteInsertionMetrics {
-                    num_dropped_gossip: 1,
-                    num_dropped_tpu: 0,
-                },
-                VoteSource::Tpu => VoteInsertionMetrics {
-                    num_dropped_gossip: 0,
-                    num_dropped_tpu: 1,
-                },
+                VoteSource::Tpu => VoteInsertionMetrics { num_dropped_tpu: 1 },
             }
         } else {
             VoteInsertionMetrics::default()
@@ -555,10 +543,10 @@ pub(crate) mod tests {
             keypair_b.vote_keypair.pubkey(),
         ]);
 
-        let vote_a = from_slots(vec![(0, 2), (1, 1)], VoteSource::Gossip, &keypair_a, None);
+        let vote_a = from_slots(vec![(0, 2), (1, 1)], VoteSource::Tpu, &keypair_a, None);
         let vote_b = from_slots(
             vec![(0, 5), (4, 2), (9, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_b,
             None,
         );
@@ -586,13 +574,13 @@ pub(crate) mod tests {
 
         let vote_a = from_slots(
             vec![(0, 5), (1, 4), (3, 3), (10, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_a,
             None,
         );
         let vote_b = from_slots(
             vec![(0, 5), (4, 2), (6, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_b,
             None,
         );
@@ -619,13 +607,13 @@ pub(crate) mod tests {
         // Same votes should be no-ops
         let vote_a = from_slots(
             vec![(0, 5), (1, 4), (3, 3), (10, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_a,
             None,
         );
         let vote_b = from_slots(
             vec![(0, 5), (4, 2), (9, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_b,
             None,
         );
@@ -649,13 +637,13 @@ pub(crate) mod tests {
         // Same votes with timestamps should override
         let vote_a = from_slots(
             vec![(0, 5), (1, 4), (3, 3), (10, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_a,
             Some(1),
         );
         let vote_b = from_slots(
             vec![(0, 5), (4, 2), (9, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_b,
             Some(2),
         );
@@ -675,13 +663,13 @@ pub(crate) mod tests {
         // Same votes with bigger timestamps should override
         let vote_a = from_slots(
             vec![(0, 5), (1, 4), (3, 3), (10, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_a,
             Some(5),
         );
         let vote_b = from_slots(
             vec![(0, 5), (4, 2), (9, 1)],
-            VoteSource::Gossip,
+            VoteSource::Tpu,
             &keypair_b,
             Some(6),
         );
@@ -702,7 +690,7 @@ pub(crate) mod tests {
         let vote_a = || {
             from_slots(
                 vec![(0, 5), (1, 4), (3, 3), (10, 1)],
-                VoteSource::Gossip,
+                VoteSource::Tpu,
                 &keypair_a,
                 Some(2),
             )
@@ -710,7 +698,7 @@ pub(crate) mod tests {
         let vote_b = || {
             from_slots(
                 vec![(0, 5), (4, 2), (9, 1)],
-                VoteSource::Gossip,
+                VoteSource::Tpu,
                 &keypair_b,
                 Some(3),
             )
@@ -760,10 +748,10 @@ pub(crate) mod tests {
             keypair_d.vote_keypair.pubkey(),
         ]);
 
-        let vote_a = from_slots(vec![(1, 1)], VoteSource::Gossip, &keypair_a, None);
+        let vote_a = from_slots(vec![(1, 1)], VoteSource::Tpu, &keypair_a, None);
         let vote_b = from_slots(vec![(2, 1)], VoteSource::Tpu, &keypair_b, None);
         let vote_c = from_slots(vec![(3, 1)], VoteSource::Tpu, &keypair_c, None);
-        let vote_d = from_slots(vec![(4, 1)], VoteSource::Gossip, &keypair_d, None);
+        let vote_d = from_slots(vec![(4, 1)], VoteSource::Tpu, &keypair_d, None);
 
         vote_storage.update_latest_vote(vote_a, false /* should replenish */);
         vote_storage.update_latest_vote(vote_b, false /* should replenish */);
@@ -985,7 +973,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
         assert_eq!(bank.epoch(), 1);
         vote_storage.cache_epoch_boundary_info(&bank);
-        insert_packets(&mut vote_storage, VoteSource::Gossip, votes());
+        insert_packets(&mut vote_storage, VoteSource::Tpu, votes());
         assert_eq!(vote_storage.len(), 1);
         assert_eq!(
             vote_storage.get_latest_vote_slot(keypair_b.vote_keypair.pubkey()),

@@ -1,5 +1,5 @@
 /// ClusterSlots object holds information about which validators have confirmed which slots
-/// via EpochSlots mechanism. Periodically, EpochSlots get sent into here via update method.
+/// Slot support retained for the legacy consensus and repair paths.
 /// The ClusterSlots datastructure maintains a shadow copy of the stake info for current and
 /// upcoming epochs, and a ringbuffer of per-slot records. The ringbuffer may contain blank
 /// records if stake information is not available (can happen for very short epochs).
@@ -7,9 +7,7 @@ use {
     crate::{cluster_slots_service::slot_supporters::SlotSupporters, consensus::Stake},
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_gossip::{
-        cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
-    },
+    solana_gossip::contact_info::ContactInfo,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
     solana_time_utils::AtomicInterval,
@@ -18,7 +16,7 @@ use {
         hash::RandomState,
         ops::Range,
         sync::{
-            Arc, Mutex, RwLock,
+            Arc, RwLock,
             atomic::{AtomicU64, Ordering},
         },
     },
@@ -82,7 +80,6 @@ pub struct ClusterSlots {
     epoch_metadata: RwLock<HashMap<Epoch, EpochStakeInfo>>,
     current_slot: AtomicU64, // current slot at the front of ringbuffer.
     root_epoch: RwLock<Option<RootEpoch>>, // epoch where root bank is
-    cursor: Mutex<Cursor>,   // cursor to read CRDS.
     metrics_last_report: AtomicInterval, // last time statistics were reported.
     metric_allocations: AtomicU64, // total amount of memory allocations made.
     metric_write_locks: AtomicU64, // total amount of write locks taken outside of initialization.
@@ -95,9 +92,9 @@ struct RowContent {
 }
 
 impl ClusterSlots {
-    pub fn new(root_bank: &Bank, cluster_info: &ClusterInfo) -> Self {
+    pub fn new(root_bank: &Bank) -> Self {
         let cluster_slots = Self::default();
-        cluster_slots.update(root_bank, cluster_info);
+        cluster_slots.update(root_bank);
         cluster_slots
     }
 
@@ -108,7 +105,6 @@ impl ClusterSlots {
             epoch_metadata: RwLock::new(HashMap::new()),
             current_slot: AtomicU64::default(),
             root_epoch: RwLock::new(None),
-            cursor: Mutex::new(Cursor::default()),
             metrics_last_report: AtomicInterval::default(),
             metric_allocations: AtomicU64::default(),
             metric_write_locks: AtomicU64::default(),
@@ -155,7 +151,7 @@ impl ClusterSlots {
         cluster_slots.get_mut(idx as usize)
     }
 
-    pub(crate) fn update(&self, root_bank: &Bank, cluster_info: &ClusterInfo) {
+    pub(crate) fn update(&self, root_bank: &Bank) {
         let root_slot = root_bank.slot();
         let current_slot = self.get_current_slot();
         if current_slot > root_slot + 1 {
@@ -167,11 +163,7 @@ impl ClusterSlots {
             self.update_epoch_info(root_bank);
         }
 
-        let epoch_slots = {
-            let mut cursor = self.cursor.lock().unwrap();
-            cluster_info.get_epoch_slots(&mut cursor)
-        };
-        self.update_internal(root_slot, epoch_slots);
+        self.roll_cluster_slots(root_slot);
         self.maybe_report_cluster_slots_perf_stats();
     }
 
@@ -352,51 +344,6 @@ impl ClusterSlots {
         slot_range
     }
 
-    fn update_internal(&self, root: Slot, epoch_slots_list: Vec<EpochSlots>) {
-        // Adjust the range of slots we can store in the datastructure to the
-        // current rooted slot, ensure the datastructure has the correct window in scope
-        let slot_range = self.roll_cluster_slots(root);
-
-        let epoch_metadata = self.epoch_metadata.read().unwrap();
-        let cluster_slots = self.cluster_slots.read().unwrap();
-        for epoch_slots in epoch_slots_list {
-            let Some(first_slot) = epoch_slots.first_slot() else {
-                continue;
-            };
-            let Some(epoch) = self.get_epoch_for_slot(first_slot) else {
-                continue;
-            };
-            let Some(epoch_meta) = epoch_metadata.get(&epoch) else {
-                continue;
-            };
-            //filter out unstaked nodes
-            let Some(&sender_stake) = epoch_meta.validator_stakes.get(&epoch_slots.from) else {
-                continue;
-            };
-            let updates = epoch_slots
-                .to_slots(root)
-                .filter(|slot| slot_range.contains(slot));
-            // figure out which entries would get updated by the new message and cache them
-            for slot in updates {
-                let RowContent {
-                    slot: s,
-                    supporters: map,
-                } = Self::get_row_for_slot(slot, &cluster_slots).unwrap();
-                debug_assert_eq!(*s, slot, "Fetched slot does not match expected value!");
-                if map.is_frozen() {
-                    continue;
-                }
-                if map
-                    .set_support_by_pubkey(&epoch_slots.from, sender_stake)
-                    .is_err()
-                {
-                    error!("Unexpected pubkey {} for slot {}!", epoch_slots.from, slot);
-                    break;
-                }
-            }
-        }
-    }
-
     /// Upload stats into metrics database
     fn maybe_report_cluster_slots_perf_stats(&self) {
         if self.metrics_last_report.should_update(10_000) {
@@ -438,17 +385,27 @@ impl ClusterSlots {
 
     #[cfg(test)]
     // patches the given node_id into the internal structures
-    // to pretend as if it has submitted epoch slots for a given slot.
+    // to provide slot support without a network advertisement.
     // If the node was not previously registered in validator_stakes,
     // an override_stake amount should be provided.
     pub(crate) fn insert_node_id(&self, slot: Slot, node_id: Pubkey) {
-        let mut epoch_slot = EpochSlots {
-            from: node_id,
-            ..Default::default()
-        };
-        epoch_slot.fill(&[slot], 0);
         let current_root = self.current_slot.load(Ordering::Relaxed);
-        self.update_internal(current_root, vec![epoch_slot]);
+        self.roll_cluster_slots(current_root);
+        let Some(epoch) = self.get_epoch_for_slot(slot) else {
+            return;
+        };
+        let epoch_metadata = self.epoch_metadata.read().unwrap();
+        let Some(metadata) = epoch_metadata.get(&epoch) else {
+            return;
+        };
+        let Some(&stake) = metadata.validator_stakes.get(&node_id) else {
+            return;
+        };
+        if let Some(supporters) = self.lookup(slot) {
+            if !supporters.is_frozen() {
+                supporters.set_support_by_pubkey(&node_id, stake).unwrap();
+            }
+        }
     }
 
     pub(crate) fn compute_weights(&self, slot: Slot, repair_peers: &[ContactInfo]) -> Vec<u64> {
@@ -603,79 +560,6 @@ mod tests {
     }
 
     #[test]
-    fn test_update_empty() {
-        let cs = ClusterSlots::default();
-        let (pk1, _, validator_stakes) = fake_stakes();
-        cs.fake_epoch_info_for_tests(validator_stakes);
-        let epoch_slot = EpochSlots {
-            from: pk1,
-            ..Default::default()
-        };
-        cs.update_internal(0, vec![epoch_slot]);
-        assert!(cs.lookup(0).is_none());
-    }
-
-    #[test]
-    fn test_update_rooted() {
-        //root is 0, so it should be a noop
-        let cs = ClusterSlots::default();
-        let (pk1, _, validator_stakes) = fake_stakes();
-        cs.fake_epoch_info_for_tests(validator_stakes);
-        let mut epoch_slot = EpochSlots {
-            from: pk1,
-            ..Default::default()
-        };
-        epoch_slot.fill(&[0], 0);
-        cs.update_internal(0, vec![epoch_slot]);
-        assert!(cs.lookup(0).is_none());
-    }
-
-    #[test]
-    fn test_update_multiple_slots() {
-        let cs = ClusterSlots::default();
-        let (pk1, pk2, validator_stakes) = fake_stakes();
-        cs.fake_epoch_info_for_tests(validator_stakes);
-
-        let mut epoch_slot1 = EpochSlots {
-            from: pk1,
-            ..Default::default()
-        };
-        epoch_slot1.fill(&[2, 4, 5], 0);
-        let mut epoch_slot2 = EpochSlots {
-            from: pk2,
-            ..Default::default()
-        };
-        epoch_slot2.fill(&[1, 3, 5], 1);
-        cs.update_internal(0, vec![epoch_slot1, epoch_slot2]);
-        assert!(
-            cs.lookup(0).is_none(),
-            "slot 0 should not be supported by anyone"
-        );
-        assert!(cs.lookup(1).is_some(), "slot 1 should be supported");
-        assert_eq!(
-            cs.lookup(1).unwrap().get_support_by_pubkey(&pk2),
-            Some(20),
-            "support should come from validator 2"
-        );
-        assert_eq!(
-            cs.lookup(4).unwrap().get_support_by_pubkey(&pk1),
-            Some(10),
-            "validator 1 should support slot 4"
-        );
-        let map = cs.lookup(5).unwrap();
-        assert_eq!(
-            map.get_support_by_pubkey(&pk1),
-            Some(10),
-            "both should support slot 5"
-        );
-        assert_eq!(
-            map.get_support_by_pubkey(&pk2),
-            Some(20),
-            "both should support slot 5"
-        );
-    }
-
-    #[test]
     fn test_compute_weights_failsafes() {
         let cs = ClusterSlots::default();
         let ci = ContactInfo::default();
@@ -685,66 +569,6 @@ mod tests {
         cs.fake_epoch_info_for_tests(validator_stakes);
         let ci = ContactInfo::default();
         assert_eq!(cs.compute_weights(0, &[ci]), vec![1]);
-    }
-
-    #[test]
-    fn test_best_peer_2() {
-        let cs = ClusterSlots::default();
-        let mut map = HashMap::default();
-        let pk1 = Pubkey::new_unique();
-        let pk2 = Pubkey::new_unique();
-        map.insert(pk1, 1000);
-        map.insert(pk2, 10);
-        map.insert(Pubkey::new_unique(), u64::MAX / 2);
-        cs.fake_epoch_info_for_tests(map);
-
-        let mut epoch_slot1 = EpochSlots {
-            from: pk1,
-            ..Default::default()
-        };
-        epoch_slot1.fill(&[1, 2, 3, 4], 0);
-        let mut epoch_slot2 = EpochSlots {
-            from: pk2,
-            ..Default::default()
-        };
-        epoch_slot2.fill(&[1, 2, 3, 4], 0);
-        // both peers have slot 1 confirmed
-        cs.update_internal(1, vec![epoch_slot1, epoch_slot2]);
-        let ci1 = ContactInfo::new(pk1, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        let ci2 = ContactInfo::new(pk2, /*wallclock:*/ 0, /*shred_version:*/ 0);
-
-        assert_eq!(
-            cs.compute_weights(1, &[ci1, ci2]),
-            vec![1000, 10],
-            "weights should match the stakes"
-        );
-    }
-
-    #[test]
-    fn test_best_peer_3() {
-        agave_logger::setup_with_default("info");
-        let cs = ClusterSlots::default();
-        let pk1 = Pubkey::new_unique();
-        let pk2 = Pubkey::new_unique();
-        let pk_other = Pubkey::new_unique();
-        //set stakes of pk1 high and pk2 to unstaked
-        let validator_stakes: HashMap<_, _> =
-            [(pk1, 42), (pk_other, u64::MAX / 2)].into_iter().collect();
-        cs.fake_epoch_info_for_tests(validator_stakes);
-        let mut epoch_slot = EpochSlots {
-            from: pk_other,
-            ..Default::default()
-        };
-        epoch_slot.fill(&[1, 2, 3, 4], 0);
-        // neither pk1 or pk2 has any confirmed slots
-        cs.update_internal(0, vec![epoch_slot]);
-        let c1 = ContactInfo::new(pk1, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        let c2 = ContactInfo::new(pk2, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        assert_eq!(
-            cs.compute_weights(1, &[c1, c2]),
-            vec![42 / 2, 1],
-            "weights should be halved, but never zero"
-        );
     }
 
     #[test]
@@ -783,25 +607,5 @@ mod tests {
         let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
         assert_eq!(w, [42]);
         assert_eq!(i, [0]);
-    }
-
-    #[test]
-    fn test_update_new_staked_slot() {
-        let cs = ClusterSlots::default();
-        let pk = Pubkey::new_unique();
-        let mut epoch_slot = EpochSlots {
-            from: pk,
-            ..Default::default()
-        };
-        epoch_slot.fill(&[1], 0);
-        let map = HashMap::from([(pk, 42)]);
-        cs.fake_epoch_info_for_tests(map);
-        cs.update_internal(0, vec![epoch_slot]);
-        assert!(cs.lookup(1).is_some(), "slot 1 should have records");
-        assert_eq!(
-            cs.lookup(1).unwrap().get_support_by_pubkey(&pk).unwrap(),
-            42,
-            "the stake of the node should be committed to the slot"
-        );
     }
 }

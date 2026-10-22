@@ -106,7 +106,7 @@ use {
 ///
 /// Simulation must mimic this load pattern while being agnostic to internal banking impl as much
 /// as possible. For that agnostic objective, `TracedSender`s were introduced into the `SigVerify`
-/// stage and gossip subsystem by `BankingTracer` to trace **all** `BankingPacketBatch`s' exact
+/// stage by `BankingTracer` to trace **all** `BankingPacketBatch`s' exact
 /// payload and _sender_'s timing with `SystemTime::now()` for all `ChannelLabel`s. This deliberate
 /// tracing placement is not to be affected by any `BankingStage`'s internal capacity (if any) nor
 /// by its channel consumption pattern.
@@ -115,7 +115,7 @@ use {
 /// segregated by the aforementioned T=0.
 ///
 /// Both phases just send `BankingPacketBatch` in the same fashion, pretending to be
-/// `SigVerifyStage`/gossip from a single thread to busy loop for precise T=N at ~1us granularity.
+/// `SigVerifyStage` from a single thread to busy loop for precise T=N at ~1us granularity.
 ///
 /// Warm-up starts at T=-WARMUP_DURATION (~ 13 secs). As soon as warm up is initiated, we invoke
 /// `BankingStage::new_num_threads()` as well to simulate the pre-leader slot's tx-buffering time.
@@ -147,7 +147,7 @@ type TimedBatchesToSend = Vec<(
     (usize, usize),
 )>;
 
-type EventSenderThread = JoinHandle<(TracedSender, TracedSender, TracedSender)>;
+type EventSenderThread = JoinHandle<(TracedSender, TracedSender)>;
 
 #[derive(Default)]
 pub struct BankingTraceEvents {
@@ -335,7 +335,6 @@ struct SenderLoop {
     first_simulated_slot: Slot,
     non_vote_sender: TracedSender,
     tpu_vote_sender: TracedSender,
-    gossip_vote_sender: TracedSender,
     exit: Arc<AtomicBool>,
     raw_base_event_time: SystemTime,
     total_batch_count: usize,
@@ -363,15 +362,8 @@ impl SenderLoop {
         Ok(handle)
     }
 
-    fn start(
-        mut self,
-        base_simulation_time: SystemTime,
-    ) -> (TracedSender, TracedSender, TracedSender) {
-        let mut logger = SenderLoopLogger::new(
-            &self.non_vote_sender,
-            &self.tpu_vote_sender,
-            &self.gossip_vote_sender,
-        );
+    fn start(mut self, base_simulation_time: SystemTime) -> (TracedSender, TracedSender) {
+        let mut logger = SenderLoopLogger::new(&self.non_vote_sender, &self.tpu_vote_sender);
         let mut simulation_duration = Duration::default();
         for ((required_duration, (label, batches_with_stats)), (batch_count, tx_count)) in
             self.timed_batches_to_send.drain(..)
@@ -387,7 +379,7 @@ impl SenderLoop {
             let sender = match label {
                 ChannelLabel::NonVote => &self.non_vote_sender,
                 ChannelLabel::TpuVote => &self.tpu_vote_sender,
-                ChannelLabel::GossipVote => &self.gossip_vote_sender,
+                ChannelLabel::GossipVote => continue,
                 ChannelLabel::Dummy => unreachable!(),
             };
             sender.send(batches_with_stats).unwrap();
@@ -400,11 +392,7 @@ impl SenderLoop {
         logger.on_terminating();
         drop(self.timed_batches_to_send);
         // hold these senders in join_handle to control banking stage termination!
-        (
-            self.non_vote_sender,
-            self.tpu_vote_sender,
-            self.gossip_vote_sender,
-        )
+        (self.non_vote_sender, self.tpu_vote_sender)
     }
 }
 
@@ -551,41 +539,30 @@ impl SimulatorThreads {
 struct SenderLoopLogger<'a> {
     non_vote_sender: &'a TracedSender,
     tpu_vote_sender: &'a TracedSender,
-    gossip_vote_sender: &'a TracedSender,
     last_log_duration: Duration,
     last_tx_count: usize,
     last_non_vote_batch_count: usize,
     last_tpu_vote_tx_count: usize,
-    last_gossip_vote_tx_count: usize,
     non_vote_batch_count: usize,
     non_vote_tx_count: usize,
     tpu_vote_batch_count: usize,
     tpu_vote_tx_count: usize,
-    gossip_vote_batch_count: usize,
-    gossip_vote_tx_count: usize,
 }
 
 impl<'a> SenderLoopLogger<'a> {
-    fn new(
-        non_vote_sender: &'a TracedSender,
-        tpu_vote_sender: &'a TracedSender,
-        gossip_vote_sender: &'a TracedSender,
-    ) -> Self {
+    fn new(non_vote_sender: &'a TracedSender, tpu_vote_sender: &'a TracedSender) -> Self {
         Self {
             non_vote_sender,
             tpu_vote_sender,
-            gossip_vote_sender,
+
             last_log_duration: Duration::default(),
             last_tx_count: 0,
             last_non_vote_batch_count: 0,
             last_tpu_vote_tx_count: 0,
-            last_gossip_vote_tx_count: 0,
             non_vote_batch_count: 0,
             non_vote_tx_count: 0,
             tpu_vote_batch_count: 0,
             tpu_vote_tx_count: 0,
-            gossip_vote_batch_count: 0,
-            gossip_vote_tx_count: 0,
         }
     }
 
@@ -602,10 +579,7 @@ impl<'a> SenderLoopLogger<'a> {
         let (total_batch_count, total_tx_count) = match label {
             NonVote => (&mut self.non_vote_batch_count, &mut self.non_vote_tx_count),
             TpuVote => (&mut self.tpu_vote_batch_count, &mut self.tpu_vote_tx_count),
-            GossipVote => (
-                &mut self.gossip_vote_batch_count,
-                &mut self.gossip_vote_tx_count,
-            ),
+            GossipVote => return,
             Dummy => unreachable!(),
         };
         *total_batch_count += batch_count;
@@ -613,51 +587,36 @@ impl<'a> SenderLoopLogger<'a> {
 
         let log_interval = simulation_duration - self.last_log_duration;
         if log_interval > Duration::from_millis(100) {
-            let current_tx_count =
-                self.non_vote_tx_count + self.tpu_vote_tx_count + self.gossip_vote_tx_count;
+            let current_tx_count = self.non_vote_tx_count + self.tpu_vote_tx_count;
             let duration = log_interval.as_secs_f64();
             let tps = (current_tx_count - self.last_tx_count) as f64 / duration;
             let non_vote_tps =
                 (self.non_vote_tx_count - self.last_non_vote_batch_count) as f64 / duration;
             let tpu_vote_tps =
                 (self.tpu_vote_tx_count - self.last_tpu_vote_tx_count) as f64 / duration;
-            let gossip_vote_tps =
-                (self.gossip_vote_tx_count - self.last_gossip_vote_tx_count) as f64 / duration;
             info!(
-                "senders(non-,tpu-,gossip-vote): tps: {:.0} (={:.0}+{:.0}+{:.0}) over {:?} \
-                 not-recved: ({}+{}+{})",
+                "senders(non-,tpu-vote): tps: {:.0} (={:.0}+{:.0}) over {:?} not-recved: ({}+{})",
                 tps,
                 non_vote_tps,
                 tpu_vote_tps,
-                gossip_vote_tps,
                 log_interval,
                 self.non_vote_sender.len(),
                 self.tpu_vote_sender.len(),
-                self.gossip_vote_sender.len(),
             );
             self.last_log_duration = simulation_duration;
             self.last_tx_count = current_tx_count;
-            (
-                self.last_non_vote_batch_count,
-                self.last_tpu_vote_tx_count,
-                self.last_gossip_vote_tx_count,
-            ) = (
-                self.non_vote_tx_count,
-                self.tpu_vote_tx_count,
-                self.gossip_vote_batch_count,
-            );
+            (self.last_non_vote_batch_count, self.last_tpu_vote_tx_count) =
+                (self.non_vote_tx_count, self.tpu_vote_tx_count);
         }
     }
 
     fn on_terminating(self) {
         info!(
-            "terminating to send...: non_vote: {} ({}), tpu_vote: {} ({}), gossip_vote: {} ({})",
+            "terminating to send...: non_vote: {} ({}), tpu_vote: {} ({})",
             self.non_vote_batch_count,
             self.non_vote_tx_count,
             self.tpu_vote_batch_count,
             self.tpu_vote_tx_count,
-            self.gossip_vote_batch_count,
-            self.gossip_vote_tx_count,
         );
     }
 
@@ -765,8 +724,6 @@ impl BankingSimulator {
             non_vote_receiver,
             tpu_vote_sender,
             tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
         } = banking_tracer_channels;
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -815,7 +772,6 @@ impl BankingSimulator {
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
-            gossip_vote_receiver,
             mpsc::channel(1).1,
             num_workers,
             SchedulerConfig::default(),
@@ -856,7 +812,7 @@ impl BankingSimulator {
             first_simulated_slot: self.first_simulated_slot,
             non_vote_sender,
             tpu_vote_sender,
-            gossip_vote_sender,
+
             exit: exit.clone(),
             raw_base_event_time,
             total_batch_count,

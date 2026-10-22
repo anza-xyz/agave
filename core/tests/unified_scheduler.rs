@@ -12,7 +12,6 @@ use {
             DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
         },
         replay_stage::{ReplayStage, TowerBFTStructures},
-        unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     solana_cost_model::transaction_cost::TrackedCost,
     solana_hash::Hash,
@@ -31,10 +30,7 @@ use {
     solana_unified_scheduler_pool::{
         DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool, TaskHandler,
     },
-    std::{
-        collections::HashMap,
-        sync::{Arc, Mutex},
-    },
+    std::sync::{Arc, Mutex},
 };
 
 #[test]
@@ -133,13 +129,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             .into_iter()
             .map(|s| (s, Hash::default()))
             .collect();
-        let unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes =
-            UnfrozenGossipVerifiedVoteHashes {
-                votes_per_slot: vec![root - 1, root, root + 1]
-                    .into_iter()
-                    .map(|s| (s, HashMap::new()))
-                    .collect(),
-            };
+
         let epoch_slots_frozen_slots: EpochSlotsFrozenSlots = vec![root - 1, root, root + 1]
             .into_iter()
             .map(|slot| (slot, Hash::default()))
@@ -148,7 +138,6 @@ fn test_scheduler_waited_by_drop_bank_service() {
             heaviest_subtree_fork_choice,
             duplicate_slots_tracker,
             duplicate_confirmed_slots,
-            unfrozen_gossip_verified_vote_hashes,
             epoch_slots_frozen_slots,
         };
         ReplayStage::handle_new_root(
