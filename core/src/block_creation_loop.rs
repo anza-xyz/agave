@@ -8,7 +8,8 @@ use {
     crate::{
         banking_trace::{BankingPacketSender, BankingTracer},
         block_creation_loop::rewards::{
-            certs_requestor::CertsRequestor, msg_types::RewardRespSucc,
+            certs_requestor::CertsRequestor,
+            msg_types::{RewardRequestToken, RewardRespSucc},
             reward_certs_service::RewardCertsService,
         },
         replay_stage::{Finalizer, ReplayStage},
@@ -579,8 +580,146 @@ fn produce_block_footer(
     }
 }
 
+<<<<<<< HEAD
 /// Produces the leader window from `start_slot` -> `end_slot` using parent
 /// `parent_slot` while abiding to the `block_timer`
+=======
+fn produce_first_slot(
+    fast_leader_handover: bool,
+    slot: Slot,
+    parent_block: Block,
+    block_timer: &mut Instant,
+    ctx: &mut LeaderContext,
+) -> Result<(), StartLeaderError> {
+    let mut slot_metrics = SlotMetrics::new(slot, fast_leader_handover);
+    let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
+    let res = start_leader_wait_for_parent_replay(
+        ctx,
+        &mut slot_metrics,
+        slot,
+        parent_block.slot,
+        Some(parent_block.block_id),
+        *block_timer,
+        /* entry_bytes_consumed */ 0,
+    )
+    .and_then(|working_bank| {
+        produce_slot(
+            ctx,
+            &mut slot_metrics,
+            slot,
+            fast_leader_handover.then_some(parent_block),
+            reward_cert_request,
+            block_timer,
+            working_bank,
+        )
+    });
+    slot_metrics.report();
+    res
+}
+
+fn produce_intra_window_slot(
+    slot: Slot,
+    block_timer: &mut Instant,
+    ctx: &mut LeaderContext,
+) -> Result<(), StartLeaderError> {
+    let mut slot_metrics = SlotMetrics::new(slot, false);
+    let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
+    let res = start_leader_wait_for_parent_replay(
+        ctx,
+        &mut slot_metrics,
+        slot,
+        slot - 1,
+        None,
+        *block_timer,
+        /* entry_bytes_consumed */ 0,
+    )
+    .and_then(|working_bank| {
+        produce_slot(
+            ctx,
+            &mut slot_metrics,
+            slot,
+            None,
+            reward_cert_request,
+            block_timer,
+            working_bank,
+        )
+    });
+    slot_metrics.report();
+    res
+}
+
+/// Asks the rewards service to build the reward certs for `slot`'s footer.
+///
+/// Call this before waiting for the parent. That wait can use up most of the slot's budget, and
+/// the footer doesn't wait for the reply, so requesting afterwards can leave the rewards service
+/// no time to answer.
+fn request_reward_certs(
+    ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
+    slot: Slot,
+) -> Result<Option<RewardRequestToken>, StartLeaderError> {
+    // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
+    // would be tower slots.
+    if slot
+        <= ctx
+            .genesis_cert_block_marker
+            .slot
+            .saturating_add(NUM_SLOTS_FOR_REWARD)
+    {
+        return Ok(None);
+    }
+    ctx.reward_certs_requestor
+        .request_reward_certs(slot_metrics, ctx.my_pubkey, slot)
+        .map_err(|()| StartLeaderError::PohRecorder(PohRecorderError::ChannelDisconnected))
+}
+
+fn produce_slot(
+    ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
+    slot: Slot,
+    optimistic_parent: Option<Block>,
+    reward_cert_request: Option<RewardRequestToken>,
+    block_timer: &mut Instant,
+    working_bank: Arc<Bank>,
+) -> Result<(), StartLeaderError> {
+    let timeout = block_timeout(&working_bank, slot);
+    trace!(
+        "{}: waiting for leader bank {slot} to finish, remaining time: {}ms",
+        ctx.my_pubkey,
+        timeout.saturating_sub(block_timer.elapsed()).as_millis()
+    );
+
+    let mut bank_completion_measure = Measure::start("bank_completion");
+    if let Err(e) = record_and_complete_block(
+        ctx,
+        slot_metrics,
+        slot,
+        optimistic_parent,
+        reward_cert_request,
+        block_timer,
+        timeout,
+    ) {
+        if ctx.exit.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if !matches!(&e, PohRecorderError::WindowMovedOn(_)) {
+            abort_failed_working_bank(ctx, slot)?;
+        }
+        return Err(StartLeaderError::PohRecorder(e));
+    }
+    assert!(!ctx.poh_recorder.read().unwrap().has_bank());
+    bank_completion_measure.stop();
+
+    ctx.metrics.bank_timeout_completion_count += 1;
+    ctx.metrics
+        .bank_timeout_completion_elapsed
+        .add_sample(bank_completion_measure.as_us());
+    Ok(())
+}
+
+/// Produces the inclusive leader window `start_slot..=end_slot`, using
+/// `parent_block` as the first slot's parent while abiding to the `block_timer`
+>>>>>>> 094744d (block-creation-loop: request reward certs before waiting for the parent (#16258))
 fn produce_window(
     fast_leader_handover: bool,
     start_slot: Slot,
@@ -666,9 +805,11 @@ fn record_and_complete_block(
     ctx: &mut LeaderContext,
     bank_slot: Slot,
     mut optimistic_parent: Option<Block>,
+    reward_cert_request: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
+<<<<<<< HEAD
     // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
     // would be tower slots.
     let reward_cert_request = if bank_slot
@@ -683,6 +824,8 @@ fn record_and_complete_block(
     } else {
         None
     };
+=======
+>>>>>>> 094744d (block-creation-loop: request reward certs before waiting for the parent (#16258))
     let mut accumulated_txs = vec![];
     let mut records_shutdown = false;
     let window_has_moved_on = loop {
@@ -1596,6 +1739,221 @@ mod tests {
     }
 
     #[test]
+<<<<<<< HEAD
+=======
+    fn test_leader_bank_skips_stale_identity_and_recovers() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let old_identity = Pubkey::new_unique();
+        let new_identity = Pubkey::new_unique();
+        let genesis = create_genesis_config_with_leader(10_000, &old_identity, 1_000);
+        let root_bank = Bank::new_for_tests(&genesis.genesis_config);
+        let parent_block_id = BlockId::new_unique();
+        root_bank.set_block_id(Some(parent_block_id));
+        root_bank.freeze();
+        let bank_forks = BankForks::new_rw_arc(root_bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let leader_schedule_cache = fixed_leader_schedule(new_identity, &root_bank);
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let poh_config = PohConfig::default();
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            root_bank.tick_height(),
+            root_bank.last_blockhash(),
+            root_bank.clone(),
+            Some((1, 1)),
+            root_bank.ticks_per_slot(),
+            blockstore.clone(),
+            &leader_schedule_cache,
+            &poh_config,
+            exit.clone(),
+        );
+        poh_recorder.enable_alpenglow();
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+
+        let (_record_sender, record_receiver) = record_channels(false);
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
+        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
+        let (reward_certs_requestor, _receiver) = CertsRequestor::new();
+
+        let mut ctx = LeaderContext {
+            exit,
+            my_pubkey: old_identity,
+            leader_window_info_receiver,
+            pending_parent_ready: None,
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
+            highest_finalized: Arc::new(RwLock::new(None)),
+            blockstore,
+            record_receiver,
+            poh_recorder,
+            leader_schedule_cache,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
+            bank_forks_controller,
+            rpc_subscriptions: None,
+            slot_status_notifier: None,
+            entry_notification_sender: None,
+            transaction_status_sender: None,
+            banking_tracer: BankingTracer::new_disabled(),
+            replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
+            reward_certs_requestor,
+            banking_stage_sender,
+            metrics: LoopMetrics::default(),
+            genesis_cert_block_marker: test_genesis_cert_block_marker(),
+        };
+        // A window for the new identity can arrive before the loop refreshes its cached identity.
+        let err = produce_window(
+            false,
+            1,
+            3,
+            Block {
+                slot: 0,
+                block_id: parent_block_id,
+            },
+            Instant::now(),
+            &mut ctx,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            StartLeaderError::LeaderIdentityMismatch { slot: 1, identity, leader }
+                if identity == old_identity && leader == new_identity
+        ));
+        assert!(!ctx.poh_recorder.read().unwrap().has_bank());
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            root_bank.bank_id()
+        );
+        assert!(ctx.bank_forks.read().unwrap().get(1).is_none());
+        assert!(entry_receiver.is_empty());
+        assert!(ctx.record_receiver.is_shutdown());
+        assert!(ctx.record_receiver.is_safe_to_restart());
+        assert!(!ctx.exit.load(Ordering::Relaxed));
+
+        // After refreshing the identity, a later window can still start a bank.
+        ctx.my_pubkey = new_identity;
+        let bank = start_leader_wait_for_parent_replay(
+            &mut ctx,
+            &mut SlotMetrics::new(4, false),
+            4,
+            0,
+            Some(parent_block_id),
+            Instant::now(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(bank.slot(), 4);
+        assert_eq!(bank.leader_id(), &new_identity);
+        assert_eq!(
+            ctx.bank_forks.read().unwrap().get(4).unwrap().bank_id(),
+            bank.bank_id()
+        );
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id(),
+            bank.bank_id()
+        );
+        assert!(!ctx.record_receiver.is_shutdown());
+        let (announced_bank, (message, _)) = entry_receiver.try_recv().unwrap();
+        assert_eq!(announced_bank.bank_id(), bank.bank_id());
+        assert!(matches!(message, RecorderMessage::SlotStart));
+    }
+
+    #[test]
+    fn test_reward_certs_requested_before_parent_replay() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let my_pubkey = Pubkey::new_unique();
+        let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
+        let root_bank = Bank::new_for_tests(&genesis.genesis_config);
+        root_bank.freeze();
+        let bank_forks = BankForks::new_rw_arc(root_bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+            root_bank.tick_height(),
+            root_bank.last_blockhash(),
+            root_bank.clone(),
+            Some((1, 1)),
+            root_bank.ticks_per_slot(),
+            blockstore.clone(),
+            &leader_schedule_cache,
+            &PohConfig::default(),
+            exit.clone(),
+        );
+        poh_recorder.enable_alpenglow();
+
+        let (_record_sender, record_receiver) = record_channels(false);
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
+        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let (reward_certs_requestor, reward_request_receiver) = CertsRequestor::new();
+        let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
+        let mut ctx = LeaderContext {
+            exit,
+            my_pubkey,
+            leader_window_info_receiver,
+            pending_parent_ready: None,
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
+            highest_finalized: Arc::new(RwLock::new(None)),
+            blockstore,
+            record_receiver,
+            poh_recorder: Arc::new(RwLock::new(poh_recorder)),
+            leader_schedule_cache,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
+            bank_forks_controller,
+            rpc_subscriptions: None,
+            slot_status_notifier: None,
+            entry_notification_sender: None,
+            transaction_status_sender: None,
+            banking_tracer: BankingTracer::new_disabled(),
+            replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
+            reward_certs_requestor,
+            banking_stage_sender,
+            metrics: LoopMetrics::default(),
+            genesis_cert_block_marker: GenesisCertBlockMarker {
+                slot: 0,
+                ..test_genesis_cert_block_marker()
+            },
+        };
+
+        // Slot 12 opens a leader window, and its parent (slot 11) never finishes
+        // replay. Only a few ms of the slot's budget are left.
+        let slot = 12;
+        let mut block_timer = Instant::now()
+            .checked_sub(block_timeout(&root_bank, slot) - Duration::from_millis(20))
+            .unwrap();
+        let err = produce_first_slot(
+            false,
+            slot,
+            Block::new_unique(slot - 1),
+            &mut block_timer,
+            &mut ctx,
+        )
+        .unwrap_err();
+        assert!(matches!(err, StartLeaderError::ReplayIsBehind(11, 12)));
+
+        // The reward certs were already requested while we waited for the parent.
+        let request = reward_request_receiver.try_recv().unwrap();
+        assert_eq!(request.bank_slot, slot);
+
+        // Same for a slot later in the window.
+        let slot = 13;
+        let mut block_timer = Instant::now()
+            .checked_sub(block_timeout(&root_bank, slot) - Duration::from_millis(20))
+            .unwrap();
+        let err = produce_intra_window_slot(slot, &mut block_timer, &mut ctx).unwrap_err();
+        assert!(matches!(err, StartLeaderError::ReplayIsBehind(12, 13)));
+        let request = reward_request_receiver.try_recv().unwrap();
+        assert_eq!(request.bank_slot, slot);
+    }
+
+    #[test]
+>>>>>>> 094744d (block-creation-loop: request reward certs before waiting for the parent (#16258))
     fn test_abort_failed_working_bank() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -1873,8 +2231,20 @@ mod tests {
             .unwrap();
 
         let start = Instant::now();
+<<<<<<< HEAD
         let result =
             record_and_complete_block(&mut ctx, 1, None, &mut Instant::now(), Duration::ZERO);
+=======
+        let result = record_and_complete_block(
+            &mut ctx,
+            &mut SlotMetrics::new(1, true),
+            1,
+            None,
+            None,
+            &mut Instant::now(),
+            Duration::ZERO,
+        );
+>>>>>>> 094744d (block-creation-loop: request reward certs before waiting for the parent (#16258))
         assert!(matches!(result, Err(PohRecorderError::WindowMovedOn(1))));
         assert!(start.elapsed() < Duration::from_millis(250));
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
