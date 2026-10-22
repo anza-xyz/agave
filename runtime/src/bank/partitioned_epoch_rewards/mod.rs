@@ -457,7 +457,9 @@ mod tests {
                 tests::create_genesis_config,
             },
             bank_forks::BankForks,
-            block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
+            block_component_processor::vote_reward::epoch_inflation_account_state::{
+                EpochInflationAccountState, VOTE_REWARD_ACCOUNT_ADDR,
+            },
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
                 create_genesis_config_with_leader, create_genesis_config_with_tower_vote_accounts,
@@ -489,9 +491,8 @@ mod tests {
         solana_stake_interface::{stake_flags::StakeFlags, state::StakeStateV2},
         solana_system_transaction as system_transaction,
         solana_sysvar::epoch_rewards::{self, EpochRewards},
-        solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
+        solana_vote_program::vote_state::{self, handler::VoteStateHandler},
         std::{
             collections::HashSet,
             sync::{Arc, RwLock},
@@ -1481,8 +1482,8 @@ mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config_with_tower_vote_accounts(
-            1_000_000_000,
+        } = create_genesis_config_with_vote_accounts(
+            1_000_000 * LAMPORTS_PER_SOL,
             &validator_keypairs,
             vec![1_000_000_000; 1],
         );
@@ -1511,10 +1512,18 @@ mod tests {
             .extend(vec![(new_stake_address, new_stake_account)]);
 
         let (mut previous_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        // Seed vote credits so rewards are paid at the epoch boundary.
+        populate_vote_accounts_with_votes(&previous_bank, [vote_key], 0);
+        EpochInflationAccountState::new_epoch_update_account(
+            &previous_bank,
+            previous_bank.capitalization(),
+            0,
+        );
         let num_slots_in_epoch = previous_bank.get_slots_in_epoch(previous_bank.epoch());
         assert_eq!(num_slots_in_epoch, 32);
 
         let transfer_amount = 5_000;
+        let initial_stake_balance = previous_bank.get_balance(&new_stake_address);
 
         for slot in 1..=num_slots_in_epoch + 2 {
             let bank = Bank::new_from_parent_with_bank_forks(
@@ -1524,30 +1533,24 @@ mod tests {
                 slot,
             );
 
-            // Fill bank_forks with banks with votes landing in the next slot
-            // So that rewards will be paid out at the epoch boundary, i.e. slot = 32
-            let tower_sync = TowerSync::new_from_slot(slot - 1, previous_bank.hash());
-            let vote = vote_transaction::new_tower_sync_transaction(
-                tower_sync,
-                previous_bank.last_blockhash(),
-                &validator_vote_keypairs.node_keypair,
-                &validator_vote_keypairs.vote_keypair,
-                &validator_vote_keypairs.vote_keypair,
-                None,
-            );
-            bank.process_transaction(&vote).unwrap();
+            if slot == num_slots_in_epoch {
+                assert_matches!(bank.get_reward_interval(), RewardInterval::InsideInterval);
+            }
 
             // Insert a transfer transaction from the mint to new stake account
+            let pre_transfer_balance = bank.get_balance(&new_stake_address);
             let system_tx = system_transaction::transfer(
                 &mint_keypair,
                 &new_stake_address,
                 transfer_amount,
                 bank.last_blockhash(),
             );
-            let system_result = bank.process_transaction(&system_tx);
-
             // Credits should always succeed
-            assert!(system_result.is_ok());
+            bank.process_transaction(&system_tx).unwrap();
+            assert_eq!(
+                bank.get_balance(&new_stake_address),
+                pre_transfer_balance + transfer_amount
+            );
 
             // Push a dummy blockhash, so that the latest_blockhash() for the transfer transaction in each
             // iteration are different. Otherwise, all those transactions will be the same, and will not be
@@ -1555,6 +1558,15 @@ mod tests {
             bank.register_unique_recent_blockhash_for_test();
             previous_bank = bank;
         }
+        assert_matches!(
+            previous_bank.get_reward_interval(),
+            RewardInterval::OutsideInterval
+        );
+        // The stake account must receive rewards in addition to the transfers.
+        assert!(
+            previous_bank.get_balance(&new_stake_address)
+                > initial_stake_balance + (num_slots_in_epoch + 2) * transfer_amount
+        );
     }
 
     #[test]
