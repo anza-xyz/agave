@@ -2905,17 +2905,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
-name = "filedescriptor"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ed3d8a5e20435ff00469e51a0d82049bae66504b5c429920dadf9bb54d47b3f"
-dependencies = [
- "libc",
- "thiserror 1.0.69",
- "winapi",
-]
-
-[[package]]
 name = "filetime"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3137,16 +3126,6 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
-]
-
-[[package]]
-name = "gag"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a713bee13966e9fbffdf7193af71d54a6b35a0bb34997cd6c9519ebeb5005972"
-dependencies = [
- "filedescriptor",
- "tempfile",
 ]
 
 [[package]]
@@ -9182,7 +9161,6 @@ dependencies = [
  "arc-swap",
  "assert_matches",
  "crossbeam-channel",
- "gag",
  "itertools 0.15.0",
  "log",
  "rand 0.9.4",
@@ -9191,21 +9169,16 @@ dependencies = [
  "solana-account",
  "solana-accounts-db",
  "solana-bls-signatures",
- "solana-client-traits",
  "solana-clock",
  "solana-cluster-type",
  "solana-commitment-config",
  "solana-core",
  "solana-download-utils",
- "solana-entry",
  "solana-epoch-schedule",
  "solana-feature-gate-interface",
  "solana-fee-structure",
  "solana-genesis-config",
- "solana-genesis-utils",
  "solana-gossip",
- "solana-hard-forks",
- "solana-hash",
  "solana-keypair",
  "solana-leader-schedule",
  "solana-ledger",
@@ -9213,7 +9186,6 @@ dependencies = [
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
- "solana-packet",
  "solana-perf",
  "solana-poh-config",
  "solana-program-binaries",
@@ -9226,22 +9198,14 @@ dependencies = [
  "solana-sdk-ids",
  "solana-shred-version",
  "solana-signer",
- "solana-slot-hashes",
  "solana-stake-interface",
- "solana-streamer",
  "solana-system-interface",
  "solana-system-transaction",
- "solana-time-utils",
- "solana-tpu-client",
  "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
- "solana-turbine",
  "solana-validator-exit",
- "solana-vote",
- "solana-vote-interface",
  "solana-vote-program",
- "static_assertions",
  "strum",
  "tempfile",
  "tokio",
