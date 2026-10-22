@@ -1015,17 +1015,34 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
     }
 
     pub(crate) fn prune_oldest(&mut self, max_size: usize) -> usize {
+        let num_to_prune = self.total_size.saturating_sub(max_size);
+        if num_to_prune == 0 {
+            return 0;
+        }
+
+        // Compute each key's oldest last_update once, then remove the oldest
+        // keys. The previous loop rescanned every key per eviction.
+        let mut keys: Vec<(Option<u64>, usize, ConnectionTableKey)> = self
+            .table
+            .iter()
+            .enumerate()
+            .map(|(index, (key, connections))| {
+                (
+                    connections.iter().map(ConnectionEntry::last_update).min(),
+                    index,
+                    *key,
+                )
+            })
+            .collect();
+        keys.sort_unstable_by_key(|&(last_update, index, _)| (last_update, index));
+
         let mut num_pruned = 0;
-        let key = |(_, connections): &(_, &Vec<_>)| {
-            connections.iter().map(ConnectionEntry::last_update).min()
-        };
-        while self.total_size.saturating_sub(num_pruned) > max_size {
-            match self.table.values().enumerate().min_by_key(key) {
-                None => break,
-                Some((index, connections)) => {
-                    num_pruned += connections.len();
-                    self.table.swap_remove_index(index);
-                }
+        for (_, _, key) in keys {
+            if num_pruned >= num_to_prune {
+                break;
+            }
+            if let Some(connections) = self.table.swap_remove(&key) {
+                num_pruned += connections.len();
             }
         }
         self.total_size = self.total_size.saturating_sub(num_pruned);
@@ -2521,4 +2538,39 @@ pub mod test {
         cancel.cancel();
         join_handle.await.unwrap();
     }
+    #[test]
+    fn test_prune_oldest_capacity() {
+        use std::net::{IpAddr, Ipv4Addr};
+        let cancel = CancellationToken::new();
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
+        let stats = Arc::new(StreamerStats::default());
+        let n = 3000;
+        for i in 0..n {
+            let ip = IpAddr::V4(Ipv4Addr::from((i as u32).to_be_bytes()));
+            table
+                .try_add_connection(
+                    ConnectionTableKey::IP(ip),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 10_000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(i as u64)),
+                    10,
+                    || Arc::new(NullStreamerCounter {}),
+                )
+                .unwrap();
+        }
+        let pruned = table.prune_oldest(2700);
+        assert_eq!(pruned, 300);
+        assert_eq!(table.total_size, 2700);
+        assert_eq!(table.table.len(), 2700);
+        for key in table.table.keys() {
+            let ConnectionTableKey::IP(IpAddr::V4(ip)) = key else {
+                panic!("expected IPv4 key");
+            };
+            let idx = u32::from_be_bytes(ip.octets()) as u64;
+            assert!(idx >= 300, "oldest key {idx} was not pruned");
+        }
+    }
+
 }
