@@ -1334,7 +1334,6 @@ impl Validator {
                 block_commitment_cache: block_commitment_cache.clone(),
                 blockstore: blockstore.clone(),
                 cluster_info: cluster_info.clone(),
-                poh_recorder: Some(poh_recorder.clone()),
                 genesis_hash: genesis_config.hash(),
                 ledger_path: ledger_path.to_path_buf(),
                 validator_exit: config.validator_exit.clone(),

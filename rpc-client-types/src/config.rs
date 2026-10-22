@@ -179,6 +179,11 @@ pub struct RpcProgramAccountsConfig {
 #[serde(rename_all = "camelCase")]
 pub enum RpcTransactionLogsFilter {
     All,
+    /// Deprecated compatibility alias for [`Self::All`].
+    #[deprecated(
+        since = "4.5.0",
+        note = "Alpenglow has no vote transactions; use `All` instead"
+    )]
     AllWithVotes,
     Mentions(Vec<String>), // base58-encoded list of addresses
 }
@@ -358,4 +363,17 @@ pub struct RpcRankMapConfig {
     pub identity: Option<String>,
     /// Minimum finalized bank context slot; no minimum is enforced when omitted.
     pub min_context_slot: Option<Slot>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RpcTransactionLogsFilter;
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_all_with_votes_wire_compatibility() {
+        let filter: RpcTransactionLogsFilter = serde_json::from_str(r#""allWithVotes""#).unwrap();
+        assert_eq!(filter, RpcTransactionLogsFilter::AllWithVotes);
+        assert_eq!(serde_json::to_string(&filter).unwrap(), r#""allWithVotes""#);
+    }
 }

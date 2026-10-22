@@ -507,7 +507,6 @@ impl JsonRpcRequestProcessor {
         let slot = bank.slot();
         let optimistically_confirmed_bank =
             Arc::new(RwLock::new(OptimisticallyConfirmedBank { bank }));
-        let migration_status = bank_forks.read().unwrap().migration_status();
         Self {
             config,
             snapshot_config: None,
@@ -521,9 +520,7 @@ impl JsonRpcRequestProcessor {
             validator_exit: create_validator_exit(exit.clone()),
             health: Arc::new(RpcHealth::new(
                 Arc::clone(&optimistically_confirmed_bank),
-                blockstore,
                 Arc::default(),
-                migration_status,
                 0,
                 exit,
             )),
@@ -3892,9 +3889,6 @@ pub mod rpc_full {
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_vote: contact_info
-                                .tpu_vote(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
                             serve_repair: contact_info
                                 .serve_repair(Protocol::UDP)
                                 .filter(|addr| socket_addr_space.check(addr)),
@@ -5089,7 +5083,7 @@ pub mod tests {
                 block_commitment_cache.clone(),
                 blockstore.clone(),
                 validator_exit,
-                RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone()),
+                RpcHealth::stub(optimistically_confirmed_bank.clone()),
                 cluster_info,
                 Hash::default(),
                 None,
@@ -5673,7 +5667,6 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:8009",
             "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:8010",
-            "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
             "rpc": "127.0.0.1:8899",
             "pubsub": "127.0.0.1:8900",
@@ -5689,7 +5682,6 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:1240",
             "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:1245",
-            "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
             "rpc": "127.0.0.1:8899",
             "pubsub": "127.0.0.1:8900",
@@ -7545,7 +7537,7 @@ pub mod tests {
         let (bank_forks, mint_keypair, ..) = new_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone());
+        let health = RpcHealth::stub(optimistically_confirmed_bank.clone());
         // Mark the node as healthy to start
         health.stub_set_health_status(Some(RpcHealthStatus::Ok));
 
@@ -7901,7 +7893,7 @@ pub mod tests {
             block_commitment_cache,
             blockstore.clone(),
             validator_exit,
-            RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore),
+            RpcHealth::stub(optimistically_confirmed_bank.clone()),
             cluster_info,
             Hash::default(),
             None,
@@ -9760,7 +9752,7 @@ pub mod tests {
             block_commitment_cache,
             blockstore.clone(),
             validator_exit,
-            RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone()),
+            RpcHealth::stub(optimistically_confirmed_bank.clone()),
             cluster_info,
             Hash::default(),
             None,
