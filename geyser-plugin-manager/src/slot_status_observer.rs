@@ -95,84 +95,79 @@ impl SlotStatusObserver {
 mod tests {
     use {
         super::*,
+        crossbeam_channel::{Sender, unbounded},
         solana_clock::Slot,
-        solana_rpc::{
-            optimistically_confirmed_bank_tracker::SlotNotification,
-            slot_status_notifier::SlotStatusNotifierInterface,
-        },
+        solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
         solana_runtime::bank::BankId,
         std::sync::RwLock,
     };
 
-    #[derive(Debug)]
-    struct NoopNotifier;
+    #[derive(Debug, PartialEq)]
+    enum Status {
+        Confirmed(Slot, Option<Slot>, BankId),
+        Processed(Slot, Option<Slot>, BankId),
+        Rooted(Slot, Option<Slot>, BankId),
+    }
 
-    impl SlotStatusNotifierInterface for NoopNotifier {
-        fn notify_slot_confirmed(&self, _: Slot, _: Option<Slot>, _: BankId) {}
-        fn notify_slot_processed(&self, _: Slot, _: Option<Slot>, _: BankId) {}
-        fn notify_slot_rooted(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+    struct RecordingNotifier(Sender<Status>);
+
+    impl SlotStatusNotifierInterface for RecordingNotifier {
+        fn notify_slot_confirmed(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+            self.0
+                .send(Status::Confirmed(slot, parent, bank_id))
+                .unwrap();
+        }
+        fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+            self.0
+                .send(Status::Processed(slot, parent, bank_id))
+                .unwrap();
+        }
+        fn notify_slot_rooted(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+            self.0.send(Status::Rooted(slot, parent, bank_id)).unwrap();
+        }
         fn notify_first_shred_received(&self, _: Slot) {}
         fn notify_completed(&self, _: Slot) {}
         fn notify_created_bank(&self, _: Slot, _: Slot, _: BankId) {}
         fn notify_slot_dead(&self, _: Slot, _: Slot, _: String) {}
     }
 
-    #[derive(Debug)]
-    struct SignalNotifier(Arc<AtomicBool>);
-
-    impl SlotStatusNotifierInterface for SignalNotifier {
-        fn notify_slot_confirmed(&self, _: Slot, _: Option<Slot>, _: BankId) {
-            self.0.store(true, Ordering::SeqCst);
-        }
-        fn notify_slot_processed(&self, _: Slot, _: Option<Slot>, _: BankId) {}
-        fn notify_slot_rooted(&self, _: Slot, _: Option<Slot>, _: BankId) {}
-        fn notify_first_shred_received(&self, _: Slot) {}
-        fn notify_completed(&self, _: Slot) {}
-        fn notify_created_bank(&self, _: Slot, _: Slot, _: BankId) {}
-        fn notify_slot_dead(&self, _: Slot, _: Slot, _: String) {}
-    }
-
-    fn wait_until_entered(entered: &AtomicBool) {
-        for _ in 0..100 {
-            if entered.load(Ordering::SeqCst) {
-                return;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        panic!("worker never entered the receive path");
+    fn recording_notifier() -> (SlotStatusNotifier, Receiver<Status>) {
+        let (sender, receiver) = unbounded();
+        (Arc::new(RwLock::new(RecordingNotifier(sender))), receiver)
     }
 
     #[test]
     fn test_slot_status_observer_joins_on_idle_channel() {
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let entered = Arc::new(AtomicBool::new(false));
-        let notifier: SlotStatusNotifier = Arc::new(RwLock::new(SignalNotifier(entered.clone())));
+        let (sender, receiver) = unbounded();
+        let (notifier, statuses) = recording_notifier();
         let observer = SlotStatusObserver::new(receiver, notifier);
 
+        let bank_id = BankId::new(3);
         sender
-            .send(SlotNotification::OptimisticallyConfirmed(
-                0,
-                BankId::default(),
-            ))
+            .send(SlotNotification::OptimisticallyConfirmed(7, bank_id))
             .unwrap();
-        wait_until_entered(&entered);
+        assert_eq!(
+            statuses.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Status::Confirmed(7, None, bank_id),
+        );
 
-        let (done_tx, done_rx) = crossbeam_channel::unbounded();
-        thread::spawn(move || {
+        let (done_tx, done_rx) = unbounded();
+        let joiner = thread::spawn(move || {
             let mut observer = observer;
             observer.join().unwrap();
             done_tx.send(()).unwrap();
         });
-        done_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("observer join timed out on an idle channel");
+        let result = done_rx.recv_timeout(Duration::from_secs(5));
+        // Release a blocked receiver even if the shutdown regression returns.
         drop(sender);
+        joiner.join().unwrap();
+        result.expect("observer join timed out on an idle channel");
     }
 
     #[test]
     fn test_slot_status_observer_exits_on_disconnect() {
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let notifier: SlotStatusNotifier = Arc::new(RwLock::new(NoopNotifier));
+        let (sender, receiver) = unbounded();
+        let (notifier, _statuses) = recording_notifier();
         let mut observer = SlotStatusObserver::new(receiver, notifier);
 
         drop(sender);
@@ -183,8 +178,84 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(10));
         }
-        assert!(handle.is_finished());
+        let finished = handle.is_finished();
         assert!(!observer.exit_updated_slot_server.load(Ordering::Relaxed));
+        // Also stop the worker when testing a regressed disconnect path.
+        observer
+            .exit_updated_slot_server
+            .store(true, Ordering::Relaxed);
         handle.join().unwrap();
+        assert!(finished);
+    }
+
+    #[test]
+    fn test_slot_status_observer_delivers_after_idle_timeout() {
+        let (sender, receiver) = unbounded();
+        let (notifier, statuses) = recording_notifier();
+        let mut observer = SlotStatusObserver::new(receiver, notifier);
+        let bank_id = BankId::new(9);
+        sender
+            .send(SlotNotification::OptimisticallyConfirmed(42, bank_id))
+            .unwrap();
+        assert_eq!(
+            statuses.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Status::Confirmed(42, None, bank_id),
+        );
+        // Leave the input connected and idle longer than the receive timeout.
+        assert_eq!(
+            statuses.recv_timeout(Duration::from_millis(1_200)),
+            Err(RecvTimeoutError::Timeout),
+        );
+        sender
+            .send(SlotNotification::Frozen((43, 42, bank_id)))
+            .unwrap();
+        sender
+            .send(SlotNotification::Root((43, 42, bank_id)))
+            .unwrap();
+        assert_eq!(
+            statuses.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Status::Processed(43, Some(42), bank_id),
+        );
+        assert_eq!(
+            statuses.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Status::Rooted(43, Some(42), bank_id),
+        );
+        drop(sender);
+        observer.join().unwrap();
+    }
+
+    #[test]
+    fn test_slot_status_observer_drains_queued_notifications_on_disconnect() {
+        let (sender, receiver) = unbounded();
+        let (notifier, statuses) = recording_notifier();
+        let bank_id = BankId::new(11);
+        sender
+            .send(SlotNotification::Frozen((44, 42, bank_id)))
+            .unwrap();
+        sender
+            .send(SlotNotification::OptimisticallyConfirmed(44, bank_id))
+            .unwrap();
+        sender
+            .send(SlotNotification::Root((44, 42, bank_id)))
+            .unwrap();
+        drop(sender);
+        // Start with a disconnected channel that still contains notifications.
+        let mut observer = SlotStatusObserver::new(receiver, notifier);
+        for expected in [
+            Status::Processed(44, Some(42), bank_id),
+            Status::Confirmed(44, None, bank_id),
+            Status::Rooted(44, Some(42), bank_id),
+        ] {
+            assert_eq!(
+                statuses.recv_timeout(Duration::from_secs(5)).unwrap(),
+                expected
+            );
+        }
+        assert_eq!(
+            statuses.recv_timeout(Duration::from_secs(5)),
+            Err(RecvTimeoutError::Disconnected),
+        );
+        assert!(!observer.exit_updated_slot_server.load(Ordering::Relaxed));
+        observer.join().unwrap();
     }
 }
