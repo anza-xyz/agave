@@ -353,7 +353,7 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-syscalls",
  "solana-system-interface",
  "solana-transaction 6.0.0",
@@ -510,7 +510,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
- "solana-svm-transaction",
+ "solana-svm-transaction 7.0.0",
  "solana-transaction 5.1.0",
 ]
 
@@ -5918,7 +5918,7 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-stake-interface",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-system-interface",
  "solana-sysvar",
  "solana-time-utils",
@@ -6368,7 +6368,7 @@ dependencies = [
  "solana-instruction-error 3.1.0",
  "solana-pubkey 4.4.0",
  "solana-sdk-ids",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-transaction-error",
 ]
 
@@ -6536,7 +6536,7 @@ dependencies = [
  "solana-streamer",
  "solana-svm",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-sysvar",
@@ -6581,7 +6581,7 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-runtime-transaction",
  "solana-sdk-ids",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-system-interface",
  "solana-transaction-error",
  "solana-vote-program",
@@ -6811,7 +6811,7 @@ name = "solana-fee"
 version = "4.5.0-alpha.2"
 dependencies = [
  "solana-fee-structure",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
 ]
 
 [[package]]
@@ -7253,7 +7253,7 @@ dependencies = [
  "solana-streamer",
  "solana-svm",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-time-utils",
@@ -7674,7 +7674,7 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-measure",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
@@ -7864,7 +7864,7 @@ dependencies = [
  "solana-slot-history",
  "solana-storage-bigtable",
  "solana-svm",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-sysvar",
@@ -8091,7 +8091,7 @@ dependencies = [
  "solana-svm",
  "solana-svm-callback",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-syscalls",
  "solana-system-interface",
  "solana-system-transaction",
@@ -8132,7 +8132,7 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-sdk-ids",
  "solana-signature",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-transaction 6.0.0",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -8606,7 +8606,7 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-measure",
  "solana-svm-timings",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-svm-type-overrides",
  "solana-syscalls",
  "solana-system-interface",
@@ -8692,6 +8692,20 @@ dependencies = [
  "solana-sdk-ids",
  "solana-signature",
  "solana-transaction 5.1.0",
+]
+
+[[package]]
+name = "solana-svm-transaction"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd7d666492c0930df25d2def2be8e84a5fcd7a65b5ec36f4247f6add6b71ef8b"
+dependencies = [
+ "solana-hash",
+ "solana-message 6.0.0",
+ "solana-pubkey 4.4.0",
+ "solana-sdk-ids",
+ "solana-signature",
+ "solana-transaction 6.0.0",
 ]
 
 [[package]]
@@ -9119,7 +9133,7 @@ dependencies = [
  "solana-hash",
  "solana-pubkey 4.4.0",
  "solana-runtime-transaction",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "static_assertions",
 ]
 
@@ -9188,7 +9202,7 @@ dependencies = [
  "solana-serialize-utils 4.0.0",
  "solana-signature",
  "solana-signer",
- "solana-svm-transaction",
+ "solana-svm-transaction 8.0.0",
  "solana-transaction 6.0.0",
  "solana-vote-interface",
  "thiserror 2.0.21",
