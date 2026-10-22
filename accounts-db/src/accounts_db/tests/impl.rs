@@ -261,6 +261,13 @@ fn test_generate_index_collects_pubkeys_by_owner() {
         store.write_accounts(&(slot, &data[..])).unwrap();
         db.storage.insert(Arc::new(store));
     }
+    // The newest version of `staked` has another owner. Old versions still
+    // count.
+    let store = db.create_store(2, 1000);
+    store
+        .write_accounts(&(2, &[(&staked, &other_account)][..]))
+        .unwrap();
+    db.storage.insert(Arc::new(store));
 
     let result = db.generate_index(None, false, &[stake_owner, vote_owner]);
     assert_eq!(result.pubkeys_by_owner.len(), 2);

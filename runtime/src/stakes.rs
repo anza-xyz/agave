@@ -1635,4 +1635,95 @@ pub(crate) mod tests {
         assert_eq!(stakes.epoch, 1);
         assert_eq!(stakes.history(), &stake_history);
     }
+
+    #[test]
+    fn test_load_from_accounts_keeps_vote_account_without_stake() {
+        let ((vote_pubkey, vote_account), _) = create_staked_node_accounts(10, &Rent::default());
+        let get_account = |pubkey: &Pubkey| (*pubkey == vote_pubkey).then(|| vote_account.clone());
+        let pubkeys_by_owner = [(solana_vote_program::id(), vec![vote_pubkey])]
+            .into_iter()
+            .collect();
+        let stakes = Stakes::load_from_accounts(
+            0,
+            StakeHistory::default(),
+            None,
+            pubkeys_by_owner,
+            get_account,
+        );
+        assert!(stakes.vote_accounts().get(&vote_pubkey).is_some());
+        assert_eq!(stakes.vote_accounts().get_delegated_stake(&vote_pubkey), 0);
+        assert!(stakes.delegated_stakes.is_empty());
+    }
+
+    #[test]
+    fn test_load_from_accounts_keeps_delegation_without_vote_account() {
+        let ((vote_pubkey, _), (stake_pubkey, stake_account)) =
+            create_staked_node_accounts(10, &Rent::default());
+        let get_account =
+            |pubkey: &Pubkey| (*pubkey == stake_pubkey).then(|| stake_account.clone());
+        let pubkeys_by_owner = [(stake::program::id(), vec![stake_pubkey])]
+            .into_iter()
+            .collect();
+        let stakes = Stakes::load_from_accounts(
+            0,
+            StakeHistory::default(),
+            None,
+            pubkeys_by_owner,
+            get_account,
+        );
+        assert!(stakes.stake_delegations().contains_key(&stake_pubkey));
+        assert_eq!(stakes.delegated_stakes.get(&vote_pubkey), Some(&10));
+        assert!(stakes.vote_accounts().get(&vote_pubkey).is_none());
+    }
+
+    #[test]
+    fn test_load_from_accounts_uses_new_rate_activation_epoch() {
+        let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
+            create_staked_node_accounts_with_activation_and_deactivation_epochs(
+                100,
+                &Rent::default(),
+                0,
+                Epoch::MAX,
+            );
+        let accounts = [
+            (vote_pubkey, vote_account),
+            (stake_pubkey, stake_account.clone()),
+        ];
+        let get_account = |pubkey: &Pubkey| {
+            accounts
+                .iter()
+                .find(|(key, _)| key == pubkey)
+                .map(|(_, account)| account.clone())
+        };
+        // A stake still warming up: the rate decides how much of it is
+        // effective at epoch 1.
+        let mut stake_history = StakeHistory::default();
+        stake_history.add(
+            0,
+            StakeHistoryEntry::with_effective_and_activating(1000, 1000),
+        );
+        let delegation = *StakeAccount::try_from(stake_account).unwrap().delegation();
+        let load = |new_rate_activation_epoch| {
+            let pubkeys_by_owner = [
+                (stake::program::id(), vec![stake_pubkey]),
+                (solana_vote_program::id(), vec![vote_pubkey]),
+            ]
+            .into_iter()
+            .collect();
+            Stakes::load_from_accounts(
+                1,
+                stake_history.clone(),
+                new_rate_activation_epoch,
+                pubkeys_by_owner,
+                get_account,
+            )
+            .vote_accounts()
+            .get_delegated_stake(&vote_pubkey)
+        };
+        let old_rate = delegation.stake_v2(1, &stake_history, None);
+        let new_rate = delegation.stake_v2(1, &stake_history, Some(0));
+        assert_ne!(old_rate, new_rate);
+        assert_eq!(load(None), old_rate);
+        assert_eq!(load(Some(0)), new_rate);
+    }
 }
