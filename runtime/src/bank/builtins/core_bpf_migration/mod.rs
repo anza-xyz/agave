@@ -1659,6 +1659,12 @@ pub(crate) mod tests {
         let slots_per_epoch = 32;
         genesis_config.epoch_schedule =
             EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+        for feature_id in [
+            agave_feature_set::disable_sbpf_v0_execution::id(),
+            agave_feature_set::reenable_sbpf_v0_execution::id(),
+        ] {
+            genesis_config.accounts.remove(&feature_id).unwrap();
+        }
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
         let test_prototype = TestPrototype::Builtin(&BUILTINS[0]); // System program

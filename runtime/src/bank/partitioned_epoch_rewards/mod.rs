@@ -459,8 +459,8 @@ mod tests {
             bank_forks::BankForks,
             block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
             genesis_utils::{
-                GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
-                create_genesis_config_with_leader, create_genesis_config_with_tower_vote_accounts,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_leader,
+                create_genesis_config_with_tower_vote_accounts,
                 create_genesis_config_with_vote_accounts, deactivate_features,
             },
             runtime_config::RuntimeConfig,
@@ -1694,8 +1694,7 @@ mod tests {
 
     #[test]
     fn test_reward_epoch_delegated_stakes_excludes_vat() {
-        let (mut genesis_config, _mint_keypair) = create_genesis_config(500);
-        activate_all_features(&mut genesis_config);
+        let (genesis_config, _mint_keypair) = create_genesis_config(500);
         let bank = Bank::new_for_tests(&genesis_config);
         let first_normal_slot = bank.epoch_schedule().first_normal_slot;
         let slots_per_epoch = bank.epoch_schedule().slots_per_epoch;
