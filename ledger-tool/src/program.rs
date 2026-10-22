@@ -420,9 +420,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         // Override account data and lamports from input file if provided
                         if space > 0 {
                             let lamports = account_info.lamports.unwrap_or(account.lamports());
-                            let mut account = AccountSharedData::new(lamports, space, &owner);
-                            account.set_data_from_slice(&data);
-                            account
+                            AccountSharedData::new_with_data(lamports, data, &owner)
                         } else {
                             account
                         }
@@ -435,9 +433,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                             Pubkey::new_unique()
                         });
                         let lamports = account_info.lamports.unwrap_or(0);
-                        let mut account = AccountSharedData::new(lamports, space, &owner);
-                        account.set_data_from_slice(&data);
-                        account
+                        AccountSharedData::new_with_data(lamports, data, &owner)
                     };
                     let txn_acct_index = if let Some(idx) = txn_acct_indices.get(&pubkey) {
                         *idx

@@ -9992,12 +9992,13 @@ fn test_accounts_data_size_delta_on_chain_with_deleted_account_transaction() {
                 let balance = rent_exempt_minimum - 1;
                 genesis_config.accounts.insert(
                     deleted_account.pubkey(),
-                    Account::new_rent_epoch(
-                        balance,
-                        account_data_size,
-                        &mock_program_id,
-                        INITIAL_RENT_EPOCH + 1,
-                    ),
+                    Account {
+                        lamports: balance,
+                        data: vec![0; account_data_size],
+                        owner: mock_program_id,
+                        executable: false,
+                        rent_epoch: INITIAL_RENT_EPOCH + 1,
+                    },
                 );
                 balance
             }
@@ -10081,12 +10082,13 @@ fn test_invalid_rent_state_changes_existing_accounts() {
     let rent_exempt_account = Keypair::new();
     genesis_config.accounts.insert(
         rent_exempt_account.pubkey(),
-        Account::new_rent_epoch(
-            rent_exempt_minimum,
-            account_data_size,
-            &mock_program_id,
-            INITIAL_RENT_EPOCH + 1,
-        ),
+        Account {
+            lamports: rent_exempt_minimum,
+            data: vec![0; account_data_size],
+            owner: mock_program_id,
+            executable: false,
+            rent_epoch: INITIAL_RENT_EPOCH + 1,
+        },
     );
 
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
@@ -12351,9 +12353,12 @@ fn test_new_for_txn_tests_system_transfer() {
             make_sysvar(wincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
         ),
         (system_program::id(), {
-            let mut acct = AccountSharedData::new(1, 14, &native_loader::id());
+            let mut acct = AccountSharedData::new_with_data(
+                1,
+                b"system_program".to_vec(),
+                &native_loader::id(),
+            );
             acct.set_executable(true);
-            acct.set_data_from_slice(b"system_program");
             acct
         }),
     ];
@@ -12525,9 +12530,12 @@ fn test_new_for_block_tests_with_vote_account() {
             make_sysvar(wincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
         ),
         (system_program::id(), {
-            let mut acct = AccountSharedData::new(1, 14, &native_loader::id());
+            let mut acct = AccountSharedData::new_with_data(
+                1,
+                b"system_program".to_vec(),
+                &native_loader::id(),
+            );
             acct.set_executable(true);
-            acct.set_data_from_slice(b"system_program");
             acct
         }),
     ];
