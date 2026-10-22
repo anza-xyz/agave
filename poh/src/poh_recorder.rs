@@ -47,7 +47,7 @@ use {
     std::{
         cmp,
         sync::{
-            Arc, Mutex, RwLock, Weak,
+            Arc, Mutex, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::{Duration, Instant},
@@ -223,12 +223,12 @@ impl PohRecorderMetrics {
 pub struct PohRecorder {
     pub(crate) poh: Arc<Mutex<Poh>>,
     clear_bank_signal: Option<Sender<bool>>,
-    // The bank PoH was last reset to (the parent slot). Weak, so PoH does not keep the bank alive
-    // after `BankForks` prunes it. The fields below are cached because they are read after that.
-    start_bank: Weak<Bank>,
+    // Cached from the bank PoH was last reset to (the parent slot). PoH does not hold the bank, so
+    // it never keeps a bank alive after `BankForks` prunes it.
     start_slot: Slot,
     start_bank_id: BankId,
     start_bank_ns_per_slot: u128,
+    start_bank_leader_id: Pubkey,
     start_bank_active_descendants: Vec<Slot>,
     start_tick_height: u64, // first tick_height this recorder will observe
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
@@ -316,10 +316,10 @@ impl PohRecorder {
                 ),
                 working_bank_sender,
                 clear_bank_signal,
-                start_bank: Arc::downgrade(&start_bank),
                 start_slot: start_bank.slot(),
                 start_bank_id: start_bank.bank_id(),
                 start_bank_ns_per_slot: start_bank.ns_per_slot,
+                start_bank_leader_id: *start_bank.leader_id(),
                 start_bank_active_descendants: vec![],
                 start_tick_height: tick_height + 1,
                 leader_last_tick_height,
@@ -617,11 +617,11 @@ impl PohRecorder {
         tick_height
     }
 
-    fn set_start_bank(&mut self, bank: &Arc<Bank>) {
-        self.start_bank = Arc::downgrade(bank);
+    fn set_start_bank(&mut self, bank: &Bank) {
         self.start_slot = bank.slot();
         self.start_bank_id = bank.bank_id();
         self.start_bank_ns_per_slot = bank.ns_per_slot;
+        self.start_bank_leader_id = *bank.leader_id();
     }
 
     /// Waits for the bank to freeze and sends the block footer with the bank hash.
@@ -993,10 +993,7 @@ impl PohRecorder {
     }
 
     fn start_slot_was_mine(&self, my_pubkey: &Pubkey) -> bool {
-        // A dropped start bank was pruned from `BankForks`; treat it as not ours.
-        self.start_bank
-            .upgrade()
-            .is_some_and(|bank| bank.leader_id() == my_pubkey)
+        self.start_bank_leader_id == *my_pubkey
     }
 
     // Active descendants of the last reset bank that are smaller than the
