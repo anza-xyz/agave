@@ -1199,8 +1199,11 @@ mod tests {
     /// Note that `sample`=0 returns a fully default account with a default pubkey.
     fn create_test_account(sample: usize) -> (Pubkey, AccountSharedData) {
         let data_len = sample % 256;
-        let mut account = AccountSharedData::new(sample as u64, 0, &Pubkey::default());
-        account.set_data_from_slice(&vec![data_len as u8; data_len]);
+        let account = AccountSharedData::new_with_data(
+            sample as u64,
+            vec![data_len as u8; data_len],
+            &Pubkey::default(),
+        );
         (Pubkey::default(), account)
     }
 
@@ -1356,12 +1359,12 @@ mod tests {
         let mut create_account = |data_len: usize| -> (Pubkey, AccountSharedData) {
             let pubkey = Pubkey::new_from_array(rng.random());
             let owner = Pubkey::new_from_array(rng.random());
-            let mut account = AccountSharedData::new(rng.random(), data_len, &owner);
+            let lamports = rng.random();
             // Ensure we actually have some unique data to compare against when checking correctness
             let data = std::iter::from_fn(|| Some(rng.random::<u8>()))
                 .take(data_len)
                 .collect::<Vec<_>>();
-            account.set_data_from_slice(&data);
+            let account = AccountSharedData::new_with_data(lamports, data, &owner);
             (pubkey, account)
         };
 
@@ -1571,8 +1574,7 @@ mod tests {
             let pubkey = solana_pubkey::new_rand();
             let owner = Pubkey::default();
             let data_len = 3_u64;
-            let mut account = AccountSharedData::new(0, data_len as usize, &owner);
-            account.set_data_from_slice(b"abc");
+            let account = AccountSharedData::new_with_data(0, b"abc".to_vec(), &owner);
             let stored_meta = StoredMeta {
                 write_version: 0,
                 pubkey,

@@ -1865,12 +1865,16 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
     account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
 
-    let mut normal_account = AccountSharedData::new(1, 0, &Pubkey::default());
-    normal_account.set_owner(spl_generic_token::token::id());
-    normal_account.set_data_from_slice(&account_data_with_mint);
-    let mut zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    zero_account.set_owner(spl_generic_token::token::id());
-    zero_account.set_data_from_slice(&account_data_with_mint);
+    let normal_account = AccountSharedData::new_with_data(
+        1,
+        account_data_with_mint.clone(),
+        &spl_generic_token::token::id(),
+    );
+    let zero_account = AccountSharedData::new_with_data(
+        0,
+        account_data_with_mint,
+        &spl_generic_token::token::id(),
+    );
 
     //store an account
     accounts.store_for_tests((0, [(&pubkey1, &normal_account)].as_slice()));
@@ -1998,8 +2002,11 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
     let mut account_data_with_mint = vec![0; spl_generic_token::token::Account::get_packed_len()];
     account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
     account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
-    let mut token_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
-    token_account.set_data_from_slice(&account_data_with_mint);
+    let token_account = AccountSharedData::new_with_data(
+        1,
+        account_data_with_mint,
+        &spl_generic_token::token::id(),
+    );
 
     let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
@@ -3282,10 +3289,16 @@ fn test_flush_purged_zero_lamport_account_purges_secondary_index() {
     account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
     account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
 
-    let mut live_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
-    live_account.set_data_from_slice(&account_data_with_mint);
-    let mut zero_account = AccountSharedData::new(0, 0, &spl_generic_token::token::id());
-    zero_account.set_data_from_slice(&account_data_with_mint);
+    let live_account = AccountSharedData::new_with_data(
+        1,
+        account_data_with_mint.clone(),
+        &spl_generic_token::token::id(),
+    );
+    let zero_account = AccountSharedData::new_with_data(
+        0,
+        account_data_with_mint,
+        &spl_generic_token::token::id(),
+    );
 
     // Storing into the cache adds the secondary index entries for all three accounts
     accounts.store_for_tests((
@@ -3339,10 +3352,16 @@ fn test_clean_tombstone_purges_secondary_index() {
     account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
     account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
 
-    let mut live_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
-    live_account.set_data_from_slice(&account_data_with_mint);
-    let mut zero_account = AccountSharedData::new(0, 0, &spl_generic_token::token::id());
-    zero_account.set_data_from_slice(&account_data_with_mint);
+    let live_account = AccountSharedData::new_with_data(
+        1,
+        account_data_with_mint.clone(),
+        &spl_generic_token::token::id(),
+    );
+    let zero_account = AccountSharedData::new_with_data(
+        0,
+        account_data_with_mint,
+        &spl_generic_token::token::id(),
+    );
 
     // Slot 1: nonzero version; slot 2: zero-lamport version. Flush without clean so the
     // slot 1 entry stays in the slot list for clean to reclaim
@@ -6809,13 +6828,11 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
     account_data[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
 
     let make_token_account = |lamports: u64| {
-        let mut acct = AccountSharedData::new(
+        AccountSharedData::new_with_data(
             lamports,
-            spl_generic_token::token::Account::get_packed_len(),
+            account_data.clone(),
             &spl_generic_token::token::id(),
-        );
-        acct.set_data_from_slice(&account_data);
-        acct
+        )
     };
 
     let db = Arc::new(AccountsDb {
