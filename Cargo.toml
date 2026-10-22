@@ -225,8 +225,8 @@ agave-math-utils = { path = "math-utils", version = "=4.5.0-alpha.2", features =
 agave-precompiles = { path = "precompiles", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-random = { path = "random", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-agave-scheduler-bindings = "6.0.0"
-agave-scheduler-handshake = "8.0.0"
+agave-scheduler-bindings = "7.0.0"
+agave-scheduler-handshake = "9.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-transaction-view = "8.0.0"
@@ -647,6 +647,7 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
+agave-scheduler-bindings = { git = "https://github.com/sonicfromnewyoke/agave-sdk", branch = "sonic/feat-add-exec-status" }
 blstrs = { git = "https://github.com/anza-xyz/blstrs", rev = "a1faffa3420bdaf4102425c43f00cdd815d4f145" }
 # for details, see https://github.com/anza-xyz/crossbeam/commit/5ee1c6ec671d94db14ed9238eb99e59a84555aad
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "5ee1c6ec671d94db14ed9238eb99e59a84555aad" }
