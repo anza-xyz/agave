@@ -30,9 +30,6 @@ pub enum AllocError {
 
     #[error("libc mmap failed")]
     MMapFailed,
-
-    #[error("libc munmap failed trimming the mapping: {0}")]
-    MUnmapFailed(io::Error),
 }
 
 impl From<AllocError> for io::Error {
@@ -53,7 +50,11 @@ impl From<AllocError> for io::Error {
 
 enum AllocationMethod {
     Std(Layout),
-    Mmap,
+    /// The whole mapping, which extends past the buffer on either side to align its start.
+    Mmap {
+        map: NonNull<libc::c_void>,
+        map_len: usize,
+    },
 }
 
 /// Size and alignment of a transparent huge page with 4 KiB base pages, as on x86_64.
@@ -118,36 +119,21 @@ impl PageAlignedMemory {
             return Err(AllocError::MMapFailed);
         }
 
-        let map_start = ptr as usize;
-        let map_end = map_start.strict_add(map_len);
-        let start = map_start.next_multiple_of(HUGE_PAGE_SIZE);
-        let end = start.strict_add(aligned_size);
+        let map = NonNull::new(ptr).ok_or(AllocError::OutOfMemory)?;
+        // The unused head and tail stay mapped until drop, but take no memory, since nothing
+        // touches them. Unmapping them here could fail and would race with other threads' mmap.
+        let map_addr = map.addr().get();
+        let head = map_addr
+            .next_multiple_of(HUGE_PAGE_SIZE)
+            .strict_sub(map_addr);
         // Safety:
-        // the trimmed head and tail lie inside the mapping above and nothing references them.
-        let trimmed = unsafe {
-            (start == map_start || libc::munmap(ptr, start.strict_sub(map_start)) == 0)
-                && (end == map_end
-                    || libc::munmap(end as *mut libc::c_void, map_end.strict_sub(end)) == 0)
-        };
-        if !trimmed {
-            // A trim splits the mapping when the kernel merged it with a neighbor, which fails
-            // when the process runs out of mappings (`vm.max_map_count`).
-            let error = io::Error::last_os_error();
-            // Safety:
-            // the whole range came from the mmap above, and unmapping its trimmed parts again is
-            // a no-op.
-            unsafe { libc::munmap(ptr, map_len) };
-            return Err(AllocError::MUnmapFailed(error));
-        }
+        // the head is shorter than the extra huge page mapped above, so the buffer stays inside
+        // the mapping.
+        let start = unsafe { map.cast::<u8>().add(head) };
         // Safety:
         // the buffer range lies inside the mapping above and nothing references it yet.
-        let advised = unsafe {
-            libc::madvise(
-                start as *mut libc::c_void,
-                aligned_size,
-                libc::MADV_HUGEPAGE,
-            )
-        };
+        let advised =
+            unsafe { libc::madvise(start.as_ptr().cast(), aligned_size, libc::MADV_HUGEPAGE) };
         // The advice only affects how the kernel backs the range, so the buffer stays valid in
         // base pages when it fails.
         if advised != 0 {
@@ -163,9 +149,9 @@ impl PageAlignedMemory {
         }
 
         Ok(Self {
-            ptr: NonNull::new(start as *mut u8).ok_or(AllocError::OutOfMemory)?,
+            ptr: start,
             len: size,
-            allocation_method: AllocationMethod::Mmap,
+            allocation_method: AllocationMethod::Mmap { map, map_len },
         })
     }
 
@@ -185,14 +171,17 @@ impl Drop for PageAlignedMemory {
                     std::alloc::dealloc(self.ptr.as_ptr(), layout);
                 }
             }
-            AllocationMethod::Mmap => {
+            AllocationMethod::Mmap { map, map_len } => {
                 // Safety:
-                // ptr starts the mapping kept by `new_huge_page_aligned`, and munmap rounds len up
-                // to the page size it was mapped with
-                let unmapped =
-                    unsafe { libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len) };
-                // Release builds leak the buffer rather than panic in drop.
-                debug_assert_eq!(unmapped, 0, "munmap failed: {}", io::Error::last_os_error());
+                // the range is the whole mapping created by `new_huge_page_aligned`
+                let unmapped = unsafe { libc::munmap(map.as_ptr(), map_len) };
+                if unmapped != 0 {
+                    // Dropping leaks the buffer rather than panicking.
+                    log::warn!(
+                        "munmap of an io_uring buffer failed, leaking {map_len} bytes: {}",
+                        io::Error::last_os_error()
+                    );
+                }
             }
         }
     }
@@ -350,7 +339,10 @@ mod tests {
     fn test_large_buffer_starts_at_huge_page() {
         for size in [HUGE_PAGE_SIZE, 3 * HUGE_PAGE_SIZE + 4097] {
             let mut buf = PageAlignedMemory::new(size).unwrap();
-            assert!(matches!(buf.allocation_method, AllocationMethod::Mmap));
+            assert!(matches!(
+                buf.allocation_method,
+                AllocationMethod::Mmap { .. }
+            ));
             assert!(buf.as_ptr().addr().is_multiple_of(HUGE_PAGE_SIZE));
             assert_eq!(buf.len(), size);
             buf.fill(1);
