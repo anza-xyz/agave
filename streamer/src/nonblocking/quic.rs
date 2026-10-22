@@ -1008,7 +1008,10 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
     }
 
     pub(crate) fn prune_random_one(&mut self) -> usize {
-        if self.total_size == 0 || self.table.is_empty() {
+        // `total_size` and `table` cannot disagree: `try_add_connection` never
+        // inserts an empty bucket, and every path that empties a bucket removes
+        // it. The table is therefore non-empty whenever `total_size > 0`.
+        if self.total_size == 0 {
             return 0;
         }
         let mut rng = rng();
@@ -1061,13 +1064,18 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
         max_connections_per_peer: usize,
         stream_counter_factory: F,
     ) -> Option<(Arc<AtomicU64>, CancellationToken, Arc<S>)> {
-        let connection_entry = self.table.entry(key).or_default();
-        let has_connection_capacity = connection_entry
-            .len()
+        // Check capacity before inserting the key: `or_default()` would add an
+        // empty bucket for a rejected connection, breaking the invariant that a
+        // non-empty `total_size` implies every bucket is non-empty.
+        let has_connection_capacity = self
+            .table
+            .get(&key)
+            .map_or(0, Vec::len)
             .checked_add(1)
             .map(|c| c <= max_connections_per_peer)
             .unwrap_or(false);
         if has_connection_capacity {
+            let connection_entry = self.table.entry(key).or_default();
             let cancel = self.cancel.child_token();
             let stream_counter = connection_entry
                 .first()
@@ -1875,6 +1883,221 @@ pub mod test {
         assert_eq!(table.total_size, 5);
         assert_eq!(table.prune_random_one(), 1);
         assert_eq!(table.total_size, 4);
+    }
+
+    #[test]
+    fn test_rejected_admission_does_not_leave_empty_bucket() {
+        use std::net::{IpAddr, Ipv4Addr};
+        let cancel = CancellationToken::new();
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
+        let stats = Arc::new(StreamerStats::default());
+        let key = ConnectionTableKey::IP(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)));
+        // A rejected admission must not insert the key: an empty bucket would
+        // make `table` non-empty while `total_size` is zero, and a later random
+        // pick could panic on `random_range(0..0)`.
+        assert!(
+            table
+                .try_add_connection(
+                    key,
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 100).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(0)),
+                    0,
+                    || Arc::new(NullStreamerCounter {}),
+                )
+                .is_none()
+        );
+        assert_eq!(table.total_size, 0);
+        assert!(table.table.is_empty());
+        assert_eq!(table.prune_random_one(), 0);
+    }
+
+    #[test]
+    fn test_prune_table_with_ip() {
+        use std::net::Ipv4Addr;
+        agave_logger::setup();
+        let cancel = CancellationToken::new();
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
+        let max_connections_per_peer = 10;
+        let sockets: Vec<_> = (0..5)
+            .map(|i| SocketAddr::new(IpAddr::V4(Ipv4Addr::new(i, 0, 0, 0)), 0))
+            .collect();
+        let stats = Arc::new(StreamerStats::default());
+        for socket in &sockets {
+            table
+                .try_add_connection(
+                    ConnectionTableKey::IP(socket.ip()),
+                    socket.port(),
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(0)),
+                    max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
+                )
+                .unwrap();
+        }
+        // A second connection on the first peer: 6 entries over 5 buckets.
+        table
+            .try_add_connection(
+                ConnectionTableKey::IP(sockets[0].ip()),
+                sockets[0].port(),
+                ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                None,
+                ConnectionPeerType::Unstaked,
+                Arc::new(AtomicU64::new(0)),
+                max_connections_per_peer,
+                || Arc::new(NullStreamerCounter {}),
+            )
+            .unwrap();
+        assert_eq!(table.total_size, 6);
+
+        // One random entry per call: no batching, no per-key preference.
+        while table.total_size > 3 {
+            assert_eq!(table.prune_random_one(), 1);
+        }
+        assert_eq!(table.total_size, 3);
+        // Emptied buckets are removed, never left behind.
+        assert!(
+            table
+                .table
+                .values()
+                .all(|connections| !connections.is_empty())
+        );
+        assert!(table.table.len() <= 3);
+
+        for socket in &sockets {
+            table.remove_connection(ConnectionTableKey::IP(socket.ip()), socket.port(), 0);
+        }
+        assert_eq!(table.total_size, 0);
+        assert!(table.table.is_empty());
+        assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_prune_table_with_unique_pubkeys() {
+        agave_logger::setup();
+        let cancel = CancellationToken::new();
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
+
+        // We should be able to add more entries than max_connections_per_peer, since each entry is
+        // from a different peer pubkey.
+        let num_entries = 15;
+        let max_connections_per_peer = 10;
+        let stats = Arc::new(StreamerStats::default());
+
+        let pubkeys: Vec<_> = (0..num_entries).map(|_| Pubkey::new_unique()).collect();
+        for pubkey in &pubkeys {
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(*pubkey),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(0)),
+                    max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
+                )
+                .unwrap();
+        }
+
+        let new_size = 3;
+        while table.total_size > new_size {
+            assert_eq!(table.prune_random_one(), 1);
+        }
+        assert_eq!(table.total_size, new_size);
+        // One entry per pubkey, so exactly `new_size` keys survive.
+        assert_eq!(table.table.len(), new_size);
+        for pubkey in &pubkeys {
+            table.remove_connection(ConnectionTableKey::Pubkey(*pubkey), 0, 0);
+        }
+        assert_eq!(table.total_size, 0);
+        assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_prune_table_with_non_unique_pubkeys() {
+        agave_logger::setup();
+        let cancel = CancellationToken::new();
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
+
+        let max_connections_per_peer = 10;
+        let pubkey = Pubkey::new_unique();
+        let stats: Arc<StreamerStats> = Arc::new(StreamerStats::default());
+
+        (0..max_connections_per_peer).for_each(|i| {
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(pubkey),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(i as u64)),
+                    max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
+                )
+                .unwrap();
+        });
+
+        // We should NOT be able to add more entries than max_connections_per_peer, since we are
+        // using the same peer pubkey.
+        assert!(
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(pubkey),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(10)),
+                    max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {})
+                )
+                .is_none()
+        );
+
+        // We should be able to add an entry from another peer pubkey
+        let num_entries = max_connections_per_peer + 1;
+        let pubkey2 = Pubkey::new_unique();
+        assert!(
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(pubkey2),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(10)),
+                    max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {})
+                )
+                .is_some()
+        );
+
+        assert_eq!(table.total_size, num_entries);
+
+        let new_max_size = 3;
+        while table.total_size > new_max_size {
+            assert_eq!(table.prune_random_one(), 1);
+        }
+        assert_eq!(table.total_size, new_max_size);
+        assert!(table.table.len() <= new_max_size);
+        assert!(
+            table
+                .table
+                .values()
+                .all(|connections| !connections.is_empty())
+        );
+
+        table.remove_connection(ConnectionTableKey::Pubkey(pubkey), 0, 0);
+        table.remove_connection(ConnectionTableKey::Pubkey(pubkey2), 0, 0);
+        assert_eq!(table.total_size, 0);
+        assert!(table.table.is_empty());
+        assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
     #[test]
