@@ -405,7 +405,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     });
                     let data = account_info.data.unwrap_or_default();
                     let space = data.len();
-                    let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
+                    let account = if let Some(account) = bank.get_account(&pubkey) {
                         let owner = *account.owner();
                         if bpf_loader_upgradeable::check_id(&owner)
                             && let Ok(UpgradeableLoaderState::Program {
@@ -413,10 +413,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                             }) = account.state()
                         {
                             debug!("Program data address {programdata_address}");
-                            if bank
-                                .get_account_with_fixed_root(&programdata_address)
-                                .is_some()
-                            {
+                            if bank.get_account(&programdata_address).is_some() {
                                 cached_account_keys.push(pubkey);
                             }
                         }

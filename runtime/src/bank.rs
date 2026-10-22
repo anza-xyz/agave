@@ -189,7 +189,9 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_callback::{
+        AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
+    },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_syscalls::create_program_runtime_environment,
@@ -2176,6 +2178,7 @@ impl Bank {
         leader_for_tests: Option<SlotLeader>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_data_size_initial: u64,
+        stake_pubkeys: Vec<Pubkey>,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     ) -> Self {
         let now = Instant::now();
@@ -2186,18 +2189,15 @@ impl Bank {
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
         let rewards_calculation_thread_pool = rewards_calculation_thread_pool();
-        // For backward compatibility, we can only serialize and deserialize
-        // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
-        // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
-        // from Stakes<Delegation> by reading the full account state from
-        // accounts-db. Note that it is crucial that these accounts are loaded
-        // at the right slot and match precisely with serialized Delegations.
+        // The stake delegations come from the stake accounts found while
+        // building the accounts index, not from the list in the snapshot.
+        // Vote accounts, epoch and stake history still come from the snapshot.
         //
         // Note that we are disabling the read cache while we populate the stakes cache.
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
         let (stakes, stakes_time) = measure_time!(
-            Stakes::load_from_deserialized_delegations(fields.stakes, |pubkey| {
+            Stakes::load_from_accounts(fields.stakes, stake_pubkeys, |pubkey| {
                 let (account, _slot) = bank_rc
                     .accounts
                     .load_do_not_populate_read_cache(&ancestors, pubkey)?;
@@ -2571,7 +2571,7 @@ impl Bank {
     where
         F: Fn(&Option<AccountSharedData>) -> AccountSharedData,
     {
-        let old_account = self.get_account_with_fixed_root(pubkey);
+        let old_account = self.get_account(pubkey);
         let mut new_account = updater(&old_account);
 
         // When new sysvar comes into existence (with RENT_UNADJUSTED_INITIAL_BALANCE lamports),
@@ -3471,7 +3471,7 @@ impl Bank {
 
     // Used by tests to simulate clusters with precompiles that aren't owned by the native loader
     fn add_precompiled_account_with_owner(&self, program_id: &Pubkey, owner: Pubkey) {
-        if let Some(account) = self.get_account_with_fixed_root(program_id) {
+        if let Some(account) = self.get_account(program_id) {
             if account.executable() {
                 return;
             } else {
@@ -3553,7 +3553,7 @@ impl Bank {
         }
         .or_else(|| {
             let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
-            let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
+            let nonce_account = self.get_account(nonce_address)?;
             verify_nonce_account(&nonce_account, message.recent_blockhash())
                 .map(|nonce_data| nonce_data.get_lamports_per_signature())
         })?;
@@ -4171,7 +4171,7 @@ impl Bank {
         let mut account_overrides = AccountOverrides::default();
         let slot_history_id = sysvar::slot_history::id();
         if account_keys.iter().any(|pubkey| *pubkey == slot_history_id) {
-            let current_account = self.get_account_with_fixed_root(&slot_history_id);
+            let current_account = self.get_account(&slot_history_id);
             let slot_history: SlotHistory = current_account
                 .as_ref()
                 .map(|account| account.state().unwrap())
@@ -4180,9 +4180,7 @@ impl Bank {
                 let mut ancestors = self.ancestors.clone();
                 let removed = ancestors.remove_max_slot();
                 debug_assert_eq!(removed, Some(self.slot()));
-                if let Some((account, _)) =
-                    self.load_slow_with_fixed_root(&ancestors, &slot_history_id)
-                {
+                if let Some((account, _)) = self.load(&ancestors, &slot_history_id) {
                     account_overrides.set_slot_history(Some(account));
                 }
             }
@@ -4746,9 +4744,7 @@ impl Bank {
     }
 
     fn run_incinerator(&self) {
-        if let Some((account, _)) =
-            self.get_account_modified_since_parent_with_fixed_root(&incinerator::id())
-        {
+        if let Some((account, _)) = self.get_account_modified_since_parent(&incinerator::id()) {
             self.capitalization.fetch_sub(account.lamports(), Relaxed);
             self.store_account(&incinerator::id(), &AccountSharedData::default());
         }
@@ -5056,7 +5052,7 @@ impl Bank {
         new_account: &AccountSharedData,
     ) {
         let old_account_data_size = if let Some(old_account) =
-            self.get_account_with_fixed_root_no_cache(pubkey)
+            self.get_account_do_not_populate_read_cache(pubkey)
         {
             match new_account.lamports().cmp(&old_account.lamports()) {
                 std::cmp::Ordering::Greater => {
@@ -5282,7 +5278,7 @@ impl Bank {
         }
     }
 
-    pub fn get_account_with_fixed_root_no_cache(
+    pub fn get_account_do_not_populate_read_cache(
         &self,
         pubkey: &Pubkey,
     ) -> Option<AccountSharedData> {
@@ -5292,40 +5288,16 @@ impl Bank {
             .map(|(acc, _slot)| acc)
     }
 
-    // Hi! leaky abstraction here....
-    // try to use get_account_with_fixed_root() if it's called ONLY from on-chain runtime account
-    // processing. That alternative fn provides more safety.
     pub fn get_account(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.get_account_modified_slot(pubkey)
             .map(|(acc, _slot)| acc)
     }
 
-    // Hi! leaky abstraction here....
-    // use this over get_account() if it's called ONLY from on-chain runtime account
-    // processing (i.e. from in-band replay/banking stage; that ensures root is *fixed* while
-    // running).
-    // pro: safer assertion can be enabled inside AccountsDb
-    // con: panics!() if called from off-chain processing
-    pub fn get_account_with_fixed_root(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        self.get_account_modified_slot_with_fixed_root(pubkey)
-            .map(|(acc, _slot)| acc)
-    }
-
-    // See note above get_account_with_fixed_root() about when to prefer this function
-    pub fn get_account_modified_slot_with_fixed_root(
-        &self,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow_with_fixed_root(&self.ancestors, pubkey)
-    }
-
-    // See note above get_account_with_fixed_root() about when to prefer this function.
-    //
     // `load_filter` is a predicate over an account's lamports, owner, and data length,
     // which AccountsDb uses to avoid loading the full data. Callers should regard
     // the predicate as a performance hint, not a validation function, and perform
     // all necessary validation on the returned account themselves.
-    pub fn get_account_with_fixed_root_if(
+    pub fn get_account_if(
         &self,
         pubkey: &Pubkey,
         load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
@@ -5337,25 +5309,10 @@ impl Bank {
     }
 
     pub fn get_account_modified_slot(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(&self.ancestors, pubkey)
+        self.load(&self.ancestors, pubkey)
     }
 
-    fn load_slow(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
-        // get_account (= primary this fn caller) may be called from on-chain Bank code even if we
-        // try hard to use get_account_with_fixed_root for that purpose...
-        // so pass safer LoadHint:Unspecified here as a fallback
-        self.rc.accounts.load(ancestors, pubkey)
-    }
-
-    fn load_slow_with_fixed_root(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
+    fn load(&self, ancestors: &Ancestors, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.rc.accounts.load(ancestors, pubkey)
     }
 
@@ -5436,13 +5393,12 @@ impl Bank {
             .load_by_program_slot(self.slot(), self.bank_id(), None)
     }
 
-    // if you want get_account_modified_since_parent without fixed_root, please define so...
-    fn get_account_modified_since_parent_with_fixed_root(
+    fn get_account_modified_since_parent(
         &self,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
         let just_self: Ancestors = Ancestors::from(vec![(self.slot(), self.bank_id())]);
-        if let Some((account, slot)) = self.load_slow_with_fixed_root(&just_self, pubkey)
+        if let Some((account, slot)) = self.load(&just_self, pubkey)
             && slot == self.slot()
         {
             return Some((account, slot));
@@ -6368,7 +6324,7 @@ impl Bank {
 
         // Update activation slot of features in `new_feature_activations`
         for feature_id in new_feature_activations.iter() {
-            if let Some(mut account) = self.get_account_with_fixed_root(feature_id)
+            if let Some(mut account) = self.get_account(feature_id)
                 && let Some(mut feature) = feature::state::from_account(&account)
             {
                 feature.activated_at = Some(self.slot());
@@ -6545,7 +6501,7 @@ impl Bank {
 
         for feature_id in self.feature_set.inactive() {
             let mut activated = None;
-            if let Some(account) = self.get_account_with_fixed_root(feature_id)
+            if let Some(account) = self.get_account(feature_id)
                 && let Some(feature) = feature::state::from_account(&account)
             {
                 match feature.activated_at {
@@ -6574,7 +6530,7 @@ impl Bank {
     /// If `feature_id` is pending to be activated at the next epoch boundary, return
     /// the first slot at which it will be active (the epoch boundary).
     pub fn compute_pending_activation_slot(&self, feature_id: &Pubkey) -> Option<Slot> {
-        let account = self.get_account_with_fixed_root(feature_id)?;
+        let account = self.get_account(feature_id)?;
         let feature = feature::from_account(&account)?;
         if feature.activated_at.is_some() {
             // Feature is already active
@@ -6743,20 +6699,18 @@ impl Bank {
     // NOTE: must hold idempotent for the same set of arguments
     /// Add a builtin program account
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-        let existing_genuine_program =
-            self.get_account_with_fixed_root(program_id)
-                .and_then(|account| {
-                    // it's very unlikely to be squatted at program_id as non-system account because of burden to
-                    // find victim's pubkey/hash. So, when account.owner is indeed native_loader's, it's
-                    // safe to assume it's a genuine program.
-                    if native_loader::check_id(account.owner()) {
-                        Some(account)
-                    } else {
-                        // malicious account is pre-occupying at program_id
-                        self.burn_and_purge_account(program_id, account);
-                        None
-                    }
-                });
+        let existing_genuine_program = self.get_account(program_id).and_then(|account| {
+            // it's very unlikely to be squatted at program_id as non-system account because of burden to
+            // find victim's pubkey/hash. So, when account.owner is indeed native_loader's, it's
+            // safe to assume it's a genuine program.
+            if native_loader::check_id(account.owner()) {
+                Some(account)
+            } else {
+                // malicious account is pre-occupying at program_id
+                self.burn_and_purge_account(program_id, account);
+                None
+            }
+        });
 
         // introducing builtin program
         if existing_genuine_program.is_some() {
@@ -6922,12 +6876,19 @@ impl InvokeContextCallback for Bank {
     }
 }
 
-impl TransactionProcessingCallback for Bank {
+impl AccountLoadCallback for Bank {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        self.rc
-            .accounts
-            .load(&self.ancestors, pubkey)
-            .map(|(account, _slot)| account)
+        self.get_account(pubkey)
+    }
+}
+
+impl TransactionProcessingCallback for Bank {
+    fn get_account_shared_data_if(
+        &self,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        self.get_account_if(pubkey, load_filter)
     }
 }
 
@@ -7324,7 +7285,7 @@ impl Bank {
     }
 
     pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
-        match self.get_account_with_fixed_root(pubkey) {
+        match self.get_account(pubkey) {
             Some(mut account) => {
                 let min_balance = match get_system_account_kind(&account) {
                     Some(SystemAccountKind::Nonce) => self
@@ -7475,7 +7436,7 @@ pub mod test_utils {
         // This doesn't collect rents intentionally.
         // Rents should only be applied to actual TXes
         let mut account = bank
-            .get_account_with_fixed_root_no_cache(pubkey)
+            .get_account_do_not_populate_read_cache(pubkey)
             .unwrap_or_default();
         account.checked_add_lamports(lamports)?;
         bank.store_account(pubkey, &account);

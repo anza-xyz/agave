@@ -52,7 +52,7 @@ fn convert_block_footer(
                 let (slot, block_id, signature, bitmap) = cert.as_parts();
                 block_footer::NotarRewardCertificate {
                     slot,
-                    block_id: *block_id,
+                    block_id: block_id.to_hash(),
                     signature: *signature,
                     bitmap,
                 }
@@ -364,8 +364,7 @@ mod tests {
             }),
             skip_reward_cert: Some(SkipRewardCertificate::try_new(41, signature, vec![6]).unwrap()),
             notar_reward_cert: Some(
-                NotarRewardCertificate::try_new(42, block_id.to_hash(), signature, vec![8])
-                    .unwrap(),
+                NotarRewardCertificate::try_new(42, block_id, signature, vec![8]).unwrap(),
             ),
         });
         let expected_block_footer =

@@ -21,7 +21,9 @@ use {
     std::{cell::RefCell, rc::Rc},
 };
 
-fn morph_into_deployment_environment(
+/// Derives the stricter environment that programs are verified against at
+/// deployment.
+pub fn morph_into_deployment_environment(
     from: ProgramRuntimeEnvironment,
     disable_sbpf_v0_v1_v2_deployment: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'static, 'static>>, ElfError> {

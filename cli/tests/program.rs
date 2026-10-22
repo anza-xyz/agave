@@ -1,7 +1,10 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::{enable_alt_bn128_syscall, loader_v3_set_program_data_to_elf_length},
+    agave_feature_set::{
+        disable_sbpf_v0_v1_v2_deployment, enable_alt_bn128_syscall,
+        loader_v3_set_program_data_to_elf_length,
+    },
     assert_matches::assert_matches,
     serde_json::Value,
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
@@ -996,6 +999,108 @@ async fn test_cli_program_deploy_local_verifier() {
 
     let response = process_command(&config).await;
     assert!(response.is_ok());
+}
+
+#[test_case(true; "Feature enabled")]
+#[test_case(false; "Feature disabled")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_deploy_sbpf_v0(disable_sbpf_v0_v1_v2_deployment_enabled: bool) {
+    agave_logger::setup();
+
+    let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    program_path.push("../programs/bpf_loader/test_elfs/out/noop_aligned");
+    program_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let mut test_validator_builder = test_validator_genesis(
+        &mint_keypair,
+        LoaderV3Features {
+            set_programdata_to_elf_length: false,
+        },
+    );
+    if !disable_sbpf_v0_v1_v2_deployment_enabled {
+        test_validator_builder.deactivate_features(&[disable_sbpf_v0_v1_v2_deployment::id()]);
+    }
+
+    let test_validator = test_validator_builder
+        .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
+        .await
+        .expect("validator start failed");
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = setup_rpc_client(&mut config);
+
+    let mut file = File::open(program_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+    let max_len = program_data.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .await
+        .unwrap();
+    let minimum_balance_for_program = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
+        .unwrap();
+    let upgrade_authority = Keypair::new();
+    let buffer_keypair = Keypair::new();
+
+    let keypair = Keypair::new();
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+    };
+    config.signers = vec![&keypair];
+    process_command(&config).await.unwrap();
+    let balance = rpc_client.get_balance(&keypair.pubkey()).await.unwrap();
+
+    config.signers = vec![&keypair, &upgrade_authority, &buffer_keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(program_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: None,
+        program_pubkey: None,
+        buffer_signer_index: Some(2),
+        buffer_pubkey: Some(buffer_keypair.pubkey()),
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: false,
+    });
+    config.output_format = OutputFormat::JsonCompact;
+
+    if disable_sbpf_v0_v1_v2_deployment_enabled {
+        expect_command_failure(
+            &config,
+            "SBPFv0 deployment is disabled",
+            "program targets SBPF v0, which this CLI does not have enabled (enabled: v3–v3). \
+             Rebuild the program targeting v3.",
+        )
+        .await;
+
+        // Pre-flight fails before any transaction is sent.
+        expect_account_absent(
+            &rpc_client,
+            buffer_keypair.pubkey(),
+            "Buffer should not be created",
+        )
+        .await;
+        assert_eq!(
+            rpc_client.get_balance(&keypair.pubkey()).await.unwrap(),
+            balance,
+        );
+    } else {
+        let response = process_command(&config).await;
+        assert!(response.is_ok());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

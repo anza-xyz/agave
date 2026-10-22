@@ -248,11 +248,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         let stats = self.stats();
         let (count, time) = if found {
-            (&stats.gets_from_mem, &stats.get_mem_us)
+            (&stats.gets_from_mem, &stats.get_mem_ns)
         } else {
-            (&stats.gets_missing, &stats.get_missing_us)
+            (&stats.gets_missing, &stats.get_missing_ns)
         };
-        Self::update_stat(time, m.as_us());
+        Self::update_stat(time, m.as_ns());
         Self::update_stat(count, 1);
 
         result
@@ -697,11 +697,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     fn update_entry_stats(&self, stopped_measure: Measure, found: bool) {
         let stats = self.stats();
         let (count, time) = if found {
-            (&stats.entries_from_mem, &stats.entry_mem_us)
+            (&stats.entries_from_mem, &stats.entry_mem_ns)
         } else {
-            (&stats.entries_missing, &stats.entry_missing_us)
+            (&stats.entries_missing, &stats.entry_missing_ns)
         };
-        Self::update_stat(time, stopped_measure.as_us());
+        Self::update_stat(time, stopped_measure.as_ns());
         Self::update_stat(count, 1);
     }
 

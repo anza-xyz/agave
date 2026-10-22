@@ -1215,7 +1215,7 @@ impl AccountsScanner {
             AccountsOutputMode::Individual(pubkeys) => pubkeys.iter().for_each(|pubkey| {
                 if let Some((account, _slot)) = self
                     .bank
-                    .get_account_modified_slot_with_fixed_root(pubkey)
+                    .get_account_modified_slot(pubkey)
                     .filter(|(account, _)| self.should_process_account(account))
                 {
                     total_accounts_stats.accumulate_account(&account);
