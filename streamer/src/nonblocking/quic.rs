@@ -913,7 +913,6 @@ fn handle_chunks(
 struct ConnectionEntry<S: OpaqueStreamerCounter> {
     cancel: CancellationToken,
     peer_type: ConnectionPeerType,
-    last_update: Arc<AtomicU64>,
     port: u16,
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
@@ -925,7 +924,6 @@ impl<S: OpaqueStreamerCounter> ConnectionEntry<S> {
     fn new(
         cancel: CancellationToken,
         peer_type: ConnectionPeerType,
-        last_update: Arc<AtomicU64>,
         port: u16,
         client_connection_tracker: ClientConnectionTracker,
         connection: Option<Connection>,
@@ -934,16 +932,11 @@ impl<S: OpaqueStreamerCounter> ConnectionEntry<S> {
         Self {
             cancel,
             peer_type,
-            last_update,
             port,
             _client_connection_tracker: client_connection_tracker,
             connection,
             stream_counter,
         }
-    }
-
-    fn last_update(&self) -> u64 {
-        self.last_update.load(Ordering::Relaxed)
     }
 
     fn stake(&self) -> u64 {
@@ -1083,7 +1076,6 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
             connection_entry.push(ConnectionEntry::new(
                 cancel.clone(),
                 peer_type,
-                last_update.clone(),
                 port,
                 client_connection_tracker,
                 connection,
@@ -1806,8 +1798,6 @@ pub mod test {
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
     }
 
-
-
     #[test]
     fn test_remove_connections_by_key() {
         agave_logger::setup();
@@ -1856,7 +1846,6 @@ pub mod test {
                 .contains_key(&ConnectionTableKey::Pubkey(pubkey2))
         );
     }
-
 
     #[test]
     fn test_prune_random_one_entry() {
