@@ -56,7 +56,6 @@ pub struct VoteWorker {
     shutdown_signal: CancellationToken,
     decision_maker: DecisionMaker,
     tpu_receiver: VotePacketReceiver,
-    gossip_receiver: VotePacketReceiver,
     storage: VoteStorage,
     bank_forks: Arc<RwLock<BankForks>>,
     consumer: Consumer,
@@ -68,7 +67,6 @@ impl VoteWorker {
         shutdown_signal: CancellationToken,
         decision_maker: DecisionMaker,
         tpu_receiver: VotePacketReceiver,
-        gossip_receiver: VotePacketReceiver,
         storage: VoteStorage,
         bank_forks: Arc<RwLock<BankForks>>,
         consumer: Consumer,
@@ -78,7 +76,6 @@ impl VoteWorker {
             shutdown_signal,
             decision_maker,
             tpu_receiver,
-            gossip_receiver,
             storage,
             bank_forks,
             consumer,
@@ -111,20 +108,6 @@ impl VoteWorker {
                 &mut banking_stage_stats,
                 &mut slot_metrics_tracker,
                 VoteSource::Tpu,
-            ) {
-                Ok(()) | Err(RecvTimeoutError::Timeout) => (),
-                Err(RecvTimeoutError::Disconnected) => {
-                    self.shutdown_signal.cancel();
-
-                    break;
-                }
-            }
-            // Check for new packets from the gossip receiver
-            match self.gossip_receiver.receive_and_buffer_packets(
-                &mut self.storage,
-                &mut banking_stage_stats,
-                &mut slot_metrics_tracker,
-                VoteSource::Gossip,
             ) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => (),
                 Err(RecvTimeoutError::Disconnected) => {

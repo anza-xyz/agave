@@ -415,7 +415,6 @@ pub fn select_vote_and_reset_forks(
     descendants: &HashMap<u64, HashSet<u64>>,
     progress: &ProgressMap,
     tower: &mut Tower,
-    latest_validator_votes_for_frozen_banks: &LatestValidatorVotesForFrozenBanks,
     fork_choice: &HeaviestSubtreeForkChoice,
 ) -> SelectVoteAndResetForkResult {
     // Try to vote on the actual heaviest fork. If the heaviest bank is
@@ -440,7 +439,6 @@ pub fn select_vote_and_reset_forks(
         heaviest_bank
             .epoch_vote_accounts(heaviest_bank.epoch())
             .expect("Bank epoch vote accounts must contain entry for the bank's own epoch"),
-        latest_validator_votes_for_frozen_banks,
         fork_choice,
     );
 

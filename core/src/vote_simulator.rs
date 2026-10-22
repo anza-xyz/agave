@@ -15,7 +15,6 @@ use {
             DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
         },
         replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
-        unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     agave_votor_messages::consensus_message::BlockId,
     crossbeam_channel::bounded,
@@ -77,7 +76,6 @@ impl VoteSimulator {
                 heaviest_subtree_fork_choice,
                 duplicate_slots_tracker: DuplicateSlotsTracker::default(),
                 duplicate_confirmed_slots: DuplicateConfirmedSlots::default(),
-                unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes::default(),
                 epoch_slots_frozen_slots: EpochSlotsFrozenSlots::default(),
             },
         }
@@ -230,7 +228,6 @@ impl VoteSimulator {
             &descendants,
             &self.progress,
             tower,
-            &self.latest_validator_votes_for_frozen_banks,
             &self.tbft_structs.heaviest_subtree_fork_choice,
         );
 

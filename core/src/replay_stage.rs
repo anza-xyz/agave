@@ -4,10 +4,8 @@ use {
         banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank,
         banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
-        cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
-        },
-        cluster_slots_service::{ClusterSlotsUpdateSender, cluster_slots::ClusterSlots},
+        cluster_info_vote_listener::{DuplicateConfirmedSlotsReceiver, VoteTracker},
+        cluster_slots_service::cluster_slots::ClusterSlots,
         commitment_service::TowerCommitmentAggregationData,
         consensus::{
             BlockhashStatus, ComputedBankState, SWITCH_FORK_THRESHOLD, Stake, SwitchForkDecision,
@@ -28,7 +26,6 @@ use {
                 AncestorDuplicateSlotsReceiver, DumpedSlotsSender, PopularPrunedForksReceiver,
             },
         },
-        unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
         voting_service::VoteOp,
         window_service::DuplicateSlotReceiver,
     },
@@ -276,7 +273,6 @@ struct ProcessActiveBanksContext {
     bank_notification_sender: Option<BankNotificationSenderConfig>,
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
-    cluster_slots_update_sender: ClusterSlotsUpdateSender,
     cost_update_sender: Sender<CostUpdate>,
     ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
@@ -372,7 +368,6 @@ pub struct TowerBFTStructures {
     pub heaviest_subtree_fork_choice: HeaviestSubtreeForkChoice,
     pub duplicate_slots_tracker: DuplicateSlotsTracker,
     pub duplicate_confirmed_slots: DuplicateConfirmedSlots,
-    pub unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes,
     pub epoch_slots_frozen_slots: EpochSlotsFrozenSlots,
 }
 
@@ -475,7 +470,6 @@ pub struct ReplaySenders {
     pub ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     pub retransmit_slots_sender: Sender<u64>,
     pub replay_vote_sender: ReplayVoteSender,
-    pub cluster_slots_update_sender: Sender<Vec<u64>>,
     pub cost_update_sender: Sender<CostUpdate>,
     pub voting_sender: Sender<VoteOp>,
     pub bls_sender: Sender<BLSOp>,
@@ -497,7 +491,6 @@ pub struct ReplayReceivers {
     pub duplicate_slots_receiver: Receiver<u64>,
     pub ancestor_duplicate_slots_receiver: Receiver<AncestorDuplicateSlotToRepair>,
     pub duplicate_confirmed_slots_receiver: Receiver<Vec<(u64, Hash)>>,
-    pub gossip_verified_vote_hash_receiver: Receiver<(Pubkey, u64, Hash)>,
     pub popular_pruned_forks_receiver: Receiver<Vec<u64>>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
     pub latest_switch_request: LatestSwitchRequest,
@@ -526,7 +519,6 @@ struct ReplayLoopTiming {
     process_ancestor_hashes_duplicate_slots_elapsed_us: u64,
     process_duplicate_confirmed_slots_elapsed_us: u64,
     process_duplicate_slots_elapsed_us: u64,
-    process_unfrozen_gossip_verified_vote_hashes_elapsed_us: u64,
     process_popular_pruned_forks_elapsed_us: u64,
     process_switch_bank_events_elapsed_us: u64,
     repair_correct_slots_elapsed_us: u64,
@@ -553,7 +545,6 @@ impl ReplayLoopTiming {
         bank_count: u64,
         process_ancestor_hashes_duplicate_slots_elapsed_us: u64,
         process_duplicate_confirmed_slots_elapsed_us: u64,
-        process_unfrozen_gossip_verified_vote_hashes_elapsed_us: u64,
         process_popular_pruned_forks_elapsed_us: u64,
         process_duplicate_slots_elapsed_us: u64,
         repair_correct_slots_elapsed_us: u64,
@@ -573,8 +564,6 @@ impl ReplayLoopTiming {
             process_ancestor_hashes_duplicate_slots_elapsed_us;
         self.process_duplicate_confirmed_slots_elapsed_us +=
             process_duplicate_confirmed_slots_elapsed_us;
-        self.process_unfrozen_gossip_verified_vote_hashes_elapsed_us +=
-            process_unfrozen_gossip_verified_vote_hashes_elapsed_us;
         self.process_popular_pruned_forks_elapsed_us += process_popular_pruned_forks_elapsed_us;
         self.process_duplicate_slots_elapsed_us += process_duplicate_slots_elapsed_us;
         self.repair_correct_slots_elapsed_us += repair_correct_slots_elapsed_us;
@@ -678,11 +667,6 @@ impl ReplayLoopTiming {
                 (
                     "process_duplicate_confirmed_slots_elapsed_us",
                     self.process_duplicate_confirmed_slots_elapsed_us as i64,
-                    i64
-                ),
-                (
-                    "process_unfrozen_gossip_verified_vote_hashes_elapsed_us",
-                    self.process_unfrozen_gossip_verified_vote_hashes_elapsed_us as i64,
                     i64
                 ),
                 (
@@ -798,7 +782,7 @@ impl ReplayStage {
             ancestor_hashes_replay_update_sender,
             retransmit_slots_sender,
             replay_vote_sender,
-            cluster_slots_update_sender,
+
             cost_update_sender,
             voting_sender,
             bls_sender,
@@ -820,7 +804,6 @@ impl ReplayStage {
             duplicate_slots_receiver,
             ancestor_duplicate_slots_receiver,
             duplicate_confirmed_slots_receiver,
-            gossip_verified_vote_hash_receiver,
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
             latest_switch_request,
@@ -892,7 +875,6 @@ impl ReplayStage {
             let epoch_slots_frozen_slots = EpochSlotsFrozenSlots::default();
             let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
             let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
-            let unfrozen_gossip_verified_vote_hashes = UnfrozenGossipVerifiedVoteHashes::default();
             let mut latest_validator_votes_for_frozen_banks =
                 LatestValidatorVotesForFrozenBanks::default();
             let mut vote_slots = HashSet::default();
@@ -908,7 +890,6 @@ impl ReplayStage {
                 heaviest_subtree_fork_choice,
                 duplicate_slots_tracker,
                 duplicate_confirmed_slots,
-                unfrozen_gossip_verified_vote_hashes,
                 epoch_slots_frozen_slots,
             };
             // AsyncVerificationProgress does a large allocation for its internal channel, so we
@@ -943,7 +924,7 @@ impl ReplayStage {
                 bank_notification_sender: bank_notification_sender.clone(),
                 rpc_subscriptions: rpc_subscriptions.clone(),
                 slot_status_notifier: slot_status_notifier.clone(),
-                cluster_slots_update_sender: cluster_slots_update_sender.clone(),
+
                 cost_update_sender: cost_update_sender.clone(),
                 ancestor_hashes_replay_update_sender: ancestor_hashes_replay_update_sender.clone(),
                 block_metadata_notifier: block_metadata_notifier.clone(),
@@ -1099,7 +1080,6 @@ impl ReplayStage {
                     // transition (or raced with it) so the old state is not retained forever.
                     for _ in ancestor_duplicate_slots_receiver.try_iter() {}
                     for _ in duplicate_confirmed_slots_receiver.try_iter() {}
-                    for _ in gossip_verified_vote_hash_receiver.try_iter() {}
                     for _ in popular_pruned_forks_receiver.try_iter() {}
                     for _ in duplicate_slots_receiver.try_iter() {}
 
@@ -1213,21 +1193,6 @@ impl ReplayStage {
                         &mut purge_repair_slot_counter,
                     );
                     process_duplicate_confirmed_slots_time.stop();
-
-                    // Ingest any new verified votes from gossip. Important for fork choice
-                    // and switching proofs because these may be votes that haven't yet been
-                    // included in a block, so we may not have yet observed these votes just
-                    // by replaying blocks.
-                    let mut process_unfrozen_gossip_verified_vote_hashes_time =
-                        Measure::start("process_gossip_verified_vote_hashes");
-                    Self::process_gossip_verified_vote_hashes(
-                        &gossip_verified_vote_hash_receiver,
-                        &mut tbft_structs.unfrozen_gossip_verified_vote_hashes,
-                        &tbft_structs.heaviest_subtree_fork_choice,
-                        &mut latest_validator_votes_for_frozen_banks,
-                    );
-                    for _ in gossip_verified_vote_hash_receiver.try_iter() {}
-                    process_unfrozen_gossip_verified_vote_hashes_time.stop();
 
                     let mut process_popular_pruned_forks_time =
                         Measure::start("process_popular_pruned_forks_time");
@@ -1357,7 +1322,6 @@ impl ReplayStage {
                         &descendants,
                         &progress,
                         &mut tower,
-                        &latest_validator_votes_for_frozen_banks,
                         &tbft_structs.heaviest_subtree_fork_choice,
                     );
                     select_vote_and_reset_forks_time.stop();
@@ -1618,7 +1582,6 @@ impl ReplayStage {
                         ),
                         process_ancestor_hashes_duplicate_slots_time.as_us(),
                         process_duplicate_confirmed_slots_time.as_us(),
-                        process_unfrozen_gossip_verified_vote_hashes_time.as_us(),
                         process_popular_pruned_forks_time.as_us(),
                         process_duplicate_slots_time.as_us(),
                         dump_then_repair_correct_slots_time.as_us(),
@@ -2867,25 +2830,6 @@ impl ReplayStage {
         }
     }
 
-    fn process_gossip_verified_vote_hashes(
-        gossip_verified_vote_hash_receiver: &GossipVerifiedVoteHashReceiver,
-        unfrozen_gossip_verified_vote_hashes: &mut UnfrozenGossipVerifiedVoteHashes,
-        heaviest_subtree_fork_choice: &HeaviestSubtreeForkChoice,
-        latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
-    ) {
-        for (pubkey, slot, hash) in gossip_verified_vote_hash_receiver.try_iter() {
-            let is_frozen = heaviest_subtree_fork_choice.contains_block(&(slot, hash));
-            // cluster_info_vote_listener will ensure it doesn't push duplicates
-            unfrozen_gossip_verified_vote_hashes.add_vote(
-                pubkey,
-                slot,
-                hash,
-                is_frozen,
-                latest_validator_votes_for_frozen_banks,
-            )
-        }
-    }
-
     // Checks for and handle forks with duplicate slots.
     #[allow(clippy::too_many_arguments)]
     fn process_duplicate_slots(
@@ -4067,7 +4011,6 @@ impl ReplayStage {
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-        latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
         duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         mut tbft_structs: Option<&mut TowerBFTStructures>,
@@ -4249,11 +4192,7 @@ impl ReplayStage {
                 if process_active_banks_context
                     .migration_status
                     .should_publish_epoch_slots(bank_slot)
-                {
-                    let _ = process_active_banks_context
-                        .cluster_slots_update_sender
-                        .send(vec![bank_slot]);
-                }
+                {}
 
                 if let Some(transaction_status_sender) = process_active_banks_context
                     .transaction_status_sender
@@ -4378,21 +4317,6 @@ impl ReplayStage {
                         .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
                 }
 
-                let bank_hash = bank.hash();
-                if let Some(new_frozen_voters) = tbft_structs.as_mut().and_then(|tbft| {
-                    tbft.unfrozen_gossip_verified_vote_hashes
-                        .remove_slot_hash(bank.slot(), &bank_hash)
-                }) {
-                    for pubkey in new_frozen_voters {
-                        latest_validator_votes_for_frozen_banks.check_add_vote(
-                            pubkey,
-                            bank.slot(),
-                            Some(bank_hash),
-                            false,
-                        );
-                    }
-                }
-
                 if let Some(block_metadata_notifier) = process_active_banks_context
                     .block_metadata_notifier
                     .as_ref()
@@ -4446,7 +4370,7 @@ impl ReplayStage {
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-        latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
+        _latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
         duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         tbft_structs: Option<&mut TowerBFTStructures>,
@@ -4480,7 +4404,6 @@ impl ReplayStage {
             process_active_banks_context,
             progress,
             async_verification_freelist,
-            latest_validator_votes_for_frozen_banks,
             duplicate_slots_to_repair,
             purge_repair_slot_counter,
             tbft_structs,
@@ -5276,7 +5199,6 @@ impl ReplayStage {
             heaviest_subtree_fork_choice,
             duplicate_slots_tracker,
             duplicate_confirmed_slots,
-            unfrozen_gossip_verified_vote_hashes,
             epoch_slots_frozen_slots,
             ..
         } = tbft_structs;
@@ -5287,7 +5209,6 @@ impl ReplayStage {
         *duplicate_confirmed_slots = duplicate_confirmed_slots.split_off(&new_root);
         // gossip_confirmed_slots now only contains entries >= `new_root`
 
-        unfrozen_gossip_verified_vote_hashes.set_root(new_root);
         *epoch_slots_frozen_slots = epoch_slots_frozen_slots.split_off(&new_root);
         // epoch_slots_frozen_slots now only contains entries >= `new_root`
     }

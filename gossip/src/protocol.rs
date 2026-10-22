@@ -24,7 +24,6 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
-pub(crate) const MAX_CRDS_OBJECT_SIZE: usize = 928;
 /// Max size of serialized crds-values in a Protocol::PushMessage packet. This
 /// is equal to PACKET_DATA_SIZE minus serialized size of an empty push
 /// message: Protocol::PushMessage(Pubkey::default(), Vec::default())
@@ -33,7 +32,6 @@ pub(crate) const PUSH_MESSAGE_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 44;
 /// is equal to PACKET_DATA_SIZE minus serialized size of an empty pull
 /// message: Protocol::PullResponse(Pubkey::default(), Vec::default())
 pub(crate) const PULL_RESPONSE_MAX_PAYLOAD_SIZE: usize = PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
-pub(crate) const DUPLICATE_SHRED_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 115;
 /// Maximum number of incremental hashes in SnapshotHashes a node publishes
 /// such that the serialized size of the push/pull message stays below
 /// PACKET_DATA_SIZE.
@@ -63,7 +61,7 @@ pub(crate) type GossipProtocolWincodeConfig =
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
+        abi_digest = "24ftZ2nwCrqk1aUFfg21HDLba4y2GJc4QagoFX5zbNho",
         abi_serializer = ["wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
@@ -222,17 +220,8 @@ impl Sanitize for Protocol {
                     _ => Err(SanitizeError::InvalidValue),
                 }
             }
-            Protocol::PullResponse(_, val) => {
-                // PullResponse is allowed to carry anything in its CrdsData, including deprecated Crds
-                // such that a deprecated Crds does not get pulled and then rejected.
-                val.sanitize()
-            }
-            Protocol::PushMessage(_, val) => {
-                // PushMessage is allowed to carry anything in its CrdsData, including deprecated Crds
-                // such that a deprecated Crds gets ingested instead of the node having to pull it from
-                // other nodes that have inserted it into their Crds table
-                val.sanitize()
-            }
+            Protocol::PullResponse(_, val) => val.sanitize(),
+            Protocol::PushMessage(_, val) => val.sanitize(),
             Protocol::PruneMessage(from, val) => {
                 if *from != val.pubkey {
                     Err(SanitizeError::InvalidValue)
@@ -325,28 +314,17 @@ pub(crate) mod tests {
         super::*,
         crate::{
             contact_info::ContactInfo,
-            crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
-            duplicate_shred::{
-                self, MAX_DUPLICATE_SHREDS,
-                tests::{new_rand_fec_set_index, new_rand_shred},
-            },
-            epoch_slots::EpochSlots,
-            restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
+            crds_data::{self, CrdsData, SnapshotHashes},
         },
         rand::Rng,
         solana_clock::Slot,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::shred::Shredder,
-        solana_perf::test_tx::new_test_vote_tx,
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        solana_transaction::Transaction,
-        solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
             iter::repeat_with,
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-            sync::Arc,
         },
     };
 
@@ -488,48 +466,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_duplicate_shred_max_payload_size() {
-        let mut rng = rand::rng();
-        let leader = Arc::new(Keypair::new());
-        let keypair = Keypair::new();
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = new_rand_fec_set_index(&mut rng);
-        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let other_payload = {
-            let other_shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-            other_shred.into_payload()
-        };
-        let leader_schedule = |s| {
-            if s == slot {
-                Some(leader.pubkey())
-            } else {
-                None
-            }
-        };
-        let chunks: Vec<_> = duplicate_shred::from_shred(
-            shred,
-            keypair.pubkey(),
-            other_payload,
-            Some(leader_schedule),
-            timestamp(),
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            version,
-        )
-        .unwrap()
-        .collect();
-        assert!(chunks.len() > 1);
-        for chunk in chunks {
-            let data = CrdsData::DuplicateShred(MAX_DUPLICATE_SHREDS - 1, chunk);
-            let value = CrdsValue::new(data, &keypair);
-            let pull_response = Protocol::PullResponse(keypair.pubkey(), vec![value.clone()]);
-            assert!(pull_response.serialized_size() < PACKET_DATA_SIZE);
-            let push_message = Protocol::PushMessage(keypair.pubkey(), vec![value.clone()]);
-            assert!(push_message.serialized_size() < PACKET_DATA_SIZE);
-        }
-    }
-
-    #[test]
     fn test_pull_response_min_serialized_size() {
         let mut rng = rand::rng();
         for _ in 0..100 {
@@ -545,67 +481,18 @@ pub(crate) mod tests {
 
     #[test]
     fn test_min_crds_value_serialized_size_holds() {
-        let mut rng = rand::rng();
-        let keypair = Keypair::new();
-
-        // Build a DuplicateShred for the corresponding variant.
-        let leader = Arc::new(Keypair::new());
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = new_rand_fec_set_index(&mut rng);
-        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let other_payload = {
-            let other = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-            other.into_payload()
-        };
-        let leader_schedule = |s| (s == slot).then_some(leader.pubkey());
-        let dup_shred = duplicate_shred::from_shred(
-            shred,
-            keypair.pubkey(),
-            other_payload,
-            Some(leader_schedule),
-            timestamp(),
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            version,
-        )
-        .unwrap()
-        .next()
-        .unwrap();
-
-        let vote =
-            CrdsVote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
-
-        // One representative per CrdsData variant. The array length is keyed to
-        // strum::EnumCount, so adding a new CrdsData variant without listing it
-        // here is a compile error (wrong array length).
-        use strum::EnumCount;
-        let variants: [CrdsData; CrdsData::COUNT] = [
-            CrdsData::LegacyContactInfo(Deprecated {}),
-            CrdsData::Vote(0, vote),
-            CrdsData::LowestSlot(0, LowestSlot::new(Pubkey::new_unique(), 0, timestamp())),
-            CrdsData::LegacySnapshotHashes(Deprecated {}),
-            CrdsData::AccountsHashes(Deprecated {}),
-            CrdsData::EpochSlots(0, EpochSlots::new_rand(&mut rng, None)),
-            CrdsData::LegacyVersion(Deprecated {}),
-            CrdsData::Version(Deprecated {}),
-            CrdsData::NodeInstance(Deprecated {}),
-            CrdsData::DuplicateShred(0, dup_shred),
+        let variants = [
             CrdsData::SnapshotHashes(SnapshotHashes {
                 from: Pubkey::new_unique(),
                 full: (0, Hash::default()),
                 incremental: vec![],
                 wallclock: timestamp(),
             }),
-            CrdsData::ContactInfo(ContactInfo::new_localhost(
+            CrdsData::from(ContactInfo::new_localhost(
                 &Pubkey::new_unique(),
                 timestamp(),
             )),
-            CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
-                &mut rng, None,
-            )),
-            CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(&mut rng, None)),
         ];
-
         for data in variants {
             let value = CrdsValue::new_unsigned(data);
             let bytes = wincode::serialize(&value).unwrap();
@@ -630,10 +517,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_split_messages_large() {
-        let value = CrdsValue::new_unsigned(CrdsData::LowestSlot(
-            0,
-            LowestSlot::new(Pubkey::default(), 0, 0),
-        ));
+        let value = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
+            from: Pubkey::default(),
+            full: (0, Hash::default()),
+            incremental: vec![(1, Hash::default()); MAX_INCREMENTAL_SNAPSHOT_HASHES],
+            wallclock: 0,
+        }));
         test_split_messages(value);
     }
 
@@ -758,34 +647,6 @@ pub(crate) mod tests {
         assert_eq!(prune_message.sanitize(), Ok(()));
         let prune_message = Protocol::PruneMessage(Pubkey::new_unique(), prune_data);
         assert_eq!(prune_message.sanitize(), Err(SanitizeError::InvalidValue));
-    }
-
-    #[test]
-    fn test_vote_size() {
-        let slots = vec![1; 32];
-        let vote = Vote::new(slots, Hash::default());
-        let keypair = Arc::new(Keypair::new());
-
-        // Create the biggest possible vote transaction
-        let vote_ix = vote_instruction::vote_switch(
-            &keypair.pubkey(),
-            &keypair.pubkey(),
-            vote,
-            Hash::default(),
-        );
-        let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
-
-        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
-        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
-
-        let vote = CrdsVote::new(
-            keypair.pubkey(),
-            vote_tx,
-            0, // wallclock
-        )
-        .unwrap();
-        let vote = CrdsValue::new(CrdsData::Vote(1, vote), &Keypair::new());
-        assert!(vote.serialized_size() <= PUSH_MESSAGE_MAX_PAYLOAD_SIZE);
     }
 
     #[test]

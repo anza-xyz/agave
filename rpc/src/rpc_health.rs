@@ -69,21 +69,9 @@ impl RpcHealth {
             return RpcHealthStatus::Ok;
         }
 
-        // Before Alpenglow, a node can observe votes by both replaying blocks and observing gossip.
-        //
-        // ClusterInfoVoteListener receives votes from both of these sources and then records
-        // optimistically confirmed slots in the Blockstore via OptimisticConfirmationVerifier.
-        // Thus, it is possible for a node to record an optimistically confirmed slot before the
-        // node has replayed and validated the slot for itself.
-        //
-        // OptimisticallyConfirmedBank holds a bank for the latest optimistically confirmed slot
-        // that the node has replayed. It is true that the node will have replayed that slot by
-        // virtue of having a bank available. Observing that the cluster has optimistically
-        // confirmed a slot through gossip is not enough to reconstruct the bank.
-        //
-        // So, comparing the latest optimistic slot from the Blockstore vs. the slot from the
-        // OptimisticallyConfirmedBank bank allows a node to see where it stands in relation to the
-        // tip of the cluster.
+        // OptimisticallyConfirmedBank holds the latest optimistically confirmed bank
+        // replayed locally. Comparing its slot with the cluster's confirmation progress
+        // below measures how far this node is behind.
         let my_latest_optimistically_confirmed_slot = self
             .optimistically_confirmed_bank
             .read()

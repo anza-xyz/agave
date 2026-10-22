@@ -13,7 +13,6 @@ use {
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum VoteSource {
-    Gossip,
     Tpu,
 }
 
@@ -217,11 +216,11 @@ mod tests {
             PacketBatch::from(vec![tower_sync, tower_sync_switch, random_transaction]);
 
         let deserialized_packets =
-            deserialize_packets(&packet_batch, VoteSource::Gossip).collect_vec();
+            deserialize_packets(&packet_batch, VoteSource::Tpu).collect_vec();
 
         assert_eq!(2, deserialized_packets.len());
-        assert_eq!(VoteSource::Gossip, deserialized_packets[0].vote_source);
-        assert_eq!(VoteSource::Gossip, deserialized_packets[1].vote_source);
+        assert_eq!(VoteSource::Tpu, deserialized_packets[0].vote_source);
+        assert_eq!(VoteSource::Tpu, deserialized_packets[1].vote_source);
 
         assert_eq!(
             keypairs.vote_keypair.pubkey(),

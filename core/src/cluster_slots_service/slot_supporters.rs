@@ -47,6 +47,7 @@ impl SlotSupporters {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn set_support_by_index(&self, index: usize, stake: Stake) {
         let old = self.supporting_stakes[index].fetch_max(stake, Ordering::Relaxed);
         if stake > old {
@@ -74,6 +75,7 @@ impl SlotSupporters {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn set_support_by_pubkey(&self, pubkey: &Pubkey, stake: Stake) -> Result<(), ()> {
         let Some(idx) = self.pubkey_to_index_map.get(pubkey) else {
             return Err(());

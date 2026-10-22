@@ -1049,7 +1049,6 @@ impl Validator {
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
-        cluster_info.set_migration_status(migration_status.clone());
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
         migration_status.set_pubkey(cluster_info.id());
 
@@ -1670,7 +1669,6 @@ impl Validator {
 
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
         let (verified_vote_sender, verified_vote_receiver) = EvictingSender::new_bounded(4096);
-        let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
 
         let serve_repair_service = ServeRepairService::new(
@@ -1695,10 +1693,7 @@ impl Validator {
             Arc::<RwLock<repair::repair_service::OutstandingShredRepairs>>::default();
         let root_bank = bank_forks.read().unwrap().root_bank();
         let cluster_slots = Arc::new({
-            crate::cluster_slots_service::cluster_slots::ClusterSlots::new(
-                &root_bank,
-                &cluster_info,
-            )
+            crate::cluster_slots_service::cluster_slots::ClusterSlots::new(&root_bank)
         });
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
@@ -1738,7 +1733,6 @@ impl Validator {
             entry_notification_sender.clone(),
             vote_tracker.clone(),
             retransmit_slots_sender,
-            gossip_verified_vote_hash_receiver,
             verified_vote_sender.clone(),
             verified_vote_receiver,
             replay_vote_sender.clone(),
@@ -1833,7 +1827,6 @@ impl Validator {
             bank_forks.clone(),
             alpenglow_slot_clock,
             verified_vote_sender,
-            gossip_verified_vote_hash_sender,
             replay_vote_receiver,
             replay_vote_sender,
             bank_notification_sender,

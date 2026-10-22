@@ -153,10 +153,7 @@ pub(crate) fn make_snapshot_hashes_crds_data(
 
 /// Build an EpochSlots CrdsData (variant 5).
 pub(crate) fn make_epoch_slots_crds_data(index: u8, from: &[u8; 32], wallclock: u64) -> Vec<u8> {
-    // EpochSlots is serialized by wincode. Build and serialize.
-    use solana_gossip::{crds_data::CrdsData, epoch_slots::EpochSlots};
-    let es = EpochSlots::new(solana_pubkey::Pubkey::from(*from), wallclock);
-    wincode::serialize(&CrdsData::EpochSlots(index, es)).unwrap()
+    wincode::serialize(&(5u32, index, *from, Vec::<u8>::new(), wallclock)).unwrap()
 }
 
 /// Build a LowestSlot CrdsData (variant 2).
@@ -166,12 +163,17 @@ pub(crate) fn make_lowest_slot_crds_data(
     lowest: u64,
     wallclock: u64,
 ) -> Vec<u8> {
-    use solana_gossip::crds_data::{CrdsData, LowestSlot};
-    let ls = LowestSlot::new(solana_pubkey::Pubkey::from(*from), lowest, wallclock);
-    let mut data = wincode::serialize(&CrdsData::LowestSlot(0, ls)).unwrap();
-    // Patch the index byte (offset 4 in the serialized CrdsData)
-    data[4] = index;
-    data
+    wincode::serialize(&(
+        2u32,
+        index,
+        *from,
+        0u64,
+        lowest,
+        Vec::<u64>::new(),
+        Vec::<u8>::new(),
+        wallclock,
+    ))
+    .unwrap()
 }
 
 /// Build a PullRequest (variant 0) from raw CrdsFilter + CrdsValue bytes.
@@ -198,7 +200,6 @@ pub(crate) fn make_crds_filter_bytes() -> Vec<u8> {
 /// The inner Transaction is complex; we construct and serialize via Rust objects.
 pub(crate) fn make_vote_crds_data(index: u8, from: &[u8; 32], wallclock: u64) -> Vec<u8> {
     use {
-        solana_gossip::crds_data::{CrdsData, Vote as CrdsVote},
         solana_keypair::Keypair,
         solana_signer::Signer,
         solana_vote_program::{vote_instruction, vote_state::Vote},
@@ -209,9 +210,7 @@ pub(crate) fn make_vote_crds_data(index: u8, from: &[u8; 32], wallclock: u64) ->
     let mut vote_tx =
         solana_transaction::Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
     vote_tx.partial_sign(&[&keypair], solana_hash::Hash::default());
-    let crds_vote = CrdsVote::new(solana_pubkey::Pubkey::from(*from), vote_tx, wallclock)
-        .expect("valid vote tx");
-    wincode::serialize(&CrdsData::Vote(index, crds_vote)).unwrap()
+    wincode::serialize(&(1u32, index, *from, vote_tx, wallclock)).unwrap()
 }
 
 /// Build a DuplicateShred CrdsData (variant 9).

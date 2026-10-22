@@ -96,7 +96,6 @@ fn packet_bytes(packet: &BytesPacket) -> Option<Bytes> {
 pub struct BankingStageStats {
     last_report: AtomicInterval,
     tpu_counts: VoteSourceCounts,
-    gossip_counts: VoteSourceCounts,
     pub(crate) dropped_duplicated_packets_count: AtomicUsize,
     dropped_forward_packets_count: AtomicUsize,
     current_buffered_packets_count: AtomicUsize,
@@ -145,8 +144,7 @@ impl BankingStageStats {
     }
 
     fn is_empty(&self) -> bool {
-        self.gossip_counts.is_empty()
-            && self.tpu_counts.is_empty()
+        self.tpu_counts.is_empty()
             && 0 == self
                 .dropped_duplicated_packets_count
                 .load(Ordering::Relaxed) as u64
@@ -198,34 +196,6 @@ impl BankingStageStats {
                 (
                     "tpu_newly_buffered_forwarded_packets_count",
                     self.tpu_counts
-                        .newly_buffered_forwarded_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "gossip_receive_and_buffer_packets_count",
-                    self.gossip_counts
-                        .receive_and_buffer_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "gossip_dropped_packets_count",
-                    self.gossip_counts
-                        .dropped_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "gossip_newly_buffered_packets_count",
-                    self.gossip_counts
-                        .newly_buffered_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "gossip_newly_buffered_forwarded_packets_count",
-                    self.gossip_counts
                         .newly_buffered_forwarded_packets_count
                         .swap(0, Ordering::Relaxed),
                     i64
@@ -335,7 +305,6 @@ pub struct BankingStage {
     worker_exit_signal: Arc<AtomicBool>,
     banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
     tpu_vote_receiver: BankingPacketReceiver,
-    gossip_vote_receiver: BankingPacketReceiver,
     non_vote_receiver: BankingPacketReceiver,
     transaction_recorder: TransactionRecorder,
     poh_recorder: Arc<RwLock<PohRecorder>>,
@@ -357,7 +326,6 @@ impl BankingStage {
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
-        gossip_vote_receiver: BankingPacketReceiver,
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
@@ -383,7 +351,7 @@ impl BankingStage {
             worker_exit_signal: Arc::new(AtomicBool::new(false)),
             banking_control_receiver,
             tpu_vote_receiver,
-            gossip_vote_receiver,
+
             non_vote_receiver,
             transaction_recorder,
             poh_recorder,
@@ -633,8 +601,6 @@ impl BankingStage {
         let vote_storage = VoteStorage::new(&self.bank_forks.read().unwrap().working_bank());
         let tpu_receiver =
             VotePacketReceiver::new(self.tpu_vote_receiver.clone(), self.filter_keys.clone());
-        let gossip_receiver =
-            VotePacketReceiver::new(self.gossip_vote_receiver.clone(), self.filter_keys.clone());
         let consumer = Consumer::new(
             self.committer.clone(),
             self.transaction_recorder.clone(),
@@ -658,7 +624,6 @@ impl BankingStage {
                     shutdown_signal,
                     decision_maker,
                     tpu_receiver,
-                    gossip_receiver,
                     vote_storage,
                     bank_forks,
                     consumer,
@@ -822,7 +787,6 @@ mod external {
             // Spawn tpu to pack.
             let tpu_to_pack_receivers = BankingPacketReceivers {
                 non_vote_receiver: self.non_vote_receiver.clone(),
-                gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
                 tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
             };
             threads.push(tpu_to_pack::spawn(
@@ -985,8 +949,6 @@ mod tests {
             non_vote_receiver,
             tpu_vote_sender,
             tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
         } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
@@ -1009,7 +971,6 @@ mod tests {
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
-            gossip_vote_receiver,
             mpsc::channel(1).1,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
@@ -1026,7 +987,6 @@ mod tests {
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
-        drop(gossip_vote_sender);
         exit.store(true, Ordering::Relaxed);
         banking_stage.join().unwrap();
         poh_service.join().unwrap();
@@ -1048,8 +1008,6 @@ mod tests {
             non_vote_receiver,
             tpu_vote_sender,
             tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
         } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
@@ -1072,7 +1030,6 @@ mod tests {
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
-            gossip_vote_receiver,
             mpsc::channel(1).1,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
@@ -1131,7 +1088,6 @@ mod tests {
 
         drop(non_vote_sender);
         drop(tpu_vote_sender);
-        drop(gossip_vote_sender);
         banking_stage.join().unwrap();
 
         exit.store(true, Ordering::Relaxed);
@@ -1183,8 +1139,6 @@ mod tests {
             non_vote_receiver,
             tpu_vote_sender,
             tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
         } = banking_tracer.create_channels();
 
         // Process a batch that includes a transaction that receives two lamports.
@@ -1225,7 +1179,6 @@ mod tests {
                 transaction_recorder,
                 non_vote_receiver,
                 tpu_vote_receiver,
-                gossip_vote_receiver,
                 mpsc::channel(1).1,
                 DEFAULT_NUM_WORKERS,
                 SchedulerConfig {
@@ -1257,7 +1210,6 @@ mod tests {
         };
         drop(non_vote_sender);
         drop(tpu_vote_sender);
-        drop(gossip_vote_sender);
 
         // consume the entire entry_receiver, feed it into a new bank
         // check that the balance is what we expect.

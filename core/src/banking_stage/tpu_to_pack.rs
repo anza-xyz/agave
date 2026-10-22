@@ -22,7 +22,6 @@ use {
 
 pub struct BankingPacketReceivers {
     pub non_vote_receiver: BankingPacketReceiver,
-    pub gossip_vote_receiver: Option<BankingPacketReceiver>,
     pub tpu_vote_receiver: Option<BankingPacketReceiver>,
 }
 
@@ -54,9 +53,6 @@ fn tpu_to_pack(
     // select! requires actual receivers, so in the case of None for vote receivers,
     // we create a dummy channel that can never receive.
     let non_vote_receiver = receivers.non_vote_receiver;
-    let gossip_vote_receiver = receivers
-        .gossip_vote_receiver
-        .unwrap_or_else(crossbeam_channel::never);
     let tpu_vote_receiver = receivers
         .tpu_vote_receiver
         .unwrap_or_else(crossbeam_channel::never);
@@ -64,7 +60,6 @@ fn tpu_to_pack(
     while !exit.load(Ordering::Relaxed) {
         let packet_batch = match crossbeam_channel::select! {
             recv(non_vote_receiver) -> msg => msg,
-            recv(gossip_vote_receiver) -> msg => msg,
             recv(tpu_vote_receiver) -> msg => msg,
             default(Duration::from_secs(1)) => continue,
         } {

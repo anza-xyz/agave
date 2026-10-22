@@ -185,7 +185,6 @@ impl VotePacketReceiver {
         stats.packet_stats.failed_sigverify_count += failed_sigverify_count as u64;
 
         let vote_source_counts = match vote_source {
-            VoteSource::Gossip => &banking_stage_stats.gossip_counts,
             VoteSource::Tpu => &banking_stage_stats.tpu_counts,
         };
 

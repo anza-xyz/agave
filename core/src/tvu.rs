@@ -6,16 +6,13 @@ use {
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
-        cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
-        },
-        cluster_slots_service::{ClusterSlotsService, cluster_slots::ClusterSlots},
+        cluster_info_vote_listener::{DuplicateConfirmedSlotsReceiver, VoteTracker},
+        cluster_slots_service::cluster_slots::ClusterSlots,
         commitment_service::AggregateCommitmentService,
         completed_data_sets_service::CompletedDataSetsSender,
         consensus::{Tower, tower_storage::TowerStorage},
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
-        epoch_specs::EpochSpecs,
         repair::{
             block_id_repair_service::BlockIdRepairChannels,
             repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
@@ -50,10 +47,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
-    solana_gossip::{
-        cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
-        duplicate_shred_listener::DuplicateShredListener,
-    },
+    solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{
@@ -121,7 +115,6 @@ pub struct Tvu {
     shred_sigverify: JoinHandle<()>,
     retransmit_stage: RetransmitStage,
     window_service: WindowService,
-    cluster_slots_service: ClusterSlotsService,
     replay_stage: ReplayStage,
     blockstore_cleanup_service: BlockstoreCleanupService,
     cost_update_service: CostUpdateService,
@@ -130,7 +123,6 @@ pub struct Tvu {
     peer_list_service: PeerListService,
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
-    duplicate_shred_listener: DuplicateShredListener,
     bls_sigverifier: JoinHandle<()>,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
@@ -244,7 +236,6 @@ impl Tvu {
         entry_notification_sender: Option<EntryNotifierSender>,
         vote_tracker: Arc<VoteTracker>,
         retransmit_slots_sender: Sender<Slot>,
-        gossip_verified_vote_hash_receiver: GossipVerifiedVoteHashReceiver,
         verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
         verified_voter_slots_receiver: Receiver<VerifiedVotorSlotsMessage>,
         replay_vote_sender: ReplayVoteSender,
@@ -503,16 +494,6 @@ impl Tvu {
             )
         };
 
-        let (cluster_slots_update_sender, cluster_slots_update_receiver) = unbounded();
-        let cluster_slots_service = ClusterSlotsService::new(
-            blockstore.clone(),
-            cluster_slots.clone(),
-            bank_forks.clone(),
-            cluster_info.clone(),
-            cluster_slots_update_receiver,
-            exit.clone(),
-        );
-
         let (cost_update_sender, cost_update_receiver) = unbounded();
         let (drop_bank_sender, drop_bank_receiver) = unbounded();
         let (voting_sender, voting_receiver) = unbounded();
@@ -572,7 +553,6 @@ impl Tvu {
             ancestor_hashes_replay_update_sender,
             retransmit_slots_sender,
             replay_vote_sender,
-            cluster_slots_update_sender,
             cost_update_sender,
             voting_sender,
             bls_sender,
@@ -594,7 +574,7 @@ impl Tvu {
             duplicate_slots_receiver,
             ancestor_duplicate_slots_receiver,
             duplicate_confirmed_slots_receiver,
-            gossip_verified_vote_hash_receiver,
+
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
             latest_switch_request,
@@ -656,29 +636,11 @@ impl Tvu {
             exit.clone(),
         );
 
-        let migration_status = bank_forks.read().unwrap().migration_status();
-        let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
-            Box::new(EpochSpecs::from(bank_forks));
-
-        let duplicate_shred_listener = DuplicateShredListener::new(
-            exit,
-            cluster_info.clone(),
-            DuplicateShredHandler::new(
-                blockstore,
-                leader_schedule_cache.clone(),
-                epoch_specs,
-                duplicate_slots_sender,
-                tvu_config.shred_version,
-                migration_status,
-            ),
-        );
-
         Ok(Tvu {
             fetch_stage,
             shred_sigverify,
             retransmit_stage,
             window_service,
-            cluster_slots_service,
             replay_stage,
             blockstore_cleanup_service,
             cost_update_service,
@@ -687,7 +649,6 @@ impl Tvu {
             peer_list_service,
             warm_quic_cache_service,
             drop_bank_service,
-            duplicate_shred_listener,
             bls_sigverifier,
             votor,
             commitment_service,
@@ -701,7 +662,6 @@ impl Tvu {
         self.votor_transport_endpoint.stop();
         self.retransmit_stage.join()?;
         self.window_service.join()?;
-        self.cluster_slots_service.join()?;
         self.fetch_stage.join()?;
         self.shred_sigverify.join()?;
         self.blockstore_cleanup_service.join()?;
@@ -713,7 +673,6 @@ impl Tvu {
             warmup_service.join()?;
         }
         self.drop_bank_service.join()?;
-        self.duplicate_shred_listener.join()?;
         if let Some(rt) = self.votor_transport_runtime.take() {
             rt.block_on(self.votor_transport_endpoint.join());
             rt.shutdown_background();
@@ -835,7 +794,6 @@ pub mod tests {
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let (retransmit_slots_sender, _retransmit_slots_receiver) = bounded(1024);
-        let (_gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
         let (verified_voter_slots_sender, verified_voter_slots_receiver) =
             EvictingSender::new_bounded(1024);
         let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
@@ -907,7 +865,6 @@ pub mod tests {
             None, // entry_notification_sender
             Arc::<VoteTracker>::default(),
             retransmit_slots_sender,
-            gossip_verified_vote_hash_receiver,
             verified_voter_slots_sender,
             verified_voter_slots_receiver,
             replay_vote_sender,

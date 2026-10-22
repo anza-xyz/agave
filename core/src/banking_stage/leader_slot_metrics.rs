@@ -444,9 +444,6 @@ impl LeaderSlotMetrics {
 // extraneous votes that were filtered out
 #[derive(Debug, Default)]
 pub(crate) struct VotePacketCountMetrics {
-    // How many votes ingested from gossip were dropped
-    dropped_gossip_votes: u64,
-
     // How many votes ingested from tpu were dropped
     dropped_tpu_votes: u64,
 }
@@ -460,7 +457,6 @@ impl VotePacketCountMetrics {
         datapoint_info!(
             "banking_stage-vote_packet_counts",
             ("slot", slot, i64),
-            ("dropped_gossip_votes", self.dropped_gossip_votes, i64),
             ("dropped_tpu_votes", self.dropped_tpu_votes, i64)
         );
     }
@@ -624,9 +620,6 @@ impl LeaderSlotMetricsTracker {
         self.increment_exceeded_buffer_limit_dropped_packets_count(
             vote_insertion_metrics.total_dropped_packets() as u64,
         );
-        self.increment_dropped_gossip_vote_count(
-            vote_insertion_metrics.dropped_gossip_packets() as u64
-        );
         self.increment_dropped_tpu_vote_count(vote_insertion_metrics.dropped_tpu_packets() as u64);
     }
 
@@ -770,14 +763,6 @@ impl LeaderSlotMetricsTracker {
                 .timing_metrics
                 .process_packets_timings
                 .filter_retryable_packets_us += us;
-        }
-    }
-
-    pub(crate) fn increment_dropped_gossip_vote_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            leader_slot_metrics
-                .vote_packet_count_metrics
-                .dropped_gossip_votes += count;
         }
     }
 
