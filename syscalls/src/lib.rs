@@ -23,7 +23,9 @@ use {
     solana_hash_512::Hash512,
     solana_instruction::{AccountMeta, ProcessedSiblingInstruction},
     solana_instruction_error::InstructionError,
-    solana_keccak_hasher as keccak, solana_poseidon as poseidon,
+    solana_keccak_hasher as keccak,
+    solana_leader_info::LeaderInfo,
+    solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS},
     solana_program_runtime::{
         cpi::CpiError,
@@ -35,6 +37,7 @@ use {
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
+        ebpf,
         memory_region::{AccessType, MemoryMapping},
         program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
         vm::Config,
@@ -329,6 +332,7 @@ pub fn create_program_runtime_environment(
         feature_set.remaining_compute_units_syscall_enabled;
     let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled;
     let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall;
+    let enable_get_leader_syscall = feature_set.enable_get_leader_syscall;
     let min_sbpf_version =
         if !feature_set.disable_sbpf_v0_execution || feature_set.reenable_sbpf_v0_execution {
             SBPFVersion::V0
@@ -518,6 +522,14 @@ pub fn create_program_runtime_environment(
 
     // Log data
     SyscallLogData::register(&mut result, "sol_log_data")?;
+
+    // Get Leader
+    register_feature_gated_function!(
+        result,
+        enable_get_leader_syscall,
+        "sol_get_leader",
+        SyscallGetLeader
+    )?;
 
     Ok(ProgramRuntimeEnvironment::from(result))
 }
@@ -2805,6 +2817,59 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochStake {
     }
 }
 
+/// Get the current and next leader.
+pub struct SyscallGetLeader {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLeader {
+    type Error = Error;
+    fn rust(
+        invoke_context: &mut InvokeContext<'_, '_>,
+        var_addr: u64,
+        _arg2: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+    ) -> Result<u64, Error> {
+        // As specified by SIMD-0558:
+        //
+        // Compute units:
+        //
+        // ```
+        // sysvar_base + max(mem_op_base, floor(size_of::<LeaderInfo>() / cpi_bytes_per_unit))
+        // ```
+        let compute_cost = invoke_context.get_execution_cost();
+        let compute_units = compute_cost.sysvar_base_cost.saturating_add(
+            (size_of::<LeaderInfo>() as u64)
+                .checked_div(compute_cost.cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX)
+                .max(compute_cost.mem_op_base_cost),
+        );
+        invoke_context.consume_checked(compute_units)?;
+
+        let check_aligned = invoke_context.get_check_aligned();
+        if !check_aligned {
+            return Err(SyscallError::UnalignedPointer.into());
+        }
+
+        if var_addr >= ebpf::MM_INPUT_START {
+            return Err(SyscallError::InvalidPointer.into());
+        }
+
+        // Read before borrowing the memory mapping. The lookup has no side
+        // effects, so taking it ahead of the translation is not observable.
+        let leader_info = invoke_context.get_leader_info();
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+        translate_mut!(
+            memory_mapping,
+            check_aligned,
+            let var: (&mut MaybeUninit<LeaderInfo>) = map(var_addr)?;
+        );
+        var.write(leader_info);
+
+        Ok(SUCCESS)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 #[allow(clippy::indexing_slicing)]
@@ -4638,6 +4703,83 @@ mod tests {
             assert_eq!(restart_from_buf, src_restart);
             assert!(are_bytes_equal(&restart_from_buf, &clean_restart));
         }
+    }
+
+    #[test]
+    fn test_syscall_get_leader() {
+        const LEADER_INFO: LeaderInfo = LeaderInfo {
+            leader_identity: Pubkey::new_from_array([1; 32]),
+            leader_vote: Pubkey::new_from_array([2; 32]),
+            next_leader_identity: Pubkey::new_from_array([3; 32]),
+            next_leader_vote: Pubkey::new_from_array([4; 32]),
+        };
+
+        let config = Config::default();
+        let mut compute_budget = SVMTransactionExecutionBudget::default();
+        let sysvar_cache = Arc::<SysvarCache>::default();
+
+        struct MockCallback {}
+        impl InvokeContextCallback for MockCallback {
+            fn get_leader_info(&self) -> LeaderInfo {
+                LEADER_INFO
+            }
+        }
+
+        // Compute units, as specified by SIMD-0558.
+        // cu = sysvar_base_cost
+        //     + max(mem_op_base_cost, floor(128/cpi_bytes_per_unit))
+        let compute_cost = SVMTransactionExecutionCost::default();
+        let expected_cus = compute_cost.sysvar_base_cost
+            + compute_cost
+                .mem_op_base_cost
+                .max(size_of::<LeaderInfo>() as u64 / compute_cost.cpi_bytes_per_unit);
+        // The value SIMD-0558 quotes for the default cost table.
+        assert_eq!(expected_cus, 110);
+
+        // Set the compute budget to the expected CUs to ensure the syscall
+        // doesn't exceed the expected usage.
+        compute_budget.compute_unit_limit = expected_cus;
+
+        with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+        let feature_set = SVMFeatureSet::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
+        invoke_context.environment_config = EnvironmentConfig::new(
+            Hash::default(),
+            0,
+            false,
+            &MockCallback {},
+            &feature_set,
+            &program_runtime_environments,
+            &sysvar_cache,
+        );
+
+        invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);
+        // test syscall
+        let mut got_leader_info_obj = LeaderInfo::default();
+        let got_leader_info_obj_va = 0x100000000;
+
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                vec![MemoryRegion::new(
+                    bytes_of_mut(&mut got_leader_info_obj),
+                    got_leader_info_obj_va,
+                )],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v1(memory_mapping);
+
+        let result =
+            SyscallGetLeader::rust(&mut invoke_context, got_leader_info_obj_va, 0, 0, 0, 0);
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(got_leader_info_obj, LEADER_INFO);
+        // ...and doesn't charge less than expected either.
+        use solana_sbpf::vm::ContextObject;
+        assert_eq!(invoke_context.get_remaining(), 0);
     }
 
     #[test_case(false; "partial")]

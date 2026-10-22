@@ -50,6 +50,7 @@ pub struct SVMFeatureSet {
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
+    pub enable_get_leader_syscall: bool,
 }
 
 impl SVMFeatureSet {
@@ -104,6 +105,7 @@ impl SVMFeatureSet {
             loader_v3_set_program_data_to_elf_length: true,
             early_instruction_trace_overflow_detection: true,
             unbound_loader_v3_instruction_data: true,
+            enable_get_leader_syscall: true,
         }
     }
 }

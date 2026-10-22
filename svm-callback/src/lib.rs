@@ -1,6 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 use {
     solana_account::{AccountSharedData, ReadableAccount},
+    solana_leader_info::LeaderInfo,
     solana_precompile_error::PrecompileError,
     solana_pubkey::Pubkey,
 };
@@ -30,6 +31,12 @@ pub trait InvokeContextCallback {
         _instruction_datas: Vec<&[u8]>,
     ) -> Result<(), PrecompileError> {
         Err(PrecompileError::InvalidPublicKey)
+    }
+
+    /// Returns the leaders of the current and next slot for the
+    /// `sol_get_leader` syscall.
+    fn get_leader_info(&self) -> LeaderInfo {
+        LeaderInfo::default()
     }
 }
 

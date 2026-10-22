@@ -817,7 +817,7 @@ mod tests {
     }
 
     fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
-        Bank::new_from_parent_with_options(parent, leader, slot, NewBankOptions::default())
+        Bank::new_from_parent_with_options(parent, leader.into(), slot, NewBankOptions::default())
     }
 
     pub(crate) fn create_bank_forks(

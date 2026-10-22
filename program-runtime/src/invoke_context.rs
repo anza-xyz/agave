@@ -24,6 +24,7 @@ use {
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
+    solana_leader_info::LeaderInfo,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -803,6 +804,12 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config
             .epoch_stake_callback
             .is_precompile(pubkey)
+    }
+
+    pub fn get_leader_info(&self) -> LeaderInfo {
+        self.environment_config
+            .epoch_stake_callback
+            .get_leader_info()
     }
 
     // Should alignment be enforced during user pointer translation

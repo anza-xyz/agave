@@ -1980,7 +1980,7 @@ fn process_next_slots(
             let next_bank = Bank::new_from_parent_with_options(
                 bank.clone(),
                 leader_schedule_cache
-                    .slot_leader_at(*next_slot, Some(bank))
+                    .slot_leaders_at(*next_slot, Some(bank))
                     .unwrap(),
                 *next_slot,
                 NewBankOptions {

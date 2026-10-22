@@ -34,6 +34,26 @@ impl SlotLeader {
     }
 }
 
+/// The leader of a slot together with the leader of the slot after it, as
+/// resolved from the leader schedule by whoever creates the bank for that slot.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct SlotLeaders {
+    pub leader: SlotLeader,
+    pub next_leader: SlotLeader,
+}
+
+/// Uses `leader` for both slots, for tests that don't care about the next
+/// leader.
+#[cfg(feature = "dev-context-only-utils")]
+impl From<SlotLeader> for SlotLeaders {
+    fn from(leader: SlotLeader) -> Self {
+        Self {
+            leader,
+            next_leader: leader,
+        }
+    }
+}
+
 // Used for testing
 #[derive(Clone, Debug)]
 pub struct FixedSchedule {

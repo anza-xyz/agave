@@ -28,6 +28,7 @@ dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
     "solana-entry/dev-context-only-utils",
+    "solana-leader-schedule/dev-context-only-utils",
     "solana-program-binaries",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
@@ -125,6 +126,7 @@ solana-instruction = { workspace = true, features = ["wincode"] }
 solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-lattice-hash = { workspace = true }
+solana-leader-info = { workspace = true }
 solana-leader-schedule = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-measure = { workspace = true }

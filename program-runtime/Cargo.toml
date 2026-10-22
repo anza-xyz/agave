@@ -49,6 +49,7 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["num-traits"] }
 solana-last-restart-slot = { workspace = true, features = ["wincode"] }
+solana-leader-info = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-message = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }

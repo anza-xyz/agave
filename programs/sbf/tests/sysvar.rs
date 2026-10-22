@@ -9,7 +9,7 @@ use {
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
+        bank::{Bank, SlotLeaders},
         bank_client::BankClient,
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         loader_utils::create_program,
@@ -93,7 +93,7 @@ fn test_sysvar_syscalls() {
     );
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeader::default())
+        .advance_slot(1, &bank_forks, SlotLeaders::default())
         .unwrap();
     let dummy_account_key = Pubkey::new_unique();
     bank.store_account(

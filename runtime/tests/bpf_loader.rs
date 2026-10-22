@@ -9,7 +9,7 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
-    solana_leader_schedule::SlotLeader,
+    solana_leader_schedule::{SlotLeader, SlotLeaders},
     solana_loader_v3_interface::{
         get_program_data_address, instruction::UpgradeableLoaderInstruction,
         state::UpgradeableLoaderState,
@@ -117,7 +117,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     // processed.
     goto_end_of_slot(bank);
     let bank = bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeader::default())
+        .advance_slot(1, bank_forks.as_ref(), SlotLeaders::default())
         .unwrap();
 
     // Load program file
@@ -283,7 +283,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     // Advance the bank so that the program becomes effective
     goto_end_of_slot(bank);
     let bank = bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeader::default())
+        .advance_slot(1, bank_forks.as_ref(), SlotLeaders::default())
         .unwrap();
 
     // Invoke the deployed program
