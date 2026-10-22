@@ -60,7 +60,6 @@ use {
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, leader_schedule_utils::leader_slot_index},
-    solana_runtime_transaction::sanitize_config::sanitize_config,
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -4843,9 +4842,7 @@ impl Blockstore {
                             } else {
                                 add_to_set(&result, tx.static_account_keys());
 
-                                let tx = tx
-                                    .sanitize(&sanitize_config())
-                                    .expect("transaction failed to sanitize");
+                                let tx = tx.sanitize().expect("transaction failed to sanitize");
 
                                 let alt_scan_extensions = scan_transaction(&tx);
                                 add_to_set(&result, &alt_scan_extensions.accounts);

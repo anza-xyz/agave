@@ -199,15 +199,11 @@ pub(crate) mod external {
             responses_region::execution_responses_from_iter,
             transaction_ptr::{TransactionPtr, TransactionPtrBatch},
         },
-        agave_transaction_view::{
-            resolved_transaction_view::ResolvedTransactionView, sanitize::SanitizeConfig,
-        },
+        agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         arrayvec::ArrayVec,
         solana_cost_model::cost_model::CostModel,
         solana_runtime::bank::Bank,
-        solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         std::num::NonZeroUsize,
     };
 
@@ -573,7 +569,6 @@ pub(crate) mod external {
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<MaxAge, MAX_TRANSACTIONS_PER_MESSAGE>,
         ) {
-            let sanitize_config = sanitize_config();
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = ArrayVec::new();
@@ -584,7 +579,6 @@ pub(crate) mod external {
                     transaction_ptr,
                     bank,
                     transaction_account_lock_limit,
-                    &sanitize_config,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -602,23 +596,18 @@ pub(crate) mod external {
             transaction_ptr: TransactionPtr,
             bank: &Bank,
             transaction_account_lock_limit: usize,
-            sanitize_config: &SanitizeConfig,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
-            translate_to_runtime_view(
-                transaction_ptr,
-                bank,
-                transaction_account_lock_limit,
-                sanitize_config,
+            translate_to_runtime_view(transaction_ptr, bank, transaction_account_lock_limit).map(
+                |(view, deactivation_slot)| {
+                    (
+                        view,
+                        MaxAge {
+                            sanitized_epoch: bank.epoch(),
+                            alt_invalidation_slot: deactivation_slot,
+                        },
+                    )
+                },
             )
-            .map(|(view, deactivation_slot)| {
-                (
-                    view,
-                    MaxAge {
-                        sanitized_epoch: bank.epoch(),
-                        alt_invalidation_slot: deactivation_slot,
-                    },
-                )
-            })
         }
 
         /// Returns `true` if a message is valid and can be processed.
@@ -1028,7 +1017,6 @@ pub(crate) mod external {
                         &simple_tx[..],
                         &bank,
                         bank.get_transaction_account_lock_limit(),
-                        &sanitize_config(),
                     )
                     .ok()
                     .unwrap()
@@ -1131,7 +1119,6 @@ pub(crate) mod external {
                 &simple_tx[..],
                 &bank,
                 bank.get_transaction_account_lock_limit(),
-                &sanitize_config(),
             )
             .ok()
             .unwrap()

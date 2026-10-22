@@ -244,11 +244,8 @@ where
     fn from(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
         let data = D::from(wincode::serialize(&versioned_transaction).unwrap());
-        let sanitized_view = SanitizedTransactionView::try_new_sanitized(
-            data,
-            &crate::sanitize_config::sanitize_config(),
-        )
-        .expect("failed to create SanitizedTransactionView from Transaction");
+        let sanitized_view = SanitizedTransactionView::try_new_sanitized(data)
+            .expect("failed to create SanitizedTransactionView from Transaction");
         let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             sanitized_view,
             MessageHash::Compute,
@@ -328,7 +325,6 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
 mod tests {
     use {
         super::*,
-        crate::sanitize_config::sanitize_config,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -352,11 +348,8 @@ mod tests {
         };
 
         let hash = Hash::new_unique();
-        let transaction = SanitizedTransactionView::try_new_sanitized(
-            &serialized_transaction[..],
-            &sanitize_config(),
-        )
-        .unwrap();
+        let transaction =
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..]).unwrap();
         let static_runtime_transaction =
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
@@ -388,9 +381,7 @@ mod tests {
             reserved_account_keys: &HashSet<Pubkey>,
         ) {
             let bytes = wincode::serialize(&original_transaction).unwrap();
-            let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
-                    .unwrap();
+            let transaction_view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -456,9 +447,7 @@ mod tests {
         ) {
             let bytes =
                 wincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
-            let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
-                    .unwrap();
+            let transaction_view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -545,11 +534,8 @@ mod tests {
                 Hash::new_unique(),
             )))
             .unwrap();
-        let transaction_view = SanitizedTransactionView::try_new_sanitized(
-            &serialized_transaction[..],
-            &sanitize_config(),
-        )
-        .unwrap();
+        let transaction_view =
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..]).unwrap();
         let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             transaction_view,
             MessageHash::Compute,

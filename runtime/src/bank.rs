@@ -5729,7 +5729,7 @@ impl Bank {
             }
 
             let sanitized_tx = tx
-                .sanitize(&solana_runtime_transaction::sanitize_config::sanitize_config())
+                .sanitize()
                 .map_err(|_| TransactionError::SanitizeFailure)?;
 
             if verification_mode == TransactionVerificationMode::FullVerification {
