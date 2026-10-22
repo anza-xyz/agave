@@ -27,12 +27,13 @@ use {
     agave_bls_sigverify::pubkeys::VerifiedVotorSlotsMessage,
     agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
     agave_xdp::transmitter::XdpSender,
-    crossbeam_channel::{Receiver, bounded},
+    crossbeam_channel::{Receiver, Sender, bounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
     solana_net_utils::quic_socket::into_quic_sockets,
+    solana_perf::packet::PacketBatch,
     solana_poh::{
         poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankMessage},
         transaction_recorder::TransactionRecorder,
@@ -103,6 +104,9 @@ pub struct Tpu {
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
     tracer_thread_hdl: TracerThread,
+    /// Keeps the vote channel connected so banking stage does not exit when
+    /// there are no TPU vote ingest sockets. Dropped in `join` to let it exit.
+    vote_packet_sender: Sender<PacketBatch>,
 }
 
 impl Tpu {
@@ -167,7 +171,7 @@ impl Tpu {
         let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
         let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
         let evicting_vote_sender =
-            EvictingSender::new(vote_packet_sender, vote_packet_receiver.clone());
+            EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
         let (forwarded_packet_sender, forwarded_packet_receiver) =
             bounded(TPU_FORWARD_CHANNEL_SIZE);
         let fetch_stage = FetchStage::new_with_sender(
@@ -361,10 +365,12 @@ impl Tpu {
             tpu_entry_notifier,
             staked_nodes_updater_service,
             tracer_thread_hdl,
+            vote_packet_sender,
         }
     }
 
     pub fn join(self) -> thread::Result<()> {
+        drop(self.vote_packet_sender);
         let results = vec![
             self.fetch_stage.join(),
             self.cluster_info_vote_listener.join(),
