@@ -222,7 +222,7 @@ fn try_restart_slot_from_update_parent(
                 slot,
                 cleared_bank_id,
                 parent_slot: update_parent.parent_slot,
-                parent_block_id: update_parent.parent_block_id,
+                parent_block_id: BlockId::from(update_parent.parent_block_id),
             },
         );
     }
@@ -458,7 +458,7 @@ pub(super) fn handle_abandoned_bank(
             slot: bank_slot,
             cleared_bank_id: bank.bank_id(),
             parent_slot: new_parent_slot,
-            parent_block_id: new_parent_block_id.to_hash(),
+            parent_block_id: new_parent_block_id,
         },
     );
     Ok(())

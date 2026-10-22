@@ -589,7 +589,7 @@ fn network_run_pull(
                                 &GossipStats::default(),
                             )
                             .into_iter()
-                            .flatten()
+                            .flat_map(|(_addr, values)| values)
                             .collect()
                     })
                     .unwrap();

@@ -1100,7 +1100,7 @@ fn handle_parent_ready(
             slot,
             cleared_bank_id,
             parent_slot: new_parent_slot,
-            parent_block_id: new_parent_block_id.to_hash(),
+            parent_block_id: new_parent_block_id,
         }))
     {
         warn!("UpdateParent entry notification send failed: {err:?}");
@@ -2319,7 +2319,7 @@ mod tests {
                 slot: leader_slot,
                 cleared_bank_id: optimistic_bank_id,
                 parent_slot: new_parent_slot,
-                parent_block_id: new_parent_block_id.to_hash(),
+                parent_block_id: new_parent_block_id,
             }
         );
         assert_eq!(

@@ -1297,25 +1297,29 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes 0.14.100",
  "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
 
 [[package]]
 name = "bit-set"
-version = "0.8.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
+checksum = "56d87354e4229f54a44f7bf2435906a4656dba36026ab6eaca629a2c436a691c"
 dependencies = [
  "bit-vec",
 ]
 
 [[package]]
 name = "bit-vec"
-version = "0.8.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
+checksum = "5727b15fa97d4f4fee0a3b7c3d550ed0269f54329207b86388de918604e31269"
+dependencies = [
+ "borsh",
+ "serde",
+]
 
 [[package]]
 name = "bitcoin-private"
@@ -2038,6 +2042,12 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "core_detect"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "corosensei"
@@ -3629,11 +3639,10 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
-version = "0.27.5"
+version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d191583f3da1305256f22463b9bb0471acad48a4e534a5218b9963e9c1f59b2"
+checksum = "e3c93eb611681b207e1fe55d5a71ecf91572ec8a6705cdb6857f7d8d5242cf58"
 dependencies = [
- "futures-util",
  "http 1.5.0",
  "hyper 1.11.1",
  "hyper-util",
@@ -3643,7 +3652,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 0.26.8",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -5473,17 +5482,18 @@ dependencies = [
 
 [[package]]
 name = "proptest"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
+checksum = "b8530004ccb15eae51c7e40009fbe317f341f804db54dc033eec1c50be28cfa0"
 dependencies = [
  "bit-set",
  "bit-vec",
  "bitflags 2.13.2",
+ "chacha20",
+ "core_detect",
  "num-traits",
- "rand 0.9.4",
- "rand_chacha 0.9.0",
- "rand_xorshift 0.4.0",
+ "rand 0.10.2",
+ "rand_xorshift 0.5.0",
  "regex-syntax",
  "rusty-fork",
  "tempfile",
@@ -5920,11 +5930,11 @@ dependencies = [
 
 [[package]]
 name = "rand_xorshift"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
+checksum = "60aa6af80be32871323012e02e6e65f8a7cc7890931ae421d217ad8fe0df2ccf"
 dependencies = [
- "rand_core 0.9.3",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -6085,7 +6095,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.0",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -6351,9 +6361,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -6562,9 +6572,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
  "itoa",
  "memchr",
@@ -6921,9 +6931,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.16.2"
+version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
+checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
 name = "smpl_jwt"
@@ -7226,7 +7236,10 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29c09d0da218d985406ed11c1c84169fc9e02e61a5a0012398026b329b9af608"
 dependencies = [
+ "bincode",
  "bytemuck",
+ "serde",
+ "serde_derive",
  "solana-clock",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
@@ -7863,9 +7876,8 @@ version = "3.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e19452bacf40a757f595819b45a9d79629eb70882f6ff4069be0e57f92d81989"
 dependencies = [
- "serde",
- "serde_derive",
  "solana-hash",
+ "wincode",
 ]
 
 [[package]]
@@ -8053,6 +8065,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-core",
  "solana-cost-model",
+ "solana-ed25519-program",
  "solana-entry",
  "solana-epoch-schedule",
  "solana-fee",
@@ -8092,6 +8105,8 @@ dependencies = [
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-sdk-ids",
+ "solana-secp256k1-program",
+ "solana-secp256r1-program",
  "solana-send-transaction-service",
  "solana-sha256-hasher",
  "solana-shred-version",
@@ -8609,15 +8624,12 @@ dependencies = [
 
 [[package]]
 name = "solana-genesis-config"
-version = "5.0.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8f376bc0e0363e3ada8f1409375670903eac588936073723e11ddc61ae120d6"
+checksum = "243dbdddc74d260db0b3bdbb1aedb1037dfe0feaffafd10eff581b46dac58005"
 dependencies = [
- "bincode",
  "chrono",
  "memmap2 0.5.10",
- "serde",
- "serde_derive",
  "solana-account",
  "solana-clock",
  "solana-cluster-type",
@@ -8634,6 +8646,7 @@ dependencies = [
  "solana-shred-version",
  "solana-signer",
  "solana-time-utils",
+ "wincode",
 ]
 
 [[package]]
@@ -9424,14 +9437,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e376ff05aaf06d7e1900e32b8522188184628916863358a1a2a3944e2755141"
 dependencies = [
  "bitflags 2.13.2",
- "cfg_eval",
- "serde",
- "serde_derive",
- "serde_with",
- "solana-frozen-abi",
- "solana-frozen-abi-macro",
  "solana-pubkey 4.4.0",
- "wincode",
 ]
 
 [[package]]
@@ -9445,6 +9451,7 @@ dependencies = [
  "arc-swap",
  "assert_matches",
  "bencher",
+ "bitflags 2.13.2",
  "bytes",
  "caps",
  "libc",
@@ -9533,12 +9540,11 @@ dependencies = [
 
 [[package]]
 name = "solana-poh-config"
-version = "3.1.0"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b2a84a6e76e6e4de709f3104113062e843add5f116cd61c218347a42681fa53"
+checksum = "18f2b4747ef01194ea4eb679101476c2769fb4ee46d939d77e482f44394e5f02"
 dependencies = [
- "serde",
- "serde_derive",
+ "wincode",
 ]
 
 [[package]]
@@ -9749,6 +9755,7 @@ dependencies = [
  "solana-account-info",
  "solana-accounts-db",
  "solana-address 2.9.0",
+ "solana-address-lookup-table-interface",
  "solana-banks-client",
  "solana-banks-interface",
  "solana-banks-server",
@@ -11680,9 +11687,9 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
-version = "7.2.0"
+version = "7.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d91f1d7031dfc71bab787ed109f71247a5ffe4b753467562a56c935385252f3"
+checksum = "e91bf90031e7387f9a57f8c4203d433a3ca08b9c1f24d95424e9bab38d5b2620"
 dependencies = [
  "arbitrary",
  "bincode",
@@ -12630,7 +12637,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tungstenite",
- "webpki-roots 0.26.8",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -12942,7 +12949,7 @@ dependencies = [
  "sha1",
  "thiserror 2.0.21",
  "utf-8",
- "webpki-roots 0.26.8",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -13297,27 +13304,27 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.2"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e4ffd8df1c57e87c325000a3d6ef93db75279dc3a231125aac571650f22b12a"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "0.26.8"
+version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2210b291f7ea53617fbafcc4939f10914214ec15aace5ba62293a668f322c5c9"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "rustls-pki-types",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.0"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2853738d1cc4f2da3a225c18ec6c3721abb31961096e9dbf5ab35fa88b19cfdb"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]

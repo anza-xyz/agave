@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(leader_schedule.num_slots(), len);
         let mut leader_node = SlotLeader::default();
         for (i, node) in leader_schedule.get_slot_leaders().enumerate() {
-            if i % repeat.get() == 0 {
+            if i % repeat == 0 {
                 leader_node = *node;
             } else {
                 assert_eq!(leader_node, *node);

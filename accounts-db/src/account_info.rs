@@ -21,23 +21,6 @@ pub enum StorageLocation {
     AccountsFile(AccountsFileId, Offset),
 }
 
-impl StorageLocation {
-    pub fn is_offset_equal(&self, other: &StorageLocation) -> bool {
-        match self {
-            StorageLocation::AccountsFile(_, offset) => match other {
-                StorageLocation::AccountsFile(_, other_offset) => other_offset == offset,
-            },
-        }
-    }
-    pub fn is_store_id_equal(&self, other: &StorageLocation) -> bool {
-        match self {
-            StorageLocation::AccountsFile(store_id, _) => match other {
-                StorageLocation::AccountsFile(other_store_id, _) => other_store_id == store_id,
-            },
-        }
-    }
-}
-
 #[bitfield(bits = 32)]
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]

@@ -52,7 +52,7 @@ pub fn spawn(
 struct ProgressTracker {
     exit: Arc<AtomicBool>,
     shared_leader_state: SharedLeaderState,
-    worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+    worker_metrics: Vec<(String, Arc<ConsumeWorkerMetrics>)>,
     ticks_per_slot: u64,
     migration_status: Arc<MigrationStatus>,
     alpenglow_slot_clock: SharedAlpenglowSlotClock,
@@ -74,7 +74,11 @@ impl ProgressTracker {
         Self {
             exit,
             shared_leader_state,
-            worker_metrics,
+            worker_metrics: worker_metrics
+                .into_iter()
+                .enumerate()
+                .map(|(id, metrics)| (id.to_string(), metrics))
+                .collect(),
             ticks_per_slot,
             migration_status,
             alpenglow_slot_clock,
@@ -106,7 +110,7 @@ impl ProgressTracker {
 
             self.worker_metrics
                 .iter()
-                .for_each(|metrics| metrics.maybe_report_and_reset());
+                .for_each(|(id, metrics)| metrics.maybe_report_and_reset(id));
 
             self.wait_for_next_progress_boundary();
         }

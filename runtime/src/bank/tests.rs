@@ -62,8 +62,8 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot,
-        UnixTimestamp,
+        DEFAULT_NS_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH,
+        MAX_RECENT_BLOCKHASHES, Slot, UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::{
@@ -105,7 +105,7 @@ use {
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
-    solana_rent::{DEFAULT_LAMPORTS_PER_BYTE, Rent},
+    solana_rent::Rent,
     solana_reward_info::RewardType,
     solana_sdk_ids::{ed25519_program, incinerator, native_loader, secp256k1_program},
     solana_seed_derivable::SeedDerivable,
@@ -190,9 +190,15 @@ pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, K
     solana_genesis_config::create_genesis_config(lamports)
 }
 
-fn create_genesis_config_with_legacy_hashes(lamports: u64) -> (GenesisConfig, Keypair) {
-    let (mut genesis_config, mint_keypair) = create_genesis_config(lamports);
+fn set_legacy_slot_params(genesis_config: &mut GenesisConfig) {
+    genesis_config.poh_config.target_tick_duration =
+        Duration::from_nanos(DEFAULT_NS_PER_TICK_400_MS);
     genesis_config.poh_config.hashes_per_tick = Some(LEGACY_HASHES_PER_TICK);
+}
+
+fn create_genesis_config_with_legacy_slot_params(lamports: u64) -> (GenesisConfig, Keypair) {
+    let (mut genesis_config, mint_keypair) = create_genesis_config(lamports);
+    set_legacy_slot_params(&mut genesis_config);
     (genesis_config, mint_keypair)
 }
 
@@ -320,8 +326,7 @@ fn test_bank_new() {
     );
 
     genesis_config.rent = Rent {
-        lamports_per_byte: 5,
-        exemption_threshold: 1.2f64.to_le_bytes(),
+        lamports_per_byte: 6,
         ..Rent::default()
     };
 
@@ -685,7 +690,7 @@ impl Bank {
             // already have been cached in cached_vote_accounts; so the code
             // below is only for sanity check in tests, and should not be hit
             // in practice.
-            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            let account = self.get_account(vote_pubkey)?;
             if account.owner() == &solana_vote_program
                 && VoteStateV4::deserialize(account.data(), vote_pubkey).is_ok()
             {
@@ -1254,7 +1259,7 @@ fn test_account_not_found() {
             &keypair,
             &mint_keypair.pubkey()
         ),
-        Err(TransactionError::AccountNotFound)
+        Err(TransactionError::InvalidAccountForFee)
     );
     assert_eq!(bank.transaction_count(), 0);
     assert_eq!(bank.non_vote_transaction_count_since_restart(), 0);
@@ -1680,7 +1685,7 @@ fn test_debits_before_credits(relax_fee_payer_constraint: bool) {
     let tx2 = system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 1, Hash::new_unique());
     let txs = [tx0, tx1, tx2];
     let results = bank.process_transactions(txs.iter());
-    assert_eq!(results[0], Err(TransactionError::AccountNotFound));
+    assert_eq!(results[0], Err(TransactionError::InvalidAccountForFee));
     assert_eq!(results[2], Err(TransactionError::BlockhashNotFound));
 
     // Assert bad transactions aren't counted.
@@ -2832,14 +2837,14 @@ fn test_bank_get_account_in_parent_after_squash2() {
 }
 
 #[test]
-fn test_bank_get_account_modified_since_parent_with_fixed_root() {
+fn test_bank_get_account_modified_since_parent() {
     let pubkey = solana_pubkey::new_rand();
 
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let amount = genesis_config.rent.minimum_balance(0);
     let (bank1, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     bank1.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    let result = bank1.get_account_modified_since_parent_with_fixed_root(&pubkey);
+    let result = bank1.get_account_modified_since_parent(&pubkey);
     assert!(result.is_some());
     let (account, slot) = result.unwrap();
     assert_eq!(account.lamports(), amount);
@@ -2851,18 +2856,14 @@ fn test_bank_get_account_modified_since_parent_with_fixed_root() {
         SlotLeader::default(),
         1,
     );
-    assert!(
-        bank2
-            .get_account_modified_since_parent_with_fixed_root(&pubkey)
-            .is_none()
-    );
+    assert!(bank2.get_account_modified_since_parent(&pubkey).is_none());
     bank2.transfer(2 * amount, &mint_keypair, &pubkey).unwrap();
-    let result = bank1.get_account_modified_since_parent_with_fixed_root(&pubkey);
+    let result = bank1.get_account_modified_since_parent(&pubkey);
     assert!(result.is_some());
     let (account, slot) = result.unwrap();
     assert_eq!(account.lamports(), amount);
     assert_eq!(slot, 0);
-    let result = bank2.get_account_modified_since_parent_with_fixed_root(&pubkey);
+    let result = bank2.get_account_modified_since_parent(&pubkey);
     assert!(result.is_some());
     let (account, slot) = result.unwrap();
     assert_eq!(account.lamports(), 3 * amount);
@@ -2872,10 +2873,7 @@ fn test_bank_get_account_modified_since_parent_with_fixed_root() {
 
     let bank3 =
         Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, SlotLeader::default(), 3);
-    assert_eq!(
-        None,
-        bank3.get_account_modified_since_parent_with_fixed_root(&pubkey)
-    );
+    assert_eq!(None, bank3.get_account_modified_since_parent(&pubkey));
 }
 
 #[test]
@@ -3453,12 +3451,12 @@ fn test_is_delta_with_no_committables() {
     let fail_tx =
         system_transaction::transfer(&keypair1, &keypair2.pubkey(), 1, bank.last_blockhash());
 
-    // Should fail with TransactionError::AccountNotFound, which means
+    // Should fail with TransactionError::InvalidAccountForFee, which means
     // the account which this tx operated on will not be committed. Thus
     // the bank is_delta should still be false
     assert_eq!(
         bank.process_transaction(&fail_tx),
-        Err(TransactionError::AccountNotFound)
+        Err(TransactionError::InvalidAccountForFee)
     );
 
     // Check the bank is_delta is still false
@@ -4861,7 +4859,10 @@ fn test_pre_post_transaction_balances() {
 
     // Failed transactions still produce balance sets
     // This is a TransactionError - not possible to charge fees
-    assert_matches!(commit_results[1], Err(TransactionError::AccountNotFound));
+    assert_matches!(
+        commit_results[1],
+        Err(TransactionError::InvalidAccountForFee)
+    );
     assert_eq!(transaction_balances_set.pre_balances[1], vec![0, 0, 1]);
     assert_eq!(transaction_balances_set.post_balances[1], vec![0, 0, 1]);
 
@@ -5084,11 +5085,11 @@ fn test_duplicate_account_key() {
 fn test_process_transaction_with_too_many_account_locks() {
     agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(500);
-    let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
-        &genesis_config,
-        solana_vote_program::id(),
-        MockBuiltin::register,
-    );
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::register);
+    // Exercise the lock limit with a transaction that still fits the wire-size limit.
+    bank.transaction_account_lock_limit = Some(4);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let from_pubkey = solana_pubkey::new_rand();
     let to_pubkey = solana_pubkey::new_rand();
@@ -5363,10 +5364,8 @@ fn test_fuzz_instructions() {
 // new feature that affects the bank hash, you should update this test to use a
 // test matrix that tests the bank hash calculation with and without your
 // added feature.
-#[allow(deprecated)]
-#[test_case(false ; "legacy")]
-#[test_case(true ; "deprecate rent exemption threshold")]
-fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
+#[test]
+fn test_bank_hash_consistency() {
     const VALIDATOR_STAKE_LAMPORTS: u64 = 100 * LAMPORTS_PER_SOL;
 
     let mut genesis_config = GenesisConfig {
@@ -5379,9 +5378,6 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
         cluster_type: ClusterType::MainnetBeta,
         ..GenesisConfig::default()
     };
-
-    genesis_config.rent.lamports_per_byte = DEFAULT_LAMPORTS_PER_BYTE / 2;
-    genesis_config.rent.exemption_threshold = 2.0f64.to_le_bytes();
 
     // Include a deterministic vote and stake account in the genesis bank.
     let validator_keypairs = (0..2)
@@ -5417,11 +5413,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
-    let mut feature_set = FeatureSet::all_enabled();
-
-    if !deprecate_rent_exemption_threshold {
-        feature_set.deactivate(&feature_set::deprecate_rent_exemption_threshold::id());
-    }
+    let feature_set = FeatureSet::all_enabled();
 
     let (mut bank, _bank_forks) = Bank::new_from_genesis(
         &genesis_config,
@@ -5505,11 +5497,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "G1rANcscD2mdoaAwdXn29ERibx3o7Ks1Nk7h1C6Sfhk2"
-                } else {
-                    "6gnFRPMgyQ1fj2xLKoQFwHqMCQ6HPPYLG7TUZFmuCen9"
-                },
+                "Frj3kc8QfCipZJssD4Bp1m4YkhBv5Ps2u72YUQY4TjGB",
             );
         }
 
@@ -5517,22 +5505,14 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "TDnXLFxaMVtN4KFKmdSc28zTfQjd2sPVazrVkfUFv3G"
-                } else {
-                    "9HL7PKa6Xt6CPqJFmdM4zWziH2YZzA7U92cbhLvTuubF"
-                },
+                "2cZPDxSwRoohpRQ9v6U6jkLVsdq4pGAvhrrGmwkLgETe",
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                if deprecate_rent_exemption_threshold {
-                    "G8mgrJ1vGXTfjRS8mmjYeHzkGwRLN5jvyirpApzB6Box"
-                } else {
-                    "6wrhEo1vT3P6bH8SuJrs7orouw7ivBkWs2XetuneH3hT"
-                },
+                "EwSi5Y5VX6w3WZph6aVdwELkiDHGLmBymLmKrhGj9yYt",
             );
             break;
         }
@@ -5622,16 +5602,17 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         let stakes = bank0.stakes_cache.stakes();
         let deserialized_stakes = DeserializableDelegationStakes {
             vote_accounts: stakes.vote_accounts().clone(),
-            stake_delegations: stakes
-                .stake_delegations()
-                .iter()
-                .map(|(pubkey, stake_account)| (*pubkey, *stake_account.delegation()))
-                .collect(),
+            stake_delegations: vec![],
             unused: 0,
             epoch: 0,
             stake_history: stakes.history().clone(),
         };
-        Stakes::load_from_deserialized_delegations(deserialized_stakes, |pubkey| {
+        let stake_pubkeys = stakes
+            .stake_delegations()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        Stakes::load_from_accounts(deserialized_stakes, stake_pubkeys, |pubkey| {
             bank0.get_account(pubkey)
         })
         .unwrap()
@@ -5830,7 +5811,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "3Bgnu7jRBPv47Bm4B4CsfDHqWz9oj2tXidPeNjEHFZPG",
+        "6NexZW334XPXzSeaB33XbY7uwR17LC4VW6durttvLL6a",
     );
 }
 
@@ -6552,7 +6533,7 @@ fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
 
 #[test]
 fn test_reduce_slot_time_features() {
-    let (genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+    let (genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
     let feature_account_balance = genesis_config.rent.minimum_balance(Feature::size_of());
 
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -6620,6 +6601,7 @@ fn test_vat_burn_slot_params() {
             ClusterType::Development,
             FeatureSet::default(),
         );
+        set_legacy_slot_params(&mut genesis_config);
         activate_feature(&mut genesis_config, feature_set::alpenglow::id());
         if let Some(feature_id) = slot_time_feature_id {
             activate_feature(&mut genesis_config, feature_id);
@@ -6689,7 +6671,7 @@ fn test_vat_burn_slot_params() {
 
 #[test]
 fn test_reduce_slot_time_features_active_at_genesis() {
-    let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
     for feature_id in slot_time_feature_ids() {
         activate_feature(&mut genesis_config, feature_id);
     }
@@ -6731,7 +6713,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
             assert_eq!(bank.hashes_per_tick(), expected_effective_hashes_per_tick);
         };
 
-    let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
     activate_feature(
         &mut genesis_config,
         feature_set::reduce_slot_time_to_200ms::id(),
@@ -6742,7 +6724,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
         SLOT_PARAMS_200MS.hashes_per_tick(),
     );
 
-    let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
     genesis_utils::activate_all_features(&mut genesis_config);
     assert_eq!(genesis_config.poh_config.hashes_per_tick, None);
     assert_reduced_slot_time_hashes_per_tick(genesis_config, None, None);
@@ -6752,7 +6734,7 @@ fn test_reduce_slot_time_hashes_per_tick() {
 fn test_reduce_slot_time_range_duration() {
     const SLOTS_PER_EPOCH: Slot = 32;
     let bank_for_activations = |activations: &[(Pubkey, Slot)]| {
-        let (mut genesis_config, _) = create_genesis_config_with_legacy_hashes(1_000_000);
+        let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
         genesis_config.epoch_schedule =
             EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
         let mut bank = Bank::new_for_tests(&genesis_config);
@@ -7999,13 +7981,13 @@ fn test_remove_unrooted_before_scan() {
                 // Test removing the slot before the scan starts, should cause
                 // SlotRemoved error every time
                 for k in pubkeys_to_modify.iter() {
-                    assert!(bank_at_fork_tip.load_slow(&ancestors, k).is_some());
+                    assert!(bank_at_fork_tip.load(&ancestors, k).is_some());
                 }
                 bank_at_fork_tip.remove_unrooted_slots(&slots_on_fork);
 
                 // Accounts on this fork should not be found after removal
                 for k in pubkeys_to_modify.iter() {
-                    assert!(bank_at_fork_tip.load_slow(&ancestors, k).is_none());
+                    assert!(bank_at_fork_tip.load(&ancestors, k).is_none());
                 }
                 if bank_to_scan_sender.send(bank_at_fork_tip.clone()).is_err() {
                     return;
@@ -8060,7 +8042,7 @@ fn test_remove_unrooted_scan_then_recreate_same_slot_before_scan() {
                     // we've recreated those slots this iteration, so they should be findable
                     // again
                     for k in pubkeys_to_modify.iter() {
-                        assert!(bank_at_fork_tip.load_slow(&ancestors, k).is_some());
+                        assert!(bank_at_fork_tip.load(&ancestors, k).is_some());
                     }
 
                     // Now after we've recreated the slots removed in the previous loop
@@ -8111,7 +8093,7 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 // we've recreated those slots this iteration, so they should be findable
                 // again
                 for k in pubkeys_to_modify.iter() {
-                    assert!(bank_at_fork_tip.load_slow(&ancestors, k).is_some());
+                    assert!(bank_at_fork_tip.load(&ancestors, k).is_some());
                 }
 
                 // Now after we've recreated the slots removed in the previous loop
@@ -11937,28 +11919,8 @@ fn test_startup_from_snapshot_after_precompile_transition() {
 }
 
 #[test]
-fn test_genesis_deprecate_rent_exemption_enabled() {
+fn test_genesis_rent_sysvar() {
     let GenesisConfigInfo { genesis_config, .. } = genesis_utils::create_genesis_config(100_000);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-    let rent_account = bank.get_account(&Rent::id()).unwrap();
-    let accounts_db_rent: Rent = rent_account.state().unwrap();
-    let rent_collector_rent = bank.rent_collector.rent.clone();
-    let tx_processor_rent = bank
-        .transaction_processor
-        .sysvar_cache()
-        .get_rent()
-        .unwrap()
-        .as_ref()
-        .clone();
-
-    assert_eq!(accounts_db_rent, tx_processor_rent);
-    assert_eq!(accounts_db_rent, rent_collector_rent);
-}
-
-#[test]
-fn test_genesis_deprecate_rent_exemption_disabled() {
-    let (genesis_config, ..) = create_genesis_config(100_000);
 
     let bank = Bank::new_for_tests(&genesis_config);
     let rent_account = bank.get_account(&Rent::id()).unwrap();
@@ -12164,6 +12126,9 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.rent_collector.rent = wrong_rent.clone();
     bank.set_block_id(Some(BlockId::default()));
+    // The rebuilt bank shares the AccountsDb but gets a new bank id, so any unrooted writes in
+    // the original bank would be lost. Squash first so they are ancestors of the rebuilt bank.
+    bank.squash();
 
     // Serialize bank to snapshot
     let mut buf = vec![];
@@ -12196,6 +12161,12 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
         None,
         None,
         bank.load_accounts_data_size(),
+        bank.stakes_cache
+            .stakes()
+            .stake_delegations()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
         epoch_stakes,
     );
 
@@ -12214,6 +12185,9 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
     let bank = Bank::new_for_tests(&genesis_config);
     bank.set_hashes_per_tick(Some(LEGACY_HASHES_PER_TICK));
     bank.set_block_id(Some(BlockId::default()));
+    // The rebuilt bank shares the AccountsDb but gets a new bank id, so any unrooted writes in
+    // the original bank would be lost. Squash first so they are ancestors of the rebuilt bank.
+    bank.squash();
 
     let mut buf = vec![];
     crate::serde_snapshot::bank_to_stream(
@@ -12241,6 +12215,12 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
         None,
         None,
         bank.load_accounts_data_size(),
+        bank.stakes_cache
+            .stakes()
+            .stake_delegations()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
         epoch_stakes,
     );
 
@@ -12694,10 +12674,16 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
     // otherwise, it is discarded as an error
     if relax_fee_payer_constraint {
         let committed = commit_results[0].as_ref().unwrap();
-        assert_eq!(committed.status, Err(TransactionError::AccountNotFound));
+        assert_eq!(
+            committed.status,
+            Err(TransactionError::InvalidAccountForFee)
+        );
         assert_eq!(committed.fee_details, FeeDetails::default());
     } else {
-        assert_eq!(commit_results[0], Err(TransactionError::AccountNotFound));
+        assert_eq!(
+            commit_results[0],
+            Err(TransactionError::InvalidAccountForFee)
+        );
     }
 
     // no fees have been accumulated

@@ -728,7 +728,7 @@ mod tests {
         vote_address: &Pubkey,
         modify_fn: &dyn Fn(&mut VoteStateV4),
     ) {
-        let mut vote_account = bank.get_account_with_fixed_root(vote_address).unwrap();
+        let mut vote_account = bank.get_account(vote_address).unwrap();
         let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
         let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
             panic!("unexpected version");
@@ -1747,6 +1747,8 @@ mod tests {
         let mut simulated_bank =
             Bank::new_from_parent(bank.clone(), SlotLeader::default(), bank.slot() + 1);
         simulated_bank.slot = bank.slot() + slots_per_epoch;
+        // A bank stores at one slot, so moving the slot makes it a different bank
+        simulated_bank.bank_id = simulated_bank.rc.bank_id_generator.next();
         simulated_bank.epoch += 1;
 
         // Simulate the steps in `compute_new_epoch_caches_and_rewards`
@@ -1981,7 +1983,7 @@ mod tests {
 
                 // All vote accounts had field reset
                 for vote_address in voters.iter() {
-                    let vote_account = curr_bank.get_account_with_fixed_root(vote_address).unwrap();
+                    let vote_account = curr_bank.get_account(vote_address).unwrap();
                     let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
                     let VoteStateVersions::V4(vote_state) = vote_state_versions else {
                         panic!("unexpected version");
@@ -2038,9 +2040,7 @@ mod tests {
                 );
 
                 for stake_address in stakers.iter() {
-                    let stake_account = curr_bank
-                        .get_account_with_fixed_root(stake_address)
-                        .unwrap();
+                    let stake_account = curr_bank.get_account(stake_address).unwrap();
                     let stake_state: StakeStateV2 = stake_account.state().unwrap();
                     let delegation = stake_state.delegation().unwrap();
                     // Check that stake accounts expected to receive a distribution, do.

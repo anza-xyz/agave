@@ -750,7 +750,7 @@ mod tests {
     use {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
-        solana_account::{Account, WritableAccount, state_traits::StateMutWincode as _},
+        solana_account::{Account, state_traits::StateMutWincode as _},
         solana_keypair::{Keypair, read_keypair_file, write_keypair},
         solana_nonce::{
             self as nonce,
@@ -1163,11 +1163,9 @@ mod tests {
 
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
         let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
-        wincode::serialize_into(
-            nonce_account.data_as_mut_slice(),
-            &Versions::new(State::Initialized(data.clone())),
-        )
-        .unwrap();
+        nonce_account
+            .set_state(&Versions::new(State::Initialized(data.clone())))
+            .unwrap();
         assert_eq!(
             state_from_account(&nonce_account),
             Ok(State::Initialized(data))
@@ -1195,11 +1193,9 @@ mod tests {
 
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
         let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
-        wincode::serialize_into(
-            nonce_account.data_as_mut_slice(),
-            &Versions::new(State::Initialized(data.clone())),
-        )
-        .unwrap();
+        nonce_account
+            .set_state(&Versions::new(State::Initialized(data.clone())))
+            .unwrap();
         let state = state_from_account(&nonce_account).unwrap();
         assert_eq!(data_from_state(&state), Ok(&data));
         assert_eq!(data_from_account(&nonce_account), Ok(data));

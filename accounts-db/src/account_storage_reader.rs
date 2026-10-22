@@ -313,7 +313,7 @@ mod tests {
         let archive_path = temp_dir.path().join("archive");
         fs::write(&archive_path, output).unwrap();
         let archived =
-            AccountsFile::new_for_startup(FileInfo::new_from_path(archive_path).unwrap()).unwrap();
+            AccountsFile::open_append_vec(FileInfo::new_from_path(archive_path).unwrap()).unwrap();
         let mut count = 0;
         archived
             .scan_accounts(
@@ -457,7 +457,7 @@ mod tests {
         // and verify that the number of accounts in the new file is correct
         if (total_accounts - number_of_accounts_to_remove) != 0 {
             let file_info = FileInfo::new_from_path(temp_file_path).unwrap();
-            let accounts_file = AccountsFile::new_for_startup(file_info).unwrap();
+            let accounts_file = AccountsFile::open_append_vec(file_info).unwrap();
 
             // Verify that the correct number of accounts were found in the file
             let mut num_accounts = 0;
@@ -612,7 +612,7 @@ mod tests {
 
             // Create a new AccountStorageEntry from the output file
             let file_info = FileInfo::new_from_path(temp_file_path).unwrap();
-            let accounts_file = AccountsFile::new_for_startup(file_info).unwrap();
+            let accounts_file = AccountsFile::open_append_vec(file_info).unwrap();
             let new_storage = AccountStorageEntry::new_existing(
                 slot,
                 0,
@@ -743,7 +743,7 @@ mod tests {
         fs::write(&archive_path, output_buf).unwrap();
 
         let archived_file_info = FileInfo::new_from_path(&archive_path).unwrap();
-        let archived_storage = AccountsFile::new_for_startup(archived_file_info).unwrap();
+        let archived_storage = AccountsFile::open_append_vec(archived_file_info).unwrap();
         let mut archived_num_accounts = 0;
         let mut expected_accounts_iter = included_accounts.iter();
         archived_storage

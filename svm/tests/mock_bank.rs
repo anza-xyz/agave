@@ -25,7 +25,9 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget},
     solana_svm::transaction_processor::TransactionBatchProcessor,
-    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_callback::{
+        AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
+    },
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::{Arc, RwLock},
@@ -68,7 +70,7 @@ pub struct MockBankCallback {
 
 impl InvokeContextCallback for MockBankCallback {}
 
-impl TransactionProcessingCallback for MockBankCallback {
+impl AccountLoadCallback for MockBankCallback {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.account_shared_data
             .read()
@@ -77,6 +79,8 @@ impl TransactionProcessingCallback for MockBankCallback {
             .cloned()
     }
 }
+
+impl TransactionProcessingCallback for MockBankCallback {}
 
 impl MockBankCallback {
     pub fn calculate_fee_details(message: &impl SVMMessage, prioritization_fee: u64) -> FeeDetails {

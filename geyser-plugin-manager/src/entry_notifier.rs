@@ -52,7 +52,7 @@ fn convert_block_footer(
                 let (slot, block_id, signature, bitmap) = cert.as_parts();
                 block_footer::NotarRewardCertificate {
                     slot,
-                    block_id: *block_id,
+                    block_id: block_id.to_hash(),
                     signature: *signature,
                     bitmap,
                 }
@@ -174,7 +174,7 @@ impl EntryNotifier for EntryNotifierImpl {
             slot: update_parent.slot,
             cleared_bank_id: update_parent.cleared_bank_id.into(),
             parent_slot: update_parent.parent_slot,
-            parent_block_id: &update_parent.parent_block_id,
+            parent_block_id: &update_parent.parent_block_id.to_hash(),
         };
         for plugin in plugin_manager.plugins() {
             if plugin.entry_notifications_enabled()
@@ -364,8 +364,7 @@ mod tests {
             }),
             skip_reward_cert: Some(SkipRewardCertificate::try_new(41, signature, vec![6]).unwrap()),
             notar_reward_cert: Some(
-                NotarRewardCertificate::try_new(42, block_id.to_hash(), signature, vec![8])
-                    .unwrap(),
+                NotarRewardCertificate::try_new(42, block_id, signature, vec![8]).unwrap(),
             ),
         });
         let expected_block_footer =
@@ -397,7 +396,7 @@ mod tests {
                     bitmap: &[8],
                 }),
             });
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
 
         notifier.notify_entry(42, BankId::new(9), 3, &entry, 7);
         notifier.notify_entry_update_parent(&EntryUpdateParentInfo {
@@ -414,7 +413,7 @@ mod tests {
         );
         assert_eq!(
             *entry_plugin_update_parents.lock().unwrap(),
-            vec![(42, 9, 40, parent_block_id)]
+            vec![(42, 9, 40, parent_block_id.to_hash())]
         );
         assert!(entry_plugin_block_footer_updates.lock().unwrap().is_empty());
         assert!(block_footer_plugin_entry_updates.lock().unwrap().is_empty());

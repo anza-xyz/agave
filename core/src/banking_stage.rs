@@ -528,6 +528,7 @@ impl BankingStage {
             check_work_receiver,
             check_result_sender,
             sharable_banks.clone(),
+            self.poh_recorder.read().unwrap().shared_leader_state(),
             self.filter_keys.clone(),
         );
         let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
@@ -558,7 +559,6 @@ impl BankingStage {
         for (index, work_receiver) in work_receivers.into_iter().enumerate() {
             let id = index as u32;
             let consume_worker = ConsumeWorker::new(
-                id,
                 exit.clone(),
                 work_receiver,
                 Consumer::new(
@@ -712,8 +712,11 @@ mod external {
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
             // Spawn the external consumer workers.
-            let mut threads = Vec::with_capacity(workers.len() + check_workers.len() + 2);
-            let mut worker_metrics = Vec::with_capacity(workers.len());
+            let simulation_worker_count = 0;
+            let mut threads = Vec::with_capacity(
+                workers.len() + simulation_worker_count + check_workers.len() + 2,
+            );
+            let mut worker_metrics = Vec::with_capacity(workers.len() + simulation_worker_count);
             for (
                 index,
                 AgaveWorkerSession {
@@ -725,14 +728,12 @@ mod external {
             {
                 let id = index as u32;
                 let consume_worker = ExternalWorker::new(
-                    id,
                     self.worker_exit_signal.clone(),
                     Consumer::new(
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
                         self.log_messages_bytes_limit,
                     ),
-                    worker_to_pack,
                     allocator,
                     self.poh_recorder.read().unwrap().shared_leader_state(),
                 );
@@ -742,12 +743,49 @@ mod external {
                     Builder::new()
                         .name(format!("solECoWorker{id:02}"))
                         .spawn(move || {
-                            if let Err(err) = consume_worker.run(pack_to_worker) {
+                            if let Err(err) =
+                                consume_worker.run_execution_worker(pack_to_worker, worker_to_pack)
+                            {
                                 error!("External consume worker error; err={err}");
                             }
                         })
                         .unwrap(),
                 );
+            }
+
+            // The simulation queues will come from the handshake once it exposes them.
+            if simulation_worker_count > 0 {
+                let (_pack_to_simulation, simulation_receiver) = shaq::mpmc::pair(16).unwrap();
+                let (simulation_sender, _simulation_to_pack) = shaq::mpmc::pair(16).unwrap();
+
+                for id in 0..simulation_worker_count {
+                    let consume_worker = ExternalWorker::new(
+                        self.worker_exit_signal.clone(),
+                        Consumer::new(
+                            self.committer.clone(),
+                            self.transaction_recorder.clone(),
+                            self.log_messages_bytes_limit,
+                        ),
+                        rts_alloc::Allocator::join_from_existing(&tpu_to_pack.allocator).unwrap(),
+                        self.poh_recorder.read().unwrap().shared_leader_state(),
+                    );
+
+                    worker_metrics.push(consume_worker.metrics_handle());
+                    let receiver = simulation_receiver.clone();
+                    let sender = simulation_sender.clone();
+                    threads.push(
+                        Builder::new()
+                            .name(format!("solESimWorker{id:02}"))
+                            .spawn(move || {
+                                if let Err(err) =
+                                    consume_worker.run_simulation_worker(receiver, sender)
+                                {
+                                    error!("External simulation worker error; err={err}");
+                                }
+                            })
+                            .unwrap(),
+                    );
+                }
             }
 
             for (
@@ -903,12 +941,10 @@ mod tests {
             to_banking_packet_batch, to_single_banking_packet_batch,
         },
         crossbeam_channel::bounded,
-        itertools::Itertools,
         solana_entry::{
             entry::{self, EntrySlice},
             recorder_message::RecorderMessage,
         },
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
@@ -928,8 +964,6 @@ mod tests {
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        solana_vote::vote_transaction::new_tower_sync_transaction,
-        solana_vote_program::vote_state::TowerSync,
         std::{sync::atomic::Ordering, thread::sleep, time::Instant},
     };
 
@@ -1305,134 +1339,5 @@ mod tests {
         // For these tests there's only 1 slot, don't want to run out of ticks
         config_info.genesis_config.ticks_per_slot *= 1024;
         config_info
-    }
-
-    #[test]
-    fn test_vote_storage_full_send() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_slow_genesis_config(10000);
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let start_hash = bank.last_blockhash();
-        let banking_tracer = BankingTracer::new_disabled();
-        let Channels {
-            non_vote_sender,
-            non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
-        } = banking_tracer.create_channels();
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(
-            Blockstore::open(ledger_path.path())
-                .expect("Expected to be able to open database ledger"),
-        );
-        let (
-            exit,
-            poh_recorder,
-            _poh_controller,
-            transaction_recorder,
-            poh_service,
-            _entry_receiver,
-        ) = create_test_recorder(bank.clone(), blockstore, None, None);
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-
-        let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralSchedulerGreedy,
-            poh_recorder,
-            transaction_recorder,
-            non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
-            mpsc::channel(1).1,
-            DEFAULT_NUM_WORKERS,
-            SchedulerConfig {
-                scheduler_pacing: SchedulerPacing::Disabled,
-            },
-            None,
-            replay_vote_sender,
-            None,
-            bank_forks,
-            SharedAlpenglowSlotClock::default(),
-            None,
-            Arc::default(),
-            Arc::new(SchedulerPriorityFloor::new()),
-        );
-
-        let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();
-        let vote_keypairs = (0..100).map(|_| Keypair::new()).collect_vec();
-        for keypair in keypairs.iter() {
-            bank.process_transaction(&system_transaction::transfer(
-                &mint_keypair,
-                &keypair.pubkey(),
-                20,
-                start_hash,
-            ))
-            .unwrap();
-        }
-
-        // Send a bunch of votes and transfers
-        let tpu_votes = (0..100_usize)
-            .map(|i| {
-                new_tower_sync_transaction(
-                    TowerSync::from(vec![(0, 8), (1, 7), (i as u64 + 10, 6), (i as u64 + 11, 1)]),
-                    Hash::new_unique(),
-                    &keypairs[i],
-                    &vote_keypairs[i],
-                    &vote_keypairs[i],
-                    None,
-                )
-            })
-            .collect_vec();
-        let gossip_votes = (0..100_usize)
-            .map(|i| {
-                new_tower_sync_transaction(
-                    TowerSync::from(vec![(0, 9), (1, 8), (i as u64 + 5, 6), (i as u64 + 63, 1)]),
-                    Hash::new_unique(),
-                    &keypairs[i],
-                    &vote_keypairs[i],
-                    &vote_keypairs[i],
-                    None,
-                )
-            })
-            .collect_vec();
-        let txs = (0..100_usize)
-            .map(|i| {
-                system_transaction::transfer(
-                    &keypairs[i],
-                    &keypairs[(i + 1) % 100].pubkey(),
-                    10,
-                    start_hash,
-                );
-            })
-            .collect_vec();
-
-        let non_vote_packet_batches = to_banking_packet_batch(&txs);
-        let tpu_packet_batches = to_banking_packet_batch(&tpu_votes);
-        let gossip_packet_batches = to_banking_packet_batch(&gossip_votes);
-
-        // Send em all
-        [
-            (non_vote_packet_batches, non_vote_sender),
-            (tpu_packet_batches, tpu_vote_sender),
-            (gossip_packet_batches, gossip_vote_sender),
-        ]
-        .into_iter()
-        .map(|(packet_batches, sender)| {
-            Builder::new()
-                .spawn(move || sender.send(packet_batches).unwrap())
-                .unwrap()
-        })
-        .for_each(|handle| {
-            handle.join().unwrap();
-        });
-
-        banking_stage.join().unwrap();
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 }

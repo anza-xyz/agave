@@ -263,8 +263,7 @@ impl<'a> ScanGuard<'a> {
     ///       Furthermore, no cleans can happen past the saved `max_root == 1`, so a
     ///       potential newer max root at slot 3 will not clean up any of the
     ///       ancestors > 1, and slot 4 will not be cleaned in the middle of the
-    ///       scan either. (NOTE: similar reasoning is employed for the `assert!()`
-    ///       justification in `AccountsDb::retry_to_get_account_accessor`.)
+    ///       scan either.
     pub(crate) fn should_use_ancestors(&self, ancestors: &Ancestors) -> bool {
         ancestors.contains_key(&self.max_root)
     }

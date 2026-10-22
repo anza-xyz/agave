@@ -6,6 +6,8 @@ set -e
 # Ref: https://buildkite.com/docs/pipelines/managing-log-output
 export PS4="++"
 
+source ci/env.sh
+
 #
 # Restore target/ from the previous CI build on this machine
 #

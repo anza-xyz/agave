@@ -2140,8 +2140,13 @@ fn load_frozen_forks(
                 timing,
                 &migration_status,
             ) {
-                assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
+                // Match steady state replay's clear_slots() before removing the failed bank.
+                let _ = progress.wait_for_all_verification_results(&mut 0, &mut 0);
+                bank.quiesce_transaction_execution();
+                let _ = bank.wait_for_completed_scheduler();
+
                 if error.is_alpenglow_migration_transition() {
+                    assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
                     assert!(migration_status.is_ready_to_enable());
                     // This was the first Alpenglow block. Enable Alpenglow and replay it with
                     // Alpenglow rules. Handle the transition even when `abort_on_invalid_block`
@@ -2164,6 +2169,8 @@ fn load_frozen_forks(
                     )?;
                     continue;
                 }
+
+                bank_forks.write().unwrap().clear_bank(bank.slot(), false);
 
                 if opts.abort_on_invalid_block {
                     return Err(error);
@@ -2590,7 +2597,6 @@ pub mod tests {
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
-        solana_message::{Message, MessageHeader, compiled_instruction::CompiledInstruction},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             declare_process_instruction, solana_sbpf::program::BuiltinFunctionDefinition,
@@ -2839,6 +2845,19 @@ pub mod tests {
             blockstore_access_type.clone(),
         );
         assert_eq!(frozen_bank_slots(&bank_forks.read().unwrap()), vec![0]);
+
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let replacement_key = Pubkey::new_unique();
+        let replacement_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), slot);
+        replacement_bank.store_account(
+            &replacement_key,
+            &AccountSharedData::new(1, 0, &Pubkey::new_unique()),
+        );
+        assert_eq!(replacement_bank.get_balance(&replacement_key), 1);
+        let replacement_bank = bank_forks.write().unwrap().insert(replacement_bank);
+        let (result, _) = replacement_bank.wait_for_completed_scheduler().unwrap();
+        result.unwrap();
+        assert_eq!(replacement_bank.get_balance(&replacement_key), 1);
 
         let dead_slots: Vec<Slot> = blockstore.dead_slots_iterator(0).unwrap().collect();
         match blockstore_access_type {
@@ -4314,7 +4333,7 @@ pub mod tests {
             assert_matches!(
                 res,
                 Err(BlockstoreProcessorError::InvalidTransaction(
-                    TransactionError::AccountNotFound
+                    TransactionError::InvalidAccountForFee
                 ))
             );
         }
@@ -6504,37 +6523,6 @@ pub mod tests {
         assert_eq!(
             validate_entry_transactions(&txs, 1),
             Err(TransactionError::TooManyAccountLocks)
-        );
-    }
-
-    #[test]
-    fn test_validate_entry_transactions_account_loaded_twice() {
-        // Message compilation dedups account keys, so a normal transfer can't repeat one.
-        // Hand-build a message whose account_keys list the payer twice to exercise the
-        // duplicate-key check.
-        let payer = Keypair::new();
-        let message = Message {
-            header: MessageHeader {
-                num_required_signatures: 1,
-                num_readonly_signed_accounts: 0,
-                num_readonly_unsigned_accounts: 1,
-            },
-            account_keys: vec![
-                payer.pubkey(),
-                payer.pubkey(),
-                solana_system_interface::program::id(),
-            ],
-            recent_blockhash: Hash::new_unique(),
-            instructions: vec![CompiledInstruction::new(2, &(), vec![0, 1])],
-        };
-        let txs = vec![ReplayTransaction::from(Transaction::new(
-            &[&payer],
-            message,
-            Hash::new_unique(),
-        ))];
-        assert_eq!(
-            validate_entry_transactions(&txs, 10),
-            Err(TransactionError::AccountLoadedTwice)
         );
     }
 }

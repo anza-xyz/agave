@@ -2,12 +2,12 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
-    crate::{certificate::Certificate, vote::Vote},
+    crate::{certificate::Certificate, stake::NonZeroStake, vote::Vote},
     serde::{Deserialize, Serialize},
     solana_bls_signatures::{Signature as BLSSignature, signature::SignatureAffine},
     solana_clock::Slot,
     solana_hash::{HASH_BYTES, Hash},
-    std::{fmt::Display, num::NonZero},
+    std::fmt::Display,
     wincode::{SchemaRead, SchemaWrite, pod_wrapper},
 };
 
@@ -130,7 +130,7 @@ pub struct VoteMessage {
     /// The rank of the validator.
     pub rank: u16,
     /// The stake of the validator
-    pub stake: NonZero<u64>,
+    pub stake: NonZeroStake,
 }
 
 /// A consensus message sent between validators.
