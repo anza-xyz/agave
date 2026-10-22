@@ -345,13 +345,31 @@ fn process_loader_upgradeable_instruction(
             }
 
             let owner_id = *program_id;
-            let mut instruction = system_instruction::create_account(
-                &payer_key,
-                &programdata_key,
-                1.max(rent.minimum_balance(programdata_len)),
-                programdata_len as u64,
-                program_id,
-            );
+            let mut instruction = if invoke_context
+                .get_feature_set()
+                .loader_v3_allow_prefunded_programdata
+            {
+                let programdata_lamports = instruction_context
+                    .try_borrow_instruction_account(1)?
+                    .get_lamports();
+                let top_up_lamports = rent
+                    .minimum_balance(programdata_len)
+                    .saturating_sub(programdata_lamports);
+                system_instruction::create_account_allow_prefund(
+                    &programdata_key,
+                    (top_up_lamports > 0).then_some((&payer_key, top_up_lamports)),
+                    programdata_len as u64,
+                    program_id,
+                )
+            } else {
+                system_instruction::create_account(
+                    &payer_key,
+                    &programdata_key,
+                    1.max(rent.minimum_balance(programdata_len)),
+                    programdata_len as u64,
+                    program_id,
+                )
+            };
 
             // pass an extra account to avoid the overly strict UnbalancedInstruction error
             instruction
