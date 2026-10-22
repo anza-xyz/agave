@@ -29,7 +29,6 @@ stable-abi = [
 ]
 
 [dependencies]
-agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
@@ -55,6 +54,7 @@ solana-vote-interface = { workspace = true, features = ["bincode", "wincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-feature-set = { workspace = true }
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 arbitrary = { workspace = true }
 assert_matches = { workspace = true }

@@ -20,15 +20,11 @@ agave-unstable-api = []
 dev-context-only-utils = ["dep:wincode", "dep:solana-transaction"]
 
 [dependencies]
-agave-feature-set = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
 rts-alloc = { workspace = true }
-slotmap = { workspace = true }
-solana-fee = { workspace = true, features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
-solana-runtime-transaction = { workspace = true }
 solana-transaction = { workspace = true, optional = true, features = ["serde"] }
 solana-transaction-error = { workspace = true }
 wincode = { workspace = true, optional = true }

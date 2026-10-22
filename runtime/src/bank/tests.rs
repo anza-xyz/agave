@@ -5602,16 +5602,17 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         let stakes = bank0.stakes_cache.stakes();
         let deserialized_stakes = DeserializableDelegationStakes {
             vote_accounts: stakes.vote_accounts().clone(),
-            stake_delegations: stakes
-                .stake_delegations()
-                .iter()
-                .map(|(pubkey, stake_account)| (*pubkey, *stake_account.delegation()))
-                .collect(),
+            stake_delegations: vec![],
             unused: 0,
             epoch: 0,
             stake_history: stakes.history().clone(),
         };
-        Stakes::load_from_deserialized_delegations(deserialized_stakes, |pubkey| {
+        let stake_pubkeys = stakes
+            .stake_delegations()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        Stakes::load_from_accounts(deserialized_stakes, stake_pubkeys, |pubkey| {
             bank0.get_account(pubkey)
         })
         .unwrap()
@@ -12208,6 +12209,12 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
         None,
         None,
         bank.load_accounts_data_size(),
+        bank.stakes_cache
+            .stakes()
+            .stake_delegations()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
         epoch_stakes,
     );
 
@@ -12256,6 +12263,12 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
         None,
         None,
         bank.load_accounts_data_size(),
+        bank.stakes_cache
+            .stakes()
+            .stake_delegations()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
         epoch_stakes,
     );
 

@@ -29,6 +29,9 @@ Release channels have their own copy of this changelog:
   for the epoch containing a requested slot, with an optional identity filter. Always queries
   finalized state; there is no commitment parameter.
 * Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
+  instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
+  preserves the existing parsed output.
 
 ### Validator
 

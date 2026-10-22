@@ -155,13 +155,21 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    #[cfg(target_os = "linux")]
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+
+    #[cfg(not(target_os = "linux"))]
+    let poh_pinned_cpu_core = None;
+
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
     let xdp_transmit_config: Option<XdpConfig> = if operation == Operation::Initialize {
         None
     } else {
-        args::xdp_config::new_config(matches, &bind_addresses)?
+        args::xdp_config::new_config(matches, &bind_addresses, poh_pinned_cpu_core)?
     };
 
     let dynamic_port_range =
@@ -366,14 +374,6 @@ pub fn execute(
 
     #[cfg(not(target_os = "linux"))]
     let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
-
-    #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
-        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
-        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-
-    #[cfg(not(target_os = "linux"))]
-    let poh_pinned_cpu_core = None;
 
     solana_core::validator::report_target_features();
 
