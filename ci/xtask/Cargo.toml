@@ -38,6 +38,10 @@ xtask_shared = { package = "anza-xtask", version = "0.2.2" }
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 
+[patch.crates-io]
+# tag anza-0.103.13-1, for details, see https://github.com/anza-xyz/rustls-webpki/commit/ef08c37003f8aad215a81879d128537b0b0a306a
+rustls-webpki = { git = "https://github.com/anza-xyz/rustls-webpki", rev = "ef08c37003f8aad215a81879d128537b0b0a306a" }
+
 [profile.dev]
 debug = "line-tables-only"
 
