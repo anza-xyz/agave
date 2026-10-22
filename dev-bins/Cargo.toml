@@ -129,7 +129,7 @@ solana-svm-transaction = "7.0.0"
 solana-syscalls = { path = "../syscalls", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-system-interface = "3.2"
 solana-system-program = { path = "../programs/system", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-system-transaction = "5.0.0"
+solana-system-transaction = "6.0.0"
 solana-sysvar = "5.0.0"
 solana-sysvar-id = "3.1.0"
 solana-transaction = "5.1.0"
