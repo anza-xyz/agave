@@ -98,7 +98,7 @@ solana-leader-schedule = { path = "../leader-schedule", version = "=4.5.0-alpha.
 solana-ledger = { path = "../ledger", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "9.0.0"
 solana-measure = { path = "../measure", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-message = "5.1.0"
+solana-message = "6.0.0"
 solana-native-token = "3.0.0"
 solana-packet = "4.2.0"
 solana-program-runtime = { path = "../program-runtime", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
