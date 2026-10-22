@@ -54,9 +54,6 @@ impl SlotStatusObserver {
             .name("solBankNotif".to_string())
             .spawn(move || {
                 while !exit.load(Ordering::Relaxed) {
-                    // A blocking recv would keep the exit flag unobserved until the
-                    // next notification arrives, so shutdown would hang on an idle
-                    // cluster waiting for the thread to join.
                     match bank_notification_receiver.recv_timeout(Duration::from_secs(1)) {
                         Ok(slot) => match slot {
                             SlotNotification::OptimisticallyConfirmed(slot, bank_id) => {
@@ -80,8 +77,6 @@ impl SlotStatusObserver {
                                 );
                             }
                         },
-                        // No more notifications will ever arrive on a disconnected
-                        // channel; spinning would just burn the core.
                         Err(RecvTimeoutError::Timeout) => continue,
                         Err(RecvTimeoutError::Disconnected) => break,
                     }
