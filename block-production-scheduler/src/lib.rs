@@ -12,8 +12,7 @@ use {
         CheckWorkerToPackMessage, PackToCheckWorkerMessage, ProgressMessage, TpuToPackMessage,
     },
     agave_scheduler_handshake::{
-        ClientCheckWorkerSession, ClientHandshakeError, ClientLogon, ClientSession,
-        ClientWorkerSession, client,
+        ClientCheckWorkerSession, ClientHandshakeError, ClientSession, ClientWorkerSession, client,
     },
     agave_scheduling_utils::{
         cost_pacer::CostPacer, thread_aware_account_locks::ThreadAwareAccountLocks,
@@ -25,10 +24,11 @@ use {
     rts_alloc::Allocator,
     solana_clock::Slot,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
-    std::{collections::HashSet, path::PathBuf, time::Instant},
+    std::{collections::HashSet, time::Instant},
 };
 
 mod check_response;
+mod config;
 mod execution_response;
 mod in_flight_tracker;
 mod progress_tracker;
@@ -47,45 +47,7 @@ mod transaction_container;
 #[cfg(test)]
 mod tests;
 
-/// Configuration for a scheduler running in a thread or a separate process.
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// Path to Agave's scheduler handshake socket.
-    pub ipc_path: PathBuf,
-    /// Timeout for handshake reads and writes.
-    pub handshake_timeout: Duration,
-    /// Number of execution workers requested from Agave.
-    pub worker_count: usize,
-    /// Number of check workers requested from Agave.
-    pub check_worker_count: usize,
-    /// Minimum shared allocator size in bytes.
-    pub allocator_size: usize,
-    /// Number of allocator handles requested by this scheduler.
-    pub allocator_handles: usize,
-    /// Minimum TPU-to-scheduler queue capacity in messages.
-    pub tpu_to_pack_capacity: usize,
-    /// Minimum progress queue capacity in messages.
-    pub progress_tracker_capacity: usize,
-    /// Minimum scheduler-to-execution-worker queue capacity in messages.
-    pub pack_to_worker_capacity: usize,
-    /// Outstanding estimated CU target per worker, including pending batches.
-    /// The last assigned transaction may cross this target.
-    pub max_cost_units_per_worker: u64,
-    /// Estimated CU target per execution batch, checked after adding each transaction.
-    pub max_cost_units_per_batch: u64,
-    /// Target serialized entry bytes per execution batch, including entry overhead.
-    pub target_entry_bytes_per_batch: u64,
-    /// Minimum execution-worker-to-scheduler queue capacity in messages.
-    pub worker_to_pack_capacity: usize,
-    /// Minimum scheduler-to-check-worker queue capacity in messages.
-    pub pack_to_check_worker_capacity: usize,
-    /// Minimum check-worker-to-scheduler queue capacity in messages.
-    pub check_worker_to_pack_capacity: usize,
-    /// Maximum number of checked transactions retained for scheduling.
-    pub transaction_state_capacity: usize,
-    /// Time before slot end by which pacing releases the full cost budget.
-    pub execution_margin: Duration,
-}
+pub use config::{Config, SchedulerConfig, SessionConfig};
 
 struct Scheduler {
     state: SchedulerState,
@@ -218,7 +180,7 @@ impl Scheduler {
 ///
 /// If exit is already set, returns without connecting. Otherwise, attempts the handshake once
 /// and returns any error to the caller. Shared resources remain alive until the loop exits.
-/// The loop receives leader progress, dispatches TPU packets, and retains checked transactions.
+/// The loop receives leader progress, checks and schedules transactions, and handles completion.
 ///
 /// The exit flag cannot interrupt an in-progress handshake. The timeout has the syscall-level
 /// semantics of [`client::connect`], rather than imposing a deadline on the entire handshake.
@@ -227,25 +189,21 @@ pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError
         return Ok(());
     }
 
-    let logon = ClientLogon {
-        worker_count: config.worker_count,
-        check_worker_count: config.check_worker_count,
-        simulate_worker_count: 0,
-        allocator_size: config.allocator_size,
-        allocator_handles: config.allocator_handles,
-        tpu_to_pack_capacity: config.tpu_to_pack_capacity,
-        progress_tracker_capacity: config.progress_tracker_capacity,
-        pack_to_worker_capacity: config.pack_to_worker_capacity,
-        worker_to_pack_capacity: config.worker_to_pack_capacity,
-        pack_to_check_worker_capacity: config.pack_to_check_worker_capacity,
-        check_worker_to_pack_capacity: config.check_worker_to_pack_capacity,
-        pack_to_simulate_worker_capacity: 0,
-        simulate_worker_to_pack_capacity: 0,
-    };
+    let logon = config.session.client_logon();
     // Resolve the ledger symlink to the short socket path before connecting.
     let ipc_path = config.ipc_path.canonicalize()?;
+    let session = client::connect(ipc_path, logon, config.session.handshake_timeout)?;
+    run_session(session, config.scheduler, exit)
+}
+
+/// Runs the scheduler on the calling thread using an established local or external session.
+pub fn run_session(
+    session: ClientSession,
+    config: SchedulerConfig,
+    exit: &AtomicBool,
+) -> Result<(), ClientHandshakeError> {
     let mut scheduler = Scheduler::new(
-        client::connect(ipc_path, logon, config.handshake_timeout)?,
+        session,
         config.transaction_state_capacity,
         config.execution_margin,
         config.max_cost_units_per_worker,
@@ -256,6 +214,5 @@ pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError
     while !exit.load(Ordering::Relaxed) {
         scheduler.run_iteration();
     }
-
     Ok(())
 }

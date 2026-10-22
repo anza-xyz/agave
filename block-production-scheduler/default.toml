@@ -1,0 +1,21 @@
+# Embedded defaults shared by the local and external entrypoints.
+# External configuration must supply ipc_path separately.
+[session]
+handshake_timeout_ms = 1000
+worker_count = 4
+check_worker_count = 8
+allocator_size = 5368709120  # 5 GiB
+allocator_handles = 1
+tpu_to_pack_capacity = 131072
+progress_tracker_capacity = 512
+pack_to_worker_capacity = 256
+worker_to_pack_capacity = 256
+pack_to_check_worker_capacity = 8192
+check_worker_to_pack_capacity = 8192
+
+[scheduler]
+transaction_state_capacity = 100000
+execution_margin_ms = 10
+max_cost_units_per_worker = 15000000
+max_cost_units_per_batch = 1000000
+target_entry_bytes_per_batch = 4622

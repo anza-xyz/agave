@@ -18,19 +18,28 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 agave-unstable-api = []
 
+[[bin]]
+name = "agave-block-production-scheduler"
+path = "src/main.rs"
+required-features = ["agave-unstable-api"]
+
 [dependencies]
 agave-reserved-account-keys = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-scheduler-handshake = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-transaction-view = { workspace = true }
+clap = { workspace = true }
 rts-alloc = { workspace = true }
+serde = { workspace = true }
 shaq = { workspace = true }
+signal-hook = { workspace = true }
 slab = { workspace = true }
 solana-clock = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-svm-transaction = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 solana-hash = { workspace = true }

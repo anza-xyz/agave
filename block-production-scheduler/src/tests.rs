@@ -7,7 +7,7 @@ use {
         },
     },
     agave_scheduler_bindings::SharableTransactionRegion,
-    agave_scheduler_handshake::{AgaveSession, server::Server, setup_local_session},
+    agave_scheduler_handshake::{AgaveSession, ClientLogon, server::Server, setup_local_session},
     agave_scheduling_utils::{pubkeys_ptr::OwnedPubkeysPtr, transaction_ptr::OwnedTransactionPtr},
     solana_message::{Message, MessageHeader, VersionedMessage},
     solana_signature::Signature,
@@ -20,22 +20,26 @@ mod scheduling_flows;
 fn config(path: &Path) -> Config {
     Config {
         ipc_path: path.to_path_buf(),
-        handshake_timeout: Duration::from_secs(1),
-        worker_count: 2,
-        check_worker_count: 3,
-        allocator_size: 64 * 1024 * 1024,
-        allocator_handles: 1,
-        tpu_to_pack_capacity: 16,
-        progress_tracker_capacity: 32,
-        pack_to_worker_capacity: 64,
-        max_cost_units_per_worker: 1_000_000,
-        max_cost_units_per_batch: 1_000_000,
-        target_entry_bytes_per_batch: 4_622,
-        worker_to_pack_capacity: 128,
-        pack_to_check_worker_capacity: 256,
-        check_worker_to_pack_capacity: 512,
-        transaction_state_capacity: 512,
-        execution_margin: Duration::from_millis(10),
+        session: SessionConfig {
+            handshake_timeout: Duration::from_secs(1),
+            worker_count: 2,
+            check_worker_count: 3,
+            allocator_size: 64 * 1024 * 1024,
+            allocator_handles: 1,
+            tpu_to_pack_capacity: 16,
+            progress_tracker_capacity: 32,
+            pack_to_worker_capacity: 64,
+            worker_to_pack_capacity: 128,
+            pack_to_check_worker_capacity: 256,
+            check_worker_to_pack_capacity: 512,
+        },
+        scheduler: SchedulerConfig {
+            transaction_state_capacity: 512,
+            execution_margin: Duration::from_millis(10),
+            max_cost_units_per_worker: 1_000_000,
+            max_cost_units_per_batch: 1_000_000,
+            target_entry_bytes_per_batch: 4_622,
+        },
     }
 }
 
@@ -150,6 +154,47 @@ pub(super) fn insert(
 }
 
 #[test]
+fn config_uses_shared_defaults_and_overrides() {
+    let config = Config::from_toml("ipc_path = '/ledger/scheduler_bindings.ipc'").unwrap();
+    let session = SessionConfig::default();
+    let scheduler = SchedulerConfig::default();
+    assert_eq!(config.session.worker_count, session.worker_count);
+    assert_eq!(config.session.allocator_size, session.allocator_size);
+    assert_eq!(
+        config.scheduler.max_cost_units_per_worker,
+        scheduler.max_cost_units_per_worker
+    );
+    assert_eq!(config.scheduler.execution_margin, Duration::from_millis(10));
+
+    let config = Config::from_toml(
+        r"
+ipc_path = '/ledger/scheduler_bindings.ipc'
+[session]
+worker_count = 2
+handshake_timeout_ms = 250
+[scheduler]
+execution_margin_ms = 5
+",
+    )
+    .unwrap();
+    assert_eq!(config.session.worker_count, 2);
+    assert_eq!(config.session.handshake_timeout, Duration::from_millis(250));
+    assert_eq!(config.scheduler.execution_margin, Duration::from_millis(5));
+    assert_eq!(config.session.allocator_size, session.allocator_size);
+    assert_eq!(
+        config.scheduler.max_cost_units_per_worker,
+        scheduler.max_cost_units_per_worker
+    );
+}
+
+#[test]
+fn config_requires_path_and_rejects_unknown_fields() {
+    assert!(Config::from_toml("").is_err());
+    assert!(Config::from_toml("ipc_path = '/ledger/socket'\nunknown = 1").is_err());
+    assert!(Config::from_toml("ipc_path = '/ledger/socket'\n[session]\nworker_cout = 2").is_err());
+}
+
+#[test]
 fn initializes_pacing_once_per_slot() {
     let (mut scheduler, _agave) = setup(2);
     let start = Instant::now();
@@ -207,8 +252,8 @@ fn connection_failure_is_returned() {
 fn handshake_then_run_until_exit() {
     let directory = tempfile::tempdir().unwrap();
     let config = config(&directory.path().join("scheduler.ipc"));
-    let worker_count = config.worker_count;
-    let check_worker_count = config.check_worker_count;
+    let worker_count = config.session.worker_count;
+    let check_worker_count = config.session.check_worker_count;
     let mut server = Server::new(&config.ipc_path).unwrap();
     let exit = Arc::new(AtomicBool::new(false));
     let scheduler_exit = exit.clone();
