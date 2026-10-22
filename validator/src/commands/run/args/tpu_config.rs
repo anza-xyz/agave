@@ -2,10 +2,10 @@ use {
     crate::cli::{DefaultArgs, thread_args::NumThreadConfig},
     clap::{Arg, ArgMatches, value_t},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
-    solana_core::{tpu::MAX_VOTES_PER_SECOND, validator::ValidatorTpuConfig},
+    solana_core::validator::ValidatorTpuConfig,
     solana_streamer::{
-        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
-        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        nonblocking::swqos::SwQosConfig,
+        quic::{QuicStreamerConfig, SwQosQuicStreamerConfig},
     },
     std::error::Error,
 };
@@ -70,23 +70,10 @@ pub(crate) fn new_config(
         },
     };
 
-    let vote_quic_server_config = SimpleQosQuicStreamerConfig {
-        quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: num_threads.tpu_vote_transaction_receive_threads,
-            ..Default::default()
-        },
-        qos_config: SimpleQosConfig {
-            max_streams_per_second: MAX_VOTES_PER_SECOND,
-            ..Default::default()
-        },
-    };
-
     Ok(ValidatorTpuConfig {
         vote_use_quic: false,
         tpu_quic_server_config,
         tpu_fwd_quic_server_config,
-        vote_quic_server_config,
         sigverify_threads: num_threads.tpu_sigverify_threads,
     })
 }
@@ -244,8 +231,6 @@ mod tests {
             "2",
             "--tpu-transaction-forward-receive-threads",
             "3",
-            "--tpu-vote-transaction-receive-threads",
-            "4",
             "--tpu-sigverify-threads",
             "5",
         ]);
@@ -262,13 +247,6 @@ mod tests {
                 .quic_streamer_config
                 .num_threads,
             num_threads.tpu_transaction_forward_receive_threads
-        );
-        assert_eq!(
-            config
-                .vote_quic_server_config
-                .quic_streamer_config
-                .num_threads,
-            num_threads.tpu_vote_transaction_receive_threads
         );
         assert_eq!(config.sigverify_threads, num_threads.tpu_sigverify_threads);
     }

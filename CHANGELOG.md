@@ -48,10 +48,13 @@ Release channels have their own copy of this changelog:
 * The default full snapshot interval is now 200,000 slots.
 * XDP interface, address, and transmitter setup failures now report startup errors instead of
   panicking.
+* The TPU vote QUIC server has been removed; the node no longer advertises a `tpu_vote` QUIC
+  address in gossip. Votes are received over UDP `tpu_vote` and gossip.
 
 #### Deprecations
 
 * `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+* `--tpu-vote-transaction-receive-threads` is deprecated - it only applied to TowerBFT and is a no-op.
 
 ### CLI
 
