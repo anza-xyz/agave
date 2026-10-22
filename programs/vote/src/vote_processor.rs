@@ -854,8 +854,7 @@ mod tests {
             previous_epoch_credits = current_epoch_credits;
         }
 
-        let mut account = AccountSharedData::new(lamports, space, &id());
-        account.set_data_from_slice(&vote_state.serialize());
+        let account = AccountSharedData::new_with_data(lamports, vote_state.serialize(), &id());
 
         (vote_pubkey, account)
     }
@@ -3300,8 +3299,7 @@ mod tests {
 
         let rent = Rent::default();
         let lamports = rent.minimum_balance(target_len);
-        let mut vote_account = AccountSharedData::new(lamports, target_len, &id());
-        vote_account.set_data_from_slice(&data);
+        let vote_account = AccountSharedData::new_with_data(lamports, data, &id());
 
         let authorized_withdrawer = solana_pubkey::new_rand();
         let features = VoteProgramFeatures::all_enabled();

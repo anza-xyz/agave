@@ -1745,8 +1745,7 @@ mod tests {
             rent.minimum_balance(account_size)
         };
 
-        let mut vote_account = AccountSharedData::new(lamports, account_size, &id());
-        vote_account.set_data_from_slice(&vec![0; account_size]);
+        let vote_account = AccountSharedData::new(lamports, account_size, &id());
 
         let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
