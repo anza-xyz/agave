@@ -1,0 +1,20 @@
+[package]
+name = "solana-sbf-rust-alt-bn128-compression"
+description = "Solana BPF test program written in Rust"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+solana-bn254 = { workspace = true }
+solana-msg = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+
+[lints]
+workspace = true

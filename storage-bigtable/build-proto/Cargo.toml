@@ -1,0 +1,25 @@
+[package]
+name = "proto"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+tonic-prost-build = { workspace = true }
+
+# windows users should install the protobuf compiler manually and set the PROTOC
+# envar to point to the installed binary
+[target."cfg(not(windows))".dependencies]
+protobuf-src = { workspace = true }
+
+[lints]
+workspace = true

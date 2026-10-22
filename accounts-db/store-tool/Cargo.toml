@@ -1,0 +1,30 @@
+[package]
+name = "agave-store-tool"
+description = "Tool for account storage files"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+workspace = "../../dev-bins"
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+dummy-for-ci-check = []
+stable-abi = []
+
+[dependencies]
+ahash = { workspace = true }
+clap = { workspace = true }
+rayon = { workspace = true }
+solana-account = { workspace = true }
+solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
+solana-pubkey = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-version = { workspace = true }
+
+[lints]
+workspace = true

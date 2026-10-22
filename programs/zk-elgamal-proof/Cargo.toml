@@ -1,0 +1,38 @@
+[package]
+name = "solana-zk-elgamal-proof-program"
+description = "Solana Zk ElGamal Proof Program"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+bytemuck = { workspace = true }
+solana-instruction = { workspace = true, features = ["std"] }
+solana-instruction-error = { workspace = true, features = ["num-traits"] }
+solana-program-runtime = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-zk-elgamal-proof-interface = { workspace = true }
+solana-zk-sdk = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "verify_proofs"
+harness = false
+
+[lints]
+workspace = true

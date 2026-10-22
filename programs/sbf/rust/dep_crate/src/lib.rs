@@ -1,0 +1,31 @@
+//! Example Rust-based SBF program tests dependent crates
+
+use {
+    byteorder::{ByteOrder, LittleEndian},
+    solana_program_entrypoint::SUCCESS,
+};
+
+#[unsafe(no_mangle)]
+pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
+    let mut buf = [0; 4];
+    LittleEndian::write_u32(&mut buf, 1_000_000);
+    std::hint::black_box(&mut buf);
+    assert_eq!(1_000_000, LittleEndian::read_u32(&buf));
+
+    let mut buf = [0; 2];
+    LittleEndian::write_i16(&mut buf, -5_000);
+    std::hint::black_box(&mut buf);
+    assert_eq!(-5_000, LittleEndian::read_i16(&buf));
+
+    SUCCESS
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_entrypoint() {
+        assert_eq!(SUCCESS, entrypoint(std::ptr::null_mut()));
+    }
+}

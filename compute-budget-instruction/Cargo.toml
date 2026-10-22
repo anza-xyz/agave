@@ -1,0 +1,57 @@
+[package]
+name = "solana-compute-budget-instruction"
+description = "Solana Compute Budget Instruction"
+documentation = "https://docs.rs/solana-compute-budget-instruction"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_compute_budget_instruction"
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+
+[dependencies]
+agave-feature-set = { workspace = true }
+solana-borsh = { workspace = true }
+solana-builtins-default-costs = { workspace = true }
+solana-compute-budget = { workspace = true }
+solana-compute-budget-interface = { workspace = true, features = ["borsh"] }
+solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-svm-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+rand = { workspace = true }
+solana-builtins-default-costs = { path = "../builtins-default-costs", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-compute-budget-instruction = { path = ".", features = ["agave-unstable-api"] }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-signer = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true, features = ["blake3"] }
+
+[[bench]]
+name = "process_compute_budget_instructions"
+harness = false
+
+[lints]
+workspace = true

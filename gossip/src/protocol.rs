@@ -1,0 +1,888 @@
+//! Definitions for the base of all Gossip protocol messages
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::{field_qualifiers, qualifiers};
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
+use {
+    crate::{
+        crds_data::{CrdsData, MAX_WALLCLOCK},
+        crds_gossip_pull::CrdsFilter,
+        crds_value::CrdsValue,
+        ping_pong::{self, Pong},
+        sigverify_cache::SigVerifyCache,
+    },
+    solana_keypair::signable::Signable,
+    solana_perf::packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
+    solana_sanitize::{Sanitize, SanitizeError},
+    solana_signature::Signature,
+    std::{
+        borrow::{Borrow, Cow},
+        fmt::Debug,
+        result::Result,
+    },
+    wincode::{SchemaRead, SchemaWrite},
+};
+
+pub(crate) const MAX_CRDS_OBJECT_SIZE: usize = 928;
+/// Max size of serialized crds-values in a Protocol::PushMessage packet. This
+/// is equal to PACKET_DATA_SIZE minus serialized size of an empty push
+/// message: Protocol::PushMessage(Pubkey::default(), Vec::default())
+pub(crate) const PUSH_MESSAGE_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 44;
+/// Max size of serialized crds-values in a Protocol::PullResponse packet. This
+/// is equal to PACKET_DATA_SIZE minus serialized size of an empty pull
+/// message: Protocol::PullResponse(Pubkey::default(), Vec::default())
+pub(crate) const PULL_RESPONSE_MAX_PAYLOAD_SIZE: usize = PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
+pub(crate) const DUPLICATE_SHRED_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 115;
+/// Maximum number of incremental hashes in SnapshotHashes a node publishes
+/// such that the serialized size of the push/pull message stays below
+/// PACKET_DATA_SIZE.
+pub(crate) const MAX_INCREMENTAL_SNAPSHOT_HASHES: usize = 25;
+/// Maximum number of origin nodes that a PruneData may contain, such that the
+/// serialized size of the PruneMessage stays below PACKET_DATA_SIZE.
+pub(crate) const MAX_PRUNE_DATA_NODES: usize = 32;
+/// Prune data prefix for PruneMessage
+const PRUNE_DATA_PREFIX: &[u8] = b"\xffSOLANA_PRUNE_DATA";
+/// Number of bytes in the randomly generated token sent with ping messages.
+const GOSSIP_PING_TOKEN_SIZE: usize = 32;
+/// Minimum serialized size of a Protocol::PullResponse packet.
+pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
+const MIN_CRDS_VALUE_SERIALIZED_SIZE: usize =
+    PULL_RESPONSE_MIN_SERIALIZED_SIZE - (PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE);
+pub(crate) const MAX_CRDS_VALUES_PER_PACKET: usize =
+    (PULL_RESPONSE_MAX_PAYLOAD_SIZE / MIN_CRDS_VALUE_SERIALIZED_SIZE) + 1;
+// Wincode's preallocation limit is decoded collection memory, not input bytes.
+// Bound it to the largest CRDS value vector that can fit in one gossip packet.
+const GOSSIP_PROTOCOL_PREALLOC_LIMIT: usize =
+    MAX_CRDS_VALUES_PER_PACKET * std::mem::size_of::<CrdsValue>();
+pub(crate) type GossipProtocolWincodeConfig =
+    wincode::config::Configuration<true, GOSSIP_PROTOCOL_PREALLOC_LIMIT>;
+
+/// Gossip protocol messages base enum
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
+        abi_serializer = ["wincode"],
+        // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
+        // recomputed on deserialize), so verify the wire round-trip only.
+        test_roundtrip = "wire_only",
+    )
+)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
+#[allow(clippy::large_enum_variant)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) enum Protocol {
+    PullRequest(CrdsFilter, CrdsValue),
+    PullResponse(Pubkey, Vec<CrdsValue>),
+    PushMessage(Pubkey, Vec<CrdsValue>),
+    // TODO: Remove the redundant outer pubkey here,
+    // and use the inner PruneData.pubkey instead.
+    PruneMessage(Pubkey, PruneData),
+    PingMessage(Ping),
+    PongMessage(Pong),
+    // Update count_packets_received if new variants are added here.
+}
+
+#[cfg_attr(
+    feature = "stable-abi",
+    frozen_abi(
+        abi_digest = "Gab1D5ug6ZAB5sRNmBpoM8JyxsixccLLaWxYZwmueVYA",
+        abi_serializer = ["wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
+pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
+
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) fn deserialize_protocol(input: &[u8]) -> wincode::ReadResult<Protocol> {
+    wincode::config::deserialize_exact::<Protocol, GossipProtocolWincodeConfig>(
+        input,
+        GossipProtocolWincodeConfig::new(),
+    )
+}
+
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "GomZf5rFL743zPKH71UShh64JfNvrDBBEC2o2VehinsT",
+        abi_serializer = ["wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Clone, Debug, Default, PartialEq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(
+        pubkey(pub),
+        prunes(pub),
+        signature(pub),
+        destination(pub),
+        wallclock(pub)
+    )
+)]
+pub(crate) struct PruneData {
+    /// Pubkey of the node that sent this prune data
+    pub(crate) pubkey: Pubkey,
+    /// Pubkeys of nodes that should be pruned
+    pub(crate) prunes: Vec<Pubkey>,
+    /// Signature of this Prune Message
+    pub(crate) signature: Signature,
+    /// The Pubkey of the intended node/destination for this message
+    pub(crate) destination: Pubkey,
+    /// Wallclock of the node that generated this message
+    pub(crate) wallclock: u64,
+}
+
+impl Protocol {
+    /// Returns the serialized size (in bytes) of the Protocol.
+    #[cfg(test)]
+    fn serialized_size(&self) -> usize {
+        wincode::serialized_size(self)
+            .map(usize::try_from)
+            .unwrap()
+            .unwrap()
+    }
+
+    // Returns true if all signatures verify.
+    #[must_use]
+    pub(crate) fn verify(&self, cache: &SigVerifyCache) -> bool {
+        match self {
+            Self::PullRequest(_, caller) => caller.verify_with_cache(cache),
+            Self::PullResponse(_, data) => data.iter().all(|value| value.verify_with_cache(cache)),
+            Self::PushMessage(_, data) => data.iter().all(|value| value.verify_with_cache(cache)),
+            Self::PruneMessage(_, data) => data.verify(),
+            Self::PingMessage(ping) => ping.verify(),
+            Self::PongMessage(pong) => pong.verify(),
+        }
+    }
+}
+
+impl PruneData {
+    fn signable_data_without_prefix(&self) -> Cow<'static, [u8]> {
+        #[derive(SchemaWrite)]
+        struct SignData<'a> {
+            pubkey: &'a Pubkey,
+            prunes: &'a [Pubkey],
+            destination: &'a Pubkey,
+            wallclock: u64,
+        }
+        let data = SignData {
+            pubkey: &self.pubkey,
+            prunes: &self.prunes,
+            destination: &self.destination,
+            wallclock: self.wallclock,
+        };
+        Cow::Owned(wincode::serialize(&data).expect("should serialize PruneData"))
+    }
+
+    fn signable_data_with_prefix(&self) -> Cow<'static, [u8]> {
+        #[derive(SchemaWrite)]
+        struct SignDataWithPrefix<'a> {
+            prefix: &'a [u8],
+            pubkey: &'a Pubkey,
+            prunes: &'a [Pubkey],
+            destination: &'a Pubkey,
+            wallclock: u64,
+        }
+        let data = SignDataWithPrefix {
+            prefix: PRUNE_DATA_PREFIX,
+            pubkey: &self.pubkey,
+            prunes: &self.prunes,
+            destination: &self.destination,
+            wallclock: self.wallclock,
+        };
+        Cow::Owned(wincode::serialize(&data).expect("should serialize PruneDataWithPrefix"))
+    }
+
+    fn verify_data(&self, use_prefix: bool) -> bool {
+        let data = if !use_prefix {
+            self.signable_data_without_prefix()
+        } else {
+            self.signable_data_with_prefix()
+        };
+        self.get_signature()
+            .verify(self.pubkey().as_ref(), data.borrow())
+    }
+}
+
+impl Sanitize for Protocol {
+    fn sanitize(&self) -> Result<(), SanitizeError> {
+        match self {
+            Protocol::PullRequest(filter, val) => {
+                filter.sanitize()?;
+                // PullRequest is only allowed to have ContactInfo in its CrdsData
+                match val.data() {
+                    CrdsData::ContactInfo(_) => val.sanitize(),
+                    _ => Err(SanitizeError::InvalidValue),
+                }
+            }
+            Protocol::PullResponse(_, val) => {
+                // PullResponse is allowed to carry anything in its CrdsData, including deprecated Crds
+                // such that a deprecated Crds does not get pulled and then rejected.
+                val.sanitize()
+            }
+            Protocol::PushMessage(_, val) => {
+                // PushMessage is allowed to carry anything in its CrdsData, including deprecated Crds
+                // such that a deprecated Crds gets ingested instead of the node having to pull it from
+                // other nodes that have inserted it into their Crds table
+                val.sanitize()
+            }
+            Protocol::PruneMessage(from, val) => {
+                if *from != val.pubkey {
+                    Err(SanitizeError::InvalidValue)
+                } else {
+                    val.sanitize()
+                }
+            }
+            Protocol::PingMessage(ping) => ping.sanitize(),
+            Protocol::PongMessage(pong) => pong.sanitize(),
+        }
+    }
+}
+
+impl Sanitize for PruneData {
+    fn sanitize(&self) -> Result<(), SanitizeError> {
+        if self.wallclock >= MAX_WALLCLOCK {
+            return Err(SanitizeError::ValueOutOfBounds);
+        }
+        Ok(())
+    }
+}
+
+impl Signable for PruneData {
+    fn pubkey(&self) -> Pubkey {
+        self.pubkey
+    }
+
+    fn signable_data(&self) -> Cow<'static, [u8]> {
+        // Continue to return signable data without a prefix until cluster has upgraded
+        self.signable_data_without_prefix()
+    }
+
+    fn get_signature(&self) -> Signature {
+        self.signature
+    }
+
+    fn set_signature(&mut self, signature: Signature) {
+        self.signature = signature
+    }
+
+    // override Signable::verify default
+    fn verify(&self) -> bool {
+        // Try to verify PruneData with both prefixed and non-prefixed data
+        self.verify_data(false) || self.verify_data(true)
+    }
+}
+
+/// Splits an input feed of serializable data into chunks where the sum of
+/// serialized size of values within each chunk is no larger than
+/// max_chunk_size.
+/// Note: some messages cannot be contained within that size so in the worst case this returns
+/// N nested Vecs with 1 item each.
+pub(crate) fn split_gossip_messages<
+    T: Debug + SchemaWrite<wincode::config::DefaultConfig, Src = T>,
+>(
+    max_chunk_size: usize,
+    data_feed: impl IntoIterator<Item = T>,
+) -> impl Iterator<Item = Vec<T>> {
+    let mut data_feed = data_feed.into_iter().fuse();
+    let mut buffer = vec![];
+    let mut buffer_size = 0; // Serialized size of buffered values.
+    std::iter::from_fn(move || {
+        loop {
+            let Some(data) = data_feed.next() else {
+                return (!buffer.is_empty()).then(|| std::mem::take(&mut buffer));
+            };
+            let data_size = match wincode::serialized_size(&data) {
+                Ok(size) => size as usize,
+                Err(err) => {
+                    error!("serialized_size failed: {err:?}");
+                    continue;
+                }
+            };
+            if buffer_size + data_size <= max_chunk_size {
+                buffer_size += data_size;
+                buffer.push(data);
+            } else if data_size <= max_chunk_size {
+                buffer_size = data_size;
+                return Some(std::mem::replace(&mut buffer, vec![data]));
+            } else {
+                error!("dropping data larger than the maximum chunk size {data:?}",);
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use {
+        super::*,
+        crate::{
+            contact_info::ContactInfo,
+            crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
+            duplicate_shred::{
+                self, MAX_DUPLICATE_SHREDS,
+                tests::{new_rand_fec_set_index, new_rand_shred},
+            },
+            epoch_slots::EpochSlots,
+            restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
+        },
+        rand::Rng,
+        solana_clock::Slot,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_ledger::shred::Shredder,
+        solana_perf::test_tx::new_test_vote_tx,
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
+        solana_transaction::Transaction,
+        solana_vote_program::{vote_instruction, vote_state::Vote},
+        std::{
+            iter::repeat_with,
+            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+            sync::Arc,
+        },
+    };
+
+    // Asserts the message fits into a single gossip packet, the check that
+    // `Packet::from_data` used to perform implicitly.
+    fn fits_in_packet(message: &Protocol) -> bool {
+        message.serialized_size() <= PACKET_DATA_SIZE
+    }
+
+    fn new_rand_socket_addr<R: Rng>(rng: &mut R) -> SocketAddr {
+        let addr = if rng.random_bool(0.5) {
+            IpAddr::V4(Ipv4Addr::new(
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+            ))
+        } else {
+            IpAddr::V6(Ipv6Addr::new(
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+            ))
+        };
+        SocketAddr::new(addr, /*port=*/ rng.random())
+    }
+
+    pub(crate) fn new_rand_remote_node<R>(rng: &mut R) -> (Keypair, SocketAddr)
+    where
+        R: Rng,
+    {
+        let keypair = Keypair::new();
+        let socket = new_rand_socket_addr(rng);
+        (keypair, socket)
+    }
+
+    fn new_rand_prune_data<R: Rng>(
+        rng: &mut R,
+        self_keypair: &Keypair,
+        num_nodes: Option<usize>,
+    ) -> PruneData {
+        let wallclock = crds_data::new_rand_timestamp(rng);
+        let num_nodes = num_nodes.unwrap_or_else(|| rng.random_range(0..MAX_PRUNE_DATA_NODES + 1));
+        let prunes = std::iter::repeat_with(Pubkey::new_unique)
+            .take(num_nodes)
+            .collect();
+        let mut prune_data = PruneData {
+            pubkey: self_keypair.pubkey(),
+            prunes,
+            signature: Signature::default(),
+            destination: Pubkey::new_unique(),
+            wallclock,
+        };
+        prune_data.sign(self_keypair);
+        prune_data
+    }
+
+    #[test]
+    fn test_deserialize_protocol_rejects_large_vec_preallocation() {
+        for num_values in [(MAX_CRDS_VALUES_PER_PACKET + 1) as u64, u64::MAX] {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&2u32.to_le_bytes()); // Protocol::PushMessage.
+            bytes.extend_from_slice(&Pubkey::new_unique().to_bytes());
+            bytes.extend_from_slice(&num_values.to_le_bytes()); // Vec<CrdsValue> length.
+
+            let err = deserialize_protocol(&bytes).unwrap_err();
+            assert!(matches!(
+                err,
+                wincode::ReadError::PreallocationSizeLimit { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn test_max_snapshot_hashes_with_push_messages() {
+        let snapshot_hashes = SnapshotHashes {
+            from: Pubkey::new_unique(),
+            full: (Slot::default(), Hash::default()),
+            incremental: vec![(Slot::default(), Hash::default()); MAX_INCREMENTAL_SNAPSHOT_HASHES],
+            wallclock: timestamp(),
+        };
+        let crds_value = CrdsValue::new(CrdsData::SnapshotHashes(snapshot_hashes), &Keypair::new());
+        let message = Protocol::PushMessage(Pubkey::new_unique(), vec![crds_value]);
+        assert!(fits_in_packet(&message));
+    }
+
+    #[test]
+    fn test_max_snapshot_hashes_with_pull_responses() {
+        let snapshot_hashes = SnapshotHashes {
+            from: Pubkey::new_unique(),
+            full: (Slot::default(), Hash::default()),
+            incremental: vec![(Slot::default(), Hash::default()); MAX_INCREMENTAL_SNAPSHOT_HASHES],
+            wallclock: timestamp(),
+        };
+        let crds_value = CrdsValue::new(CrdsData::SnapshotHashes(snapshot_hashes), &Keypair::new());
+        let response = Protocol::PullResponse(Pubkey::new_unique(), vec![crds_value]);
+        assert!(fits_in_packet(&response));
+    }
+
+    #[test]
+    fn test_max_prune_data_pubkeys() {
+        let mut rng = rand::rng();
+        for _ in 0..64 {
+            let self_keypair = Keypair::new();
+            let prune_data =
+                new_rand_prune_data(&mut rng, &self_keypair, Some(MAX_PRUNE_DATA_NODES));
+            let prune_message = Protocol::PruneMessage(self_keypair.pubkey(), prune_data);
+            assert!(fits_in_packet(&prune_message));
+        }
+        // Assert that MAX_PRUNE_DATA_NODES is highest possible.
+        let self_keypair = Keypair::new();
+        let prune_data =
+            new_rand_prune_data(&mut rng, &self_keypair, Some(MAX_PRUNE_DATA_NODES + 1));
+        let prune_message = Protocol::PruneMessage(self_keypair.pubkey(), prune_data);
+        assert!(!fits_in_packet(&prune_message));
+    }
+
+    #[test]
+    fn test_push_message_max_payload_size() {
+        let header = Protocol::PushMessage(Pubkey::default(), Vec::default());
+        assert_eq!(
+            PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
+            PACKET_DATA_SIZE - header.serialized_size()
+        );
+    }
+
+    #[test]
+    fn test_pull_response_max_payload_size() {
+        let header = Protocol::PullResponse(Pubkey::default(), Vec::default());
+        assert_eq!(
+            PULL_RESPONSE_MAX_PAYLOAD_SIZE,
+            PACKET_DATA_SIZE - header.serialized_size()
+        );
+    }
+
+    #[test]
+    fn test_duplicate_shred_max_payload_size() {
+        let mut rng = rand::rng();
+        let leader = Arc::new(Keypair::new());
+        let keypair = Keypair::new();
+        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
+        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
+        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
+        let other_payload = {
+            let other_shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
+            other_shred.into_payload()
+        };
+        let leader_schedule = |s| {
+            if s == slot {
+                Some(leader.pubkey())
+            } else {
+                None
+            }
+        };
+        let chunks: Vec<_> = duplicate_shred::from_shred(
+            shred,
+            keypair.pubkey(),
+            other_payload,
+            Some(leader_schedule),
+            timestamp(),
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            version,
+        )
+        .unwrap()
+        .collect();
+        assert!(chunks.len() > 1);
+        for chunk in chunks {
+            let data = CrdsData::DuplicateShred(MAX_DUPLICATE_SHREDS - 1, chunk);
+            let value = CrdsValue::new(data, &keypair);
+            let pull_response = Protocol::PullResponse(keypair.pubkey(), vec![value.clone()]);
+            assert!(pull_response.serialized_size() < PACKET_DATA_SIZE);
+            let push_message = Protocol::PushMessage(keypair.pubkey(), vec![value.clone()]);
+            assert!(push_message.serialized_size() < PACKET_DATA_SIZE);
+        }
+    }
+
+    #[test]
+    fn test_pull_response_min_serialized_size() {
+        let mut rng = rand::rng();
+        for _ in 0..100 {
+            let crds_values = vec![CrdsValue::new_rand(&mut rng, None)];
+            let pull_response = Protocol::PullResponse(Pubkey::new_unique(), crds_values);
+            let size = pull_response.serialized_size();
+            assert!(
+                PULL_RESPONSE_MIN_SERIALIZED_SIZE <= size,
+                "pull-response serialized size: {size}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_min_crds_value_serialized_size_holds() {
+        let mut rng = rand::rng();
+        let keypair = Keypair::new();
+
+        // Build a DuplicateShred for the corresponding variant.
+        let leader = Arc::new(Keypair::new());
+        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
+        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
+        let next_shred_index = new_rand_fec_set_index(&mut rng);
+        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
+        let other_payload = {
+            let other = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
+            other.into_payload()
+        };
+        let leader_schedule = |s| (s == slot).then_some(leader.pubkey());
+        let dup_shred = duplicate_shred::from_shred(
+            shred,
+            keypair.pubkey(),
+            other_payload,
+            Some(leader_schedule),
+            timestamp(),
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            version,
+        )
+        .unwrap()
+        .next()
+        .unwrap();
+
+        let vote =
+            CrdsVote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
+
+        // One representative per CrdsData variant. The array length is keyed to
+        // strum::EnumCount, so adding a new CrdsData variant without listing it
+        // here is a compile error (wrong array length).
+        use strum::EnumCount;
+        let variants: [CrdsData; CrdsData::COUNT] = [
+            CrdsData::LegacyContactInfo(Deprecated {}),
+            CrdsData::Vote(0, vote),
+            CrdsData::LowestSlot(0, LowestSlot::new(Pubkey::new_unique(), 0, timestamp())),
+            CrdsData::LegacySnapshotHashes(Deprecated {}),
+            CrdsData::AccountsHashes(Deprecated {}),
+            CrdsData::EpochSlots(0, EpochSlots::new_rand(&mut rng, None)),
+            CrdsData::LegacyVersion(Deprecated {}),
+            CrdsData::Version(Deprecated {}),
+            CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::DuplicateShred(0, dup_shred),
+            CrdsData::SnapshotHashes(SnapshotHashes {
+                from: Pubkey::new_unique(),
+                full: (0, Hash::default()),
+                incremental: vec![],
+                wallclock: timestamp(),
+            }),
+            CrdsData::ContactInfo(ContactInfo::new_localhost(
+                &Pubkey::new_unique(),
+                timestamp(),
+            )),
+            CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
+                &mut rng, None,
+            )),
+            CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(&mut rng, None)),
+        ];
+
+        for data in variants {
+            let value = CrdsValue::new_unsigned(data);
+            let bytes = wincode::serialize(&value).unwrap();
+            // Deprecated variants fail to deserialize; only assert the bound
+            // for variants that can appear in a successfully-parsed Protocol.
+            if wincode::deserialize::<CrdsValue>(&bytes).is_ok() {
+                assert!(
+                    bytes.len() >= MIN_CRDS_VALUE_SERIALIZED_SIZE,
+                    "MIN_CRDS_VALUE_SERIALIZED_SIZE ({MIN_CRDS_VALUE_SERIALIZED_SIZE}) \
+                     underestimates serialized size {}",
+                    bytes.len(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_split_messages_small() {
+        let value = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
+        test_split_messages(value);
+    }
+
+    #[test]
+    fn test_split_messages_large() {
+        let value = CrdsValue::new_unsigned(CrdsData::LowestSlot(
+            0,
+            LowestSlot::new(Pubkey::default(), 0, 0),
+        ));
+        test_split_messages(value);
+    }
+
+    #[test]
+    fn test_split_gossip_messages() {
+        const NUM_CRDS_VALUES: usize = 2048;
+        let mut rng = rand::rng();
+        let values: Vec<_> = repeat_with(|| CrdsValue::new_rand(&mut rng, None))
+            .take(NUM_CRDS_VALUES)
+            .collect();
+        let splits: Vec<_> =
+            split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, values.clone()).collect();
+        let self_pubkey = solana_pubkey::new_rand();
+        assert!(splits.len() * 2 < NUM_CRDS_VALUES);
+        // Assert that all messages are included in the splits.
+        assert_eq!(NUM_CRDS_VALUES, splits.iter().map(Vec::len).sum::<usize>());
+        splits
+            .iter()
+            .flat_map(|s| s.iter())
+            .zip(values)
+            .for_each(|(a, b)| assert_eq!(*a, b));
+        let header_size = PACKET_DATA_SIZE - PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
+        for values in splits {
+            // Assert that sum of parts equals the whole.
+            let size = header_size + values.iter().map(CrdsValue::serialized_size).sum::<usize>();
+            let message = Protocol::PushMessage(self_pubkey, values);
+            assert_eq!(message.serialized_size(), size);
+            // Assert that the message fits into a packet.
+            assert!(fits_in_packet(&message));
+        }
+    }
+
+    #[test]
+    fn test_split_gossip_messages_pull_response() {
+        const NUM_CRDS_VALUES: usize = 2048;
+        let mut rng = rand::rng();
+        let values: Vec<_> = repeat_with(|| CrdsValue::new_rand(&mut rng, None))
+            .take(NUM_CRDS_VALUES)
+            .collect();
+        let splits: Vec<_> =
+            split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, values.clone()).collect();
+        let self_pubkey = solana_pubkey::new_rand();
+        assert!(splits.len() * 2 < NUM_CRDS_VALUES);
+        // Assert that all messages are included in the splits.
+        assert_eq!(NUM_CRDS_VALUES, splits.iter().map(Vec::len).sum::<usize>());
+        splits
+            .iter()
+            .flat_map(|s| s.iter())
+            .zip(values)
+            .for_each(|(a, b)| assert_eq!(*a, b));
+        // check message fits into PullResponse
+        let header_size = PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE;
+        for values in splits {
+            // Assert that sum of parts equals the whole.
+            let size = header_size + values.iter().map(CrdsValue::serialized_size).sum::<usize>();
+            let message = Protocol::PullResponse(self_pubkey, values);
+            assert_eq!(message.serialized_size(), size);
+            // Assert that the message fits into a packet.
+            assert!(fits_in_packet(&message));
+        }
+    }
+
+    #[test]
+    fn test_split_messages_packet_size() {
+        // Test that if a value is smaller than payload size but too large to be wrapped in a vec
+        // that it is still dropped
+        let mut incremental: Vec<(Slot, Hash)> = vec![];
+        let mut value = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
+            from: Pubkey::default(),
+            full: (0, Hash::default()),
+            incremental: incremental.clone(),
+            wallclock: 0,
+        }));
+        while value.serialized_size() < PUSH_MESSAGE_MAX_PAYLOAD_SIZE {
+            incremental.push((0, Hash::default()));
+            value = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
+                from: Pubkey::default(),
+                full: (0, Hash::default()),
+                incremental: incremental.clone(),
+                wallclock: 0,
+            }));
+        }
+        let split: Vec<_> =
+            split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, vec![value]).collect();
+        assert_eq!(split.len(), 0);
+    }
+
+    fn test_split_messages(value: CrdsValue) {
+        const NUM_VALUES: usize = 30;
+        let value_size = value.serialized_size();
+        let num_values_per_payload = (PUSH_MESSAGE_MAX_PAYLOAD_SIZE / value_size).max(1);
+
+        // Expected len is the ceiling of the division
+        let expected_len = NUM_VALUES.div_ceil(num_values_per_payload);
+        let msgs = vec![value; NUM_VALUES];
+
+        assert!(split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs).count() <= expected_len);
+    }
+
+    #[test]
+    fn test_protocol_sanitize() {
+        let pd = PruneData {
+            wallclock: MAX_WALLCLOCK,
+            ..PruneData::default()
+        };
+        let msg = Protocol::PruneMessage(Pubkey::default(), pd);
+        assert_eq!(msg.sanitize(), Err(SanitizeError::ValueOutOfBounds));
+    }
+
+    #[test]
+    fn test_protocol_prune_message_sanitize() {
+        let keypair = Keypair::new();
+        let mut prune_data = PruneData {
+            pubkey: keypair.pubkey(),
+            prunes: vec![],
+            signature: Signature::default(),
+            destination: Pubkey::new_unique(),
+            wallclock: timestamp(),
+        };
+        prune_data.sign(&keypair);
+        let prune_message = Protocol::PruneMessage(keypair.pubkey(), prune_data.clone());
+        assert_eq!(prune_message.sanitize(), Ok(()));
+        let prune_message = Protocol::PruneMessage(Pubkey::new_unique(), prune_data);
+        assert_eq!(prune_message.sanitize(), Err(SanitizeError::InvalidValue));
+    }
+
+    #[test]
+    fn test_vote_size() {
+        let slots = vec![1; 32];
+        let vote = Vote::new(slots, Hash::default());
+        let keypair = Arc::new(Keypair::new());
+
+        // Create the biggest possible vote transaction
+        let vote_ix = vote_instruction::vote_switch(
+            &keypair.pubkey(),
+            &keypair.pubkey(),
+            vote,
+            Hash::default(),
+        );
+        let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
+
+        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
+        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
+
+        let vote = CrdsVote::new(
+            keypair.pubkey(),
+            vote_tx,
+            0, // wallclock
+        )
+        .unwrap();
+        let vote = CrdsValue::new(CrdsData::Vote(1, vote), &Keypair::new());
+        assert!(vote.serialized_size() <= PUSH_MESSAGE_MAX_PAYLOAD_SIZE);
+    }
+
+    #[test]
+    fn test_prune_data_sign_and_verify_without_prefix() {
+        let mut rng = rand::rng();
+        let keypair = Keypair::new();
+        let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
+
+        prune_data.sign(&keypair);
+
+        let is_valid = prune_data.verify();
+        assert!(is_valid, "Signature should be valid without prefix");
+    }
+
+    #[test]
+    fn test_prune_data_sign_and_verify_with_prefix() {
+        let mut rng = rand::rng();
+        let keypair = Keypair::new();
+        let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
+
+        // Manually set the signature with prefixed data
+        let prefixed_data = prune_data.signable_data_with_prefix();
+        let signature_with_prefix = keypair.sign_message(prefixed_data.borrow());
+        prune_data.set_signature(signature_with_prefix);
+
+        let is_valid = prune_data.verify();
+        assert!(is_valid, "Signature should be valid with prefix");
+    }
+
+    // The signable bytes of PruneData are a field subset (plus, in one case, a
+    // prefix) rather than PruneData's own encoding, so no abi digest covers
+    // them. Any drift here silently breaks signature verification between
+    // versions, so pin the exact layout.
+    #[test]
+    fn test_prune_data_signable_bytes_are_fixed() {
+        let prune_data = PruneData {
+            pubkey: Pubkey::from([1u8; 32]),
+            prunes: vec![Pubkey::from([2u8; 32]), Pubkey::from([3u8; 32])],
+            // Not part of the signable data.
+            signature: Signature::from([4u8; 64]),
+            destination: Pubkey::from([5u8; 32]),
+            wallclock: 0x0102_0304_0506_0708,
+        };
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&[1u8; 32]); // pubkey
+        expected.extend_from_slice(&2u64.to_le_bytes()); // prunes.len()
+        expected.extend_from_slice(&[2u8; 32]); // prunes[0]
+        expected.extend_from_slice(&[3u8; 32]); // prunes[1]
+        expected.extend_from_slice(&[5u8; 32]); // destination
+        expected.extend_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes()); // wallclock
+        assert_eq!(
+            prune_data.signable_data_without_prefix().as_ref(),
+            expected.as_slice()
+        );
+
+        let mut expected_with_prefix = Vec::new();
+        expected_with_prefix.extend_from_slice(&(PRUNE_DATA_PREFIX.len() as u64).to_le_bytes());
+        expected_with_prefix.extend_from_slice(PRUNE_DATA_PREFIX);
+        expected_with_prefix.extend_from_slice(&expected);
+        assert_eq!(
+            prune_data.signable_data_with_prefix().as_ref(),
+            expected_with_prefix.as_slice()
+        );
+    }
+
+    #[test]
+    fn test_prune_data_verify_with_and_without_prefix() {
+        let mut rng = rand::rng();
+        let keypair = Keypair::new();
+        let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
+
+        // Sign with non-prefixed data
+        prune_data.sign(&keypair);
+        let is_valid_non_prefixed = prune_data.verify();
+        assert!(
+            is_valid_non_prefixed,
+            "Signature should be valid without prefix"
+        );
+
+        // Save the original non-prefixed, serialized data for last check
+        let non_prefixed_data = prune_data.signable_data_without_prefix().into_owned();
+
+        // Manually set the signature with prefixed, serialized data
+        let prefixed_data = prune_data.signable_data_with_prefix();
+        let signature_with_prefix = keypair.sign_message(prefixed_data.borrow());
+        prune_data.set_signature(signature_with_prefix);
+
+        let is_valid_prefixed = prune_data.verify();
+        assert!(is_valid_prefixed, "Signature should be valid with prefix");
+
+        // Ensure prefixed and non-prefixed serialized data are different
+        let prefixed_data = prune_data.signable_data_with_prefix();
+        assert_ne!(
+            prefixed_data.as_ref(),
+            non_prefixed_data.as_slice(),
+            "Prefixed and non-prefixed serialized data should be different"
+        );
+    }
+}

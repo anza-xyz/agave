@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+source ci/env.sh
+
+# Kill leftover containers from this agent's previous job. Scoped by
+# docker-run.sh's agent label so concurrent sibling jobs survive.
+(
+  echo "+++ Killing stale docker containers"
+  while read -r id image; do
+    if docker kill "$id" >/dev/null; then
+      echo "kill $id $image"
+    fi
+  done < <(docker ps --filter "label=buildkite_agent=${BUILDKITE_AGENT_NAME:-unknown}" --format '{{.ID}} {{.Image}}')
+)
+
+# Aborted CI jobs leave loiterers re-parented to init (PPID 1). Re-parenting
+# keeps their environment, so match inherited BUILDKITE_AGENT_NAME to spare
+# sibling jobs' processes.
+(
+  [[ -n $BUILDKITE_AGENT_NAME ]] || exit 0
+  for name in bash cargo docker solana; do
+    for pid in $(pgrep -u "$(id -u)" -P 1 "$name"); do
+      if grep -qz "^BUILDKITE_AGENT_NAME=$BUILDKITE_AGENT_NAME$" "/proc/$pid/environ" 2>/dev/null; then
+        echo "Killing pid $pid"
+        kill -9 "$pid" || true
+      fi
+    done
+  done
+)

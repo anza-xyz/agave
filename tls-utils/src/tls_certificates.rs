@@ -1,0 +1,207 @@
+use {
+    rustls::pki_types::CertificateDer, solana_keypair::Keypair, solana_pubkey::Pubkey,
+    solana_signer::Signer, std::net::SocketAddr, webpki::EndEntityCert,
+};
+
+pub fn new_dummy_x509_certificate(
+    keypair: &Keypair,
+) -> (
+    rustls::pki_types::CertificateDer<'static>,
+    rustls::pki_types::PrivateKeyDer<'static>,
+) {
+    // Unfortunately, rustls does not accept a "raw" Ed25519 key.
+    // We have to convert it to DER and pass it to the library.
+
+    // Convert private key into PKCS#8 v1 object.
+    // RFC 8410, Section 7: Private Key Format
+    // https://www.rfc-editor.org/rfc/rfc8410#section-7
+    //
+    // The hardcoded prefix decodes to the following ASN.1 structure:
+    //
+    //   PrivateKeyInfo SEQUENCE (3 elem)
+    //     version Version INTEGER 0
+    //     privateKeyAlgorithm AlgorithmIdentifier SEQUENCE (1 elem)
+    //       algorithm OBJECT IDENTIFIER 1.3.101.112 curveEd25519 (EdDSA 25519 signature algorithm)
+    //     privateKey PrivateKey OCTET STRING (34 byte)
+    const PKCS8_PREFIX: [u8; 16] = [
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04,
+        0x20,
+    ];
+
+    let key_pkcs8_der = {
+        let keypair_secret_bytes = keypair.secret_bytes();
+        let keypair_secret_len = keypair_secret_bytes.len();
+        if keypair_secret_len != 32 {
+            panic!("Unexpected secret key length!");
+        }
+        let buffer_size = PKCS8_PREFIX
+            .len()
+            .checked_add(keypair_secret_len) //clippy being overly guarded here but optimizer will elide checked_add
+            .expect("Unexpected secret key length!");
+        let mut key_pkcs8_der = Vec::<u8>::with_capacity(buffer_size);
+        key_pkcs8_der.extend_from_slice(&PKCS8_PREFIX);
+        key_pkcs8_der.extend_from_slice(keypair_secret_bytes);
+        key_pkcs8_der
+    };
+
+    // Create a dummy certificate. Only the SubjectPublicKeyInfo field
+    // is relevant to the peer-to-peer protocols. The signature of the
+    // X.509 certificate is deliberately invalid. (Peer authenticity is
+    // checked in the TLS 1.3 CertificateVerify)
+    // See https://www.itu.int/rec/T-REC-X.509-201910-I/en for detailed definitions.
+
+    let mut cert_der = Vec::<u8>::with_capacity(0xf4);
+    //    Certificate SEQUENCE (3 elem)
+    //      tbsCertificate TBSCertificate SEQUENCE (8 elem)
+    //        version [0] (1 elem)
+    //          INTEGER  2
+    //        serialNumber CertificateSerialNumber INTEGER (62 bit)
+    //        signature AlgorithmIdentifier SEQUENCE (1 elem)
+    //          algorithm OBJECT IDENTIFIER 1.3.101.112 curveEd25519 (EdDSA 25519 signature algorithm)
+    //        issuer Name SEQUENCE (1 elem)
+    //          RelativeDistinguishedName SET (1 elem)
+    //            AttributeTypeAndValue SEQUENCE (2 elem)
+    //              type AttributeType OBJECT IDENTIFIER 2.5.4.3 commonName (X.520 DN component)
+    //              value AttributeValue [?] UTF8String Solana
+    //        validity Validity SEQUENCE (2 elem)
+    //          notBefore Time UTCTime 1970-01-01 00:00:00 UTC
+    //          notAfter Time GeneralizedTime 4096-01-01 00:00:00 UTC
+    //        subject Name SEQUENCE (0 elem)
+    //        subjectPublicKeyInfo SubjectPublicKeyInfo SEQUENCE (2 elem)
+    //          algorithm AlgorithmIdentifier SEQUENCE (1 elem)
+    //            algorithm OBJECT IDENTIFIER 1.3.101.112 curveEd25519 (EdDSA 25519 signature algorithm)
+    //          subjectPublicKey BIT STRING (256 bit)
+    cert_der.extend_from_slice(&[
+        0x30, 0x81, 0xf6, 0x30, 0x81, 0xa9, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x08, 0x01, 0x01,
+        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x30, 0x16,
+        0x31, 0x14, 0x30, 0x12, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x0b, 0x53, 0x6f, 0x6c, 0x61,
+        0x6e, 0x61, 0x20, 0x6e, 0x6f, 0x64, 0x65, 0x30, 0x20, 0x17, 0x0d, 0x37, 0x30, 0x30, 0x31,
+        0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, 0x18, 0x0f, 0x34, 0x30, 0x39, 0x36,
+        0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, 0x30, 0x00, 0x30, 0x2a,
+        0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    ]);
+    cert_der.extend_from_slice(&keypair.pubkey().to_bytes());
+    //        extensions [3] (1 elem)
+    //          Extensions SEQUENCE (2 elem)
+    //            Extension SEQUENCE (3 elem)
+    //              extnID OBJECT IDENTIFIER 2.5.29.17 subjectAltName (X.509 extension)
+    //              critical BOOLEAN true
+    //              extnValue OCTET STRING (13 byte) encapsulating
+    //                SEQUENCE (1 elem)
+    //                [2] (9 byte) localhost
+    //            Extension SEQUENCE (3 elem)
+    //              extnID OBJECT IDENTIFIER 2.5.29.19 basicConstraints (X.509 extension)
+    //              critical BOOLEAN true
+    //              extnValue OCTET STRING (2 byte) encapsulating
+    //                SEQUENCE (0 elem)
+    //      signatureAlgorithm AlgorithmIdentifier SEQUENCE (1 elem)
+    //        algorithm OBJECT IDENTIFIER 1.3.101.112 curveEd25519 (EdDSA 25519 signature algorithm)
+    //        signature BIT STRING (512 bit)
+    cert_der.extend_from_slice(&[
+        0xa3, 0x29, 0x30, 0x27, 0x30, 0x17, 0x06, 0x03, 0x55, 0x1d, 0x11, 0x01, 0x01, 0xff, 0x04,
+        0x0d, 0x30, 0x0b, 0x82, 0x09, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x68, 0x6f, 0x73, 0x74, 0x30,
+        0x0c, 0x06, 0x03, 0x55, 0x1d, 0x13, 0x01, 0x01, 0xff, 0x04, 0x02, 0x30, 0x00, 0x30, 0x05,
+        0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x41, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    ]);
+
+    (
+        rustls::pki_types::CertificateDer::from(cert_der),
+        rustls::pki_types::PrivateKeyDer::try_from(key_pkcs8_der).unwrap(),
+    )
+}
+
+/// DER header of an RFC 5280 `SubjectPublicKeyInfo` carrying one Ed25519 key:
+/// `SEQUENCE(42) { SEQUENCE(5) { OID 1.3.101.112 }, BIT STRING(33) { 0 unused bits } }`.
+/// The 32 raw key bytes follow immediately, so a full Ed25519 SPKI is 44 bytes.
+const ED25519_SPKI_PREFIX: [u8; 12] = [
+    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+];
+
+pub fn get_pubkey_from_tls_certificate(der_cert: &CertificateDer) -> Option<Pubkey> {
+    // Parse with webpki, the exact same DER parser rustls uses internally for
+    // the TLS 1.3 possession check (`rustls::crypto::verify_tls13_signature`).
+    // Using one parser for both the possession check and identity extraction
+    // guarantees the verified key and the attributed identity cannot diverge.
+    //
+    // webpki hands back the `SubjectPublicKeyInfo` as an opaque blob and
+    // exposes no parsed-key accessor, so the 32 key bytes have to be sliced out
+    // by hand.
+    //
+    // Hardcoding the header is not ideal, but should be sound because RFC 8410 pins the
+    // Ed25519 SPKI to a single encoding: no algorithm parameters, fixed 32-byte key.
+    // A valid Ed25519 SPKI cannot be encoded any other way, and
+    // `test_ed25519_spki_layout_matches_webpki_output` pins that against webpki's
+    // actual output. Any other key algorithm fails the prefix match and yields
+    // `None`, which is the correct answer for a non-Solana identity.
+    let cert = EndEntityCert::try_from(der_cert).ok()?;
+    let spki = cert.subject_public_key_info();
+    let key = spki.as_ref().strip_prefix(&ED25519_SPKI_PREFIX)?;
+    Pubkey::try_from(key).ok()
+}
+
+/// Recover the peer's Solana pubkey from a `quinn::Connection`. Accepts
+/// only a self-signed cert chain of length 1 (matches the cert shape
+/// produced by [`new_dummy_x509_certificate`]).
+///
+/// Single source of truth for anything doing QUIC and using
+/// Solana validator identities for auth.
+pub fn get_remote_pubkey(connection: &quinn::Connection) -> Option<Pubkey> {
+    connection
+        .peer_identity()?
+        .downcast::<Vec<CertificateDer>>()
+        .ok()
+        .filter(|certs| certs.len() == 1)?
+        .first()
+        .and_then(get_pubkey_from_tls_certificate)
+}
+
+/// Translate a SocketAddr into a valid SNI for the purposes of QUIC connection
+///
+/// We do not actually check if the server holds a cert for this server_name
+/// since Solana does not rely on DNS names, but we need to provide a unique
+/// one to ensure that we present correct QUIC tokens to the correct server.
+pub fn socket_addr_to_quic_server_name(peer: SocketAddr) -> String {
+    format!("{}.{}.sol", peer.ip(), peer.port())
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_signer::Signer,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    #[test]
+    fn test_socket_addr_to_quic_server_name() {
+        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 8004);
+        assert_eq!(socket_addr_to_quic_server_name(socket), "1.2.3.4.8004.sol");
+    }
+
+    #[test]
+    fn test_generate_tls_certificate() {
+        let keypair = Keypair::new();
+        let (cert, _) = new_dummy_x509_certificate(&keypair);
+        if let Some(pubkey) = get_pubkey_from_tls_certificate(&cert) {
+            assert_eq!(pubkey, keypair.pubkey());
+        } else {
+            panic!("Failed to get certificate pubkey");
+        }
+    }
+
+    #[test]
+    fn test_ed25519_spki_layout_matches_webpki_output() {
+        let keypair = Keypair::new();
+        let (cert, _) = new_dummy_x509_certificate(&keypair);
+        let parsed = EndEntityCert::try_from(&cert).expect("dummy cert must parse with webpki");
+        assert_eq!(
+            parsed.subject_public_key_info().as_ref(),
+            [ED25519_SPKI_PREFIX.as_slice(), keypair.pubkey().as_ref()].concat(),
+            "RFC 8410 fixes an Ed25519 SPKI to the 12-byte prefix plus 32 raw key bytes"
+        );
+    }
+}

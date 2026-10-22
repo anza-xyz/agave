@@ -1,0 +1,43 @@
+[package]
+name = "agave-bls-cert-verify"
+description = "The BLS cert verify logic shared between sigverify and block marker consumption"
+readme = "../README.md"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = ["agave-votor-messages/dev-context-only-utils"]
+
+[dependencies]
+agave-votor-messages = { workspace = true }
+bitvec = { workspace = true }
+qualifier_attr = { workspace = true }
+rayon = { workspace = true }
+solana-bls-signatures = { workspace = true, features = ["parallel"] }
+solana-signer-store = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }
+
+[dev-dependencies]
+agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+criterion = { workspace = true }
+rand = { workspace = true }
+solana-hash = { workspace = true }
+
+[[bench]]
+name = "cert_verify"
+harness = false
+
+[lints]
+workspace = true

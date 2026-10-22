@@ -1,0 +1,91 @@
+use {
+    crate::{banking_stage::BankingControlMsg, repair::repair_service::OutstandingShredRepairs},
+    agave_event_system::EventSystem,
+    agave_votor::event::VotorEventSender,
+    solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
+    solana_ledger::blockstore::Blockstore,
+    solana_pubkey::Pubkey,
+    solana_runtime::{bank_forks::BankForks, snapshot_controller::SnapshotController},
+    solana_tls_utils::NotifyKeyUpdate,
+    std::{
+        collections::{HashMap, HashSet},
+        net::UdpSocket,
+        sync::{Arc, RwLock},
+    },
+    tokio::sync::mpsc,
+};
+
+/// Key updaters:
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub enum KeyUpdaterType {
+    /// TPU key updater
+    Tpu,
+    /// TPU forwards key updater
+    TpuForwards,
+    /// TPU vote key updater
+    TpuVote,
+    /// Forward key updater
+    Forward,
+    /// For the RPC service
+    RpcService,
+    /// Votor QUIC endpoint
+    Votor,
+    /// Votor updater of peer lists
+    VotorPeerListService,
+}
+
+/// Responsible for managing the updaters for identity key change
+#[derive(Default)]
+pub struct KeyUpdaters {
+    updaters: HashMap<KeyUpdaterType, Arc<dyn NotifyKeyUpdate + Sync + Send>>,
+}
+
+impl KeyUpdaters {
+    /// Add a new key updater to the list
+    pub fn add(
+        &mut self,
+        updater_type: KeyUpdaterType,
+        updater: Arc<dyn NotifyKeyUpdate + Sync + Send>,
+    ) {
+        self.updaters.insert(updater_type, updater);
+    }
+
+    /// Remove a key updater by its key
+    pub fn remove(&mut self, updater_type: &KeyUpdaterType) {
+        self.updaters.remove(updater_type);
+    }
+}
+
+/// Implement the Iterator trait for KeyUpdaters
+impl<'a> IntoIterator for &'a KeyUpdaters {
+    type Item = (
+        &'a KeyUpdaterType,
+        &'a Arc<dyn NotifyKeyUpdate + Sync + Send>,
+    );
+    type IntoIter = std::collections::hash_map::Iter<
+        'a,
+        KeyUpdaterType,
+        Arc<dyn NotifyKeyUpdate + Sync + Send>,
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.updaters.iter()
+    }
+}
+
+#[derive(Clone)]
+pub struct AdminRpcRequestMetadataPostInit {
+    pub event_system: EventSystem,
+    pub cluster_info: Arc<ClusterInfo>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub vote_account: Pubkey,
+    pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
+    pub notifies: Arc<RwLock<KeyUpdaters>>,
+    pub repair_socket: Arc<UdpSocket>,
+    pub outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+    pub node: Option<Arc<NodeMultihoming>>,
+    pub banking_control_sender: mpsc::Sender<BankingControlMsg>,
+    pub snapshot_controller: Arc<SnapshotController>,
+    pub blockstore: Arc<Blockstore>,
+    pub votor_event_sender: VotorEventSender,
+}

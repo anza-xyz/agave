@@ -1,0 +1,154 @@
+//! Program deployment functionality.
+
+#[cfg(feature = "metrics")]
+use {crate::program_metrics::LoadProgramMetrics, solana_svm_measure::measure::Measure};
+use {
+    crate::{
+        invoke_context::InvokeContext,
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
+    },
+    solana_clock::Slot,
+    solana_instruction_error::InstructionError,
+    solana_pubkey::Pubkey,
+    solana_sbpf::{
+        elf::{ElfError, Executable},
+        program::{BuiltinProgram, SBPFVersion},
+        verifier::RequisiteVerifier,
+    },
+    solana_svm_log_collector::{LogCollector, ic_logger_msg},
+    solana_svm_type_overrides::sync::Arc,
+    std::{cell::RefCell, rc::Rc},
+};
+
+/// Derives the stricter environment that programs are verified against at
+/// deployment.
+pub fn morph_into_deployment_environment(
+    from: ProgramRuntimeEnvironment,
+    disable_sbpf_v0_v1_v2_deployment: bool,
+) -> Result<BuiltinProgram<InvokeContext<'static, 'static>>, ElfError> {
+    let mut config = (*from).get_config().clone();
+    config.reject_broken_elfs = true;
+    if disable_sbpf_v0_v1_v2_deployment {
+        config.enabled_sbpf_versions = SBPFVersion::V3..=*config.enabled_sbpf_versions.end();
+    }
+
+    let mut result = BuiltinProgram::new_loader(config);
+
+    for (_key, (name, value)) in (*from).get_function_registry().iter() {
+        // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
+        if name != *b"sol_alloc_free_" {
+            result.register_function(unsafe { std::str::from_utf8_unchecked(name) }, value)?;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Directly deploy a program using a provided invoke context.
+/// This function should only be invoked from the runtime, since it does not
+/// provide any account loads or checks.
+#[allow(clippy::too_many_arguments)]
+pub fn deploy_program(
+    log_collector: Option<Rc<RefCell<LogCollector>>>,
+    #[cfg(feature = "metrics")] load_program_metrics: &mut LoadProgramMetrics,
+    program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
+    program_runtime_environment: ProgramRuntimeEnvironment,
+    disable_sbpf_v0_v1_v2_deployment: bool,
+    program_id: &Pubkey,
+    loader_key: &Pubkey,
+    programdata: &[u8],
+    deployment_slot: Slot,
+) -> Result<(), InstructionError> {
+    #[cfg(feature = "metrics")]
+    let mut register_syscalls_time = Measure::start("register_syscalls_time");
+    let deployment_program_runtime_environment = morph_into_deployment_environment(
+        ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+        disable_sbpf_v0_v1_v2_deployment,
+    )
+    .map_err(|e| {
+        ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
+        InstructionError::ProgramEnvironmentSetupFailure
+    })?;
+    #[cfg(feature = "metrics")]
+    {
+        register_syscalls_time.stop();
+        load_program_metrics.register_syscalls_us = register_syscalls_time.as_us();
+    }
+    // Verify using stricter deployment_program_runtime_environment
+    #[cfg(feature = "metrics")]
+    let mut load_elf_time = Measure::start("load_elf_time");
+    let executable = Executable::<InvokeContext>::load(
+        programdata,
+        Arc::new(deployment_program_runtime_environment),
+    )
+    .map_err(|err| {
+        ic_logger_msg!(log_collector, "{}", err);
+        InstructionError::InvalidAccountData
+    })?;
+    #[cfg(feature = "metrics")]
+    {
+        load_elf_time.stop();
+        load_program_metrics.load_elf_us = load_elf_time.as_us();
+    }
+    #[cfg(feature = "metrics")]
+    let mut verify_code_time = Measure::start("verify_code_time");
+    executable.verify::<RequisiteVerifier>().map_err(|err| {
+        ic_logger_msg!(log_collector, "{}", err);
+        InstructionError::InvalidAccountData
+    })?;
+    #[cfg(feature = "metrics")]
+    {
+        verify_code_time.stop();
+        load_program_metrics.verify_code_us = verify_code_time.as_us();
+    }
+    // Insert but with program_runtime_environment
+    let program_cache_entry = ProgramCacheEntry::new_unloaded(
+        deployment_slot,
+        ProgramCacheEntryOwner::try_from(loader_key)
+            .map_err(|_| InstructionError::InvalidAccountData)?,
+        program_runtime_environment,
+    );
+    if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
+        program_cache_entry.stats.merge_from(&old_entry.stats);
+    }
+    #[cfg(feature = "metrics")]
+    {
+        load_program_metrics.program_id = program_id.to_string();
+    }
+    program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(program_cache_entry));
+    Ok(())
+}
+
+#[macro_export]
+macro_rules! deploy_program {
+    ($invoke_context:expr,
+     $program_id:expr,
+     $loader_key:expr,
+     $programdata:expr,
+     $deployment_slot:expr,
+     $disable_sbpf_v0_v1_v2_deployment:expr $(,)?) => {
+        assert_eq!(
+            $deployment_slot,
+            $invoke_context.program_cache_for_tx_batch.slot()
+        );
+        #[cfg(feature = "metrics")]
+        let mut load_program_metrics = $crate::program_metrics::LoadProgramMetrics::default();
+        $crate::deploy::deploy_program(
+            $invoke_context.get_log_collector(),
+            #[cfg(feature = "metrics")]
+            &mut load_program_metrics,
+            $invoke_context.program_cache_for_tx_batch,
+            $invoke_context
+                .get_program_runtime_environment_for_deployment()
+                .clone(),
+            $disable_sbpf_v0_v1_v2_deployment,
+            $program_id,
+            $loader_key,
+            $programdata,
+            $deployment_slot,
+        )?;
+        #[cfg(feature = "metrics")]
+        load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
+    };
+}

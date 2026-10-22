@@ -1,0 +1,90 @@
+use {
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
+    solana_clock::Epoch,
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_stake_interface::{
+        program as stake_program,
+        stake_flags::StakeFlags,
+        state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
+    },
+    solana_vote_interface::state::VoteStateV4,
+};
+
+/// The minimum stake amount that can be delegated, in lamports.
+/// When this feature is added, it will be accompanied by an upgrade to the BPF Stake Program.
+/// NOTE: This is also used to calculate the minimum balance of a delegated stake account,
+/// which is the rent exempt reserve _plus_ the minimum stake delegation.
+#[inline(always)]
+pub fn get_minimum_delegation(upgrade_bpf_stake_program_to_v5_is_active: bool) -> u64 {
+    if upgrade_bpf_stake_program_to_v5_is_active {
+        const MINIMUM_DELEGATION_SOL: u64 = 1;
+        MINIMUM_DELEGATION_SOL * LAMPORTS_PER_SOL
+    } else {
+        1
+    }
+}
+
+/// Utility function for creating a stake account from basic parameters.
+/// Only used in tests and CLIs.
+pub fn create_stake_account_with_activation_and_deactivation_epochs(
+    authorized: &Pubkey,
+    voter_pubkey: &Pubkey,
+    vote_account: &AccountSharedData,
+    rent: &Rent,
+    lamports: u64,
+    activation_epoch: Epoch,
+    deactivation_epoch: Epoch,
+) -> AccountSharedData {
+    let mut stake_account =
+        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
+
+    let vote_state = VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();
+    let credits_observed = vote_state.credits();
+
+    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+    let stake_amount = lamports
+        .checked_sub(rent_exempt_reserve)
+        .expect("lamports >= rent_exempt_reserve");
+
+    let meta = Meta {
+        authorized: Authorized::auto(authorized),
+        #[expect(deprecated)]
+        rent_exempt_reserve,
+        ..Meta::default()
+    };
+
+    let mut delegation = Delegation::new(voter_pubkey, stake_amount, activation_epoch);
+    delegation.deactivation_epoch = deactivation_epoch;
+    let stake = Stake {
+        delegation,
+        credits_observed,
+    };
+
+    stake_account
+        .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
+        .expect("set_state");
+
+    stake_account
+}
+
+/// Utility function for creating a stake account from basic parameters.
+/// Only used in tests and CLIs.
+pub fn create_stake_account(
+    authorized: &Pubkey,
+    voter_pubkey: &Pubkey,
+    vote_account: &AccountSharedData,
+    rent: &Rent,
+    lamports: u64,
+) -> AccountSharedData {
+    create_stake_account_with_activation_and_deactivation_epochs(
+        authorized,
+        voter_pubkey,
+        vote_account,
+        rent,
+        lamports,
+        Epoch::MAX,
+        Epoch::MAX,
+    )
+}

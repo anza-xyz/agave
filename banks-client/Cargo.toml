@@ -1,0 +1,56 @@
+[package]
+name = "solana-banks-client"
+description = "Solana banks client"
+documentation = "https://docs.rs/solana-banks-client"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_banks_client"
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+borsh = { workspace = true }
+futures = { workspace = true }
+solana-account = { workspace = true }
+solana-banks-interface = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-hash = { workspace = true }
+solana-message = { workspace = true }
+solana-program-pack = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true, features = ["sysvar", "wincode"] }
+solana-signature = { workspace = true }
+solana-sysvar-id = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-context = { workspace = true }
+solana-transaction-error = { workspace = true }
+tarpc = { workspace = true, features = ["full"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tokio-serde = { workspace = true, features = ["bincode"] }
+wincode = { workspace = true }
+
+[dev-dependencies]
+solana-banks-server = { path = "../banks-server", features = ["agave-unstable-api"] }
+solana-pubkey = { workspace = true }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-signer = { workspace = true }
+solana-system-interface = { workspace = true }
+
+[lints]
+workspace = true

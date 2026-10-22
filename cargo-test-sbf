@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+here=$(dirname "$0")
+
+cargo --list | grep -q "^\s*test-sbf"
+found=$?
+if [[ $found -ne 0 ]]; then
+  cargo install cargo-test-sbf
+fi
+exec cargo test-sbf "$@"

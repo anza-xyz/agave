@@ -1,0 +1,37 @@
+#
+# Build steps that run after the primary pipeline on pushes and tags.
+# Pull requests to not run these steps.
+steps:
+  - name: "cargo audit"
+    command: "ci/docker-run-default-image.sh ci/do-audit.sh"
+    agents:
+      queue: "release-build"
+    timeout_in_minutes: 10
+  - wait
+  - name: "publish tarball (x86_64-unknown-linux-gnu)"
+    command: "ci/publish-tarball.sh"
+    agents:
+      queue: "release-build"
+    timeout_in_minutes: 60
+  - name: "publish installer"
+    command: "ci/publish-installer.sh"
+    agents:
+      queue: "release-build"
+    timeout_in_minutes: 5
+  - wait
+  - name: "publish tarball (aarch64-apple-darwin)"
+    command: "ci/publish-tarball.sh"
+    agents:
+      queue: "release-build-aarch64-apple-darwin"
+    retry:
+      manual:
+        permit_on_passed: true
+    timeout_in_minutes: 60
+  - name: "publish tarball (x86_64-apple-darwin)"
+    command: "ci/publish-tarball.sh"
+    agents:
+      queue: "release-build-x86_64-apple-darwin"
+    retry:
+      manual:
+        permit_on_passed: true
+    timeout_in_minutes: 60

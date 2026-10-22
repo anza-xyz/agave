@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+set -euox pipefail
+
+if ! cargo hack --version >/dev/null 2>&1; then
+	cat >&2 <<EOF
+ERROR: cargo hack failed.
+       install 'cargo hack' with 'cargo install cargo-hack'
+EOF
+	exit 1
+fi
+
+partition="${1:-1/1}"
+
+exclude_features=(
+	# [agave-xdp-ebpf]
+	#     it needs aya-ebpf which is only available when target_arch = "bpf"
+	ebpf
+)
+
+export RUSTFLAGS="-D warnings"
+
+cargo hack clippy \
+	--features agave-unstable-api \
+	--ignore-unknown-features \
+	--each-feature \
+	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
+	--exclude-all-features \
+	--all-targets \
+	--partition "$partition"

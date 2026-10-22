@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  trigger-buildkite-pipeline:
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Build env vars JSON
+        id: build-env-vars
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "json=$(jq -cn --arg tag "$REF_NAME" '{"TRIGGERED_BUILDKITE_TAG": $tag}')" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger a Buildkite Build
+        uses: "buildkite/trigger-pipeline-action@41fd38b69189bf186cf69cf10ec807a850cae593"  # v2.5.0
+        with:
+          buildkite_api_access_token: ${{ secrets.TRIGGER_BK_BUILD_TOKEN }}
+          pipeline: "anza/agave-secondary"
+          branch: "${{ github.ref_name }}"
+          build_env_vars: ${{ steps.build-env-vars.outputs.json }}
+          commit: "HEAD"
+          message: ":github: Triggered from a GitHub Action"
+
+  draft-release:
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - name: Create Release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: process.env.REF_NAME,
+              name: `Release ${process.env.REF_NAME}`,
+              body: '🚧',
+              draft: false,
+              prerelease: true
+            })
+
+  publish-crates:
+    if: github.repository == 'anza-xyz/agave'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-crates.yml

@@ -1,0 +1,1270 @@
+use {
+    crate::error::{LedgerToolError, Result},
+    itertools::Either,
+    pretty_hex::PrettyHex,
+    serde::{
+        Deserialize, Serialize,
+        ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
+    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_accounts_db::is_loadable::IsLoadable as _,
+    solana_cli_output::{
+        CliAccount, CliAccountNewConfig, CliBlock, OutputFormat, QuietDisplay, VerboseDisplay,
+        display::writeln_transaction,
+    },
+    solana_clock::{Slot, UnixTimestamp},
+    solana_entry::block_component::{
+        BlockComponent, BlockFooterV1, BlockMarkerV1, VersionedBlockFooter, VersionedBlockHeader,
+        VersionedBlockMarker, VersionedUpdateParent,
+    },
+    solana_hash::Hash,
+    solana_ledger::{
+        blockstore::{
+            Blockstore, BlockstoreError, ConfirmedBlockComponent,
+            VersionedConfirmedBlockWithComponents,
+        },
+        blockstore_meta::{DuplicateSlotProof, ErasureMeta},
+        shred::{Shred, ShredType},
+    },
+    solana_pubkey::Pubkey,
+    solana_runtime::bank::Bank,
+    solana_signer_store::{Decoded, decode},
+    solana_transaction::versioned::VersionedTransaction,
+    solana_transaction_status::{
+        BlockEncodingOptions, ConfirmedBlock, Encodable, EncodedConfirmedBlock,
+        EncodedTransactionWithStatusMeta, EntrySummary, Rewards, TransactionDetails,
+        UiTransactionEncoding, VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
+    },
+    std::{
+        cell::RefCell,
+        fmt::{self, Display, Formatter},
+        io::{Write, stdout},
+        rc::Rc,
+        sync::Arc,
+    },
+};
+
+/// Maximum number of validators in a certificate.
+///
+/// There are around 1500 validators currently. For a clean power-of-two
+/// implementation, we should choose either 2048 or 4096.
+const MAXIMUM_VALIDATORS: usize = 4096;
+
+#[derive(Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotInfo {
+    pub total: usize,
+    pub first: Option<u64>,
+    pub last: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_after_last_root: Option<usize>,
+}
+
+#[derive(Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotBounds<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_slots: Option<&'a Vec<u64>>,
+    pub slots: SlotInfo,
+    pub roots: SlotInfo,
+}
+
+impl VerboseDisplay for SlotBounds<'_> {}
+impl QuietDisplay for SlotBounds<'_> {}
+
+impl Display for SlotBounds<'_> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        if self.slots.total > 0 {
+            let first = self.slots.first.unwrap();
+            let last = self.slots.last.unwrap();
+
+            if first != last {
+                writeln!(
+                    f,
+                    "Ledger has data for {:?} slots {:?} to {:?}",
+                    self.slots.total, first, last
+                )?;
+
+                if let Some(all_slots) = self.all_slots {
+                    writeln!(f, "Non-empty slots: {all_slots:?}")?;
+                }
+            } else {
+                writeln!(f, "Ledger has data for slot {first:?}")?;
+            }
+
+            if self.roots.total > 0 {
+                let first_rooted = self.roots.first.unwrap_or_default();
+                let last_rooted = self.roots.last.unwrap_or_default();
+                let num_after_last_root = self.roots.num_after_last_root.unwrap_or_default();
+                writeln!(
+                    f,
+                    "  with {:?} rooted slots from {:?} to {:?}",
+                    self.roots.total, first_rooted, last_rooted
+                )?;
+
+                writeln!(f, "  and {num_after_last_root:?} slots past the last root")?;
+            } else {
+                writeln!(f, "  with no rooted slots")?;
+            }
+        } else {
+            writeln!(f, "Ledger is empty")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotBankHash {
+    pub slot: Slot,
+    pub hash: String,
+}
+
+impl VerboseDisplay for SlotBankHash {}
+impl QuietDisplay for SlotBankHash {}
+
+impl Display for SlotBankHash {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "Bank hash for slot {}: {}", self.slot, self.hash)
+    }
+}
+
+fn writeln_entry(f: &mut dyn fmt::Write, i: usize, entry: &CliEntry, prefix: &str) -> fmt::Result {
+    writeln!(
+        f,
+        "{prefix}Entry {} - num_hashes: {}, hash: {}, transactions: {}, \
+         starting_transaction_index: {}",
+        i, entry.num_hashes, entry.hash, entry.num_transactions, entry.starting_transaction_index,
+    )
+}
+
+fn writeln_block_marker(
+    f: &mut dyn fmt::Write,
+    marker: &CliPopulatedBlockMarker,
+    prefix: &str,
+) -> fmt::Result {
+    match marker {
+        CliPopulatedBlockMarker::BlockFooter(footer) => {
+            writeln!(
+                f,
+                "{prefix}Block Marker - BlockFooter: bank_hash: {}, block_producer_time_nanos: \
+                 {}, block_user_agent: {}",
+                footer.bank_hash, footer.block_producer_time_nanos, footer.block_user_agent,
+            )?;
+
+            let final_cert_log = match &footer.final_cert {
+                Some(cert) => format!(
+                    "FinalCertificate: slot: {}, block_id: {}, final_aggregate validators: {}, \
+                     notar_aggregate validators: {}",
+                    cert.slot, cert.block_id, cert.final_validators, cert.notar_validators,
+                ),
+                None => "No finalization certificate".to_string(),
+            };
+            let skip_reward_log = match &footer.skip_reward {
+                Some(cert) => format!(
+                    "SkipRewardCertificate: slot: {}, validators: {}",
+                    cert.slot, cert.validators,
+                ),
+                None => "SkipRewardCertificate: None".to_string(),
+            };
+            let notar_reward_log = match &footer.notar_reward {
+                Some(cert) => format!(
+                    "NotarRewardCertificate: slot: {}, validators: {}, block_id: {}",
+                    cert.slot, cert.validators, cert.block_id,
+                ),
+                None => "NotarRewardCertificate: None".to_string(),
+            };
+
+            writeln!(f, "{prefix}  {final_cert_log}")?;
+            writeln!(f, "{prefix}  {skip_reward_log}")?;
+            writeln!(f, "{prefix}  {notar_reward_log}")
+        }
+        CliPopulatedBlockMarker::BlockHeader(header) => writeln!(
+            f,
+            "{prefix}Block Marker - BlockHeader: parent_slot: {}, parent_block_id: {}",
+            header.parent_slot, header.parent_block_id,
+        ),
+        CliPopulatedBlockMarker::UpdateParent(update_parent) => writeln!(
+            f,
+            "{prefix}Block Marker - UpdateParent: new_parent_slot: {}, new_parent_block_id: {}",
+            update_parent.new_parent_slot, update_parent.new_parent_block_id,
+        ),
+        CliPopulatedBlockMarker::GenesisCertificate(certificate) => writeln!(
+            f,
+            "{prefix}Block Marker - GenesisCertificate: slot: {}, block_id: {}",
+            certificate.slot, certificate.block_id,
+        ),
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliEntries {
+    pub entries: Vec<CliEntry>,
+    #[serde(skip_serializing)]
+    pub slot: Slot,
+}
+
+impl QuietDisplay for CliEntries {}
+impl VerboseDisplay for CliEntries {}
+
+impl fmt::Display for CliEntries {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Slot {}", self.slot)?;
+        for (i, entry) in self.entries.iter().enumerate() {
+            writeln_entry(f, i, entry, "  ")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliEntry {
+    num_hashes: u64,
+    hash: String,
+    num_transactions: u64,
+    starting_transaction_index: usize,
+}
+
+impl From<EntrySummary> for CliEntry {
+    fn from(entry_summary: EntrySummary) -> Self {
+        Self {
+            num_hashes: entry_summary.num_hashes,
+            hash: entry_summary.hash.to_string(),
+            num_transactions: entry_summary.num_transactions,
+            starting_transaction_index: entry_summary.starting_transaction_index,
+        }
+    }
+}
+
+impl From<&CliPopulatedEntry> for CliEntry {
+    fn from(populated_entry: &CliPopulatedEntry) -> Self {
+        Self {
+            num_hashes: populated_entry.num_hashes,
+            hash: populated_entry.hash.clone(),
+            num_transactions: populated_entry.num_transactions,
+            starting_transaction_index: populated_entry.starting_transaction_index,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CliPopulatedComponent {
+    EntryBatch(Vec<CliPopulatedEntry>),
+    BlockMarker(CliPopulatedBlockMarker),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CliPopulatedBlockMarker {
+    BlockFooter(CliPopulatedFooter),
+    BlockHeader(CliPopulatedHeader),
+    UpdateParent(CliPopulatedUpdateParent),
+    GenesisCertificate(CliPopulatedGenesisCertificate),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPopulatedEntry {
+    num_hashes: u64,
+    hash: String,
+    num_transactions: u64,
+    starting_transaction_index: usize,
+    transactions: Vec<EncodedTransactionWithStatusMeta>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliFinalCert {
+    slot: Slot,
+    final_validators: usize,
+    notar_validators: usize,
+    block_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliSkipRewards {
+    slot: Slot,
+    validators: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliNotarRewards {
+    slot: Slot,
+    validators: usize,
+    block_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPopulatedFooter {
+    bank_hash: String,
+    block_producer_time_nanos: u64,
+    block_user_agent: String,
+    final_cert: Option<CliFinalCert>,
+    skip_reward: Option<CliSkipRewards>,
+    notar_reward: Option<CliNotarRewards>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPopulatedHeader {
+    parent_slot: Slot,
+    parent_block_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPopulatedUpdateParent {
+    new_parent_slot: Slot,
+    new_parent_block_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliPopulatedGenesisCertificate {
+    slot: Slot,
+    block_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliBlockWithComponents {
+    #[serde(flatten)]
+    pub encoded_confirmed_block: EncodedConfirmedBlockWithComponents,
+    #[serde(skip_serializing)]
+    pub slot: Slot,
+}
+
+impl QuietDisplay for CliBlockWithComponents {}
+impl VerboseDisplay for CliBlockWithComponents {}
+
+impl fmt::Display for CliBlockWithComponents {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        CliBlock::display_block_meta(
+            f,
+            self.slot,
+            self.encoded_confirmed_block.parent_slot,
+            &self.encoded_confirmed_block.blockhash,
+            &self.encoded_confirmed_block.previous_blockhash,
+            self.encoded_confirmed_block.block_time,
+            self.encoded_confirmed_block.block_height,
+            &self.encoded_confirmed_block.rewards,
+        )?;
+
+        let mut entry_index = 0;
+        for component in &self.encoded_confirmed_block.components {
+            match component {
+                CliPopulatedComponent::EntryBatch(entries) => {
+                    for entry in entries {
+                        writeln_entry(f, entry_index, &entry.into(), "")?;
+                        for (index, transaction_with_meta) in entry.transactions.iter().enumerate()
+                        {
+                            writeln!(f, "  Transaction {index}:")?;
+                            writeln_transaction(
+                                f,
+                                &transaction_with_meta.transaction.decode().unwrap(),
+                                transaction_with_meta.meta.as_ref(),
+                                "    ",
+                                None,
+                                None,
+                            )?;
+                        }
+                        entry_index += 1;
+                    }
+                }
+                CliPopulatedComponent::BlockMarker(marker) => {
+                    writeln_block_marker(f, marker, "")?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliBlockWithEntries {
+    #[serde(flatten)]
+    pub encoded_confirmed_block: EncodedConfirmedBlockWithEntries,
+    #[serde(skip_serializing)]
+    pub slot: Slot,
+}
+
+impl QuietDisplay for CliBlockWithEntries {}
+impl VerboseDisplay for CliBlockWithEntries {}
+
+impl fmt::Display for CliBlockWithEntries {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        CliBlock::display_block_meta(
+            f,
+            self.slot,
+            self.encoded_confirmed_block.parent_slot,
+            &self.encoded_confirmed_block.blockhash,
+            &self.encoded_confirmed_block.previous_blockhash,
+            self.encoded_confirmed_block.block_time,
+            self.encoded_confirmed_block.block_height,
+            &self.encoded_confirmed_block.rewards,
+        )?;
+
+        for (index, entry) in self.encoded_confirmed_block.entries.iter().enumerate() {
+            writeln_entry(f, index, &entry.into(), "")?;
+            for (index, transaction_with_meta) in entry.transactions.iter().enumerate() {
+                writeln!(f, "  Transaction {index}:")?;
+                writeln_transaction(
+                    f,
+                    &transaction_with_meta.transaction.decode().unwrap(),
+                    transaction_with_meta.meta.as_ref(),
+                    "    ",
+                    None,
+                    None,
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliDuplicateSlotProof {
+    shred1: CliDuplicateShred,
+    shred2: CliDuplicateShred,
+    erasure_consistency: Option<bool>,
+}
+
+impl QuietDisplay for CliDuplicateSlotProof {}
+
+impl VerboseDisplay for CliDuplicateSlotProof {
+    fn write_str(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
+        write!(w, "    Shred1 ")?;
+        VerboseDisplay::write_str(&self.shred1, w)?;
+        write!(w, "    Shred2 ")?;
+        VerboseDisplay::write_str(&self.shred2, w)?;
+        if let Some(erasure_consistency) = self.erasure_consistency {
+            writeln!(w, "    Erasure consistency {erasure_consistency}")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for CliDuplicateSlotProof {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "    Shred1 {}", self.shred1)?;
+        write!(f, "    Shred2 {}", self.shred2)?;
+        if let Some(erasure_consistency) = self.erasure_consistency {
+            writeln!(f, "    Erasure consistency {erasure_consistency}")?;
+        }
+        Ok(())
+    }
+}
+
+impl From<DuplicateSlotProof> for CliDuplicateSlotProof {
+    fn from(proof: DuplicateSlotProof) -> Self {
+        let shred1 = Shred::new_from_serialized_shred(proof.shred1).unwrap();
+        let shred2 = Shred::new_from_serialized_shred(proof.shred2).unwrap();
+        let erasure_consistency = (shred1.shred_type() == ShredType::Code
+            && shred2.shred_type() == ShredType::Code)
+            .then(|| ErasureMeta::check_erasure_consistency(&shred1, &shred2));
+
+        Self {
+            shred1: CliDuplicateShred::from(shred1),
+            shred2: CliDuplicateShred::from(shred2),
+            erasure_consistency,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliDuplicateShred {
+    fec_set_index: u32,
+    index: u32,
+    shred_type: ShredType,
+    version: u16,
+    merkle_root: Option<Hash>,
+    chained_merkle_root: Option<Hash>,
+    last_in_slot: bool,
+    #[serde(with = "serde_bytes")]
+    payload: Vec<u8>,
+}
+
+impl CliDuplicateShred {
+    fn write_common(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
+        writeln!(
+            w,
+            "fec_set_index {}, index {}, shred_type {:?}\n       version {}, merkle_root {:?}, \
+             chained_merkle_root {:?}, last_in_slot {}",
+            self.fec_set_index,
+            self.index,
+            self.shred_type,
+            self.version,
+            self.merkle_root,
+            self.chained_merkle_root,
+            self.last_in_slot,
+        )
+    }
+}
+
+impl QuietDisplay for CliDuplicateShred {}
+
+impl VerboseDisplay for CliDuplicateShred {
+    fn write_str(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
+        self.write_common(w)?;
+        writeln!(w, "       payload: {:?}", self.payload)
+    }
+}
+
+impl fmt::Display for CliDuplicateShred {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.write_common(f)
+    }
+}
+
+impl From<Shred> for CliDuplicateShred {
+    fn from(shred: Shred) -> Self {
+        Self {
+            fec_set_index: shred.fec_set_index(),
+            index: shred.index(),
+            shred_type: shred.shred_type(),
+            version: shred.version(),
+            merkle_root: shred.merkle_root().ok(),
+            chained_merkle_root: shred.chained_merkle_root().ok(),
+            last_in_slot: shred.last_in_slot(),
+            payload: Vec::from(shred.into_payload().bytes),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncodedConfirmedBlockWithComponents {
+    pub previous_blockhash: String,
+    pub blockhash: String,
+    pub parent_slot: Slot,
+    pub components: Vec<CliPopulatedComponent>,
+    pub rewards: Rewards,
+    pub block_time: Option<UnixTimestamp>,
+    pub block_height: Option<u64>,
+}
+
+fn cli_populated_block_marker_from(
+    marker: VersionedBlockMarker,
+) -> Result<CliPopulatedBlockMarker> {
+    let VersionedBlockMarker::V1(block_marker) = marker;
+    match block_marker {
+        BlockMarkerV1::BlockFooter(footer) => {
+            let VersionedBlockFooter::V1(footer) = footer.into_inner();
+            Ok(CliPopulatedBlockMarker::BlockFooter(
+                cli_populated_footer_from_marker(footer)?,
+            ))
+        }
+        BlockMarkerV1::BlockHeader(header) => {
+            let VersionedBlockHeader::V1(header) = header.into_inner();
+            Ok(CliPopulatedBlockMarker::BlockHeader(CliPopulatedHeader {
+                parent_slot: header.parent_slot,
+                parent_block_id: header.parent_block_id.to_string(),
+            }))
+        }
+        BlockMarkerV1::UpdateParent(update_parent) => {
+            let VersionedUpdateParent::V1(update_parent) = update_parent.into_inner();
+            Ok(CliPopulatedBlockMarker::UpdateParent(
+                CliPopulatedUpdateParent {
+                    new_parent_slot: update_parent.new_parent_slot,
+                    new_parent_block_id: update_parent.new_parent_block_id.to_string(),
+                },
+            ))
+        }
+        BlockMarkerV1::GenesisCertificate(certificate) => {
+            let certificate = certificate.into_inner();
+            Ok(CliPopulatedBlockMarker::GenesisCertificate(
+                CliPopulatedGenesisCertificate {
+                    slot: certificate.slot,
+                    block_id: certificate.block_id.to_string(),
+                },
+            ))
+        }
+    }
+}
+
+fn cli_populated_footer_from_marker(footer: BlockFooterV1) -> Result<CliPopulatedFooter> {
+    let BlockFooterV1 {
+        bank_hash,
+        block_producer_time_nanos,
+        block_user_agent,
+        block_final_cert,
+        skip_reward_cert,
+        notar_reward_cert,
+    } = footer;
+
+    let final_cert = if let Some(cert) = block_final_cert {
+        Some(CliFinalCert {
+            slot: cert.slot,
+            block_id: cert.block_id.to_string(),
+            final_validators: validator_count_log(&cert.final_aggregate.into_bitmap())?,
+            notar_validators: match cert.notar_aggregate {
+                Some(notar_aggregate) => validator_count_log(&notar_aggregate.into_bitmap())?,
+                None => 0,
+            },
+        })
+    } else {
+        None
+    };
+
+    let skip_reward = if let Some(cert) = skip_reward_cert {
+        Some(CliSkipRewards {
+            slot: cert.slot,
+            validators: validator_count_log(cert.to_bitmap())?,
+        })
+    } else {
+        None
+    };
+
+    let notar_reward = if let Some(cert) = notar_reward_cert {
+        Some(CliNotarRewards {
+            slot: cert.slot,
+            validators: validator_count_log(cert.bitmap())?,
+            block_id: cert.block_id.to_string(),
+        })
+    } else {
+        None
+    };
+
+    Ok(CliPopulatedFooter {
+        bank_hash: bank_hash.to_string(),
+        block_producer_time_nanos,
+        block_user_agent: String::from_utf8_lossy(&block_user_agent).into_owned(),
+        final_cert,
+        skip_reward,
+        notar_reward,
+    })
+}
+
+fn validator_count_log(bitmap: &[u8]) -> Result<usize> {
+    match decode(bitmap, MAXIMUM_VALIDATORS)
+        .map_err(|err| LedgerToolError::BitmapDecode(format!("unable to decode ({err:?})")))?
+    {
+        Decoded::Base2(validators) => Ok(validators.count_ones()),
+        Decoded::Base3(first, second) => Ok(first.count_ones().saturating_add(second.count_ones())),
+    }
+}
+
+impl EncodedConfirmedBlockWithComponents {
+    pub fn try_from(
+        block: EncodedConfirmedBlock,
+        components_iterator: impl IntoIterator<Item = ConfirmedBlockComponent>,
+    ) -> Result<Self> {
+        let components = components_iterator
+            .into_iter()
+            .enumerate()
+            .map(|(i, component)| match component {
+                ConfirmedBlockComponent::EntryBatch(entry_batch) => {
+                    let entries = entry_batch
+                        .into_iter()
+                        .enumerate()
+                        .map(|(j, entry)| {
+                            let ending_transaction_index = entry
+                                .starting_transaction_index
+                                .saturating_add(entry.num_transactions as usize);
+                            let transactions = block
+                                .transactions
+                                .get(entry.starting_transaction_index..ending_transaction_index)
+                                .ok_or(LedgerToolError::Generic(format!(
+                                    "Mismatched entry data and transactions: component {i:?}, \
+                                     entry {j:?}"
+                                )))?;
+                            Ok(CliPopulatedEntry {
+                                num_hashes: entry.num_hashes,
+                                hash: entry.hash.to_string(),
+                                num_transactions: entry.num_transactions,
+                                starting_transaction_index: entry.starting_transaction_index,
+                                transactions: transactions.to_vec(),
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(CliPopulatedComponent::EntryBatch(entries))
+                }
+                ConfirmedBlockComponent::BlockMarker(marker) => Ok(
+                    CliPopulatedComponent::BlockMarker(cli_populated_block_marker_from(marker)?),
+                ),
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            previous_blockhash: block.previous_blockhash,
+            blockhash: block.blockhash,
+            parent_slot: block.parent_slot,
+            components,
+            rewards: block.rewards,
+            block_time: block.block_time,
+            block_height: block.block_height,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncodedConfirmedBlockWithEntries {
+    pub previous_blockhash: String,
+    pub blockhash: String,
+    pub parent_slot: Slot,
+    pub entries: Vec<CliPopulatedEntry>,
+    pub rewards: Rewards,
+    pub block_time: Option<UnixTimestamp>,
+    pub block_height: Option<u64>,
+}
+
+impl EncodedConfirmedBlockWithEntries {
+    pub fn try_from(
+        block: EncodedConfirmedBlock,
+        entries_iterator: impl IntoIterator<Item = EntrySummary>,
+    ) -> Result<Self> {
+        let entries = entries_iterator
+            .into_iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let ending_transaction_index = entry
+                    .starting_transaction_index
+                    .saturating_add(entry.num_transactions as usize);
+                let transactions = block
+                    .transactions
+                    .get(entry.starting_transaction_index..ending_transaction_index)
+                    .ok_or(LedgerToolError::Generic(format!(
+                        "Mismatched entry data and transactions: entry {i:?}"
+                    )))?;
+                Ok(CliPopulatedEntry {
+                    num_hashes: entry.num_hashes,
+                    hash: entry.hash.to_string(),
+                    num_transactions: entry.num_transactions,
+                    starting_transaction_index: entry.starting_transaction_index,
+                    transactions: transactions.to_vec(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            previous_blockhash: block.previous_blockhash,
+            blockhash: block.blockhash,
+            parent_slot: block.parent_slot,
+            entries,
+            rewards: block.rewards,
+            block_time: block.block_time,
+            block_height: block.block_height,
+        })
+    }
+}
+
+pub(crate) fn encode_confirmed_block(
+    confirmed_block: ConfirmedBlock,
+) -> Result<EncodedConfirmedBlock> {
+    let encoded_block = confirmed_block.encode_with_options(
+        UiTransactionEncoding::Base64,
+        BlockEncodingOptions {
+            transaction_details: TransactionDetails::Full,
+            show_rewards: true,
+            max_supported_transaction_version: Some(1),
+        },
+    )?;
+
+    let encoded_block: EncodedConfirmedBlock = encoded_block.into();
+    Ok(encoded_block)
+}
+
+fn encode_versioned_transactions(block: BlockWithoutMetadata) -> EncodedConfirmedBlock {
+    let transactions = block
+        .transactions
+        .into_iter()
+        .map(|transaction| EncodedTransactionWithStatusMeta {
+            transaction: transaction.encode(UiTransactionEncoding::Base64),
+            meta: None,
+            version: None,
+        })
+        .collect();
+
+    EncodedConfirmedBlock {
+        previous_blockhash: Hash::default().to_string(),
+        blockhash: block.blockhash,
+        parent_slot: block.parent_slot,
+        transactions,
+        rewards: Rewards::default(),
+        num_partitions: None,
+        block_time: None,
+        block_height: None,
+    }
+}
+
+pub enum BlockContents {
+    VersionedConfirmedBlock(VersionedConfirmedBlock),
+    BlockWithoutMetadata(BlockWithoutMetadata),
+}
+
+// A VersionedConfirmedBlock analogue for use when the transaction metadata
+// fields are unavailable. Also supports non-full blocks
+pub struct BlockWithoutMetadata {
+    pub blockhash: String,
+    pub parent_slot: Slot,
+    pub transactions: Vec<VersionedTransaction>,
+}
+
+impl BlockContents {
+    pub fn transactions(&self) -> impl Iterator<Item = &VersionedTransaction> {
+        match self {
+            BlockContents::VersionedConfirmedBlock(block) => Either::Left(
+                block
+                    .transactions
+                    .iter()
+                    .map(|VersionedTransactionWithStatusMeta { transaction, .. }| transaction),
+            ),
+            BlockContents::BlockWithoutMetadata(block) => Either::Right(block.transactions.iter()),
+        }
+    }
+}
+
+impl TryFrom<BlockContents> for EncodedConfirmedBlock {
+    type Error = LedgerToolError;
+
+    fn try_from(block_contents: BlockContents) -> Result<Self> {
+        match block_contents {
+            BlockContents::VersionedConfirmedBlock(block) => {
+                encode_confirmed_block(ConfirmedBlock::from(block))
+            }
+            BlockContents::BlockWithoutMetadata(block) => Ok(encode_versioned_transactions(block)),
+        }
+    }
+}
+
+pub fn output_slot(
+    blockstore: &Blockstore,
+    slot: Slot,
+    allow_dead_slots: bool,
+    output_format: &OutputFormat,
+    verbose_level: u64,
+) -> Result<()> {
+    let is_root = blockstore.is_root(slot);
+    let is_dead = blockstore.is_dead(slot);
+    if *output_format == OutputFormat::Display && verbose_level <= 1 {
+        if is_root && is_dead {
+            eprintln!("Slot {slot} is marked as both a root and dead, this shouldn't be possible");
+        }
+        println!(
+            "Slot {slot}{}",
+            if is_root {
+                " (root)"
+            } else if is_dead {
+                " (dead)"
+            } else {
+                ""
+            }
+        );
+    }
+
+    if is_dead && !allow_dead_slots {
+        return Err(LedgerToolError::from(BlockstoreError::DeadSlot));
+    }
+
+    let Some(meta) = blockstore.meta(slot)? else {
+        return Ok(());
+    };
+    let (block_contents, components) = match blockstore.get_complete_block_with_components(
+        slot,
+        /*require_previous_blockhash:*/ false,
+        /*populate_components:*/ true,
+        allow_dead_slots,
+    ) {
+        Ok(VersionedConfirmedBlockWithComponents { block, components }) => {
+            (BlockContents::VersionedConfirmedBlock(block), components)
+        }
+        Err(_) => {
+            // Transaction metadata could be missing, try to fetch just the
+            // entries and leave the metadata fields empty
+            let (components, _, _) = blockstore.get_slot_components_with_shred_info(
+                slot,
+                u64::from(meta.replay_fec_set_index),
+                allow_dead_slots,
+            )?;
+
+            let blockhash = components
+                .iter()
+                .rev()
+                .find_map(|component| match component {
+                    BlockComponent::EntryBatch(entries) => entries.last().map(|entry| entry.hash),
+                    BlockComponent::BlockMarker(_) => None,
+                })
+                .filter(|_| meta.is_full())
+                .unwrap_or_default();
+            let parent_slot = meta.parent_slot.unwrap_or(0);
+            let mut starting_transaction_index = 0;
+            let mut transactions = Vec::new();
+
+            let components = components
+                .into_iter()
+                .map(|component| match component {
+                    BlockComponent::EntryBatch(entries) => {
+                        let entry_summaries = entries
+                            .into_iter()
+                            .map(|entry| {
+                                let entry_summary = EntrySummary {
+                                    num_hashes: entry.num_hashes,
+                                    hash: entry.hash,
+                                    num_transactions: entry.transactions.len() as u64,
+                                    starting_transaction_index,
+                                };
+                                starting_transaction_index += entry.transactions.len();
+                                transactions.extend(entry.transactions);
+                                entry_summary
+                            })
+                            .collect();
+
+                        ConfirmedBlockComponent::EntryBatch(entry_summaries)
+                    }
+                    BlockComponent::BlockMarker(marker) => {
+                        ConfirmedBlockComponent::BlockMarker(marker)
+                    }
+                })
+                .collect();
+
+            let block = BlockWithoutMetadata {
+                blockhash: blockhash.to_string(),
+                parent_slot,
+                transactions,
+            };
+            (BlockContents::BlockWithoutMetadata(block), components)
+        }
+    };
+
+    let entries: Vec<EntrySummary> = components
+        .iter()
+        .filter_map(|component| match component {
+            ConfirmedBlockComponent::EntryBatch(entries) => Some(entries),
+            ConfirmedBlockComponent::BlockMarker(_) => None,
+        })
+        .flatten()
+        .copied()
+        .collect();
+
+    if verbose_level == 0 {
+        if *output_format == OutputFormat::Display {
+            // Given that Blockstore::get_complete_block_with_components() returned Ok(_), we know
+            // that we have a full block so meta.consumed is the number of shreds in the block
+            println!(
+                "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, is_full: \
+                 {}",
+                meta.consumed,
+                meta.parent_slot,
+                meta.next_slots,
+                entries.len(),
+                meta.is_full(),
+            );
+        }
+    } else if verbose_level == 1 {
+        if *output_format == OutputFormat::Display {
+            println!("  {meta:?} is_full: {}", meta.is_full());
+
+            let mut num_hashes = 0;
+            for entry in entries.iter() {
+                num_hashes += entry.num_hashes;
+            }
+            let blockhash = entries
+                .last()
+                .filter(|_| meta.is_full())
+                .map(|entry| entry.hash)
+                .unwrap_or_default();
+
+            let num_transactions = block_contents.transactions().count();
+            println!(
+                "  Transactions: {num_transactions}, hashes: {num_hashes}, block_hash: {blockhash}",
+            );
+        }
+    } else if verbose_level == 2 {
+        let encoded_block = EncodedConfirmedBlock::try_from(block_contents)?;
+        let cli_block = CliBlockWithEntries {
+            encoded_confirmed_block: EncodedConfirmedBlockWithEntries::try_from(
+                encoded_block,
+                entries,
+            )?,
+            slot,
+        };
+
+        println!("{}", output_format.formatted_string(&cli_block));
+    } else {
+        let encoded_block = EncodedConfirmedBlock::try_from(block_contents)?;
+        let cli_block = CliBlockWithComponents {
+            encoded_confirmed_block: EncodedConfirmedBlockWithComponents::try_from(
+                encoded_block,
+                components,
+            )?,
+            slot,
+        };
+
+        println!("{}", output_format.formatted_string(&cli_block));
+    }
+
+    Ok(())
+}
+
+pub fn output_ledger(
+    blockstore: Blockstore,
+    starting_slot: Slot,
+    ending_slot: Slot,
+    allow_dead_slots: bool,
+    output_format: OutputFormat,
+    num_slots: Option<Slot>,
+    verbose_level: u64,
+    only_rooted: bool,
+) -> Result<()> {
+    let slot_iterator = blockstore.slot_meta_iterator(starting_slot)?;
+
+    if output_format == OutputFormat::Json {
+        stdout().write_all(b"{\"ledger\":[\n")?;
+    }
+
+    let num_slots = num_slots.unwrap_or(Slot::MAX);
+    let mut num_printed = 0;
+    for (slot, _slot_meta) in slot_iterator {
+        if only_rooted && !blockstore.is_root(slot) {
+            continue;
+        }
+        if slot > ending_slot {
+            break;
+        }
+
+        if let Err(err) = output_slot(
+            &blockstore,
+            slot,
+            allow_dead_slots,
+            &output_format,
+            verbose_level,
+        ) {
+            eprintln!("{err}");
+        }
+        num_printed += 1;
+        if num_printed >= num_slots as usize {
+            break;
+        }
+    }
+
+    if output_format == OutputFormat::Json {
+        stdout().write_all(b"\n]}\n")?;
+    }
+    Ok(())
+}
+
+/// A type to facilitate streaming account information to an output destination
+///
+/// This type scans every account, so streaming is preferred over the simpler
+/// approach of accumulating all the accounts into a Vec and printing or
+/// serializing the Vec directly.
+pub struct AccountsOutputStreamer {
+    account_scanner: AccountsScanner,
+    total_accounts_stats: Rc<RefCell<TotalAccountsStats>>,
+    output_format: OutputFormat,
+}
+
+pub enum AccountsOutputMode {
+    All,
+    Individual(Vec<Pubkey>),
+    Program(Pubkey),
+}
+
+pub struct AccountsOutputConfig {
+    pub mode: AccountsOutputMode,
+    pub output_config: Option<CliAccountNewConfig>,
+    pub include_sysvars: bool,
+}
+
+impl AccountsOutputStreamer {
+    pub fn new(bank: Arc<Bank>, output_format: OutputFormat, config: AccountsOutputConfig) -> Self {
+        let total_accounts_stats = Rc::new(RefCell::new(TotalAccountsStats::default()));
+        let account_scanner = AccountsScanner {
+            bank,
+            total_accounts_stats: total_accounts_stats.clone(),
+            config,
+        };
+        Self {
+            account_scanner,
+            total_accounts_stats,
+            output_format,
+        }
+    }
+
+    pub fn output(&self) -> std::result::Result<(), String> {
+        match self.output_format {
+            OutputFormat::Json | OutputFormat::JsonCompact => {
+                let mut serializer = serde_json::Serializer::new(stdout());
+                let mut struct_serializer = serializer
+                    .serialize_struct("accountInfo", 2)
+                    .map_err(|err| format!("unable to start serialization: {err}"))?;
+                struct_serializer
+                    .serialize_field("accounts", &self.account_scanner)
+                    .map_err(|err| format!("unable to serialize accounts scanner: {err}"))?;
+                struct_serializer
+                    .serialize_field("summary", &*self.total_accounts_stats.borrow())
+                    .map_err(|err| format!("unable to serialize accounts summary: {err}"))?;
+                SerializeStruct::end(struct_serializer)
+                    .map_err(|err| format!("unable to end serialization: {err}"))?;
+                // The serializer doesn't give us a trailing newline so do it ourselves
+                println!();
+                Ok(())
+            }
+            _ => {
+                // The compiler needs a placeholder type to satisfy the generic
+                // SerializeSeq trait on AccountScanner::output(). The type
+                // doesn't really matter since we're passing None, so just use
+                // serde::ser::Impossible as it already implements SerializeSeq
+                self.account_scanner
+                    .output::<Impossible<(), serde_json::Error>>(&mut None);
+                println!("\n{:#?}", self.total_accounts_stats.borrow());
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Struct to collect stats when scanning all accounts for AccountsOutputStreamer
+#[derive(Debug, Default, Copy, Clone, Serialize)]
+pub struct TotalAccountsStats {
+    /// Total number of accounts
+    pub num_accounts: usize,
+    /// Total data size of all accounts
+    pub data_len: usize,
+
+    /// Total number of executable accounts
+    pub num_executable_accounts: usize,
+    /// Total data size of executable accounts
+    pub executable_data_len: usize,
+}
+
+impl TotalAccountsStats {
+    pub fn accumulate_account(&mut self, account: &AccountSharedData) {
+        let data_len = account.data().len();
+        self.num_accounts += 1;
+        self.data_len += data_len;
+
+        if account.executable() {
+            self.num_executable_accounts += 1;
+            self.executable_data_len += data_len;
+        }
+    }
+}
+
+struct AccountsScanner {
+    bank: Arc<Bank>,
+    total_accounts_stats: Rc<RefCell<TotalAccountsStats>>,
+    config: AccountsOutputConfig,
+}
+
+impl AccountsScanner {
+    /// Returns true if this account should be included in the output
+    fn should_process_account(&self, account: &AccountSharedData) -> bool {
+        account.is_loadable()
+            && (self.config.include_sysvars || !solana_sdk_ids::sysvar::check_id(account.owner()))
+    }
+
+    fn maybe_output_account<S>(
+        &self,
+        seq_serializer: &mut Option<S>,
+        pubkey: &Pubkey,
+        account: &AccountSharedData,
+    ) where
+        S: SerializeSeq,
+    {
+        if let Some(output_config) = &self.config.output_config {
+            let cli_account = CliAccount::new_with_config(pubkey, account, output_config);
+
+            if let Some(serializer) = seq_serializer {
+                serializer.serialize_element(&cli_account).unwrap();
+            } else {
+                print!("{cli_account}");
+                // CliAccount doesn't print the account data payload so handle
+                // that separately. If --no-account-data was specified,
+                // output_config.data_slice_config will have been created to
+                // yield an empty slice which will make data.empty() below true
+                let account_data = cli_account.keyed_account.account.data.decode();
+                if let Some(data) = account_data
+                    && !data.is_empty()
+                {
+                    println!("{:?}", data.hex_dump());
+                }
+            }
+        }
+    }
+
+    pub fn output<S>(&self, seq_serializer: &mut Option<S>)
+    where
+        S: SerializeSeq,
+    {
+        let mut total_accounts_stats = self.total_accounts_stats.borrow_mut();
+        let scan_func = |account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>| {
+            if let Some((pubkey, account, _slot)) =
+                account_tuple.filter(|(_, account, _)| self.should_process_account(account))
+            {
+                total_accounts_stats.accumulate_account(&account);
+                self.maybe_output_account(seq_serializer, pubkey, &account);
+            }
+        };
+
+        match &self.config.mode {
+            AccountsOutputMode::All => {
+                self.bank.scan_all_accounts(scan_func).unwrap();
+            }
+            AccountsOutputMode::Individual(pubkeys) => pubkeys.iter().for_each(|pubkey| {
+                if let Some((account, _slot)) = self
+                    .bank
+                    .get_account_modified_slot(pubkey)
+                    .filter(|(account, _)| self.should_process_account(account))
+                {
+                    total_accounts_stats.accumulate_account(&account);
+                    self.maybe_output_account(seq_serializer, pubkey, &account);
+                }
+            }),
+            AccountsOutputMode::Program(program_pubkey) => self
+                .bank
+                .get_program_accounts(program_pubkey)
+                .unwrap()
+                .iter()
+                .filter(|(_, account)| self.should_process_account(account))
+                .for_each(|(pubkey, account)| {
+                    total_accounts_stats.accumulate_account(account);
+                    self.maybe_output_account(seq_serializer, pubkey, account);
+                }),
+        }
+    }
+}
+
+impl serde::Serialize for AccountsScanner {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq_serializer = Some(serializer.serialize_seq(None)?);
+        self.output(&mut seq_serializer);
+        seq_serializer.unwrap().end()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CliAccounts {
+    pub accounts: Vec<CliAccount>,
+}
+
+impl fmt::Display for CliAccounts {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for account in &self.accounts {
+            write!(f, "{account}")?;
+            let account_data = account.keyed_account.account.data.decode();
+            if let Some(data) = account_data
+                && !data.is_empty()
+            {
+                writeln!(f, "{:?}", data.hex_dump())?;
+            }
+        }
+        Ok(())
+    }
+}
+impl QuietDisplay for CliAccounts {}
+impl VerboseDisplay for CliAccounts {}

@@ -1,0 +1,260 @@
+#[cfg(test)]
+use super::Bank;
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{genesis_utils::activate_all_features, inflation_rewards::points::PointValue},
+        solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
+        solana_genesis_config::create_genesis_config,
+        solana_leader_schedule::SlotLeader,
+        solana_sysvar::epoch_rewards::EpochRewards,
+    };
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_sysvar_cache_initialization() {
+        let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+
+        let bank0_sysvar_cache = bank0.transaction_processor.sysvar_cache();
+        let bank0_cached_clock = bank0_sysvar_cache.get_clock();
+        let bank0_cached_epoch_schedule = bank0_sysvar_cache.get_epoch_schedule();
+        let bank0_cached_rent = bank0_sysvar_cache.get_rent();
+
+        assert!(bank0_cached_clock.is_ok());
+        assert!(bank0_cached_epoch_schedule.is_ok());
+        assert!(bank0_cached_rent.is_ok());
+        assert!(bank0_sysvar_cache.get_slot_hashes().is_err());
+        assert!(bank0_sysvar_cache.get_epoch_rewards().is_err()); // partitioned epoch reward feature is not enabled
+
+        let bank1_slot = bank0.slot() + 1;
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0.clone(),
+            SlotLeader::default(),
+            bank1_slot,
+        );
+
+        let bank1_sysvar_cache = bank1.transaction_processor.sysvar_cache();
+        let bank1_cached_clock = bank1_sysvar_cache.get_clock();
+        let bank1_cached_epoch_schedule = bank1_sysvar_cache.get_epoch_schedule();
+        let bank1_cached_rent = bank1_sysvar_cache.get_rent();
+
+        assert!(bank1_cached_clock.is_ok());
+        assert!(bank1_cached_epoch_schedule.is_ok());
+        assert!(bank1_cached_rent.is_ok());
+        assert!(bank1_sysvar_cache.get_slot_hashes().is_ok());
+        assert!(bank1_sysvar_cache.get_epoch_rewards().is_err());
+
+        assert_ne!(bank0_cached_clock, bank1_cached_clock);
+        assert_eq!(bank0_cached_epoch_schedule, bank1_cached_epoch_schedule);
+        assert_eq!(bank0_cached_rent, bank1_cached_rent);
+
+        let bank2_slot = bank1.slot() + 1;
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank1.clone(),
+            SlotLeader::default(),
+            bank2_slot,
+        );
+
+        let bank2_sysvar_cache = bank2.transaction_processor.sysvar_cache();
+        let bank2_cached_clock = bank2_sysvar_cache.get_clock();
+        let bank2_cached_epoch_schedule = bank2_sysvar_cache.get_epoch_schedule();
+        let bank2_cached_rent = bank2_sysvar_cache.get_rent();
+
+        assert!(bank2_cached_clock.is_ok());
+        assert!(bank2_cached_epoch_schedule.is_ok());
+        assert!(bank2_cached_rent.is_ok());
+        assert!(bank2_sysvar_cache.get_slot_hashes().is_ok());
+        assert!(bank2_sysvar_cache.get_epoch_rewards().is_err()); // partitioned epoch reward feature is not enabled
+
+        assert_ne!(bank1_cached_clock, bank2_cached_clock);
+        assert_eq!(bank1_cached_epoch_schedule, bank2_cached_epoch_schedule);
+        assert_eq!(bank1_cached_rent, bank2_cached_rent);
+        assert_ne!(
+            bank1_sysvar_cache.get_slot_hashes(),
+            bank2_sysvar_cache.get_slot_hashes(),
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_reset_and_fill_sysvar_cache() {
+        let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank1_slot = bank0.slot() + 1;
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeader::default(),
+            bank1_slot,
+        );
+
+        let bank1_sysvar_cache = bank1.transaction_processor.sysvar_cache();
+        let bank1_cached_clock = bank1_sysvar_cache.get_clock();
+        let bank1_cached_epoch_schedule = bank1_sysvar_cache.get_epoch_schedule();
+        let bank1_cached_fees = bank1_sysvar_cache.get_fees();
+        let bank1_cached_rent = bank1_sysvar_cache.get_rent();
+        let bank1_cached_slot_hashes = bank1_sysvar_cache.get_slot_hashes();
+        let bank1_cached_epoch_rewards = bank1_sysvar_cache.get_epoch_rewards();
+
+        assert!(bank1_cached_clock.is_ok());
+        assert!(bank1_cached_epoch_schedule.is_ok());
+        assert!(bank1_cached_rent.is_ok());
+        assert!(bank1_cached_slot_hashes.is_ok());
+        assert!(bank1_cached_epoch_rewards.is_err());
+
+        drop(bank1_sysvar_cache);
+        bank1.transaction_processor.reset_sysvar_cache();
+
+        let bank1_sysvar_cache = bank1.transaction_processor.sysvar_cache();
+        assert!(bank1_sysvar_cache.get_clock().is_err());
+        assert!(bank1_sysvar_cache.get_epoch_schedule().is_err());
+        assert!(bank1_sysvar_cache.get_rent().is_err());
+        assert!(bank1_sysvar_cache.get_slot_hashes().is_err());
+        assert!(bank1_sysvar_cache.get_epoch_rewards().is_err());
+
+        drop(bank1_sysvar_cache);
+
+        // inject a reward sysvar for test
+        let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
+        let total_points = 42_000; // total_points is arbitrary for the purposes of this test
+        let block_rewards = 42_000_000; // block_rewards are arbitrary for this test
+        let expected_epoch_rewards = EpochRewards {
+            distribution_starting_block_height: 42,
+            num_partitions,
+            parent_blockhash: bank1.parent().unwrap().last_blockhash(),
+            total_points,
+            total_rewards: 100,
+            distributed_rewards: 10,
+            active: true,
+        };
+        bank1.create_epoch_rewards_sysvar(
+            expected_epoch_rewards.distributed_rewards,
+            expected_epoch_rewards.distribution_starting_block_height,
+            num_partitions,
+            &PointValue {
+                rewards: 100,
+                points: total_points,
+            },
+            block_rewards,
+        );
+
+        bank1
+            .transaction_processor
+            .fill_missing_sysvar_cache_entries(&*bank1);
+
+        let bank1_sysvar_cache = bank1.transaction_processor.sysvar_cache();
+        assert_eq!(bank1_sysvar_cache.get_clock(), bank1_cached_clock);
+        assert_eq!(
+            bank1_sysvar_cache.get_epoch_schedule(),
+            bank1_cached_epoch_schedule
+        );
+        assert_eq!(bank1_sysvar_cache.get_fees(), bank1_cached_fees);
+        assert_eq!(bank1_sysvar_cache.get_rent(), bank1_cached_rent);
+        assert_eq!(
+            bank1_sysvar_cache.get_slot_hashes(),
+            bank1_cached_slot_hashes
+        );
+        assert_eq!(
+            *bank1_sysvar_cache.get_epoch_rewards().unwrap(),
+            expected_epoch_rewards,
+        );
+    }
+
+    #[test]
+    fn test_alpenglow_clock_cache_updates_before_and_after_footer() {
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        activate_all_features(&mut genesis_config);
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        assert!(bank0.get_alpenglow_genesis_certificate().is_some());
+        assert!(bank0.is_alpenglow());
+
+        let parent_clock = bank0.clock();
+        let bank1_slot = bank0.slot() + 1;
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeader::default(),
+            bank1_slot,
+        );
+        assert!(bank1.is_alpenglow());
+
+        let pre_footer_clock = bank1.clock();
+        assert_eq!(pre_footer_clock.slot, bank1_slot);
+        assert_eq!(pre_footer_clock.unix_timestamp, parent_clock.unix_timestamp);
+        assert_eq!(
+            pre_footer_clock.epoch_start_timestamp,
+            parent_clock.epoch_start_timestamp
+        );
+
+        let cached_pre_footer_clock = {
+            let sysvar_cache = bank1.transaction_processor.sysvar_cache();
+            sysvar_cache.get_clock().unwrap()
+        };
+        assert_eq!(cached_pre_footer_clock.slot, bank1_slot);
+        assert_eq!(
+            cached_pre_footer_clock.unix_timestamp,
+            parent_clock.unix_timestamp
+        );
+
+        let footer_timestamp_nanos = parent_clock
+            .unix_timestamp
+            .saturating_add(42)
+            .saturating_mul(1_000_000_000);
+        bank1.update_clock_from_footer(footer_timestamp_nanos);
+        let footer_timestamp = footer_timestamp_nanos / 1_000_000_000;
+
+        assert_eq!(bank1.clock().slot, bank1_slot);
+        assert_eq!(bank1.clock().unix_timestamp, footer_timestamp);
+
+        let cached_post_footer_clock = {
+            let sysvar_cache = bank1.transaction_processor.sysvar_cache();
+            sysvar_cache.get_clock().unwrap()
+        };
+        assert_eq!(cached_post_footer_clock.slot, bank1_slot);
+        assert_eq!(cached_post_footer_clock.unix_timestamp, footer_timestamp);
+    }
+
+    #[test]
+    fn test_alpenglow_clock_epoch_start_timestamp_before_footer() {
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
+        activate_all_features(&mut genesis_config);
+        let (parent, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+
+        let parent_footer_timestamp = parent.clock().unix_timestamp.saturating_add(42);
+        parent.update_clock_from_footer(parent_footer_timestamp.saturating_mul(1_000_000_000));
+        assert_ne!(
+            parent.clock().epoch_start_timestamp,
+            parent_footer_timestamp
+        );
+
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            parent,
+            SlotLeader::default(),
+            MINIMUM_SLOTS_PER_EPOCH,
+        );
+        assert_eq!(bank.epoch(), 1);
+
+        let clock = bank.clock();
+        assert_eq!(clock.unix_timestamp, parent_footer_timestamp);
+        assert_eq!(clock.epoch_start_timestamp, parent_footer_timestamp);
+
+        let cached_clock = bank
+            .transaction_processor
+            .sysvar_cache()
+            .get_clock()
+            .unwrap();
+        assert_eq!(cached_clock.epoch_start_timestamp, parent_footer_timestamp);
+    }
+}

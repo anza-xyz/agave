@@ -1,0 +1,52 @@
+name: Crate Check
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "**/Cargo.toml"
+      - ".github/workflows/crate-check.yml"
+      - "./ci/check-crates.sh"
+
+jobs:
+  check:
+    name: crate check
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Get commit range (push)
+        if: ${{ github.event_name == 'push' }}
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          printf 'COMMIT_RANGE=%s..%s\n' "$BEFORE_SHA" "$GITHUB_SHA" >> "$GITHUB_ENV"
+
+      - name: Get commit range (pull_request)
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf 'COMMIT_RANGE=%s..%s\n' "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_ENV"
+
+      - name: Setup Rust
+        shell: bash
+        run: |
+          source ci/rust-version.sh stable
+          rustup default $rust_stable
+
+      - name: Install toml-cli
+        shell: bash
+        run: |
+          cargo install toml-cli
+
+      - run: |
+          ci/check-crates.sh

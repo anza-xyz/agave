@@ -1,0 +1,46 @@
+[package]
+name = "solana-bucket-map"
+description = "solana-bucket-map"
+documentation = "https://docs.rs/solana-bucket-map"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_bucket_map"
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+
+[dependencies]
+ahash = { workspace = true }
+bv = { workspace = true, features = ["serde"] }
+bytemuck = { workspace = true }
+bytemuck_derive = { workspace = true }
+memmap2 = { workspace = true }
+modular-bitfield = { workspace = true }
+num_enum = { workspace = true }
+rand = { workspace = true }
+solana-clock = { workspace = true }
+solana-measure = { workspace = true }
+solana-pubkey = { workspace = true }
+tempfile = { workspace = true }
+
+[dev-dependencies]
+rayon = { workspace = true }
+solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
+
+[lints]
+workspace = true

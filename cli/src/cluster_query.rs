@@ -1,0 +1,2317 @@
+use {
+    crate::{
+        cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
+        feature::get_feature_activation_epoch,
+    },
+    agave_votor_messages::wire::WireBlockCertMessage,
+    clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
+    console::style,
+    serde::{Deserialize, Serialize},
+    solana_account::state_traits::StateMutWincode as _,
+    solana_clap_utils::{input_parsers::*, input_validators::*},
+    solana_cli_output::{
+        cli_clientid::CliClientId,
+        cli_version::CliVersion,
+        display::{
+            build_balance_message, format_labeled_address, new_spinner_progress_bar,
+            writeln_name_value,
+        },
+        stdout::writeln_stdout,
+        *,
+    },
+    solana_clock::{self as clock, Clock, Epoch, Slot},
+    solana_commitment_config::CommitmentConfig,
+    solana_nonce::state::State as NonceState,
+    solana_pubkey::Pubkey,
+    solana_pubsub_client::pubsub_client::PubsubClient,
+    solana_remote_wallet::remote_wallet::RemoteWalletManager,
+    solana_rent::Rent,
+    solana_rpc_client::{
+        nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
+    },
+    solana_rpc_client_api::{
+        client_error::ErrorKind as ClientErrorKind,
+        config::{
+            RpcAccountInfoConfig, RpcBlockConfig, RpcGetVoteAccountsConfig,
+            RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcLeaderScheduleConfig,
+            RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
+            RpcTransactionLogsFilter,
+        },
+        filter::{Memcmp, RpcFilterType},
+        request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
+        response::{RpcPerfSample, RpcPrioritizationFee, SlotInfo},
+    },
+    solana_sdk_ids::sysvar::{self, stake_history},
+    solana_signature::Signature,
+    solana_signer_store::{Decoded, decode},
+    solana_slot_history::{self as slot_history, SlotHistory},
+    solana_stake_history::StakeHistory,
+    solana_stake_interface::{self as stake, state::StakeStateV2},
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
+    solana_transaction_status::{
+        EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
+    },
+    solana_vote_program::vote_state::VoteStateV4,
+    std::{
+        collections::{BTreeMap, HashMap, HashSet},
+        fmt,
+        num::Saturating,
+        rc::Rc,
+        str::FromStr,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread::sleep,
+        time::{Duration, Instant},
+    },
+    thiserror::Error,
+};
+
+const DEFAULT_RPC_PORT_STR: &str = "8899";
+
+pub trait ClusterQuerySubCommands {
+    fn cluster_query_subcommands(self) -> Self;
+}
+
+impl ClusterQuerySubCommands for App<'_, '_> {
+    fn cluster_query_subcommands(self) -> Self {
+        self.subcommand(
+            SubCommand::with_name("block")
+                .about("Get a confirmed block")
+                .arg(
+                    Arg::with_name("slot")
+                        .long("slot")
+                        .validator(is_slot)
+                        .value_name("SLOT")
+                        .takes_value(true)
+                        .index(1),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("recent-prioritization-fees")
+                .about("Get recent prioritization fees")
+                .arg(
+                    Arg::with_name("accounts")
+                        .value_name("ACCOUNTS")
+                        .takes_value(true)
+                        .multiple(true)
+                        .index(1)
+                        .help(
+                            "A list of accounts which if provided the fee response will represent \
+                             the fee to land a transaction with those accounts as writable",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("limit_num_slots")
+                        .long("limit-num-slots")
+                        .value_name("SLOTS")
+                        .takes_value(true)
+                        .help("Limit the number of slots to the last <N> slots"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("catchup")
+                .about("Wait for a validator to catch up to the cluster")
+                .arg(pubkey!(
+                    Arg::with_name("node_pubkey")
+                        .index(1)
+                        .value_name("OUR_VALIDATOR_PUBKEY")
+                        .required(false),
+                    "Identity of the validator."
+                ))
+                .arg(
+                    Arg::with_name("node_json_rpc_url")
+                        .index(2)
+                        .value_name("OUR_URL")
+                        .takes_value(true)
+                        .validator(is_url)
+                        .help(
+                            "JSON RPC URL for validator, which is useful for validators with a \
+                             private RPC service",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("follow")
+                        .long("follow")
+                        .takes_value(false)
+                        .help("Continue reporting progress even after the validator has caught up"),
+                )
+                .arg(
+                    Arg::with_name("our_localhost")
+                        .long("our-localhost")
+                        .takes_value(false)
+                        .value_name("PORT")
+                        .default_value(DEFAULT_RPC_PORT_STR)
+                        .validator(is_port)
+                        .help(
+                            "Guess Identity pubkey and validator rpc node assuming local \
+                             (possibly private) validator",
+                        ),
+                )
+                .arg(Arg::with_name("log").long("log").takes_value(false).help(
+                    "Don't update the progress inplace; instead show updates with its own new \
+                     lines",
+                )),
+        )
+        .subcommand(SubCommand::with_name("cluster-date").about(
+            "Get current cluster date, computed from genesis creation time and network time",
+        ))
+        .subcommand(
+            SubCommand::with_name("cluster-version")
+                .about("Get the version of the cluster entrypoint"),
+        )
+        .subcommand(
+            SubCommand::with_name("first-available-block")
+                .about("Get the first available block in the storage"),
+        )
+        .subcommand(
+            SubCommand::with_name("block-time")
+                .about("Get estimated production time of a block")
+                .alias("get-block-time")
+                .arg(
+                    Arg::with_name("slot")
+                        .index(1)
+                        .takes_value(true)
+                        .value_name("SLOT")
+                        .help("Slot number of the block to query"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("leader-schedule")
+                .about("Display leader schedule")
+                .arg(
+                    Arg::with_name("epoch")
+                        .long("epoch")
+                        .takes_value(true)
+                        .value_name("EPOCH")
+                        .validator(is_epoch)
+                        .help("Epoch to show leader schedule for [default: current]"),
+                )
+                .arg(
+                    Arg::with_name("key_by_vote_account")
+                        .long("key-by-vote-account")
+                        .takes_value(false)
+                        .help(
+                            "Show each slot's leader by vote account instead of validator identity",
+                        ),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("epoch-info")
+                .about("Get information about the current epoch")
+                .alias("get-epoch-info"),
+        )
+        .subcommand(
+            SubCommand::with_name("alpenglow-genesis-info")
+                .about("Get info about the Alpenglow genesis cert")
+                .alias("get-alpenglow-genesis-info"),
+        )
+        .subcommand(
+            SubCommand::with_name("genesis-hash")
+                .about("Get the genesis hash")
+                .alias("get-genesis-hash"),
+        )
+        .subcommand(
+            SubCommand::with_name("slot")
+                .about("Get current slot")
+                .alias("get-slot"),
+        )
+        .subcommand(SubCommand::with_name("block-height").about("Get current block height"))
+        .subcommand(SubCommand::with_name("epoch").about("Get current epoch"))
+        .subcommand(
+            SubCommand::with_name("largest-accounts")
+                .about("Get addresses of largest cluster accounts")
+                .arg(
+                    Arg::with_name("circulating")
+                        .long("circulating")
+                        .takes_value(false)
+                        .help("Filter address list to only circulating accounts"),
+                )
+                .arg(
+                    Arg::with_name("non_circulating")
+                        .long("non-circulating")
+                        .takes_value(false)
+                        .conflicts_with("circulating")
+                        .help("Filter address list to only non-circulating accounts"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("supply")
+                .about("Get information about the cluster supply of SOL")
+                .arg(
+                    Arg::with_name("print_accounts")
+                        .long("print-accounts")
+                        .takes_value(false)
+                        .help("Print list of non-circulating account addresses"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("total-supply")
+                .about("Get total number of SOL")
+                .setting(AppSettings::Hidden),
+        )
+        .subcommand(
+            SubCommand::with_name("transaction-count")
+                .about("Get current transaction count")
+                .alias("get-transaction-count"),
+        )
+        .subcommand(
+            SubCommand::with_name("live-slots")
+                .about("Show information about the current slot progression"),
+        )
+        .subcommand(
+            SubCommand::with_name("logs")
+                .about("Stream transaction logs")
+                .arg(pubkey!(
+                    Arg::with_name("address").index(1).value_name("ADDRESS"),
+                    "Account to monitor [default: monitor all transactions except for votes]."
+                ))
+                .arg(
+                    Arg::with_name("include_votes")
+                        .long("include-votes")
+                        .takes_value(false)
+                        .conflicts_with("address")
+                        .help("Include vote transactions when monitoring all transactions"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("block-production")
+                .about("Show information about block production")
+                .alias("show-block-production")
+                .arg(
+                    Arg::with_name("epoch")
+                        .long("epoch")
+                        .takes_value(true)
+                        .help("Epoch to show block production for [default: current epoch]"),
+                )
+                .arg(
+                    Arg::with_name("slot_limit")
+                        .long("slot-limit")
+                        .takes_value(true)
+                        .help(
+                            "Limit results to this many slots from the end of the epoch [default: \
+                             full epoch]",
+                        ),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("gossip")
+                .about("Show the current gossip network nodes")
+                .alias("show-gossip"),
+        )
+        .subcommand(
+            SubCommand::with_name("stakes")
+                .about("Show stake account information")
+                .arg(
+                    Arg::with_name("lamports")
+                        .long("lamports")
+                        .takes_value(false)
+                        .help("Display balance in lamports instead of SOL"),
+                )
+                .arg(pubkey!(
+                    Arg::with_name("vote_account_pubkeys")
+                        .index(1)
+                        .value_name("VALIDATOR_ACCOUNT_PUBKEYS")
+                        .multiple(true),
+                    "Only show stake accounts delegated to the provided pubkeys. Accepts both \
+                     vote and identity pubkeys."
+                ))
+                .arg(pubkey!(
+                    Arg::with_name("withdraw_authority")
+                        .value_name("PUBKEY")
+                        .long("withdraw-authority"),
+                    "Only show stake accounts with the provided withdraw authority."
+                )),
+        )
+        .subcommand(
+            SubCommand::with_name("validators")
+                .about("Show summary information about the current validators")
+                .alias("show-validators")
+                .arg(
+                    Arg::with_name("lamports")
+                        .long("lamports")
+                        .takes_value(false)
+                        .help("Display balance in lamports instead of SOL"),
+                )
+                .arg(
+                    Arg::with_name("number")
+                        .long("number")
+                        .short("n")
+                        .takes_value(false)
+                        .help("Number the validators"),
+                )
+                .arg(
+                    Arg::with_name("reverse")
+                        .long("reverse")
+                        .short("r")
+                        .takes_value(false)
+                        .help("Reverse order while sorting"),
+                )
+                .arg(
+                    Arg::with_name("sort")
+                        .long("sort")
+                        .takes_value(true)
+                        .possible_values(&[
+                            "delinquent",
+                            "commission",
+                            "credits",
+                            "identity",
+                            "last-vote",
+                            "root",
+                            "skip-rate",
+                            "stake",
+                            "version",
+                            "client-id",
+                            "vote-account",
+                        ])
+                        .default_value("stake")
+                        .help("Sort order (does not affect JSON output)"),
+                )
+                .arg(
+                    Arg::with_name("keep_unstaked_delinquents")
+                        .long("keep-unstaked-delinquents")
+                        .takes_value(false)
+                        .help("Don't discard unstaked, delinquent validators"),
+                )
+                .arg(
+                    Arg::with_name("delinquent_slot_distance")
+                        .long("delinquent-slot-distance")
+                        .takes_value(true)
+                        .value_name("SLOT_DISTANCE")
+                        .validator(is_slot)
+                        .help(concatcp!(
+                            "Minimum slot distance from the tip to consider a validator \
+                             delinquent [default: ",
+                            DELINQUENT_VALIDATOR_SLOT_DISTANCE,
+                            "]",
+                        )),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("transaction-history")
+                .about(
+                    "Show historical transactions affecting the given address from newest to \
+                     oldest",
+                )
+                .arg(pubkey!(
+                    Arg::with_name("address")
+                        .index(1)
+                        .value_name("ADDRESS")
+                        .required(true),
+                    "Account to query for transactions."
+                ))
+                .arg(
+                    Arg::with_name("limit")
+                        .long("limit")
+                        .takes_value(true)
+                        .value_name("LIMIT")
+                        .validator(is_slot)
+                        .default_value("1000")
+                        .help("Maximum number of transaction signatures to return"),
+                )
+                .arg(
+                    Arg::with_name("before")
+                        .long("before")
+                        .value_name("TRANSACTION_SIGNATURE")
+                        .takes_value(true)
+                        .help("Start with the first signature older than this one"),
+                )
+                .arg(
+                    Arg::with_name("until")
+                        .long("until")
+                        .value_name("TRANSACTION_SIGNATURE")
+                        .takes_value(true)
+                        .help(
+                            "List until this transaction signature, if found before limit reached",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("show_transactions")
+                        .long("show-transactions")
+                        .takes_value(false)
+                        .help("Display the full transactions"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("rent")
+                .about("Calculate rent-exempt-minimum value for a given account data field length.")
+                .arg(
+                    Arg::with_name("data_length")
+                        .index(1)
+                        .value_name("DATA_LENGTH_OR_MONIKER")
+                        .required(true)
+                        .validator(|s| {
+                            RentLengthValue::from_str(&s)
+                                .map(|_| ())
+                                .map_err(|e| e.to_string())
+                        })
+                        .help(
+                            "Length of data field in the account to calculate rent for, or \
+                             moniker: [nonce, stake, system, vote]",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("lamports")
+                        .long("lamports")
+                        .takes_value(false)
+                        .help("Display rent in lamports instead of SOL"),
+                ),
+        )
+    }
+}
+
+pub fn parse_catchup(
+    matches: &ArgMatches<'_>,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let node_pubkey = pubkey_of_signer(matches, "node_pubkey", wallet_manager)?;
+    let mut our_localhost_port = value_t!(matches, "our_localhost", u16).ok();
+    // if there is no explicitly specified --our-localhost,
+    // disable the guess mode (= our_localhost_port)
+    if matches.occurrences_of("our_localhost") == 0 {
+        our_localhost_port = None
+    }
+    let node_json_rpc_url = value_t!(matches, "node_json_rpc_url", String).ok();
+    // requirement of node_pubkey is relaxed only if our_localhost_port
+    if our_localhost_port.is_none() && node_pubkey.is_none() {
+        return Err(CliError::BadParameter(
+            "OUR_VALIDATOR_PUBKEY (and possibly OUR_URL) must be specified unless --our-localhost \
+             is given"
+                .into(),
+        ));
+    }
+    let follow = matches.is_present("follow");
+    let log = matches.is_present("log");
+    Ok(CliCommandInfo::without_signers(CliCommand::Catchup {
+        node_pubkey,
+        node_json_rpc_url,
+        follow,
+        our_localhost_port,
+        log,
+    }))
+}
+
+pub fn parse_get_block(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    let slot = value_of(matches, "slot");
+    Ok(CliCommandInfo::without_signers(CliCommand::GetBlock {
+        slot,
+    }))
+}
+
+pub fn parse_get_recent_prioritization_fees(
+    matches: &ArgMatches<'_>,
+) -> Result<CliCommandInfo, CliError> {
+    let accounts = values_of(matches, "accounts").unwrap_or(vec![]);
+    let limit_num_slots = value_of(matches, "limit_num_slots");
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::GetRecentPrioritizationFees {
+            accounts,
+            limit_num_slots,
+        },
+    ))
+}
+
+pub fn parse_get_block_time(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    let slot = value_of(matches, "slot");
+    Ok(CliCommandInfo::without_signers(CliCommand::GetBlockTime {
+        slot,
+    }))
+}
+
+pub fn parse_get_epoch(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(CliCommand::GetEpoch))
+}
+
+pub fn parse_get_ag_genesis_info(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::GetAgGenesisInfo,
+    ))
+}
+
+pub fn parse_get_epoch_info(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(CliCommand::GetEpochInfo))
+}
+
+pub fn parse_get_slot(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(CliCommand::GetSlot))
+}
+
+pub fn parse_get_block_height(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(CliCommand::GetBlockHeight))
+}
+
+pub fn parse_largest_accounts(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    let filter = if matches.is_present("circulating") {
+        Some(RpcLargestAccountsFilter::Circulating)
+    } else if matches.is_present("non_circulating") {
+        Some(RpcLargestAccountsFilter::NonCirculating)
+    } else {
+        None
+    };
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::LargestAccounts { filter },
+    ))
+}
+
+pub fn parse_supply(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    let print_accounts = matches.is_present("print_accounts");
+    Ok(CliCommandInfo::without_signers(CliCommand::Supply {
+        print_accounts,
+    }))
+}
+
+pub fn parse_total_supply(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(CliCommand::TotalSupply))
+}
+
+pub fn parse_get_transaction_count(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::GetTransactionCount,
+    ))
+}
+
+pub fn parse_show_stakes(
+    matches: &ArgMatches<'_>,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let use_lamports_unit = matches.is_present("lamports");
+    let vote_account_pubkeys =
+        pubkeys_of_multiple_signers(matches, "vote_account_pubkeys", wallet_manager)?;
+    let withdraw_authority = pubkey_of(matches, "withdraw_authority");
+    Ok(CliCommandInfo::without_signers(CliCommand::ShowStakes {
+        use_lamports_unit,
+        vote_account_pubkeys,
+        withdraw_authority,
+    }))
+}
+
+pub fn parse_show_validators(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    let use_lamports_unit = matches.is_present("lamports");
+    let number_validators = matches.is_present("number");
+    let reverse_sort = matches.is_present("reverse");
+    let keep_unstaked_delinquents = matches.is_present("keep_unstaked_delinquents");
+    let delinquent_slot_distance = value_of(matches, "delinquent_slot_distance");
+
+    let sort_order = match value_t_or_exit!(matches, "sort", String).as_str() {
+        "delinquent" => CliValidatorsSortOrder::Delinquent,
+        "commission" => CliValidatorsSortOrder::Commission,
+        "credits" => CliValidatorsSortOrder::EpochCredits,
+        "identity" => CliValidatorsSortOrder::Identity,
+        "last-vote" => CliValidatorsSortOrder::LastVote,
+        "root" => CliValidatorsSortOrder::Root,
+        "skip-rate" => CliValidatorsSortOrder::SkipRate,
+        "stake" => CliValidatorsSortOrder::Stake,
+        "vote-account" => CliValidatorsSortOrder::VoteAccount,
+        "version" => CliValidatorsSortOrder::Version,
+        "client-id" => CliValidatorsSortOrder::ClientId,
+        _ => unreachable!(),
+    };
+
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::ShowValidators {
+            use_lamports_unit,
+            sort_order,
+            reverse_sort,
+            number_validators,
+            keep_unstaked_delinquents,
+            delinquent_slot_distance,
+        },
+    ))
+}
+
+pub fn parse_transaction_history(
+    matches: &ArgMatches<'_>,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let address = pubkey_of_signer(matches, "address", wallet_manager)?.unwrap();
+
+    let before = match matches.value_of("before") {
+        Some(signature) => Some(
+            signature
+                .parse()
+                .map_err(|err| CliError::BadParameter(format!("Invalid signature: {err}")))?,
+        ),
+        None => None,
+    };
+    let until = match matches.value_of("until") {
+        Some(signature) => Some(
+            signature
+                .parse()
+                .map_err(|err| CliError::BadParameter(format!("Invalid signature: {err}")))?,
+        ),
+        None => None,
+    };
+    let limit = value_t_or_exit!(matches, "limit", usize);
+    let show_transactions = matches.is_present("show_transactions");
+
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::TransactionHistory {
+            address,
+            before,
+            until,
+            limit,
+            show_transactions,
+        },
+    ))
+}
+
+pub async fn process_catchup(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    node_pubkey: Option<Pubkey>,
+    mut node_json_rpc_url: Option<String>,
+    follow: bool,
+    our_localhost_port: Option<u16>,
+    log: bool,
+) -> ProcessResult {
+    let sleep_interval = Duration::from_secs(2);
+
+    let progress_bar = new_spinner_progress_bar();
+    progress_bar.set_message("Connecting...");
+
+    if let Some(our_localhost_port) = our_localhost_port {
+        let gussed_default = format!("http://localhost:{our_localhost_port}");
+        match node_json_rpc_url.as_ref() {
+            Some(node_json_rpc_url) if node_json_rpc_url != &gussed_default => {
+                // go to new line to leave this message on console
+                writeln_stdout(format_args!(
+                    "Preferring explicitly given rpc ({node_json_rpc_url}) as us, although \
+                     --our-localhost is given\n"
+                ))?;
+            }
+            _ => {
+                node_json_rpc_url = Some(gussed_default);
+            }
+        }
+    }
+
+    let (node_client, node_pubkey) = if our_localhost_port.is_some() {
+        let client = RpcClient::new(node_json_rpc_url.unwrap());
+        let guessed_default = client.get_identity().await?;
+        (
+            client,
+            (match node_pubkey {
+                Some(node_pubkey) if node_pubkey != guessed_default => {
+                    // go to new line to leave this message on console
+                    writeln_stdout(format_args!(
+                        "Preferring explicitly given node pubkey ({node_pubkey}) as us, although \
+                         --our-localhost is given\n"
+                    ))?;
+                    node_pubkey
+                }
+                _ => guessed_default,
+            }),
+        )
+    } else if let Some(node_pubkey) = node_pubkey {
+        if let Some(node_json_rpc_url) = node_json_rpc_url {
+            (RpcClient::new(node_json_rpc_url), node_pubkey)
+        } else {
+            let rpc_addr = loop {
+                let cluster_nodes = rpc_client.get_cluster_nodes().await?;
+                if let Some(contact_info) = cluster_nodes
+                    .iter()
+                    .find(|contact_info| contact_info.pubkey == node_pubkey.to_string())
+                {
+                    if let Some(rpc_addr) = contact_info.rpc {
+                        break rpc_addr;
+                    }
+                    progress_bar.set_message(format!("RPC service not found for {node_pubkey}"));
+                } else {
+                    progress_bar
+                        .set_message(format!("Contact information not found for {node_pubkey}"));
+                }
+                sleep(sleep_interval);
+            };
+
+            (RpcClient::new_socket(rpc_addr), node_pubkey)
+        }
+    } else {
+        unreachable!()
+    };
+
+    let reported_node_pubkey = loop {
+        match node_client.get_identity().await {
+            Ok(reported_node_pubkey) => break reported_node_pubkey,
+            Err(err) => {
+                if let ClientErrorKind::Reqwest(err) = err.kind() {
+                    progress_bar.set_message(format!("Connection failed: {err}"));
+                    sleep(sleep_interval);
+                    continue;
+                }
+                return Err(Box::new(err));
+            }
+        }
+    };
+
+    if reported_node_pubkey != node_pubkey {
+        return Err(format!(
+            "The identity reported by node RPC URL does not match.  Expected: {node_pubkey:?}.  \
+             Reported: {reported_node_pubkey:?}"
+        )
+        .into());
+    }
+
+    if rpc_client.get_identity().await? == node_pubkey {
+        return Err(
+            "Both RPC URLs reference the same node, unable to monitor for catchup.  Try a \
+             different --url"
+                .into(),
+        );
+    }
+
+    async fn get_slot_while_retrying(
+        client: &RpcClient,
+        commitment: CommitmentConfig,
+        log: bool,
+        retry_count: &mut u64,
+        max_retry_count: u64,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        loop {
+            match client.get_slot_with_commitment(commitment).await {
+                Ok(r) => {
+                    *retry_count = 0;
+                    return Ok(r);
+                }
+                Err(e) => {
+                    if *retry_count >= max_retry_count {
+                        return Err(e.into());
+                    }
+                    *retry_count = retry_count.saturating_add(1);
+                    if log {
+                        // go to new line to leave this message on console
+                        writeln_stdout(format_args!(
+                            "Retrying({}/{max_retry_count}): {e}\n",
+                            *retry_count
+                        ))?;
+                    }
+                    sleep(Duration::from_secs(1));
+                }
+            };
+        }
+    }
+
+    let mut previous_rpc_slot = i64::MAX;
+    let mut previous_slot_distance: i64 = 0;
+    let mut retry_count: u64 = 0;
+    let max_retry_count = 5;
+
+    let start_node_slot: i64 = get_slot_while_retrying(
+        &node_client,
+        config.commitment,
+        log,
+        &mut retry_count,
+        max_retry_count,
+    )
+    .await?
+    .try_into()?;
+    let start_rpc_slot: i64 = get_slot_while_retrying(
+        rpc_client,
+        config.commitment,
+        log,
+        &mut retry_count,
+        max_retry_count,
+    )
+    .await?
+    .try_into()?;
+    let start_slot_distance = start_rpc_slot.saturating_sub(start_node_slot);
+    let mut total_sleep_interval = Duration::ZERO;
+    loop {
+        // humbly retry; the reference node (rpc_client) could be spotty,
+        // especially if pointing to api.meinnet-beta.solana.com at times
+        let rpc_slot: i64 = get_slot_while_retrying(
+            rpc_client,
+            config.commitment,
+            log,
+            &mut retry_count,
+            max_retry_count,
+        )
+        .await?
+        .try_into()?;
+        let node_slot: i64 = get_slot_while_retrying(
+            &node_client,
+            config.commitment,
+            log,
+            &mut retry_count,
+            max_retry_count,
+        )
+        .await?
+        .try_into()?;
+        if !follow && node_slot > std::cmp::min(previous_rpc_slot, rpc_slot) {
+            progress_bar.finish_and_clear();
+            return Ok(format!(
+                "{node_pubkey} has caught up (us:{node_slot} them:{rpc_slot})",
+            ));
+        }
+
+        let slot_distance = rpc_slot.saturating_sub(node_slot);
+        let slots_per_second = previous_slot_distance.saturating_sub(slot_distance) as f64
+            / sleep_interval.as_secs_f64();
+
+        let average_time_remaining = if slot_distance == 0 || total_sleep_interval.is_zero() {
+            "".to_string()
+        } else {
+            let distance_delta = start_slot_distance.saturating_sub(slot_distance);
+            let average_catchup_slots_per_second =
+                distance_delta as f64 / total_sleep_interval.as_secs_f64();
+            let average_time_remaining =
+                (slot_distance as f64 / average_catchup_slots_per_second).round();
+            if !average_time_remaining.is_normal() {
+                "".to_string()
+            } else if average_time_remaining < 0.0 {
+                format!(" (AVG: {average_catchup_slots_per_second:.1} slots/second (falling))")
+            } else {
+                // important not to miss next scheduled lead slots
+                let total_node_slot_delta = node_slot.saturating_sub(start_node_slot);
+                let average_node_slots_per_second =
+                    total_node_slot_delta as f64 / total_sleep_interval.as_secs_f64();
+                let expected_finish_slot = (node_slot as f64
+                    + average_time_remaining * average_node_slots_per_second)
+                    .round();
+                format!(
+                    " (AVG: {:.1} slots/second, ETA: slot {} in {})",
+                    average_catchup_slots_per_second,
+                    expected_finish_slot,
+                    humantime::format_duration(Duration::from_secs_f64(average_time_remaining))
+                )
+            }
+        };
+
+        progress_bar.set_message(format!(
+            "{} slot(s) {} (us:{} them:{}){}",
+            slot_distance.abs(),
+            if slot_distance >= 0 {
+                "behind"
+            } else {
+                "ahead"
+            },
+            node_slot,
+            rpc_slot,
+            if slot_distance == 0 || previous_rpc_slot == i64::MAX {
+                "".to_string()
+            } else {
+                format!(
+                    ", {} node is {} at {:.1} slots/second{}",
+                    if slot_distance >= 0 { "our" } else { "their" },
+                    if slots_per_second < 0.0 {
+                        "falling behind"
+                    } else {
+                        "gaining"
+                    },
+                    slots_per_second,
+                    average_time_remaining
+                )
+            },
+        ));
+        if log {
+            writeln_stdout(format_args!(""))?;
+        }
+
+        sleep(sleep_interval);
+        previous_rpc_slot = rpc_slot;
+        previous_slot_distance = slot_distance;
+        total_sleep_interval = total_sleep_interval.saturating_add(sleep_interval);
+    }
+}
+
+pub async fn process_cluster_date(rpc_client: &RpcClient, config: &CliConfig<'_>) -> ProcessResult {
+    let result = rpc_client
+        .get_account_with_commitment(&sysvar::clock::id(), config.commitment)
+        .await?;
+    if let Some(clock_account) = result.value {
+        let clock: Clock = clock_account.state().map_err(|_| {
+            CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
+        })?;
+        let block_time = CliBlockTime {
+            slot: result.context.slot,
+            timestamp: clock.unix_timestamp,
+        };
+        Ok(config.output_format.formatted_string(&block_time))
+    } else {
+        Err(format!("AccountNotFound: pubkey={}", sysvar::clock::id()).into())
+    }
+}
+
+pub async fn process_cluster_version(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+) -> ProcessResult {
+    let remote_version = rpc_client.get_version().await?;
+
+    if config.verbose {
+        Ok(format!("{remote_version:?}"))
+    } else {
+        Ok(remote_version.to_string())
+    }
+}
+
+pub async fn process_first_available_block(rpc_client: &RpcClient) -> ProcessResult {
+    let first_available_block = rpc_client.get_first_available_block().await?;
+    Ok(format!("{first_available_block}"))
+}
+
+pub fn parse_leader_schedule(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    let epoch = value_of(matches, "epoch");
+    let key_by_vote_account = matches.is_present("key_by_vote_account");
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::LeaderSchedule {
+            epoch,
+            key_by_vote_account,
+        },
+    ))
+}
+
+pub async fn process_leader_schedule(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    epoch: Option<Epoch>,
+    key_by_vote_account: bool,
+) -> ProcessResult {
+    let epoch_info = rpc_client.get_epoch_info().await?;
+    let epoch = epoch.unwrap_or(epoch_info.epoch);
+    if epoch > epoch_info.epoch.saturating_add(1) {
+        return Err(format!("Epoch {epoch} is more than one epoch in the future").into());
+    }
+
+    let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+    let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
+
+    let leader_schedule = rpc_client
+        .get_leader_schedule_with_config(
+            Some(first_slot_in_epoch),
+            RpcLeaderScheduleConfig {
+                key_by_vote_account: key_by_vote_account.then_some(true),
+                commitment: Some(rpc_client.commitment()),
+                ..RpcLeaderScheduleConfig::default()
+            },
+        )
+        .await?;
+    if leader_schedule.is_none() {
+        return Err(
+            format!("Unable to fetch leader schedule for slot {first_slot_in_epoch}").into(),
+        );
+    }
+    let leader_schedule = leader_schedule.unwrap();
+
+    let mut leader_per_slot_index = Vec::new();
+    for (pubkey, leader_slots) in leader_schedule.iter() {
+        for slot_index in leader_slots.iter() {
+            if *slot_index >= leader_per_slot_index.len() {
+                leader_per_slot_index.resize(slot_index.saturating_add(1), "?");
+            }
+            leader_per_slot_index[*slot_index] = pubkey;
+        }
+    }
+
+    let mut leader_schedule_entries = vec![];
+    for (slot_index, leader) in leader_per_slot_index.iter().enumerate() {
+        leader_schedule_entries.push(CliLeaderScheduleEntry {
+            slot: first_slot_in_epoch.saturating_add(slot_index as u64),
+            leader: leader.to_string(),
+        });
+    }
+
+    Ok(config.output_format.formatted_string(&CliLeaderSchedule {
+        epoch,
+        leader_schedule_entries,
+    }))
+}
+
+pub async fn process_get_recent_priority_fees(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    accounts: &[Pubkey],
+    limit_num_slots: Option<Slot>,
+) -> ProcessResult {
+    let fees = rpc_client.get_recent_prioritization_fees(accounts).await?;
+    let mut min = u64::MAX;
+    let mut max = 0;
+    let mut total = Saturating(0);
+    let fees_len: u64 = fees.len().try_into().unwrap();
+    let num_slots = limit_num_slots.unwrap_or(fees_len).min(fees_len).max(1);
+
+    let mut cli_fees = Vec::with_capacity(fees.len());
+    for RpcPrioritizationFee {
+        slot,
+        prioritization_fee,
+    } in fees
+        .into_iter()
+        .skip(fees_len.saturating_sub(num_slots) as usize)
+    {
+        min = min.min(prioritization_fee);
+        max = max.max(prioritization_fee);
+        total += prioritization_fee;
+        cli_fees.push(CliPrioritizationFee {
+            slot,
+            prioritization_fee,
+        });
+    }
+    Ok(config
+        .output_format
+        .formatted_string(&CliPrioritizationFeeStats {
+            fees: cli_fees,
+            min,
+            max,
+            average: total.0.checked_div(num_slots).unwrap_or(0),
+            num_slots,
+        }))
+}
+
+pub async fn process_get_block(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    slot: Option<Slot>,
+) -> ProcessResult {
+    let slot = if let Some(slot) = slot {
+        slot
+    } else {
+        rpc_client
+            .get_slot_with_commitment(CommitmentConfig::finalized())
+            .await?
+    };
+
+    let encoded_confirmed_block = rpc_client
+        .get_block_with_config(
+            slot,
+            RpcBlockConfig {
+                encoding: Some(UiTransactionEncoding::Base64),
+                commitment: Some(CommitmentConfig::confirmed()),
+                max_supported_transaction_version: Some(1),
+                ..RpcBlockConfig::default()
+            },
+        )
+        .await?
+        .into();
+    let cli_block = CliBlock {
+        encoded_confirmed_block,
+        slot,
+    };
+    Ok(config.output_format.formatted_string(&cli_block))
+}
+
+pub async fn process_get_block_time(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    slot: Option<Slot>,
+) -> ProcessResult {
+    let slot = if let Some(slot) = slot {
+        slot
+    } else {
+        rpc_client
+            .get_slot_with_commitment(CommitmentConfig::finalized())
+            .await?
+    };
+    let timestamp = rpc_client.get_block_time(slot).await?;
+    let block_time = CliBlockTime { slot, timestamp };
+    Ok(config.output_format.formatted_string(&block_time))
+}
+
+pub async fn process_get_epoch(rpc_client: &RpcClient, _config: &CliConfig<'_>) -> ProcessResult {
+    let epoch_info = rpc_client.get_epoch_info().await?;
+    Ok(epoch_info.epoch.to_string())
+}
+
+pub async fn process_get_ag_genesis_info(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+) -> ProcessResult {
+    let cert = rpc_client.get_ag_genesis_cert().await?;
+    let ag_genesis_info = match cert {
+        None => CliAgGenesisInfo::Tower,
+        Some(WireBlockCertMessage { block, signature }) => {
+            let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+            let epoch = epoch_schedule.get_epoch(block.slot);
+            const MAX_VALIDATORS: usize = 4096;
+            let Decoded::Base2(bitvec) = decode(&signature.bitmap, MAX_VALIDATORS)
+                .map_err(|_| Box::new(CliError::InvalidAgGenesisCert))?
+            else {
+                return Err(Box::new(CliError::InvalidAgGenesisCert));
+            };
+            CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
+                epoch,
+                slot: block.slot,
+                block_id: block.block_id.to_hash(),
+                bitvec,
+                signature: signature.signature,
+            })
+        }
+    };
+    Ok(config.output_format.formatted_string(&ag_genesis_info))
+}
+
+pub async fn process_get_epoch_info(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+) -> ProcessResult {
+    let epoch_info = rpc_client.get_epoch_info().await?;
+    let epoch_completed_percent =
+        epoch_info.slot_index as f64 / epoch_info.slots_in_epoch as f64 * 100_f64;
+    let mut cli_epoch_info = CliEpochInfo {
+        epoch_info,
+        epoch_completed_percent,
+        average_slot_time_ms: 0,
+        start_block_time: None,
+        current_block_time: None,
+    };
+    match config.output_format {
+        OutputFormat::Json | OutputFormat::JsonCompact => {}
+        _ => {
+            let epoch_info = &cli_epoch_info.epoch_info;
+            let average_slot_time_ms = rpc_client
+                .get_recent_performance_samples(Some(60))
+                .await
+                .ok()
+                .and_then(|samples| {
+                    let (slots, secs) = samples.iter().fold(
+                        (0, 0u64),
+                        |(slots, secs): (u64, u64),
+                         RpcPerfSample {
+                             num_slots,
+                             sample_period_secs,
+                             ..
+                         }| {
+                            (
+                                slots.saturating_add(*num_slots),
+                                secs.saturating_add((*sample_period_secs).into()),
+                            )
+                        },
+                    );
+                    secs.saturating_mul(1000).checked_div(slots)
+                })
+                .unwrap_or(clock::DEFAULT_MS_PER_SLOT);
+            let epoch_expected_start_slot = epoch_info
+                .absolute_slot
+                .saturating_sub(epoch_info.slot_index);
+            let first_block_in_epoch = rpc_client
+                .get_blocks_with_limit(epoch_expected_start_slot, 1)
+                .await
+                .ok()
+                .and_then(|slot_vec| slot_vec.first().cloned())
+                .unwrap_or(epoch_expected_start_slot);
+            let start_block_time = rpc_client
+                .get_block_time(first_block_in_epoch)
+                .await
+                .ok()
+                .map(|time| {
+                    time.saturating_sub(
+                        first_block_in_epoch
+                            .saturating_sub(epoch_expected_start_slot)
+                            .saturating_mul(average_slot_time_ms)
+                            .saturating_div(1000) as i64,
+                    )
+                });
+            let current_block_time = rpc_client
+                .get_block_time(epoch_info.absolute_slot)
+                .await
+                .ok();
+
+            cli_epoch_info.average_slot_time_ms = average_slot_time_ms;
+            cli_epoch_info.start_block_time = start_block_time;
+            cli_epoch_info.current_block_time = current_block_time;
+        }
+    }
+    Ok(config.output_format.formatted_string(&cli_epoch_info))
+}
+
+pub async fn process_get_genesis_hash(rpc_client: &RpcClient) -> ProcessResult {
+    let genesis_hash = rpc_client.get_genesis_hash().await?;
+    Ok(genesis_hash.to_string())
+}
+
+pub async fn process_get_slot(rpc_client: &RpcClient, _config: &CliConfig<'_>) -> ProcessResult {
+    let slot = rpc_client.get_slot().await?;
+    Ok(slot.to_string())
+}
+
+pub async fn process_get_block_height(
+    rpc_client: &RpcClient,
+    _config: &CliConfig<'_>,
+) -> ProcessResult {
+    let block_height = rpc_client.get_block_height().await?;
+    Ok(block_height.to_string())
+}
+
+pub fn parse_show_block_production(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    let epoch = value_t!(matches, "epoch", Epoch).ok();
+    let slot_limit = value_t!(matches, "slot_limit", u64).ok();
+
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::ShowBlockProduction { epoch, slot_limit },
+    ))
+}
+
+pub async fn process_show_block_production(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    epoch: Option<Epoch>,
+    slot_limit: Option<u64>,
+) -> ProcessResult {
+    let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+    let epoch_info = rpc_client
+        .get_epoch_info_with_commitment(CommitmentConfig::finalized())
+        .await?;
+
+    let epoch = epoch.unwrap_or(epoch_info.epoch);
+    if epoch > epoch_info.epoch {
+        return Err(format!("Epoch {epoch} is in the future").into());
+    }
+
+    let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
+    let end_slot = std::cmp::min(
+        epoch_info.absolute_slot,
+        epoch_schedule.get_last_slot_in_epoch(epoch),
+    );
+
+    let mut start_slot = if let Some(slot_limit) = slot_limit {
+        std::cmp::max(end_slot.saturating_sub(slot_limit), first_slot_in_epoch)
+    } else {
+        first_slot_in_epoch
+    };
+
+    let progress_bar = new_spinner_progress_bar();
+    progress_bar.set_message(format!(
+        "Fetching confirmed blocks between slots {start_slot} and {end_slot}..."
+    ));
+
+    let slot_history_account = rpc_client
+        .get_account_with_commitment(&sysvar::slot_history::id(), CommitmentConfig::finalized())
+        .await?
+        .value
+        .unwrap();
+
+    let slot_history: SlotHistory = slot_history_account
+        .state()
+        .map_err(|_| CliError::RpcRequestError("Failed to deserialize slot history".to_string()))?;
+
+    let (confirmed_blocks, start_slot) =
+        if start_slot >= slot_history.oldest() && end_slot <= slot_history.newest() {
+            // Fast, more reliable path using the SlotHistory sysvar
+
+            let confirmed_blocks: Vec<_> = (start_slot..=end_slot)
+                .filter(|slot| slot_history.check(*slot) == slot_history::Check::Found)
+                .collect();
+            (confirmed_blocks, start_slot)
+        } else {
+            // Slow, less reliable path using `getBlocks`.
+            //
+            // "less reliable" because if the RPC node has holds in its ledger then the block production data will be
+            // incorrect.  This condition currently can't be detected over RPC
+            //
+
+            let minimum_ledger_slot = rpc_client.minimum_ledger_slot().await?;
+            if minimum_ledger_slot > end_slot {
+                return Err(format!(
+                    "Ledger data not available for slots {start_slot} to {end_slot} (minimum \
+                     ledger slot is {minimum_ledger_slot})"
+                )
+                .into());
+            }
+
+            if minimum_ledger_slot > start_slot {
+                progress_bar.println(format!(
+                    "{}",
+                    style(format!(
+                        "Note: Requested start slot was {start_slot} but minimum ledger slot is \
+                         {minimum_ledger_slot}"
+                    ))
+                    .italic(),
+                ));
+                start_slot = minimum_ledger_slot;
+            }
+
+            let confirmed_blocks = rpc_client.get_blocks(start_slot, Some(end_slot)).await?;
+            (confirmed_blocks, start_slot)
+        };
+
+    let start_slot_index = start_slot.saturating_sub(first_slot_in_epoch) as usize;
+    let end_slot_index = end_slot.saturating_sub(first_slot_in_epoch) as usize;
+    let total_slots = end_slot_index
+        .saturating_sub(start_slot_index)
+        .saturating_add(1);
+    let total_blocks_produced = confirmed_blocks.len();
+    assert!(total_blocks_produced <= total_slots);
+    let total_slots_skipped = total_slots.saturating_sub(total_blocks_produced);
+    let mut leader_slot_count = HashMap::new();
+    let mut leader_skipped_slots = HashMap::new();
+
+    progress_bar.set_message(format!("Fetching leader schedule for epoch {epoch}..."));
+    let leader_schedule = rpc_client
+        .get_leader_schedule_with_commitment(Some(start_slot), CommitmentConfig::finalized())
+        .await?;
+    if leader_schedule.is_none() {
+        return Err(format!("Unable to fetch leader schedule for slot {start_slot}").into());
+    }
+    let leader_schedule = leader_schedule.unwrap();
+
+    let mut leader_per_slot_index = Vec::new();
+    leader_per_slot_index.resize(total_slots, "?".to_string());
+    for (pubkey, leader_slots) in leader_schedule.iter() {
+        let pubkey = format_labeled_address(pubkey, &config.address_labels);
+        for slot_index in leader_slots.iter() {
+            if *slot_index >= start_slot_index && *slot_index <= end_slot_index {
+                leader_per_slot_index[slot_index.saturating_sub(start_slot_index)]
+                    .clone_from(&pubkey);
+            }
+        }
+    }
+
+    progress_bar.set_message(format!(
+        "Processing {total_slots} slots containing {total_blocks_produced} blocks and \
+         {total_slots_skipped} empty slots..."
+    ));
+
+    let mut confirmed_blocks_index = 0;
+    let mut individual_slot_status = vec![];
+    for (leader, slot_index) in leader_per_slot_index.iter().zip(0u64..) {
+        let slot = start_slot.saturating_add(slot_index);
+        let slot_count: &mut u64 = leader_slot_count.entry(leader).or_insert(0);
+        *slot_count = slot_count.saturating_add(1);
+        let skipped_slots: &mut u64 = leader_skipped_slots.entry(leader).or_insert(0);
+
+        loop {
+            if confirmed_blocks_index < confirmed_blocks.len() {
+                let slot_of_next_confirmed_block = confirmed_blocks[confirmed_blocks_index];
+                if slot_of_next_confirmed_block < slot {
+                    confirmed_blocks_index = confirmed_blocks_index.saturating_add(1);
+                    continue;
+                }
+                if slot_of_next_confirmed_block == slot {
+                    individual_slot_status.push(CliSlotStatus {
+                        slot,
+                        leader: (*leader).to_string(),
+                        skipped: false,
+                    });
+                    break;
+                }
+            }
+            *skipped_slots = skipped_slots.saturating_add(1);
+            individual_slot_status.push(CliSlotStatus {
+                slot,
+                leader: (*leader).to_string(),
+                skipped: true,
+            });
+            break;
+        }
+    }
+
+    progress_bar.finish_and_clear();
+
+    let mut leaders: Vec<CliBlockProductionEntry> = leader_slot_count
+        .iter()
+        .map(|(leader, leader_slots)| {
+            let skipped_slots = *leader_skipped_slots.get(leader).unwrap();
+            let blocks_produced = leader_slots.saturating_sub(skipped_slots);
+            CliBlockProductionEntry {
+                identity_pubkey: (**leader).to_string(),
+                leader_slots: *leader_slots,
+                blocks_produced,
+                skipped_slots,
+            }
+        })
+        .collect();
+    leaders.sort_by(|a, b| a.identity_pubkey.partial_cmp(&b.identity_pubkey).unwrap());
+    let block_production = CliBlockProduction {
+        epoch,
+        start_slot,
+        end_slot,
+        total_slots,
+        total_blocks_produced,
+        total_slots_skipped,
+        leaders,
+        individual_slot_status,
+        verbose: config.verbose,
+    };
+    Ok(config.output_format.formatted_string(&block_production))
+}
+
+pub async fn process_largest_accounts(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    filter: Option<RpcLargestAccountsFilter>,
+) -> ProcessResult {
+    let accounts = rpc_client
+        .get_largest_accounts_with_config(RpcLargestAccountsConfig {
+            commitment: Some(config.commitment),
+            filter,
+            sort_results: None,
+        })
+        .await?
+        .value;
+    let largest_accounts = CliAccountBalances { accounts };
+    Ok(config.output_format.formatted_string(&largest_accounts))
+}
+
+pub async fn process_supply(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    print_accounts: bool,
+) -> ProcessResult {
+    let supply_response = rpc_client.supply().await?;
+    let mut supply: CliSupply = supply_response.value.into();
+    supply.print_accounts = print_accounts;
+    Ok(config.output_format.formatted_string(&supply))
+}
+
+pub async fn process_total_supply(
+    rpc_client: &RpcClient,
+    _config: &CliConfig<'_>,
+) -> ProcessResult {
+    let supply = rpc_client.supply().await?.value;
+    Ok(format!(
+        "{} SOL",
+        build_balance_message(supply.total, false, false)
+    ))
+}
+
+pub async fn process_get_transaction_count(
+    rpc_client: &RpcClient,
+    _config: &CliConfig<'_>,
+) -> ProcessResult {
+    let transaction_count = rpc_client.get_transaction_count().await?;
+    Ok(transaction_count.to_string())
+}
+
+pub fn parse_logs(
+    matches: &ArgMatches<'_>,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let address = pubkey_of_signer(matches, "address", wallet_manager)?;
+    let include_votes = matches.is_present("include_votes");
+
+    let filter = match address {
+        None => {
+            if include_votes {
+                RpcTransactionLogsFilter::AllWithVotes
+            } else {
+                RpcTransactionLogsFilter::All
+            }
+        }
+        Some(address) => RpcTransactionLogsFilter::Mentions(vec![address.to_string()]),
+    };
+
+    Ok(CliCommandInfo::without_signers(CliCommand::Logs { filter }))
+}
+
+pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> ProcessResult {
+    writeln_stdout(format_args!(
+        "Streaming transaction logs{}. {:?} commitment",
+        match filter {
+            RpcTransactionLogsFilter::All => "".into(),
+            RpcTransactionLogsFilter::AllWithVotes => " (including votes)".into(),
+            RpcTransactionLogsFilter::Mentions(addresses) =>
+                format!(" mentioning {}", addresses.join(",")),
+        },
+        config.commitment.commitment
+    ))?;
+
+    let (_client, receiver) = PubsubClient::logs_subscribe(
+        &config.websocket_url,
+        filter.clone(),
+        RpcTransactionLogsConfig {
+            commitment: Some(config.commitment),
+        },
+    )?;
+
+    loop {
+        match receiver.recv() {
+            Ok(logs) => {
+                writeln_stdout(format_args!(
+                    "Transaction executed in slot {}:",
+                    logs.context.slot
+                ))?;
+                writeln_stdout(format_args!("  Signature: {}", logs.value.signature))?;
+                writeln_stdout(format_args!(
+                    "  Status: {}",
+                    logs.value
+                        .err
+                        .map(|err| err.to_string())
+                        .unwrap_or_else(|| "Ok".to_string())
+                ))?;
+                writeln_stdout(format_args!("  Log Messages:"))?;
+                for log in logs.value.logs {
+                    writeln_stdout(format_args!("    {log}"))?;
+                }
+            }
+            Err(err) => {
+                return Ok(format!("Disconnected: {err}"));
+            }
+        }
+    }
+}
+
+pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
+    let exit = Arc::new(AtomicBool::new(false));
+
+    let mut current: Option<SlotInfo> = None;
+    let mut message = "".to_string();
+
+    let slot_progress = new_spinner_progress_bar();
+    slot_progress.set_message("Connecting...");
+    let (mut client, receiver) = PubsubClient::slot_subscribe(&config.websocket_url)?;
+    slot_progress.set_message("Connected.");
+
+    let spacer = "|";
+    slot_progress.println(spacer);
+
+    let mut last_root = u64::MAX;
+    let mut last_root_update = Instant::now();
+    let mut slots_per_second = f64::NAN;
+    loop {
+        if exit.load(Ordering::Relaxed) {
+            eprintln!("{message}");
+            client.shutdown().unwrap();
+            break;
+        }
+
+        match receiver.recv() {
+            Ok(new_info) => {
+                if last_root == u64::MAX {
+                    last_root = new_info.root;
+                    last_root_update = Instant::now();
+                }
+                if last_root_update.elapsed().as_secs() >= 5 {
+                    let root = new_info.root;
+                    slots_per_second = root.saturating_sub(last_root) as f64
+                        / last_root_update.elapsed().as_secs() as f64;
+                    last_root_update = Instant::now();
+                    last_root = root;
+                }
+
+                message = if slots_per_second.is_nan() {
+                    format!("{new_info:?}")
+                } else {
+                    format!(
+                        "{new_info:?} | root slot advancing at {slots_per_second:.2} slots/second"
+                    )
+                };
+                slot_progress.set_message(message.clone());
+
+                if let Some(previous) = current {
+                    let slot_delta = (new_info.slot as i64).saturating_sub(previous.slot as i64);
+                    let root_delta = (new_info.root as i64).saturating_sub(previous.root as i64);
+
+                    //
+                    // if slot has advanced out of step with the root, we detect
+                    // a mismatch and output the slot information
+                    //
+                    if slot_delta != root_delta {
+                        let prev_root = format!(
+                            "|<--- {} <- … <- {} <- {}   (prev)",
+                            previous.root, previous.parent, previous.slot
+                        );
+                        slot_progress.println(&prev_root);
+
+                        let new_root = format!(
+                            "|  '- {} <- … <- {} <- {}   (next)",
+                            new_info.root, new_info.parent, new_info.slot
+                        );
+
+                        slot_progress.println(prev_root);
+                        slot_progress.println(new_root);
+                        slot_progress.println(spacer);
+                    }
+                }
+                current = Some(new_info);
+            }
+            Err(err) => {
+                eprintln!("disconnected: {err}");
+                break;
+            }
+        }
+    }
+
+    Ok("".to_string())
+}
+
+pub async fn process_show_gossip(rpc_client: &RpcClient, config: &CliConfig<'_>) -> ProcessResult {
+    let cluster_nodes = rpc_client.get_cluster_nodes().await?;
+
+    let nodes: Vec<_> = cluster_nodes
+        .into_iter()
+        .map(|node| CliGossipNode::new(node, &config.address_labels))
+        .collect();
+
+    Ok(config
+        .output_format
+        .formatted_string(&CliGossipNodes(nodes)))
+}
+
+pub async fn process_show_stakes(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    use_lamports_unit: bool,
+    vote_account_pubkeys: Option<&[Pubkey]>,
+    withdraw_authority_pubkey: Option<&Pubkey>,
+) -> ProcessResult {
+    use crate::stake::build_stake_state;
+
+    // Both vote and identity pubkeys are supported to identify validator stakes.
+    // For identity pubkeys, fetch corresponding vote pubkey.
+    let vote_account_pubkeys = match vote_account_pubkeys {
+        Some(pubkeys) => {
+            let vote_account_progress_bar = new_spinner_progress_bar();
+            vote_account_progress_bar.set_message("Searching for matching vote accounts...");
+
+            let vote_accounts = rpc_client.get_vote_accounts().await?;
+
+            let mut pubkeys: HashSet<String> =
+                pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
+
+            let vote_account_pubkeys: HashSet<Pubkey> = vote_accounts
+                .current
+                .into_iter()
+                .chain(vote_accounts.delinquent)
+                .filter_map(|vote_acc| {
+                    if pubkeys.remove(&vote_acc.node_pubkey)
+                        || pubkeys.remove(&vote_acc.vote_pubkey)
+                    {
+                        Pubkey::from_str(&vote_acc.vote_pubkey).ok()
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !pubkeys.is_empty() {
+                let mut pubkeys: Vec<String> = pubkeys.into_iter().collect();
+                pubkeys.sort();
+                return Err(CliError::RpcRequestError(format!(
+                    "Failed to retrieve matching vote account for {}.",
+                    pubkeys.join(", ")
+                ))
+                .into());
+            }
+            vote_account_progress_bar.finish_and_clear();
+            vote_account_pubkeys
+        }
+        None => HashSet::<Pubkey>::new(),
+    };
+
+    let mut program_accounts_config = RpcProgramAccountsConfig {
+        account_config: RpcAccountInfoConfig {
+            encoding: Some(solana_account_decoder::UiAccountEncoding::Base64),
+            ..RpcAccountInfoConfig::default()
+        },
+        ..RpcProgramAccountsConfig::default()
+    };
+
+    let stake_account_progress_bar = new_spinner_progress_bar();
+    stake_account_progress_bar.set_message("Fetching stake accounts...");
+
+    // Use server-side filtering if only one vote account is provided
+    if vote_account_pubkeys.len() == 1 {
+        let filter_pubkey = vote_account_pubkeys.iter().next().unwrap();
+        program_accounts_config.filters = Some(vec![
+            // Filter by `StakeStateV2::Stake(_, _)`
+            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &[2, 0, 0, 0])),
+            // Filter by `Delegation::voter_pubkey`, which begins at byte offset 124
+            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(124, filter_pubkey.as_ref())),
+        ]);
+    }
+
+    if let Some(withdraw_authority_pubkey) = withdraw_authority_pubkey {
+        // withdrawer filter
+        let withdrawer_filter = RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
+            44,
+            withdraw_authority_pubkey.as_ref(),
+        ));
+        let filters = program_accounts_config.filters.get_or_insert(vec![]);
+        filters.push(withdrawer_filter);
+    }
+
+    let all_stake_accounts = rpc_client
+        .get_program_ui_accounts_with_config(&stake::program::id(), program_accounts_config)
+        .await?;
+    let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
+    let clock_account = rpc_client.get_account(&sysvar::clock::id()).await?;
+    let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
+    let clock: Clock = clock_account
+        .state()
+        .map_err(|_| CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string()))?;
+    let rent: Rent = wincode::deserialize(&rent_account.data)?;
+    let stake_history: StakeHistory = stake_history_account.state().map_err(|_| {
+        CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+    })?;
+    let new_rate_activation_epoch = get_feature_activation_epoch(
+        rpc_client,
+        &agave_feature_set::reduce_stake_warmup_cooldown::id(),
+    )
+    .await?;
+    stake_account_progress_bar.finish_and_clear();
+
+    let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
+    for (stake_pubkey, stake_ui_account) in all_stake_accounts {
+        let stake_account = stake_ui_account.to_account().expect(
+            "It should be impossible at this point for the account data not to be decodable. \
+             Ensure that the account was fetched using a binary encoding.",
+        );
+        if let Ok(stake_state) = stake_account.state() {
+            let rent_exempt_balance = rent.minimum_balance(stake_account.data.len()).max(1);
+
+            match stake_state {
+                StakeStateV2::Initialized(_) if vote_account_pubkeys.is_empty() => {
+                    stake_accounts.push(CliKeyedStakeState {
+                        stake_pubkey: stake_pubkey.to_string(),
+                        stake_state: build_stake_state(
+                            stake_account.lamports,
+                            &stake_state,
+                            use_lamports_unit,
+                            &stake_history,
+                            &clock,
+                            new_rate_activation_epoch,
+                            rent_exempt_balance,
+                            false,
+                        ),
+                    });
+                }
+                StakeStateV2::Stake(_, stake, _)
+                    if vote_account_pubkeys.is_empty()
+                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey) =>
+                {
+                    stake_accounts.push(CliKeyedStakeState {
+                        stake_pubkey: stake_pubkey.to_string(),
+                        stake_state: build_stake_state(
+                            stake_account.lamports,
+                            &stake_state,
+                            use_lamports_unit,
+                            &stake_history,
+                            &clock,
+                            new_rate_activation_epoch,
+                            rent_exempt_balance,
+                            false,
+                        ),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    if stake_accounts.is_empty() {
+        Ok("No stake accounts found".into())
+    } else {
+        Ok(config
+            .output_format
+            .formatted_string(&CliStakeVec::new(stake_accounts)))
+    }
+}
+
+pub async fn process_show_validators(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    use_lamports_unit: bool,
+    validators_sort_order: CliValidatorsSortOrder,
+    validators_reverse_sort: bool,
+    number_validators: bool,
+    keep_unstaked_delinquents: bool,
+    delinquent_slot_distance: Option<Slot>,
+) -> ProcessResult {
+    let progress_bar = new_spinner_progress_bar();
+    progress_bar.set_message("Fetching vote accounts...");
+    let epoch_info = rpc_client.get_epoch_info().await?;
+    let vote_accounts = rpc_client
+        .get_vote_accounts_with_config(RpcGetVoteAccountsConfig {
+            keep_unstaked_delinquents: Some(keep_unstaked_delinquents),
+            delinquent_slot_distance,
+            ..RpcGetVoteAccountsConfig::default()
+        })
+        .await?;
+
+    progress_bar.set_message("Fetching block production...");
+    let skip_rate: HashMap<_, _> = rpc_client
+        .get_block_production()
+        .await?
+        .value
+        .by_identity
+        .into_iter()
+        .map(|(identity, (leader_slots, blocks_produced))| {
+            (
+                identity,
+                100. * (leader_slots.saturating_sub(blocks_produced)) as f64 / leader_slots as f64,
+            )
+        })
+        .collect();
+
+    progress_bar.set_message("Fetching version information...");
+    let mut node_version = HashMap::new();
+    let mut client_id: HashMap<String, CliClientId> = HashMap::new();
+    for contact_info in rpc_client.get_cluster_nodes().await? {
+        node_version.insert(
+            contact_info.pubkey.clone(),
+            contact_info
+                .version
+                .and_then(|version| CliVersion::from_str(&version).ok())
+                .unwrap_or_else(CliVersion::unknown_version),
+        );
+        client_id.insert(
+            contact_info.pubkey,
+            CliClientId::from(contact_info.client_id),
+        );
+    }
+
+    progress_bar.finish_and_clear();
+
+    let total_active_stake = vote_accounts
+        .current
+        .iter()
+        .chain(vote_accounts.delinquent.iter())
+        .map(|vote_account| vote_account.activated_stake)
+        .sum::<u64>();
+
+    let total_delinquent_stake = vote_accounts
+        .delinquent
+        .iter()
+        .map(|vote_account| vote_account.activated_stake)
+        .sum();
+    let total_current_stake = total_active_stake.saturating_sub(total_delinquent_stake);
+
+    let current_validators: Vec<CliValidator> = vote_accounts
+        .current
+        .iter()
+        .map(|vote_account| {
+            CliValidator::new(
+                vote_account,
+                epoch_info.epoch,
+                node_version
+                    .get(&vote_account.node_pubkey)
+                    .cloned()
+                    .unwrap_or_else(CliVersion::unknown_version),
+                client_id
+                    .get(&vote_account.node_pubkey)
+                    .cloned()
+                    .unwrap_or_else(CliClientId::unknown),
+                skip_rate.get(&vote_account.node_pubkey).cloned(),
+                &config.address_labels,
+            )
+        })
+        .collect();
+    let delinquent_validators: Vec<CliValidator> = vote_accounts
+        .delinquent
+        .iter()
+        .map(|vote_account| {
+            CliValidator::new_delinquent(
+                vote_account,
+                epoch_info.epoch,
+                node_version
+                    .get(&vote_account.node_pubkey)
+                    .cloned()
+                    .unwrap_or_else(CliVersion::unknown_version),
+                client_id
+                    .get(&vote_account.node_pubkey)
+                    .cloned()
+                    .unwrap_or_else(CliClientId::unknown),
+                skip_rate.get(&vote_account.node_pubkey).cloned(),
+                &config.address_labels,
+            )
+        })
+        .collect();
+
+    let mut stake_by_version: BTreeMap<CliVersion, CliValidatorsStakeByVersion> = BTreeMap::new();
+    let mut stake_by_client_id: BTreeMap<CliClientId, CliValidatorsStakeByClientId> =
+        BTreeMap::new();
+    for validator in current_validators.iter() {
+        let CliValidatorsStakeByVersion {
+            current_validators,
+            current_active_stake,
+            ..
+        } = stake_by_version
+            .entry(validator.version.clone())
+            .or_default();
+        *current_validators = current_validators.saturating_add(1);
+        *current_active_stake = current_active_stake.saturating_add(validator.activated_stake);
+
+        let CliValidatorsStakeByClientId {
+            current_validators,
+            current_active_stake,
+            ..
+        } = stake_by_client_id
+            .entry(validator.client_id.clone())
+            .or_default();
+        *current_validators = current_validators.saturating_add(1);
+        *current_active_stake = current_active_stake.saturating_add(validator.activated_stake);
+    }
+    for validator in delinquent_validators.iter() {
+        let CliValidatorsStakeByVersion {
+            delinquent_validators,
+            delinquent_active_stake,
+            ..
+        } = stake_by_version
+            .entry(validator.version.clone())
+            .or_default();
+        *delinquent_validators = delinquent_validators.saturating_add(1);
+        *delinquent_active_stake =
+            delinquent_active_stake.saturating_add(validator.activated_stake);
+
+        let CliValidatorsStakeByClientId {
+            delinquent_validators,
+            delinquent_active_stake,
+            ..
+        } = stake_by_client_id
+            .entry(validator.client_id.clone())
+            .or_default();
+        *delinquent_validators = delinquent_validators.saturating_add(1);
+        *delinquent_active_stake =
+            delinquent_active_stake.saturating_add(validator.activated_stake);
+    }
+
+    let validators: Vec<_> = current_validators
+        .into_iter()
+        .chain(delinquent_validators)
+        .collect();
+
+    let (average_skip_rate, average_stake_weighted_skip_rate) = {
+        let mut skip_rate_len: u64 = 0;
+        let mut skip_rate_sum = 0.;
+        let mut skip_rate_weighted_sum = 0.;
+        for validator in validators.iter() {
+            if let Some(skip_rate) = validator.skip_rate {
+                skip_rate_sum += skip_rate;
+                skip_rate_len = skip_rate_len.saturating_add(1);
+                skip_rate_weighted_sum += skip_rate * validator.activated_stake as f64;
+            }
+        }
+
+        if skip_rate_len > 0 && total_active_stake > 0 {
+            (
+                skip_rate_sum / skip_rate_len as f64,
+                skip_rate_weighted_sum / total_active_stake as f64,
+            )
+        } else {
+            (100., 100.) // Impossible?
+        }
+    };
+
+    let cli_validators = CliValidators {
+        total_active_stake,
+        total_current_stake,
+        total_delinquent_stake,
+        validators,
+        average_skip_rate,
+        average_stake_weighted_skip_rate,
+        validators_sort_order,
+        validators_reverse_sort,
+        number_validators,
+        stake_by_version,
+        stake_by_client_id,
+        use_lamports_unit,
+    };
+    Ok(config.output_format.formatted_string(&cli_validators))
+}
+
+pub async fn process_transaction_history(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    address: &Pubkey,
+    before: Option<Signature>,
+    until: Option<Signature>,
+    limit: usize,
+    show_transactions: bool,
+) -> ProcessResult {
+    let results = rpc_client
+        .get_signatures_for_address_with_config(
+            address,
+            GetConfirmedSignaturesForAddress2Config {
+                before,
+                until,
+                limit: Some(limit),
+                commitment: Some(CommitmentConfig::confirmed()),
+            },
+        )
+        .await?;
+
+    if !show_transactions {
+        let cli_signatures: Vec<_> = results
+            .into_iter()
+            .map(|result| {
+                let mut signature = CliHistorySignature {
+                    signature: result.signature,
+                    ..CliHistorySignature::default()
+                };
+                if config.verbose {
+                    signature.verbose = Some(CliHistoryVerbose {
+                        slot: result.slot,
+                        block_time: result.block_time,
+                        err: result.err,
+                        confirmation_status: result.confirmation_status,
+                        memo: result.memo,
+                    });
+                }
+                signature
+            })
+            .collect();
+        Ok(config
+            .output_format
+            .formatted_string(&CliHistorySignatureVec::new(cli_signatures)))
+    } else {
+        let mut cli_transactions = vec![];
+        for result in results {
+            if let Ok(signature) = result.signature.parse::<Signature>() {
+                let mut transaction = None;
+                let mut get_transaction_error = None;
+                match rpc_client
+                    .get_transaction_with_config(
+                        &signature,
+                        RpcTransactionConfig {
+                            encoding: Some(UiTransactionEncoding::Base64),
+                            commitment: Some(CommitmentConfig::confirmed()),
+                            max_supported_transaction_version: Some(1),
+                            min_context_slot: None,
+                        },
+                    )
+                    .await
+                {
+                    Ok(confirmed_transaction) => {
+                        let EncodedConfirmedTransactionWithStatusMeta {
+                            block_time,
+                            slot,
+                            transaction: transaction_with_meta,
+                            ..
+                        } = confirmed_transaction;
+
+                        let decoded_transaction =
+                            transaction_with_meta.transaction.decode().unwrap();
+                        let json_transaction = decoded_transaction.json_encode();
+
+                        transaction = Some(CliTransaction {
+                            transaction: json_transaction,
+                            meta: transaction_with_meta.meta,
+                            block_time,
+                            slot: Some(slot),
+                            decoded_transaction,
+                            prefix: "  ".to_string(),
+                            sigverify_status: vec![],
+                        });
+                    }
+                    Err(err) => {
+                        get_transaction_error = Some(format!("{err:?}"));
+                    }
+                };
+                cli_transactions.push(CliTransactionConfirmation {
+                    confirmation_status: result.confirmation_status,
+                    transaction,
+                    get_transaction_error,
+                    err: result.err,
+                });
+            }
+        }
+        Ok(config
+            .output_format
+            .formatted_string(&CliHistoryTransactionVec::new(cli_transactions)))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CliRentCalculation {
+    // lamports_per_* fields are deprecated since all accounts must be rent
+    // exempt; however, they are kept here for the sake of compatibility.
+    pub lamports_per_byte_year: u64,
+    pub lamports_per_epoch: u64,
+    pub rent_exempt_minimum_lamports: u64,
+    #[serde(skip)]
+    pub use_lamports_unit: bool,
+}
+
+impl CliRentCalculation {
+    fn build_balance_message(&self, lamports: u64) -> String {
+        build_balance_message(lamports, self.use_lamports_unit, true)
+    }
+}
+
+impl fmt::Display for CliRentCalculation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let exempt_minimum = self.build_balance_message(self.rent_exempt_minimum_lamports);
+        writeln_name_value(f, "Rent-exempt minimum:", &exempt_minimum)
+    }
+}
+
+impl QuietDisplay for CliRentCalculation {}
+impl VerboseDisplay for CliRentCalculation {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RentLengthValue {
+    Nonce,
+    Stake,
+    System,
+    Vote,
+    Bytes(usize),
+}
+
+impl RentLengthValue {
+    pub fn length(&self) -> usize {
+        match self {
+            Self::Nonce => NonceState::size(),
+            Self::Stake => StakeStateV2::size_of(),
+            Self::System => 0,
+            Self::Vote => VoteStateV4::size_of(),
+            Self::Bytes(l) => *l,
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("expected number or moniker, got \"{0}\"")]
+pub struct RentLengthValueError(pub String);
+
+impl FromStr for RentLengthValue {
+    type Err = RentLengthValueError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.to_ascii_lowercase();
+        match s.as_str() {
+            "nonce" => Ok(Self::Nonce),
+            "stake" => Ok(Self::Stake),
+            "system" => Ok(Self::System),
+            "vote" => Ok(Self::Vote),
+            _ => usize::from_str(&s)
+                .map(Self::Bytes)
+                .map_err(|_| RentLengthValueError(s)),
+        }
+    }
+}
+
+pub async fn process_calculate_rent(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    data_length: usize,
+    use_lamports_unit: bool,
+) -> ProcessResult {
+    if data_length > MAX_PERMITTED_DATA_LENGTH.try_into().unwrap() {
+        eprintln!(
+            "Warning: Maximum account size is {MAX_PERMITTED_DATA_LENGTH} bytes, {data_length} \
+             provided"
+        );
+    }
+    let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
+    let rent: Rent = wincode::deserialize(&rent_account.data)?;
+    let rent_exempt_minimum_lamports = rent.minimum_balance(data_length);
+    let cli_rent_calculation = CliRentCalculation {
+        lamports_per_byte_year: 0,
+        lamports_per_epoch: 0,
+        rent_exempt_minimum_lamports,
+        use_lamports_unit,
+    };
+
+    Ok(config.output_format.formatted_string(&cli_rent_calculation))
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{clap_app::get_clap_app, cli::parse_command},
+        solana_keypair::{Keypair, write_keypair},
+        tempfile::NamedTempFile,
+    };
+
+    fn make_tmp_file() -> (String, NamedTempFile) {
+        let tmp_file = NamedTempFile::new().unwrap();
+        (String::from(tmp_file.path().to_str().unwrap()), tmp_file)
+    }
+
+    #[test]
+    fn test_parse_command() {
+        let test_commands = get_clap_app("test", "desc", "version");
+        let default_keypair = Keypair::new();
+        let (default_keypair_file, mut tmp_file) = make_tmp_file();
+        write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
+        let default_signer =
+            solana_clap_utils::keypair::DefaultSigner::new("", default_keypair_file);
+
+        let test_cluster_version = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "cluster-date"]);
+        assert_eq!(
+            parse_command(&test_cluster_version, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::ClusterDate)
+        );
+
+        let test_cluster_version = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "cluster-version"]);
+        assert_eq!(
+            parse_command(&test_cluster_version, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::ClusterVersion)
+        );
+
+        let slot = 100;
+        let test_get_block_time =
+            test_commands
+                .clone()
+                .get_matches_from(vec!["test", "block-time", &slot.to_string()]);
+        assert_eq!(
+            parse_command(&test_get_block_time, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::GetBlockTime { slot: Some(slot) })
+        );
+
+        let test_get_epoch = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "epoch"]);
+        assert_eq!(
+            parse_command(&test_get_epoch, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::GetEpoch)
+        );
+
+        let test_get_epoch_info = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "epoch-info"]);
+        assert_eq!(
+            parse_command(&test_get_epoch_info, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::GetEpochInfo)
+        );
+
+        let test_leader_schedule = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "leader-schedule"]);
+        assert_eq!(
+            parse_command(&test_leader_schedule, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::LeaderSchedule {
+                epoch: None,
+                key_by_vote_account: false,
+            })
+        );
+
+        let test_leader_schedule = test_commands.clone().get_matches_from(vec![
+            "test",
+            "leader-schedule",
+            "--epoch",
+            "42",
+            "--key-by-vote-account",
+        ]);
+        assert_eq!(
+            parse_command(&test_leader_schedule, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::LeaderSchedule {
+                epoch: Some(42),
+                key_by_vote_account: true,
+            })
+        );
+
+        let test_get_genesis_hash = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "genesis-hash"]);
+        assert_eq!(
+            parse_command(&test_get_genesis_hash, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::GetGenesisHash)
+        );
+
+        let test_get_slot = test_commands.clone().get_matches_from(vec!["test", "slot"]);
+        assert_eq!(
+            parse_command(&test_get_slot, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::GetSlot)
+        );
+
+        let test_total_supply = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "total-supply"]);
+        assert_eq!(
+            parse_command(&test_total_supply, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::TotalSupply)
+        );
+
+        let test_transaction_count = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "transaction-count"]);
+        assert_eq!(
+            parse_command(&test_transaction_count, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::GetTransactionCount)
+        );
+    }
+}

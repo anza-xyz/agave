@@ -1,0 +1,24 @@
+[package]
+name = "solana-sbf-rust-sanity"
+version = { workspace = true }
+description = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+solana-account-info = { workspace = true }
+solana-msg = { workspace = true }
+solana-program = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-program-error = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+
+[lints]
+workspace = true

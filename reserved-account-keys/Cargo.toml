@@ -1,0 +1,32 @@
+[package]
+name = "agave-reserved-account-keys"
+description = "Reserved Solana account keys"
+documentation = "https://docs.rs/agave-reserved-account-keys"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+agave-feature-set = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false }
+solana-sdk-ids = { workspace = true }
+
+[dev-dependencies]
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
+solana-sysvar = { workspace = true }
+
+[lints]
+workspace = true

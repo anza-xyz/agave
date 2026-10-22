@@ -1,0 +1,3855 @@
+#![cfg(feature = "agave-unstable-api")]
+//! Transaction scheduling code.
+//!
+//! This crate implements 3 solana-runtime traits [`InstalledScheduler`], [`UninstalledScheduler`]
+//! and [`InstalledSchedulerPool`] to provide a concrete transaction scheduling implementation
+//! (including executing txes and committing tx results).
+//!
+//! At the highest level, this crate takes [`SanitizedTransaction`]s via its
+//! [`InstalledScheduler::schedule_execution`] and commits any side-effects (i.e. on-chain state
+//! changes) into the associated [`Bank`](solana_runtime::bank::Bank) via `solana-ledger`'s helper
+//! function called [`execute_batch`].
+//!
+//! Refer to [`PooledScheduler`] doc comment for general overview of scheduler state transitions
+//! regarding to pooling and the actual use.
+
+use {
+    agave_jemalloc::{
+        group::ArenaGroup,
+        jemalloc::{Arena, Jemalloc},
+    },
+    assert_matches::assert_matches,
+    crossbeam_channel::{
+        self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
+    },
+    crossbeam_utils::CachePadded,
+    dashmap::DashMap,
+    derive_where::derive_where,
+    log::*,
+    scopeguard::defer,
+    solana_clock::Slot,
+    solana_cost_model::transaction_cost::TrackedCost,
+    solana_pubkey::Pubkey,
+    solana_runtime::{
+        bank::Bank,
+        installed_scheduler_pool::{
+            InstalledScheduler, InstalledSchedulerBox, InstalledSchedulerPool, ResultWithTimings,
+            ScheduleResult, SchedulerAborted, SchedulerId, SchedulingContext, TimeoutListener,
+            UninstalledScheduler, UninstalledSchedulerBox, initialized_result_with_timings,
+        },
+        prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_execution::{
+            TransactionBatchWithIndexes, TransactionStatusSender, check_block_cost_limits,
+            execute_batch,
+        },
+        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
+    },
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
+    solana_svm_timings::ExecuteTimings,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
+    solana_unified_scheduler_logic::{
+        BlockSize, Capability, OrderedTaskId, SchedulingStateMachine, Task, UsageQueue,
+    },
+    static_assertions::const_assert_eq,
+    std::{
+        fmt::Debug,
+        marker::PhantomData,
+        mem,
+        sync::{
+            Arc, Mutex, OnceLock, Weak,
+            atomic::{AtomicU64, Ordering::Relaxed},
+        },
+        thread::{self, JoinHandle, sleep},
+        time::{Duration, Instant},
+    },
+};
+
+mod sleepless_testing;
+use crate::sleepless_testing::BuilderTracked;
+
+#[cfg(test)]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
+// dead_code is false positive; these tuple fields are used via Debug.
+#[allow(dead_code)]
+#[derive(Debug)]
+enum CheckPoint<'a> {
+    NewTask(OrderedTaskId),
+    NewBufferedOrDroppedTask(OrderedTaskId),
+    BufferedOrDroppedTask(OrderedTaskId),
+    TaskHandled(OrderedTaskId),
+    TaskAccumulated(OrderedTaskId, &'a Result<()>),
+    SessionEnding,
+    SessionFinished(Slot),
+    SchedulerThreadAborted,
+    IdleSchedulerCleaned(usize),
+    IdlingSchedulerTrashed,
+    ReturningSchedulerTrashed,
+    TrashedSchedulerCleaned(usize),
+    TimeoutListenerTriggered(usize),
+    DiscardRequested,
+    Discarded(usize),
+}
+
+type CountOrDefault = Option<usize>;
+type AtomicSchedulerId = AtomicU64;
+
+/// A pool of idling schedulers (usually [`PooledScheduler`]), ready to be taken by bank.
+///
+/// Also, the pool runs a _cleaner_ thread named as `solScCleaner`. its jobs include:
+///
+/// - Shrink of pool if there are too many idle schedulers.
+/// - Invocation of timeouts registered by [`InstalledSchedulerPool::register_timeout_listener`].
+/// - The actual destruction of any retired schedulers including thread termination and the heavy
+///   `UsageQueueLoader` drop.
+///
+/// `SchedulerPool` (and [`PooledScheduler`] in this regard) must be accessed as a dyn trait from
+/// `solana-runtime`, because it contains some internal fields, whose types aren't available in
+/// `solana-runtime` ( [`TransactionStatusSender`] and [`TransactionRecorder`]). Refer to the doc
+/// comment with a diagram at [`solana_runtime::installed_scheduler_pool::InstalledScheduler`] for
+/// explanation of this rather complex dyn trait/type hierarchy.
+#[derive(Debug)]
+pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
+    scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
+    trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
+    timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
+    common_handler_context: CommonHandlerContext,
+    block_verification_handler_count: CountOrDefault,
+    handler_thread_arenas: Option<ArenaGroup>,
+    // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
+    // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
+    // almost always. But, this would cause wasted and noisy Arc::clone()'s at every call sites.
+    //
+    // Alternatively, `impl InstalledScheduler for Arc<SchedulerPool>` approach could be explored
+    // but it entails its own problems due to rustc's coherence and necessitated newtype with the
+    // type graph of InstalledScheduler being quite elaborate.
+    //
+    // After these considerations, this weak_self approach is chosen at the cost of some additional
+    // memory increase.
+    weak_self: Weak<Self>,
+    next_scheduler_id: AtomicSchedulerId,
+    max_usage_queue_count: usize,
+    scheduler_pool_sender: Sender<Weak<Self>>,
+    cleaner_thread: JoinHandle<()>,
+    _phantom: PhantomData<TH>,
+}
+
+// Drop this before jemalloc's thread-local destructor runs. That flushes and disables the
+// handler thread's tcache while the thread is still assigned to its arena, avoiding jemalloc's
+// no-background-thread forced purge path when the last handler thread exits.
+#[derive(Debug)]
+struct DisableHandlerThreadTcacheOnDrop {
+    arena: Arena,
+    thread_index: usize,
+}
+
+impl Drop for DisableHandlerThreadTcacheOnDrop {
+    fn drop(&mut self) {
+        if let Err(error) = Jemalloc::disable_current_thread_tcache() {
+            warn!(
+                "failed to disable unified scheduler handler thread jemalloc tcache before thread \
+                 exit; thread_index: {}; arena_id: {}; error: {error}",
+                self.thread_index,
+                self.arena.id()
+            );
+        }
+    }
+}
+
+#[derive(derive_more::Debug, Clone)]
+pub struct HandlerContext {
+    thread_count: usize,
+    log_messages_bytes_limit: Option<usize>,
+    transaction_status_sender: Option<TransactionStatusSender>,
+    replay_vote_sender: Option<ReplayVoteSender>,
+    prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+}
+
+impl HandlerContext {
+    fn usage_queue_loader_for_newly_spawned(&self) -> UsageQueueLoader {
+        UsageQueueLoader::OwnedBySelf {
+            usage_queue_loader_inner: UsageQueueLoaderInner::new(Capability::FifoQueueing),
+        }
+    }
+
+    fn clone_for_scheduler_thread(&self) -> Self {
+        self.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CommonHandlerContext {
+    log_messages_bytes_limit: Option<usize>,
+    transaction_status_sender: Option<TransactionStatusSender>,
+    replay_vote_sender: Option<ReplayVoteSender>,
+    prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+}
+
+impl CommonHandlerContext {
+    fn into_handler_context(self, thread_count: usize) -> HandlerContext {
+        let Self {
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+        } = self;
+
+        HandlerContext {
+            thread_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+        }
+    }
+}
+
+pub type DefaultSchedulerPool =
+    SchedulerPool<PooledScheduler<DefaultTaskHandler>, DefaultTaskHandler>;
+
+const DEFAULT_POOL_CLEANER_INTERVAL: Duration = Duration::from_secs(10);
+const ARENA_DIRTY_BYTES_PURGE_THRESHOLD: usize = 10 * 1024 * 1024 * 1024;
+const ARENA_STATS_INTERVAL: Duration = Duration::from_secs(5);
+const DEFAULT_MAX_POOLING_DURATION: Duration = Duration::from_secs(180);
+const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
+// Rough estimate of max UsageQueueLoader size in bytes:
+//   UsageFromTask * UsageQueue's capacity * DEFAULT_MAX_USAGE_QUEUE_COUNT
+//   16 bytes      * 128 items             * 262_144 entries               == 512 MiB
+// It's expected that there will be 2 or 3 pooled schedulers constantly when running against
+// mainnnet-beta. That means the total memory consumption for the idle close-to-be-trashed pooled
+// schedulers is set to 1.0 ~ 1.5 GiB. This value is chosen to maximize performance under the
+// normal cluster condition to avoid memory reallocation as much as possible. That said, it's not
+// likely this would allow unbounded memory growth when the cluster is unstable or under some kind
+// of attacks. That's because this limit is enforced at every slot and the UsageQueueLoader itself
+// is recreated without any entries at first, needing to repopulate by means of actual use to eat
+// the memory.
+//
+// Along the lines, this isn't problematic for the development settings (= solana-test-validator),
+// because UsageQueueLoader won't grow that much to begin with.
+const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
+
+impl<S, TH> SchedulerPool<S, TH>
+where
+    S: SpawnableScheduler<TH>,
+    TH: TaskHandler,
+{
+    pub fn new(
+        block_verification_handler_count: CountOrDefault,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        handler_thread_arenas: Option<ArenaGroup>,
+    ) -> Arc<Self> {
+        Self::do_new(
+            block_verification_handler_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+            handler_thread_arenas,
+            DEFAULT_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        )
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_for_verification(
+        block_verification_handler_count: CountOrDefault,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+    ) -> Arc<Self> {
+        Self::new(
+            block_verification_handler_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn do_new(
+        block_verification_handler_count: CountOrDefault,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        handler_thread_arenas: Option<ArenaGroup>,
+        pool_cleaner_interval: Duration,
+        max_pooling_duration: Duration,
+        max_usage_queue_count: usize,
+        timeout_duration: Duration,
+    ) -> Arc<Self> {
+        let cleaner_interval = handler_thread_arenas
+            .as_ref()
+            .map_or(pool_cleaner_interval, |_| {
+                pool_cleaner_interval.min(ARENA_STATS_INTERVAL)
+            });
+        let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
+
+        let cleaner_main_loop = move || {
+            info!("cleaner_main_loop: started...");
+
+            let weak_scheduler_pool: Weak<Self> = scheduler_pool_receiver.recv().unwrap();
+            let mut last_cleanup = Instant::now();
+            let mut last_arena_stats_report = Instant::now();
+            loop {
+                match scheduler_pool_receiver.recv_timeout(cleaner_interval) {
+                    Ok(_) => unreachable!(),
+                    Err(RecvTimeoutError::Disconnected | RecvTimeoutError::Timeout) => (),
+                }
+
+                let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                    // this is the only safe termination point of cleaner_main_loop while all other
+                    // `break`s being due to poisoned locks.
+                    break;
+                };
+
+                let now = Instant::now();
+
+                if now.duration_since(last_arena_stats_report) >= ARENA_STATS_INTERVAL {
+                    if let Some(arenas) = &scheduler_pool.handler_thread_arenas {
+                        if let Err(error) = Jemalloc::advance_epoch() {
+                            warn!("failed to advance jemalloc epoch: {error}");
+                        } else {
+                            for arena_index in 0..arenas.len() {
+                                let arena = arenas[arena_index];
+                                let stats = match arena.stats() {
+                                    Ok(stats) => stats,
+                                    Err(error) => {
+                                        warn!(
+                                            "failed to read jemalloc arena stats; arena_id: {}; \
+                                             error: {error}",
+                                            arena.id()
+                                        );
+                                        continue;
+                                    }
+                                };
+
+                                arena.report_stats("replay-arena-stats", &stats);
+
+                                if stats.dirty > ARENA_DIRTY_BYTES_PURGE_THRESHOLD {
+                                    match arena.purge() {
+                                        Ok(()) => error!(
+                                            "purged jemalloc arena after dirty memory exceeded \
+                                             threshold; arena_id: {}; dirty_bytes: {}; \
+                                             threshold_bytes: {}",
+                                            arena.id(),
+                                            stats.dirty,
+                                            ARENA_DIRTY_BYTES_PURGE_THRESHOLD
+                                        ),
+                                        Err(error) => error!(
+                                            "failed to purge jemalloc arena after dirty memory \
+                                             exceeded threshold; arena_id: {}; dirty_bytes: {}; \
+                                             threshold_bytes: {}; error: {error}",
+                                            arena.id(),
+                                            stats.dirty,
+                                            ARENA_DIRTY_BYTES_PURGE_THRESHOLD
+                                        ),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    last_arena_stats_report = now;
+                }
+
+                if now.duration_since(last_cleanup) < pool_cleaner_interval {
+                    continue;
+                }
+                last_cleanup = now;
+
+                let idle_inner_count = {
+                    // Pre-allocate rather large capacity to avoid reallocation inside the lock.
+                    let mut idle_inners = Vec::with_capacity(128);
+
+                    let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock() else {
+                        break;
+                    };
+                    // Note that this critical section could block the latency-sensitive replay
+                    // code-path via ::take_scheduler().
+                    idle_inners.extend(scheduler_inners.extract_if(.., |(_inner, pooled_at)| {
+                        now.duration_since(*pooled_at) > max_pooling_duration
+                    }));
+                    drop(scheduler_inners);
+
+                    let idle_inner_count = idle_inners.len();
+                    drop(idle_inners);
+                    idle_inner_count
+                };
+
+                let trashed_inner_count = {
+                    let Ok(mut trashed_inners) = scheduler_pool.trashed_scheduler_inners.lock()
+                    else {
+                        break;
+                    };
+                    let trashed_inner_count = trashed_inners.len();
+                    let trashed_inners: Vec<_> = mem::take(&mut *trashed_inners);
+                    // drop all the trashded schedulers outside the lock guard
+                    drop(trashed_inners);
+                    trashed_inner_count
+                };
+
+                let triggered_timeout_listener_count = {
+                    // Pre-allocate rather large capacity to avoid reallocation inside the lock.
+                    let mut expired_listeners = Vec::with_capacity(128);
+                    let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
+                        break;
+                    };
+                    expired_listeners.extend(timeout_listeners.extract_if(
+                        ..,
+                        |(_callback, registered_at)| {
+                            now.duration_since(*registered_at) > timeout_duration
+                        },
+                    ));
+                    drop(timeout_listeners);
+
+                    let count = expired_listeners.len();
+                    // Now triggers all expired listeners. Usually, triggering timeouts does
+                    // nothing because the callbacks will be no-op if already successfully
+                    // `wait_for_termination()`-ed.
+                    for (timeout_listener, _registered_at) in expired_listeners {
+                        timeout_listener.trigger(scheduler_pool.clone());
+                    }
+                    count
+                };
+
+                info!(
+                    "Scheduler pool cleaner: dropped {idle_inner_count} idle inners, \
+                     {trashed_inner_count} trashed inners, triggered \
+                     {triggered_timeout_listener_count} timeout listeners",
+                );
+                sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
+                sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
+                sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
+                    triggered_timeout_listener_count,
+                ));
+            }
+            info!("cleaner_main_loop: ...finished");
+        };
+
+        let cleaner_thread = thread::Builder::new()
+            .name("solScCleaner".to_owned())
+            .spawn_tracked(cleaner_main_loop)
+            .unwrap();
+
+        let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
+            scheduler_inners: Mutex::default(),
+            trashed_scheduler_inners: Mutex::default(),
+            timeout_listeners: Mutex::default(),
+            common_handler_context: CommonHandlerContext {
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+            },
+            block_verification_handler_count,
+            handler_thread_arenas,
+            weak_self: weak_self.clone(),
+            next_scheduler_id: AtomicSchedulerId::default(),
+            max_usage_queue_count,
+            scheduler_pool_sender: scheduler_pool_sender.clone(),
+            cleaner_thread,
+            _phantom: PhantomData,
+        });
+
+        scheduler_pool_sender
+            .send(Arc::downgrade(&scheduler_pool))
+            .unwrap();
+
+        scheduler_pool
+    }
+
+    // See a comment at the weak_self field for justification of this method's existence.
+    fn self_arc(&self) -> Arc<Self> {
+        self.weak_self
+            .upgrade()
+            .expect("self-referencing Arc-ed pool")
+    }
+
+    fn new_scheduler_id(&self) -> SchedulerId {
+        self.next_scheduler_id.fetch_add(1, Relaxed)
+    }
+
+    // This fn needs to return immediately due to being part of the blocking
+    // `::wait_for_termination()` call.
+    fn return_scheduler(&self, scheduler: S::Inner) {
+        // Refer to the comment in is_aborted() as to the exact definition of the concept of
+        // _trashed_ and the interaction among different parts of unified scheduler.
+        let should_trash = scheduler.is_trashed();
+
+        if should_trash {
+            // Note that the following steps are tightly in sync with the bp
+            // spawning in cleaner_main_loop.
+
+            // Delay drop()-ing this trashed returned scheduler inner by stashing it in
+            // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
+            // thread. Dropping it could take long time (in fact,
+            // PooledSchedulerInner::usage_queue_loader can contain many entries to drop).
+            self.trashed_scheduler_inners
+                .lock()
+                .expect("not poisoned")
+                .push(scheduler);
+            sleepless_testing::at(CheckPoint::ReturningSchedulerTrashed);
+        } else {
+            self.scheduler_inners
+                .lock()
+                .expect("not poisoned")
+                .push((scheduler, Instant::now()));
+        }
+    }
+
+    #[cfg(test)]
+    fn do_take_scheduler(&self, context: SchedulingContext) -> S {
+        self.do_take_resumed_scheduler(context, initialized_result_with_timings())
+            .unwrap()
+    }
+
+    fn do_take_resumed_scheduler(
+        &self,
+        context: SchedulingContext,
+        result_with_timings: ResultWithTimings,
+    ) -> Option<S> {
+        assert_matches!(result_with_timings, (Ok(_), _));
+
+        // pop is intentional for filo, expecting relatively warmed-up scheduler due to
+        // having been returned recently
+        if let Some((inner, _pooled_at)) = self.scheduler_inners.lock().expect("not poisoned").pop()
+        {
+            Some(S::from_inner(inner, context, result_with_timings))
+        } else {
+            Some(S::spawn(self.self_arc(), context, result_with_timings))
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn pooled_scheduler_count(&self) -> usize {
+        self.scheduler_inners.lock().expect("not poisoned").len()
+    }
+
+    fn create_handler_context(&self) -> HandlerContext {
+        let thread_count = self.block_verification_handler_count;
+
+        let thread_count = thread_count.unwrap_or(Self::default_handler_count());
+        assert!(thread_count >= 1);
+        self.common_handler_context
+            .clone()
+            .into_handler_context(thread_count)
+    }
+
+    pub fn default_handler_count() -> usize {
+        Self::calculate_default_handler_count(
+            thread::available_parallelism()
+                .ok()
+                .map(|non_zero| non_zero.get()),
+        )
+    }
+
+    pub fn calculate_default_handler_count(detected_cpu_core_count: CountOrDefault) -> usize {
+        // Divide by 4 just not to consume all available CPUs just with handler threads, sparing for
+        // other active forks and other subsystems.
+        // Also, if available_parallelism fails (which should be very rare), use 4 threads,
+        // as a relatively conservatism assumption of modern multi-core systems ranging from
+        // engineers' laptops to production servers.
+        detected_cpu_core_count
+            .map(|core_count| (core_count / 4).max(1))
+            .unwrap_or(4)
+    }
+
+    pub fn cli_message() -> &'static str {
+        static MESSAGE: OnceLock<String> = OnceLock::new();
+
+        MESSAGE.get_or_init(|| {
+            format!(
+                "Change the number of the unified scheduler's transaction execution threads \
+                 dedicated to each block, otherwise calculated as cpu_cores/4 [default: {}]",
+                Self::default_handler_count()
+            )
+        })
+    }
+}
+
+impl<S, TH> InstalledSchedulerPool for SchedulerPool<S, TH>
+where
+    S: SpawnableScheduler<TH>,
+    TH: TaskHandler,
+{
+    fn take_resumed_scheduler(
+        &self,
+        context: SchedulingContext,
+        result_with_timings: ResultWithTimings,
+    ) -> Option<InstalledSchedulerBox> {
+        self.do_take_resumed_scheduler(context, result_with_timings)
+            .map(|s| Box::new(s) as InstalledSchedulerBox)
+    }
+
+    fn register_timeout_listener(&self, timeout_listener: TimeoutListener) {
+        self.timeout_listeners
+            .lock()
+            .unwrap()
+            .push((timeout_listener, Instant::now()));
+    }
+
+    fn uninstalled_from_bank_forks(self: Arc<Self>) {
+        info!("SchedulerPool::uninstalled_from_bank_forks(): started...");
+
+        // Forcibly return back all taken schedulers back to this scheduler pool.
+        for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
+            listener.trigger(self.clone());
+        }
+
+        // Then, drop all schedulers in the pool.
+        mem::take(&mut *self.scheduler_inners.lock().unwrap());
+        mem::take(&mut *self.trashed_scheduler_inners.lock().unwrap());
+
+        // At this point, all circular references of this pool has been cut. And there should be
+        // only 1 strong rerefence unless the cleaner thread is active right now.
+
+        // So, wait a bit to unwrap the pool out of the sinful Arc finally here. Note that we can't resort to the
+        // Drop impl, because of the need to take the ownership of the join handle of the cleaner
+        // thread...
+        let mut this = self;
+        let mut this: Self = loop {
+            match Arc::try_unwrap(this) {
+                Ok(pool) => {
+                    break pool;
+                }
+                Err(that) => {
+                    // It seems solScCleaner is active... retry later
+                    this = that;
+                    sleep(Duration::from_millis(100));
+                    // Yes, indefinite loop, but the situation isn't so different from the
+                    // following join(), which indefinitely waits as well.
+                    continue;
+                }
+            }
+        };
+        // Accelerate cleaner thread joining by disconnection
+        this.scheduler_pool_sender = crossbeam_channel::bounded(1).0;
+        this.cleaner_thread.join().unwrap();
+
+        info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
+    }
+}
+
+pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
+    fn handle(
+        timings: &mut ExecuteTimings,
+        scheduling_context: &SchedulingContext,
+        task: &Task,
+        handler_context: &HandlerContext,
+    ) -> Result<TrackedCost>;
+}
+
+#[derive(Debug)]
+pub struct DefaultTaskHandler;
+
+impl TaskHandler for DefaultTaskHandler {
+    fn handle(
+        timings: &mut ExecuteTimings,
+        scheduling_context: &SchedulingContext,
+        task: &Task,
+        handler_context: &HandlerContext,
+    ) -> Result<TrackedCost> {
+        let bank = scheduling_context.bank();
+        let transaction = task.transaction();
+        let task_id = task.task_id();
+
+        let batch = bank.prepare_unlocked_batch_from_single_tx(transaction);
+
+        let transaction_indexes = vec![task_id.try_into().unwrap()];
+        let batch_with_indexes = TransactionBatchWithIndexes {
+            batch,
+            transaction_indexes,
+        };
+
+        let result = execute_batch(
+            &batch_with_indexes,
+            bank,
+            handler_context.transaction_status_sender.as_ref(),
+            handler_context.replay_vote_sender.as_ref(),
+            ReplayVoteSendType::Executed {
+                replay_bank_id: bank.bank_id(),
+                replay_slot: bank.slot(),
+            },
+            timings,
+            handler_context.log_messages_bytes_limit,
+            handler_context.prioritization_fee_cache.as_deref(),
+        )
+        .map(|tx_costs| tx_costs[0].tracked_cost());
+        sleepless_testing::at(CheckPoint::TaskHandled(task_id));
+        result
+    }
+}
+
+struct ExecutedTask {
+    task: Task,
+    result: Result<TrackedCost>,
+}
+
+/// Each handler accumulates its timings here, and the scheduler thread merges them at the end
+/// of each session.
+type HandlerTimings = Arc<[CachePadded<Mutex<ExecuteTimings>>]>;
+
+impl ExecutedTask {
+    fn consumed_block_size(&self) -> BlockSize {
+        self.task.consumed_block_size()
+    }
+}
+
+// A very tiny generic message type to signal about opening and closing of subchannels, which are
+// logically segmented series of Payloads (P1) over a single continuous time-span, potentially
+// carrying some subchannel metadata (P2) upon opening a new subchannel.
+// Note that the above properties can be upheld only when this is used inside MPSC or SPSC channels
+// (i.e. the consumer side needs to be single threaded). For the multiple consumer cases,
+// ChainedChannel can be used instead.
+enum SubchanneledPayload<P1, P2> {
+    Payload(P1),
+    OpenSubchannel(P2),
+    UnpauseOpenedSubchannel,
+    CloseSubchannel,
+    Reset,
+    Disconnect,
+}
+
+type NewTaskPayload = SubchanneledPayload<Task, Box<(SchedulingContext, ResultWithTimings)>>;
+const_assert_eq!(mem::size_of::<NewTaskPayload>(), 16);
+
+// A tiny generic message type to synchronize multiple threads everytime some contextual data needs
+// to be switched (ie. SchedulingContext), just using a single communication channel.
+//
+// Usually, there's no way to prevent one of those threads from mixing current and next contexts
+// while processing messages with a multiple-consumer channel. A condvar or other
+// out-of-bound mechanism is needed to notify about switching of contextual data. That's because
+// there's no way to block those threads reliably on such a switching event just with a channel.
+//
+// However, if the number of consumer can be determined, this can be accomplished just over a
+// single channel, which even carries an in-bound control meta-message with the contexts. The trick
+// is that identical meta-messages as many as the number of threads are sent over the channel,
+// along with new channel receivers to be used (hence the name of _chained_). Then, the receiving
+// thread drops the old channel and is now blocked on receiving from the new channel. In this way,
+// this switching can happen exactly once for each thread.
+//
+// Overall, this greatly simplifies the code, reduces CAS/syscall overhead per messaging to the
+// minimum at the cost of a single channel recreation per switching. Needless to say, such an
+// allocation can be amortized to be negligible.
+//
+// Lastly, there's an auxiliary channel to realize a 2-level priority queue. See comment before
+// runnable_task_sender.
+mod chained_channel {
+    use super::*;
+
+    // hide variants by putting this inside newtype
+    enum ChainedChannelPrivate<P, C> {
+        Payload(P),
+        ContextAndChannels(C, Receiver<ChainedChannel<P, C>>, Receiver<P>),
+    }
+
+    pub(super) struct ChainedChannel<P, C>(ChainedChannelPrivate<P, C>);
+
+    impl<P, C> ChainedChannel<P, C> {
+        fn chain_to_new_channel(
+            context: C,
+            receiver: Receiver<Self>,
+            aux_receiver: Receiver<P>,
+        ) -> Self {
+            Self(ChainedChannelPrivate::ContextAndChannels(
+                context,
+                receiver,
+                aux_receiver,
+            ))
+        }
+    }
+
+    pub(super) struct ChainedChannelSender<P, C> {
+        sender: Sender<ChainedChannel<P, C>>,
+        aux_sender: Sender<P>,
+    }
+
+    impl<P, C: Clone> ChainedChannelSender<P, C> {
+        fn new(sender: Sender<ChainedChannel<P, C>>, aux_sender: Sender<P>) -> Self {
+            Self { sender, aux_sender }
+        }
+
+        pub(super) fn send_payload(
+            &self,
+            payload: P,
+        ) -> std::result::Result<(), SendError<ChainedChannel<P, C>>> {
+            self.sender
+                .send(ChainedChannel(ChainedChannelPrivate::Payload(payload)))
+        }
+
+        pub(super) fn send_aux_payload(&self, payload: P) -> std::result::Result<(), SendError<P>> {
+            self.aux_sender.send(payload)
+        }
+
+        pub(super) fn send_chained_channel(
+            &mut self,
+            context: &C,
+            count: usize,
+        ) -> std::result::Result<(), SendError<ChainedChannel<P, C>>> {
+            let (chained_sender, chained_receiver) = crossbeam_channel::unbounded();
+            let (chained_aux_sender, chained_aux_receiver) = crossbeam_channel::unbounded();
+            for _ in 0..count {
+                self.sender.send(ChainedChannel::chain_to_new_channel(
+                    context.clone(),
+                    chained_receiver.clone(),
+                    chained_aux_receiver.clone(),
+                ))?
+            }
+            self.sender = chained_sender;
+            self.aux_sender = chained_aux_sender;
+            Ok(())
+        }
+    }
+
+    // P doesn't need to be `: Clone`, yet rustc derive can't handle it.
+    // see https://github.com/rust-lang/rust/issues/26925
+    #[derive_where(Clone)]
+    pub(super) struct ChainedChannelReceiver<P, C: Clone> {
+        receiver: Receiver<ChainedChannel<P, C>>,
+        aux_receiver: Receiver<P>,
+        context: C,
+    }
+
+    impl<P, C: Clone> ChainedChannelReceiver<P, C> {
+        fn new(
+            receiver: Receiver<ChainedChannel<P, C>>,
+            aux_receiver: Receiver<P>,
+            initial_context: C,
+        ) -> Self {
+            Self {
+                receiver,
+                aux_receiver,
+                context: initial_context,
+            }
+        }
+
+        pub(super) fn context(&self) -> &C {
+            &self.context
+        }
+
+        pub(super) fn for_select(&self) -> &Receiver<ChainedChannel<P, C>> {
+            &self.receiver
+        }
+
+        pub(super) fn aux_for_select(&self) -> &Receiver<P> {
+            &self.aux_receiver
+        }
+
+        pub(super) fn never_receive_from_aux(&mut self) {
+            self.aux_receiver = never();
+        }
+
+        pub(super) fn after_select(&mut self, message: ChainedChannel<P, C>) -> Option<P> {
+            match message.0 {
+                ChainedChannelPrivate::Payload(payload) => Some(payload),
+                ChainedChannelPrivate::ContextAndChannels(context, channel, idle_channel) => {
+                    self.context = context;
+                    self.receiver = channel;
+                    self.aux_receiver = idle_channel;
+                    None
+                }
+            }
+        }
+    }
+
+    pub(super) fn unbounded<P, C: Clone>(
+        initial_context: C,
+    ) -> (ChainedChannelSender<P, C>, ChainedChannelReceiver<P, C>) {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (aux_sender, aux_receiver) = crossbeam_channel::unbounded();
+        (
+            ChainedChannelSender::new(sender, aux_sender),
+            ChainedChannelReceiver::new(receiver, aux_receiver, initial_context),
+        )
+    }
+}
+
+/// The primary owner of all [`UsageQueue`]s used for particular [`PooledScheduler`].
+///
+/// Its `load` method provides `Pubkey`-based multi-thread-friendly `UsageQueue` lookup
+/// with automatic population on initial entry misses, fulfilling the Pubkey-UsageQueue 1-to-1
+/// mapping responsibility as documented by `UsageQueue`.
+///
+/// Currently, the simplest implementation. This grows memory usage in unbounded way. Overgrown
+/// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
+/// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
+/// the pure-logic-only crate). Some practical and mundane pruning will be implemented in this type.
+#[derive(Debug)]
+struct UsageQueueLoaderInner {
+    capability: Capability,
+    usage_queues: DashMap<Pubkey, UsageQueue>,
+}
+
+impl UsageQueueLoaderInner {
+    fn new(capability: Capability) -> Self {
+        Self {
+            capability,
+            usage_queues: DashMap::default(),
+        }
+    }
+
+    fn load(&self, address: Pubkey) -> UsageQueue {
+        self.usage_queues
+            .entry(address)
+            .or_insert_with(|| UsageQueue::new(&self.capability))
+            .clone()
+    }
+
+    fn count(&self) -> usize {
+        self.usage_queues.len()
+    }
+}
+
+/// Thin wrapper to encapsulate ownership variation of UsageQueueLoaderInner across block
+/// verification and production. This is needed to provide a uniform interface for the overgrown
+/// check.
+#[derive(Debug)]
+enum UsageQueueLoader {
+    // UsageQueueLoader is owned by this wrapper itself; used by block verification.
+    OwnedBySelf {
+        usage_queue_loader_inner: UsageQueueLoaderInner,
+    },
+}
+
+impl UsageQueueLoader {
+    fn usage_queue_loader(&self) -> &UsageQueueLoaderInner {
+        match self {
+            Self::OwnedBySelf {
+                usage_queue_loader_inner,
+            } => usage_queue_loader_inner,
+        }
+    }
+
+    fn load(&self, pubkey: Pubkey) -> UsageQueue {
+        self.usage_queue_loader().load(pubkey)
+    }
+
+    fn is_overgrown(&self, max_usage_queue_count: usize) -> bool {
+        if self.usage_queue_loader().count() > max_usage_queue_count {
+            return true;
+        }
+
+        match self {
+            Self::OwnedBySelf {
+                usage_queue_loader_inner: _,
+            } => false,
+        }
+    }
+}
+
+// (this is slow needing atomic mem reads. However, this can be turned into a lot faster
+// optimizer-friendly version as shown in this crossbeam pr:
+// https://github.com/crossbeam-rs/crossbeam/pull/1047)
+fn disconnected<T>() -> Receiver<T> {
+    // drop the sender residing at .0, returning an always-disconnected receiver.
+    crossbeam_channel::unbounded().1
+}
+
+/// The concrete scheduler instance along with 1 scheduler and N handler threads.
+///
+/// This implements the dyn-compatible [`InstalledScheduler`] trait to be interacted by
+/// solana-runtime code as `Box<dyn _>`.  This also implements the [`SpawnableScheduler`] subtrait
+/// to be spawned and pooled by [`SchedulerPool`].  When a scheduler is said to be _taken_ from a
+/// pool, the Rust's ownership is literally moved from the pool's vec to the particular
+/// [`BankWithScheduler`](solana_runtime::installed_scheduler_pool::BankWithScheduler) for
+/// type-level protection against double-use by different banks. As soon as the bank is
+/// [`is_complete()`](`solana_runtime::bank::Bank::is_complete`) (i.e. ready for freezing), the
+/// associated scheduler is immediately _returned_ to the pool via
+/// [`InstalledScheduler::wait_for_termination`], to be taken by other banks quickly (usually,
+/// child bank).
+///
+/// Pooling is implemented to avoid repeated thread creation/destruction. Further more, each
+/// scheduler should manage its own set of threads, to be independent from other scheduler's
+/// threads for concurrent and efficient processing of banks of different forks.
+///
+/// It's intentionally designed for a start and end of scheduler use by banks not to incur any
+/// heavy system resource manipulation to reduce the latency of this per-block bookkeeping as much
+/// as possible.
+///
+/// To complement the above most common situation, there's various erroneous conditions: timeouts
+/// and abortions.
+///
+/// Timeouts are for rare conditions where there are abandoned-yet-unpruned banks in the
+/// [`BankForks`](solana_runtime::bank_forks::BankForks) under forky (unsteady rooting) cluster
+/// conditions. The pool's background cleaner thread (`solScCleaner`) triggers the timeout-based
+/// out-of-pool (i.e. _taken_) scheduler reclamation with prior coordination of
+/// [`BankForks::insert()`](solana_runtime::bank_forks::BankForks::insert) via
+/// [`InstalledSchedulerPool::register_timeout_listener`].
+///
+/// Abortions are for another rate conditions where there's a fatal processing error, marking the
+/// given block as dead. In this case, all threads are terminated abruptly as much as possible to
+/// avoid any further system resource consumption on this possibly malice block. This error
+/// condition can implicitly be signalled to the replay stage on further transaction scheduling or
+/// can explicitly be done so on the eventual `wait_for_termination()` by drops or timeouts.
+///
+/// Lastly, scheduler can finally be _retired_ to be ready for thread termination due to various
+/// reasons like [`UsageQueueLoader`] being overgrown or many idling schedulers in the pool, in
+/// addition to the obvious reason of aborted scheduler.
+///
+#[derive(Debug)]
+pub struct PooledScheduler<TH: TaskHandler> {
+    inner: PooledSchedulerInner<Self, TH>,
+    context: SchedulingContext,
+}
+
+#[derive(Debug)]
+pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
+    thread_manager: ThreadManager<S, TH>,
+    usage_queue_loader: UsageQueueLoader,
+}
+
+impl<S, TH> Drop for ThreadManager<S, TH>
+where
+    S: SpawnableScheduler<TH>,
+    TH: TaskHandler,
+{
+    fn drop(&mut self) {
+        trace!("ThreadManager::drop() is called...");
+
+        if self.are_threads_joined() {
+            return;
+        }
+        // If on-stack ThreadManager is being dropped abruptly while panicking, it's likely
+        // ::into_inner() isn't called, which is a critical runtime invariant for the following
+        // thread shutdown. Also, the state could be corrupt in other ways too, so just skip it
+        // altogether.
+        if thread::panicking() {
+            error!(
+                "ThreadManager::drop(): scheduler_id: {} skipping due to already panicking...",
+                self.scheduler_id,
+            );
+            return;
+        }
+
+        // assert that this is called after ::into_inner()
+        assert_matches!(self.session_result_with_timings, None);
+
+        // Ensure to initiate thread shutdown by disconnecting new_task_receiver
+        let abort_detected = self.disconnect_new_task_sender();
+
+        if abort_detected {
+            self.ensure_join_threads_after_abort(true);
+        } else {
+            self.ensure_join_threads(true);
+        }
+        // This assert will always be triggered if abort_detected. This is intentional to propagate
+        // a fatal condition of existence of error in response to a graceful thread shutdown
+        // request just above.
+        assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
+    }
+}
+
+impl<S, TH> PooledSchedulerInner<S, TH>
+where
+    S: SpawnableScheduler<TH>,
+    TH: TaskHandler,
+{
+    fn is_aborted(&self) -> bool {
+        // Schedulers can be regarded as being _trashed_ (thereby will be cleaned up later), if
+        // threads are joined. Remember that unified scheduler _doesn't normally join threads_ even
+        // across different sessions (i.e. different banks) to avoid thread recreation overhead.
+        //
+        // These unusual thread joining happens after the blocked thread (= the replay stage)'s
+        // detection of aborted scheduler thread, which can be interpreted as an immediate signal
+        // about the existence of the transaction error.
+        //
+        // Note that this detection is done internally every time scheduler operations are run
+        // (send_task() and end_session(); or schedule_execution() and wait_for_termination() in
+        // terms of InstalledScheduler). So, it's ensured that the detection is done at least once
+        // for any scheduler which is taken out of the pool.
+        //
+        // Thus, any transaction errors are always handled without loss of information and
+        // the aborted scheduler itself will always be handled as _trashed_ before returning the
+        // scheduler to the pool, considering is_aborted() is checked via is_trashed() immediately
+        // before that.
+        self.thread_manager.are_threads_joined()
+    }
+}
+
+// This type manages the OS threads for scheduling and executing transactions. The term
+// `session` is consistently used to mean a group of Tasks scoped under a single SchedulingContext.
+// This is equivalent to a particular bank for block verification. However, new terms is introduced
+// here to mean some continuous time over multiple continuous banks/slots for the block production,
+// which is planned to be implemented in the future.
+#[derive(Debug)]
+struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
+    scheduler_id: SchedulerId,
+    pool: Arc<SchedulerPool<S, TH>>,
+    new_task_sender: Sender<NewTaskPayload>,
+    new_task_receiver: Option<Receiver<NewTaskPayload>>,
+    session_result_sender: Sender<ResultWithTimings>,
+    session_result_receiver: Receiver<ResultWithTimings>,
+    session_result_with_timings: Option<ResultWithTimings>,
+    scheduler_thread: Option<JoinHandle<()>>,
+    handler_threads: Vec<JoinHandle<()>>,
+}
+
+struct HandlerPanicked;
+type HandlerResult = std::result::Result<ExecutedTask, HandlerPanicked>;
+
+impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
+    fn new(pool: Arc<SchedulerPool<S, TH>>) -> Self {
+        let (new_task_sender, new_task_receiver) = crossbeam_channel::unbounded();
+        let (session_result_sender, session_result_receiver) = crossbeam_channel::unbounded();
+
+        Self {
+            scheduler_id: pool.new_scheduler_id(),
+            pool,
+            new_task_sender,
+            new_task_receiver: Some(new_task_receiver),
+            session_result_sender,
+            session_result_receiver,
+            session_result_with_timings: None,
+            scheduler_thread: None,
+            handler_threads: vec![],
+        }
+    }
+
+    fn execute_task_with_handler(
+        scheduling_context: &SchedulingContext,
+        task: Task,
+        handler_context: &HandlerContext,
+        handler_timings: &Mutex<ExecuteTimings>,
+    ) -> ExecutedTask {
+        debug!("handling task at {:?}", thread::current());
+        let mut timings = ExecuteTimings::default();
+        let result = TH::handle(&mut timings, scheduling_context, &task, handler_context);
+        handler_timings.lock().unwrap().accumulate(&timings);
+        ExecutedTask { task, result }
+    }
+
+    fn take_handler_timings(handler_timings: &HandlerTimings, timings: &mut ExecuteTimings) {
+        for handler_timings in handler_timings.iter() {
+            timings.accumulate(&mem::take(&mut *handler_timings.lock().unwrap()));
+        }
+    }
+
+    fn max_running_task_count() -> Option<usize> {
+        // Unlike block production, there is no agony for block verification with regards
+        // to max_running_task_count. Its responsibility is to execute all transactions by
+        // _the pre-determined order_ and no reprioritization or interruption whatsoever.
+        // So, just specify no limit and buffer everything as much as possible at the
+        // runnable task channel.
+        None
+    }
+
+    fn max_unique_active_task_count() -> Option<usize> {
+        // We can't silently drop block verification tasks by imposing some arbitrary limit
+        // here; otherwise same transactions could be allowed in the same block!
+        // The block size (i.e. shred count) limit is already enforced before unified
+        // scheduler.
+        None
+    }
+
+    fn can_receive_unblocked_task(state_machine: &SchedulingStateMachine) -> bool {
+        // Always take as much as possible out of SchedulingStateMachine to avoid crossbeam
+        // channel internal message buffering depletion with much relaxed condition than
+        // block production.
+        state_machine.has_unblocked_task()
+    }
+
+    fn can_finish_session(session_ending: bool, state_machine: &SchedulingStateMachine) -> bool {
+        // It's needed to wait to execute all active tasks without any short-circuiting,
+        // even if the session has been signalled for ending; otherwise verification
+        // outcome could differ.
+        session_ending && state_machine.has_no_active_task()
+    }
+
+    /// Dispatches the tasks unblocked by `executed_task` before checking its cost, so the check
+    /// overlaps with their execution.
+    fn dispatch_unblocked_then_check_block_cost_limits(
+        state_machine: &mut SchedulingStateMachine,
+        runnable_task_sender: &chained_channel::ChainedChannelSender<Task, SchedulingContext>,
+        executed_task: &ExecutedTask,
+        bank: &Bank,
+    ) -> Result<()> {
+        let tracked_cost = executed_task.result.clone()?;
+        while let Some(task) = state_machine.schedule_next_unblocked_task() {
+            runnable_task_sender.send_payload(task).unwrap();
+        }
+        check_block_cost_limits(
+            &mut bank.write_cost_tracker().unwrap(),
+            executed_task.task.transaction(),
+            tracked_cost,
+        )
+    }
+
+    /// Returns `true` if the caller should abort.
+    #[must_use]
+    fn abort_or_accumulate_result(
+        result: &mut Result<()>,
+        executed_task: ExecutedTask,
+        task_result: Result<()>,
+    ) -> bool {
+        sleepless_testing::at(CheckPoint::TaskAccumulated(
+            executed_task.task.task_id(),
+            &task_result,
+        ));
+
+        match task_result {
+            Ok(()) => {
+                // The most normal case
+                // This is only for block production.
+                assert_eq!(executed_task.consumed_block_size(), 0);
+
+                false
+            }
+            // This should never be observed because the scheduler thread makes all running
+            // tasks are conflict-free
+            Err(TransactionError::AccountInUse)
+            // These should have been validated by blockstore by now
+            | Err(TransactionError::AccountLoadedTwice)
+            | Err(TransactionError::TooManyAccountLocks) => {
+                unreachable!()
+            }
+            Err(error) => {
+                error!("error is detected while accumulating....: {error:?}");
+                *result = Err(error);
+                true
+            }
+        }
+    }
+
+    fn take_session_result_with_timings(&mut self) -> ResultWithTimings {
+        self.session_result_with_timings.take().unwrap()
+    }
+
+    fn put_session_result_with_timings(&mut self, result_with_timings: ResultWithTimings) {
+        assert!(
+            self.session_result_with_timings
+                .replace(result_with_timings)
+                .is_none()
+        );
+    }
+
+    // This method must take same set of session-related arguments as start_session() to avoid
+    // unneeded channel operations to minimize overhead. Starting threads incurs a very high cost
+    // already... Also, pre-creating threads isn't desirable as well to avoid `Option`-ed types
+    // for type safety.
+    fn start_threads(
+        &mut self,
+        context: SchedulingContext,
+        mut result_with_timings: ResultWithTimings,
+        handler_context: HandlerContext,
+    ) {
+        let mut current_slot = context.slot();
+        let (mut is_finished, mut session_ending) = (false, false);
+
+        // Firstly, setup bi-directional messaging between the scheduler and handlers to pass
+        // around tasks, by creating 2 channels (one for to-be-handled tasks from the scheduler to
+        // the handlers and the other for finished tasks from the handlers to the scheduler).
+        // Furthermore, this pair of channels is duplicated to work as a primitive 2-level priority
+        // queue, totalling 4 channels. Note that the two scheduler-to-handler channels are managed
+        // behind chained_channel to avoid race conditions relating to contexts.
+        //
+        // This quasi-priority-queue arrangement is desired as an optimization to prioritize
+        // blocked tasks.
+        //
+        // As a quick background, SchedulingStateMachine doesn't throttle runnable tasks at all.
+        // Thus, it's likely for to-be-handled tasks to be stalled for extended duration due to
+        // excessive buffering (commonly known as buffer bloat). Normally, this buffering isn't
+        // problematic and actually intentional to fully saturate all the handler threads.
+        //
+        // However, there's one caveat: task dependencies. It can be hinted with tasks being
+        // blocked, that there could be more similarly-blocked tasks in the future. Empirically,
+        // clearing these linearized long runs of blocking tasks out of the buffer is delaying bank
+        // freezing while only using 1 handler thread or two near the end of slot, deteriorating
+        // the overall concurrency.
+        //
+        // To alleviate the situation, blocked tasks are exchanged via independent communication
+        // pathway as a heuristic for expedite processing. Without prioritization of these tasks,
+        // progression of clearing these runs would be severely hampered due to interleaved
+        // not-blocked tasks (called _idle_ here; typically, voting transactions) in the single
+        // buffer.
+        //
+        // Concurrent priority queue isn't used to avoid penalized throughput due to higher
+        // overhead than crossbeam channel, even considering the doubled processing of the
+        // crossbeam channel. Fortunately, just 2-level prioritization is enough. Also, sticking to
+        // crossbeam was convenient and there was no popular and promising crate for concurrent
+        // priority queue as of writing.
+        //
+        // It's generally harmless for the blocked task buffer to be flooded, stalling the idle
+        // tasks completely. Firstly, it's unlikely without malice, considering all blocked tasks
+        // must have independently been blocked for each isolated linearized runs. That's because
+        // all to-be-handled tasks of the blocked and idle buffers must not be conflicting with
+        // each other by definition. Furthermore, handler threads would still be saturated to
+        // maximum even under such a block-verification situation, meaning no remotely-controlled
+        // performance degradation.
+        //
+        // Overall, while this is merely a heuristic, it's effective and adaptive while not
+        // vulnerable, merely reusing existing information without any additional runtime cost.
+        //
+        // One known caveat, though, is that this heuristic is employed under a sub-optimal
+        // setting, considering scheduling is done in real-time. Namely, prioritization enforcement
+        // isn't immediate, in a sense that the first task of a long run is buried in the middle of
+        // a large idle task buffer. Prioritization of such a run will be realized only after the
+        // first task is handled with the priority of an idle task. To overcome this, some kind of
+        // re-prioritization or look-ahead scheduling mechanism would be needed. However, both
+        // isn't implemented. The former is due to complex implementation and the later is due to
+        // delayed (NOT real-time) processing, which is against the unified scheduler design goal.
+        //
+        // Alternatively, more faithful prioritization can be realized by checking blocking
+        // statuses of all addresses immediately before sending to the handlers. This would prevent
+        // false negatives of the heuristics approach (i.e. the last task of a run doesn't need to
+        // be handled with the higher priority). Note that this is the only improvement, compared
+        // to the heuristics. That's because this underlying information asymmetry between the 2
+        // approaches doesn't exist for all other cases, assuming no look-ahead: idle tasks are
+        // always unblocked by definition, and other blocked tasks should always be calculated as
+        // blocked by the very existence of the last blocked task.
+        //
+        // The faithful approach incurs a considerable overhead: O(N), where N is the number of
+        // locked addresses in a task, adding to the current bare-minimum complexity of O(2*N) for
+        // both scheduling and descheduling. This means 1.5x increase. Furthermore, this doesn't
+        // nicely work in practice with a real-time streamed scheduler. That's because these
+        // linearized runs could be intermittent in the view with little or no look-back, albeit
+        // actually forming a far more longer runs in longer time span. These access patterns are
+        // very common, considering existence of well-known hot accounts.
+        //
+        // Thus, intentionally allowing these false-positives by the heuristic approach is actually
+        // helping to extend the logical prioritization session for the invisible longer runs, as
+        // long as the last task of the current run is being handled by the handlers, hoping yet
+        // another blocking new task is arriving to finalize the tentatively extended
+        // prioritization further. Consequently, this also contributes to alleviate the known
+        // heuristic's caveat for the first task of linearized runs, which is described above.
+        let mut session_bank = context.bank().clone();
+        let handler_timings: HandlerTimings = (0..handler_context.thread_count)
+            .map(|_| CachePadded::default())
+            .collect();
+        let (mut runnable_task_sender, runnable_task_receiver) =
+            chained_channel::unbounded::<Task, SchedulingContext>(context);
+        // Create two handler-to-scheduler channels to prioritize the finishing of blocked tasks,
+        // because it is more likely that a blocked task will have more blocked tasks behind it,
+        // which should be scheduled while minimizing the delay to clear buffered linearized runs
+        // as fast as possible.
+        let (finished_blocked_task_sender, finished_blocked_task_receiver) =
+            crossbeam_channel::unbounded::<HandlerResult>();
+        let (finished_idle_task_sender, finished_idle_task_receiver) =
+            crossbeam_channel::unbounded::<HandlerResult>();
+
+        assert_matches!(self.session_result_with_timings, None);
+
+        // High-level flow of new tasks:
+        // 1. the replay stage thread send a new task.
+        // 2. the scheduler thread accepts the task.
+        // 3. the scheduler thread dispatches the task after proper locking.
+        // 4. the handler thread processes the dispatched task.
+        // 5. the handler thread reply back to the scheduler thread as an executed task.
+        // 6. the scheduler thread post-processes the executed task.
+        let scheduler_main_loop = {
+            let handler_context = handler_context.clone_for_scheduler_thread();
+            let handler_timings = handler_timings.clone();
+            let session_result_sender = self.session_result_sender.clone();
+            // Taking new_task_receiver here is important to ensure there's a single receiver. In
+            // this way, the replay stage will get .send() failures reliably, after this scheduler
+            // thread died along with the single receiver.
+            let new_task_receiver = self
+                .new_task_receiver
+                .take()
+                .expect("no 2nd start_threads()");
+
+            // Now, this is the main loop for the scheduler thread, which is a special beast.
+            //
+            // That's because it could be the most notable bottleneck of throughput in the future
+            // when there are ~100 handler threads. Unified scheduler's overall throughput is
+            // largely dependent on its ultra-low latency characteristic, which is the most
+            // important design goal of the scheduler in order to reduce the transaction
+            // confirmation latency for end users.
+            //
+            // Firstly, the scheduler thread must handle incoming messages from thread(s) owned by
+            // the replay stage or the banking stage. It also must handle incoming messages from
+            // the multi-threaded handlers. This heavily-multi-threaded whole processing load must
+            // be coped just with the single-threaded scheduler, to attain ideal cpu cache
+            // friendliness and main memory bandwidth saturation with its shared-nothing
+            // single-threaded account locking implementation. In other words, the per-task
+            // processing efficiency of the main loop codifies the upper bound of horizontal
+            // scalability of the unified scheduler.
+            //
+            // Moreover, the scheduler is designed to handle tasks without batching at all in the
+            // pursuit of saturating all of the handler threads with maximally-fine-grained
+            // concurrency density for throughput as the second design goal. This design goal
+            // relies on the assumption that there's no considerable penalty arising from the
+            // unbatched manner of processing.
+            //
+            // Note that this assumption isn't true as of writing. The current code path
+            // underneath execute_batch() isn't optimized for unified scheduler's load pattern (ie.
+            // batches just with a single transaction) at all. This will be addressed in the
+            // future.
+            //
+            // These two key elements of the design philosophy lead to the rather unforgiving
+            // implementation burden: Degraded performance would acutely manifest from an even tiny
+            // amount of individual cpu-bound processing delay in the scheduler thread, like when
+            // dispatching the next conflicting task after receiving the previous finished one from
+            // the handler.
+            //
+            // Thus, it's fatal for unified scheduler's advertised superiority to squeeze every cpu
+            // cycles out of the scheduler thread. Thus, any kinds of unessential overhead sources
+            // like syscalls, VDSO, and even memory (de)allocation should be avoided at all costs
+            // by design or by means of offloading at the last resort.
+            move || {
+                let (do_now, dont_now) = (&disconnected::<()>(), &never::<()>());
+                let dummy_receiver = |trigger| {
+                    if trigger { do_now } else { dont_now }
+                };
+
+                let mut state_machine = unsafe {
+                    SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
+                        Self::max_running_task_count(),
+                        Self::max_unique_active_task_count(),
+                    )
+                };
+
+                // The following loop maintains and updates ResultWithTimings as its
+                // externally-provided mutable state for each session in this way:
+                //
+                // 1. Initial result_with_timing is propagated implicitly by the moved variable.
+                // 2. Subsequent result_with_timings are propagated explicitly from
+                //    the new_task_receiver.recv() invocation located at the end of loop.
+                'nonaborted_main_loop: loop {
+                    while !is_finished {
+                        // ALL recv selectors are eager-evaluated ALWAYS by current crossbeam impl,
+                        // which isn't great and is inconsistent with `if`s in the Rust's match
+                        // arm. So, eagerly binding the result to a variable unconditionally here
+                        // makes no perf. difference...
+                        let dummy_unblocked_task_receiver =
+                            dummy_receiver(Self::can_receive_unblocked_task(&state_machine));
+
+                        // There's something special called dummy_unblocked_task_receiver here.
+                        // This odd pattern was needed to react to newly unblocked tasks from
+                        // _not-crossbeam-channel_ event sources, precisely at the specified
+                        // precedence among other selectors, while delegating the control flow to
+                        // select_biased!.
+                        //
+                        // In this way, hot looping is avoided and overall control flow is much
+                        // consistent. Note that unified scheduler will go
+                        // into busy looping to seek lowest latency eventually. However, not now,
+                        // to measure _actual_ cpu usage easily with the select approach.
+                        select_biased! {
+                            recv(finished_blocked_task_receiver) -> receiver_result => {
+                                let handler_result = receiver_result.expect("alive handler");
+                                let Ok(executed_task) = handler_result else {
+                                    break 'nonaborted_main_loop;
+                                };
+                                state_machine.deschedule_task(&executed_task.task);
+                                let task_result =
+                                    Self::dispatch_unblocked_then_check_block_cost_limits(
+                                        &mut state_machine,
+                                        &runnable_task_sender,
+                                        &executed_task,
+                                        &session_bank,
+                                    );
+
+                                if Self::abort_or_accumulate_result(
+                                    &mut result_with_timings.0,
+                                    executed_task,
+                                    task_result,
+                                ) {
+                                    break 'nonaborted_main_loop;
+                                }
+                            },
+                            recv(dummy_unblocked_task_receiver) -> dummy => {
+                                assert_matches!(dummy, Err(RecvError));
+
+                                let task = state_machine
+                                    .schedule_next_unblocked_task()
+                                    .expect("unblocked task");
+                                runnable_task_sender.send_payload(task).unwrap();
+                            },
+                            recv(new_task_receiver) -> message => {
+                                assert!(!session_ending);
+
+                                match message {
+                                    Ok(NewTaskPayload::Payload(task)) => {
+                                        let task_id = task.task_id();
+                                        sleepless_testing::at(CheckPoint::NewTask(task_id));
+
+                                        if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
+                                            runnable_task_sender.send_aux_payload(task).unwrap();
+                                        } else {
+                                            sleepless_testing::at(CheckPoint::BufferedOrDroppedTask(task_id));
+                                        }
+                                    }
+                                    Ok(NewTaskPayload::CloseSubchannel) => {
+                                        sleepless_testing::at(CheckPoint::SessionEnding);
+                                        session_ending = true;
+                                    }
+                                    Ok(
+                                        NewTaskPayload::OpenSubchannel(_)
+                                        | NewTaskPayload::UnpauseOpenedSubchannel
+                                        | NewTaskPayload::Reset
+                                    )
+                                    | Err(RecvError) => unreachable!(),
+                                    Ok(NewTaskPayload::Disconnect) => {
+                                        // Mostly likely is that this scheduler is dropped for pruned blocks of
+                                        // abandoned forks...
+                                        // This short-circuiting is tested with test_scheduler_drop_short_circuiting.
+                                        break 'nonaborted_main_loop;
+                                    }
+                                }
+                            },
+                            recv(finished_idle_task_receiver) -> receiver_result => {
+                                let handler_result = receiver_result.expect("alive handler");
+                                let Ok(executed_task) = handler_result else {
+                                    break 'nonaborted_main_loop;
+                                };
+                                state_machine.deschedule_task(&executed_task.task);
+                                let task_result =
+                                    Self::dispatch_unblocked_then_check_block_cost_limits(
+                                        &mut state_machine,
+                                        &runnable_task_sender,
+                                        &executed_task,
+                                        &session_bank,
+                                    );
+
+                                if Self::abort_or_accumulate_result(
+                                    &mut result_with_timings.0,
+                                    executed_task,
+                                    task_result,
+                                ) {
+                                    break 'nonaborted_main_loop;
+                                }
+                            },
+                        };
+
+                        is_finished = Self::can_finish_session(session_ending, &state_machine);
+                    }
+                    assert!(mem::replace(&mut is_finished, false));
+
+                    sleepless_testing::at(CheckPoint::SessionFinished(current_slot));
+                    // Finalize the current session after asserting it's explicitly requested so.
+                    Self::take_handler_timings(&handler_timings, &mut result_with_timings.1);
+                    // Send result first because this is blocking the replay code-path.
+                    session_result_sender
+                        .send(result_with_timings)
+                        .expect("always outlived receiver");
+
+                    state_machine.reinitialize();
+                    assert!(mem::replace(&mut session_ending, false));
+
+                    // This variable is hoisted from OpenSubchannel match arm to pass the rustc
+                    // borrow checker because it can't tell the control-flow diverging
+                    // UnpauseOpenedSubchannel won't be used by itself, which would leave
+                    // `result_with_timings` uninitialized after sending it via
+                    // session_result_sender just above
+                    let mut new_result_with_timings = None;
+
+                    let discard_on_reset = false;
+                    #[allow(clippy::never_loop)]
+                    loop {
+                        if discard_on_reset {
+                            // Gracefully clear all buffered tasks to discard all outstanding stale
+                            // tasks; we're not aborting scheduler here. So, `state_machine` needs
+                            // to be reusable after this.
+                            //
+                            // As for panic safety of .clear_and_reinitialize(), it's safe because
+                            // there should be _no scheduled tasks (i.e. owned by us, not by
+                            // state_machine) on the call stack by now.
+                            let count = state_machine.clear_and_reinitialize();
+                            sleepless_testing::at(CheckPoint::Discarded(count));
+                        }
+                        // Prepare for the new session.
+                        match new_task_receiver.recv() {
+                            Ok(NewTaskPayload::Payload(_task)) => {
+                                unreachable!("cannot receive new task before session start");
+                            }
+                            Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
+                                let new_context = context_and_result_with_timings.0;
+                                assert!(
+                                    new_result_with_timings
+                                        .replace(context_and_result_with_timings.1)
+                                        .is_none()
+                                );
+                                // We just received subsequent (= not initial) session and about to
+                                // enter into the preceding `while(!is_finished) {...}` loop again.
+                                // Before that, propagate new SchedulingContext to handler threads
+                                current_slot = new_context.slot();
+                                session_bank = new_context.bank().clone();
+                                runnable_task_sender
+                                    .send_chained_channel(
+                                        &new_context,
+                                        handler_context.thread_count,
+                                    )
+                                    .unwrap();
+
+                                break;
+                            }
+                            Ok(NewTaskPayload::UnpauseOpenedSubchannel) => {
+                                unreachable!("unpause without open is prohibited");
+                            }
+                            Ok(NewTaskPayload::CloseSubchannel) => {
+                                unreachable!("close without open is prohibited");
+                            }
+                            Ok(NewTaskPayload::Reset) => {
+                                unreachable!("reset without open is prohibited");
+                            }
+                            Ok(NewTaskPayload::Disconnect) => {
+                                // This unusual condition must be triggered by ThreadManager::drop().
+                                // Initialize result_with_timings with a harmless value...
+                                result_with_timings = initialized_result_with_timings();
+                                break 'nonaborted_main_loop;
+                            }
+                            Err(RecvError) => unreachable!(),
+                        }
+                    }
+                    result_with_timings = new_result_with_timings.unwrap();
+                }
+
+                // There are several code-path reaching here out of the preceding unconditional
+                // `loop { ... }` by the use of `break 'nonaborted_main_loop;`. This scheduler
+                // thread will now initiate the termination process, indicating an abnormal abortion,
+                // in order to be handled gracefully by other threads.
+
+                // Firstly, send result_with_timings as-is, because it's expected for us to put the
+                // last result_with_timings into the channel without exception. Usually,
+                // result_with_timings will contain the Err variant at this point, indicating the
+                // occurrence of transaction error.
+                Self::take_handler_timings(&handler_timings, &mut result_with_timings.1);
+                session_result_sender
+                    .send(result_with_timings)
+                    .expect("always outlived receiver");
+
+                // Next, drop `new_task_receiver`. After that, the paired singleton
+                // `new_task_sender` will start to error when called by external threads, resulting
+                // in propagation of thread abortion to the external threads.
+                drop(new_task_receiver);
+
+                // We will now exit this thread finally... Good bye.
+                sleepless_testing::at(CheckPoint::SchedulerThreadAborted);
+            }
+        };
+
+        let handler_main_loop = |thread_index: usize, assigned_arena: Option<Arena>| {
+            let handler_context = handler_context.clone();
+            let handler_timings = handler_timings.clone();
+            let mut runnable_task_receiver = runnable_task_receiver.clone();
+            let finished_blocked_task_sender = finished_blocked_task_sender.clone();
+            let finished_idle_task_sender = finished_idle_task_sender.clone();
+
+            // The following loop maintains and updates SchedulingContext as its
+            // externally-provided state for each session in this way:
+            //
+            // 1. Initial context is propagated implicitly by the moved runnable_task_receiver,
+            //    which is clone()-d just above for this particular thread.
+            // 2. Subsequent contexts are propagated explicitly inside `.after_select()` as part of
+            //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
+            //    thread for all-but-initial sessions.
+            move || {
+                let _disable_tcache_on_exit = if let Some(arena) = assigned_arena {
+                    if let Err(error) = arena.bind_current_thread_permanently() {
+                        let current_thread = thread::current();
+                        error!(
+                            "failed to bind unified scheduler handler thread to jemalloc arena; \
+                             thread_index: {thread_index}; arena_id: {}; thread: \
+                             {current_thread:?}; error: {error}",
+                            arena.id()
+                        );
+                        let _ = finished_idle_task_sender.send(Err(HandlerPanicked));
+                        panic!(
+                            "failed to bind unified scheduler handler thread {thread_index} to \
+                             jemalloc arena {}: {error}",
+                            arena.id()
+                        );
+                    }
+
+                    Some(DisableHandlerThreadTcacheOnDrop {
+                        arena,
+                        thread_index,
+                    })
+                } else {
+                    None
+                };
+
+                loop {
+                    let (task, sender) = select_biased! {
+                        recv(runnable_task_receiver.for_select()) -> message => {
+                            let Ok(message) = message else {
+                                break;
+                            };
+                            if let Some(task) = runnable_task_receiver.after_select(message) {
+                                (task, &finished_blocked_task_sender)
+                            } else {
+                                continue;
+                            }
+                        },
+                        recv(runnable_task_receiver.aux_for_select()) -> task => {
+                            if let Ok(task) = task {
+                                (task, &finished_idle_task_sender)
+                            } else {
+                                runnable_task_receiver.never_receive_from_aux();
+                                continue;
+                            }
+                        }
+                    };
+                    defer! {
+                        if !thread::panicking() {
+                            return;
+                        }
+
+                        // The scheduler thread can't detect panics in handler threads with
+                        // disconnected channel errors, unless all of them has died. So, send an
+                        // explicit Err promptly.
+                        let current_thread = thread::current();
+                        error!("handler thread is panicking: {:?}", current_thread);
+                        if sender.send(Err(HandlerPanicked)).is_ok() {
+                            info!("notified a panic from {current_thread:?}");
+                        } else {
+                            // It seems that the scheduler thread has been aborted already...
+                            warn!("failed to notify a panic from {current_thread:?}");
+                        }
+                    }
+                    let executed_task = Self::execute_task_with_handler(
+                        runnable_task_receiver.context(),
+                        task,
+                        &handler_context,
+                        &handler_timings[thread_index],
+                    );
+                    if sender.send(Ok(executed_task)).is_err() {
+                        warn!("handler_thread: scheduler thread aborted...");
+                        break;
+                    }
+                }
+            }
+        };
+
+        let mode_char = 'V';
+
+        self.scheduler_thread = Some(
+            thread::Builder::new()
+                .name(format!("solSchedule{mode_char}"))
+                .spawn_tracked(scheduler_main_loop)
+                .unwrap(),
+        );
+
+        let handler_thread_arenas = self.pool.handler_thread_arenas.as_ref();
+        self.handler_threads = (0..handler_context.thread_count)
+            .map({
+                |thx| {
+                    let assigned_arena = handler_thread_arenas.map(|arenas| {
+                        let first_handler_arena = usize::from(arenas.len() > 1);
+                        #[allow(clippy::arithmetic_side_effects)]
+                        let arena_index =
+                            first_handler_arena + thx % (arenas.len() - first_handler_arena);
+                        arenas[arena_index]
+                    });
+                    thread::Builder::new()
+                        .name(format!("solScHandle{mode_char}{thx:02}"))
+                        .spawn_tracked(handler_main_loop(thx, assigned_arena))
+                        .unwrap()
+                }
+            })
+            .collect();
+    }
+
+    fn send_task(&self, task: Task) -> ScheduleResult {
+        debug!("send_task()");
+        self.new_task_sender
+            .send(NewTaskPayload::Payload(task))
+            .map_err(|_| SchedulerAborted)
+    }
+
+    fn ensure_join_threads(&mut self, should_receive_session_result: bool) {
+        trace!("ensure_join_threads() is called");
+
+        fn join_with_panic_message(join_handle: JoinHandle<()>) -> thread::Result<()> {
+            let thread = join_handle.thread().clone();
+            join_handle.join().inspect_err(|e| {
+                // Always needs to try both types for .downcast_ref(), according to
+                // https://doc.rust-lang.org/1.78.0/std/macro.panic.html:
+                //   a panic can be accessed as a &dyn Any + Send, which contains either a &str or
+                //   String for regular panic!() invocations. (Whether a particular invocation
+                //   contains the payload at type &str or String is unspecified and can change.)
+                let panic_message = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
+                    (Some(&s), _) => s,
+                    (_, Some(s)) => s,
+                    (None, None) => "<No panic info>",
+                };
+                panic!("{panic_message} (From: {thread:?})");
+            })
+        }
+
+        if let Some(scheduler_thread) = self.scheduler_thread.take() {
+            for thread in self.handler_threads.drain(..) {
+                debug!("joining...: {thread:?}");
+                () = join_with_panic_message(thread).unwrap();
+            }
+            () = join_with_panic_message(scheduler_thread).unwrap();
+
+            if should_receive_session_result {
+                let result_with_timings = self.session_result_receiver.recv().unwrap();
+                debug!("ensure_join_threads(): err: {:?}", result_with_timings.0);
+                self.put_session_result_with_timings(result_with_timings);
+            }
+        } else {
+            warn!("ensure_join_threads(): skipping; already joined...");
+        };
+    }
+
+    fn ensure_join_threads_after_abort(
+        &mut self,
+        should_receive_aborted_session_result: bool,
+    ) -> TransactionError {
+        self.ensure_join_threads(should_receive_aborted_session_result);
+        self.session_result_with_timings
+            .as_mut()
+            .unwrap()
+            .0
+            .clone()
+            .unwrap_err()
+    }
+
+    fn are_threads_joined(&self) -> bool {
+        if self.scheduler_thread.is_none() {
+            // Emptying handler_threads must be an atomic operation with scheduler_thread being
+            // taken.
+            assert!(self.handler_threads.is_empty());
+            true
+        } else {
+            false
+        }
+    }
+
+    fn end_session(&mut self) {
+        self.do_end_session(false)
+    }
+
+    fn do_end_session(&mut self, nonblocking: bool) {
+        if self.are_threads_joined() {
+            assert!(self.session_result_with_timings.is_some());
+            debug!("end_session(): skipping; already joined the aborted threads...");
+            return;
+        } else if self.session_result_with_timings.is_some() {
+            debug!("end_session(): skipping; already result resides within thread manager...");
+            return;
+        }
+        debug!(
+            "end_session(): will end session at {:?}...",
+            thread::current(),
+        );
+
+        let mut abort_detected = self
+            .new_task_sender
+            .send(NewTaskPayload::CloseSubchannel)
+            .is_err();
+
+        if nonblocking {
+            // Bail out session ending bookkeeping under this special case codepath for block
+            // production. This means skipping the `abort_detected`-dependent thread joining step
+            // as well; Otherwise, we could be dead-locked around poh, because we would technically
+            // wait for joining handler threads in _the poh thread_, which holds the poh lock (This
+            // `nonblocking` special case is called by the thread).
+            //
+            // This nonblocking session ending is guaranteed to be followed by a blocking session ending
+            // in the replay stage thread. The next real session ending will properly take care of
+            // all the skipped bookkeeping.
+            return;
+        }
+
+        if abort_detected {
+            self.ensure_join_threads_after_abort(true);
+            return;
+        }
+
+        // Even if abort is detected, it's guaranteed that the scheduler thread puts the last
+        // message into the session_result_sender before terminating.
+        let result_with_timings = self.session_result_receiver.recv().unwrap();
+        abort_detected = result_with_timings.0.is_err();
+        self.put_session_result_with_timings(result_with_timings);
+        if abort_detected {
+            self.ensure_join_threads_after_abort(false);
+        }
+        debug!("end_session(): ended session at {:?}...", thread::current());
+    }
+
+    fn unpause_started_session(&self) {
+        self.new_task_sender
+            .send(NewTaskPayload::UnpauseOpenedSubchannel)
+            .unwrap();
+    }
+
+    fn start_session(
+        &mut self,
+        context: SchedulingContext,
+        result_with_timings: ResultWithTimings,
+    ) {
+        assert!(!self.are_threads_joined());
+        assert_matches!(self.session_result_with_timings, None);
+        self.new_task_sender
+            .send(NewTaskPayload::OpenSubchannel(Box::new((
+                context,
+                result_with_timings,
+            ))))
+            .expect("no new session after aborted");
+    }
+
+    fn discard_buffered_tasks(&self) {
+        self.new_task_sender.send(NewTaskPayload::Reset).unwrap();
+    }
+
+    #[must_use]
+    fn disconnect_new_task_sender(&mut self) -> bool {
+        // Currently, crossbeam doesn't provide a way to indicate channel disconnection other than
+        // dropping all of the senders. However, dropping this self.new_task_sender isn't enough
+        // for block production, because the same new_task_sender can be shared with
+        // BankingStageHelper as well. So, always send our own disconnection message instead,
+        // regardless of block verification and block production for consistency.
+        self.new_task_sender
+            .send(NewTaskPayload::Disconnect)
+            .is_err()
+    }
+}
+
+pub trait SchedulerInner {
+    fn id(&self) -> SchedulerId;
+    fn is_trashed(&self) -> bool;
+    fn is_overgrown(&self) -> bool;
+    fn discard_buffer(&self);
+}
+
+pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
+    type Inner: SchedulerInner + Debug + Send + Sync;
+
+    fn into_inner(self) -> (ResultWithTimings, Self::Inner);
+
+    fn from_inner(
+        inner: Self::Inner,
+        context: SchedulingContext,
+        result_with_timings: ResultWithTimings,
+    ) -> Self;
+
+    fn spawn(
+        pool: Arc<SchedulerPool<Self, TH>>,
+        context: SchedulingContext,
+        result_with_timings: ResultWithTimings,
+    ) -> Self
+    where
+        Self: Sized;
+}
+
+impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
+    type Inner = PooledSchedulerInner<Self, TH>;
+
+    fn into_inner(mut self) -> (ResultWithTimings, Self::Inner) {
+        let result_with_timings = {
+            let manager = &mut self.inner.thread_manager;
+            manager.end_session();
+            manager.take_session_result_with_timings()
+        };
+        (result_with_timings, self.inner)
+    }
+
+    fn from_inner(
+        mut inner: Self::Inner,
+        context: SchedulingContext,
+        result_with_timings: ResultWithTimings,
+    ) -> Self {
+        inner
+            .thread_manager
+            .start_session(context.clone(), result_with_timings);
+        Self { inner, context }
+    }
+
+    fn spawn(
+        pool: Arc<SchedulerPool<Self, TH>>,
+        context: SchedulingContext,
+        result_with_timings: ResultWithTimings,
+    ) -> Self {
+        let mut thread_manager = ThreadManager::new(pool.clone());
+        let handler_context = pool.create_handler_context();
+        let usage_queue_loader = handler_context.usage_queue_loader_for_newly_spawned();
+        thread_manager.start_threads(context.clone(), result_with_timings, handler_context);
+        let inner = Self::Inner {
+            thread_manager,
+            usage_queue_loader,
+        };
+        Self { inner, context }
+    }
+}
+
+impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
+    fn id(&self) -> SchedulerId {
+        self.inner.id()
+    }
+
+    fn context(&self) -> &SchedulingContext {
+        &self.context
+    }
+
+    fn schedule_execution(
+        &self,
+        transaction: ReplayTransaction,
+        task_id: OrderedTaskId,
+    ) -> ScheduleResult {
+        let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |pubkey| {
+            self.inner.usage_queue_loader.load(pubkey)
+        });
+        self.inner.thread_manager.send_task(task)
+    }
+
+    fn recover_error_after_abort(&mut self) -> TransactionError {
+        self.inner
+            .thread_manager
+            .ensure_join_threads_after_abort(true)
+    }
+
+    fn wait_for_termination(
+        self: Box<Self>,
+        _is_dropped: bool,
+    ) -> (ResultWithTimings, UninstalledSchedulerBox) {
+        let (result_with_timings, uninstalled_scheduler) = self.into_inner();
+        (result_with_timings, Box::new(uninstalled_scheduler))
+    }
+
+    fn pause_for_recent_blockhash(&mut self) {
+        self.inner.thread_manager.do_end_session(false);
+    }
+
+    fn unpause_after_taken(&self) {
+        self.inner.thread_manager.unpause_started_session();
+    }
+}
+
+impl<S, TH> SchedulerInner for PooledSchedulerInner<S, TH>
+where
+    S: SpawnableScheduler<TH>,
+    TH: TaskHandler,
+{
+    fn id(&self) -> SchedulerId {
+        self.thread_manager.scheduler_id
+    }
+
+    fn is_trashed(&self) -> bool {
+        self.is_aborted() || self.is_overgrown()
+    }
+
+    fn is_overgrown(&self) -> bool {
+        self.usage_queue_loader
+            .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
+    }
+
+    fn discard_buffer(&self) {
+        self.thread_manager.discard_buffered_tasks();
+    }
+}
+
+impl<S, TH> UninstalledScheduler for PooledSchedulerInner<S, TH>
+where
+    S: SpawnableScheduler<TH, Inner = Self>,
+    TH: TaskHandler,
+{
+    fn return_to_pool(self: Box<Self>) {
+        self.thread_manager.pool.clone().return_scheduler(*self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::sleepless_testing,
+        agave_jemalloc::jemalloc::{Decay, Jemalloc},
+        assert_matches::assert_matches,
+        solana_clock::Slot,
+        solana_cost_model::cost_tracker::CostTrackerLimits,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
+        solana_runtime::{
+            bank::{Bank, SlotLeader},
+            bank_forks::BankForks,
+            genesis_utils::{
+                GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+                create_genesis_config_with_leader,
+            },
+            installed_scheduler_pool::{
+                BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
+            },
+        },
+        solana_svm_timings::ExecuteTimingType,
+        solana_system_transaction as system_transaction,
+        solana_transaction_error::TransactionError,
+        std::{
+            num::Saturating,
+            sync::{Arc, RwLock},
+            thread::JoinHandle,
+        },
+        test_case::test_case,
+    };
+
+    impl<S, TH> SchedulerPool<S, TH>
+    where
+        S: SpawnableScheduler<TH>,
+        TH: TaskHandler,
+    {
+        fn do_new_for_verification(
+            block_verification_handler_count: CountOrDefault,
+            log_messages_bytes_limit: Option<usize>,
+            transaction_status_sender: Option<TransactionStatusSender>,
+            replay_vote_sender: Option<ReplayVoteSender>,
+            prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+            pool_cleaner_interval: Duration,
+            max_pooling_duration: Duration,
+            max_usage_queue_count: usize,
+            timeout_duration: Duration,
+        ) -> Arc<Self> {
+            Self::do_new(
+                block_verification_handler_count,
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+                None,
+                pool_cleaner_interval,
+                max_pooling_duration,
+                max_usage_queue_count,
+                timeout_duration,
+            )
+        }
+
+        // This apparently-meaningless wrapper is handy, because some callers explicitly want
+        // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
+        fn new_dyn_for_verification(
+            block_verification_handler_count: CountOrDefault,
+            log_messages_bytes_limit: Option<usize>,
+            transaction_status_sender: Option<TransactionStatusSender>,
+            replay_vote_sender: Option<ReplayVoteSender>,
+            prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        ) -> InstalledSchedulerPoolArc {
+            Self::new(
+                block_verification_handler_count,
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+                None,
+            )
+        }
+    }
+
+    #[derive(Debug)]
+    enum TestCheckPoint {
+        BeforeNewTask,
+        AfterBufferedTask,
+        AfterTaskHandled,
+        AfterSessionEnding,
+        AfterSchedulerThreadAborted,
+        BeforeIdleSchedulerCleaned,
+        AfterIdleSchedulerCleaned,
+        BeforeTrashedSchedulerCleaned,
+        AfterTrashedSchedulerCleaned,
+        BeforeTimeoutListenerTriggered,
+        AfterTimeoutListenerTriggered,
+        BeforeThreadManagerDrop,
+        BeforeEndSession,
+    }
+
+    #[test]
+    fn test_scheduler_pool_new() {
+        agave_logger::setup();
+
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+
+        // this indirectly proves that there should be circular link because there's only one Arc
+        // at this moment now
+        // the 2 weaks are for the weak_self field and the pool cleaner thread.
+        assert_eq!((Arc::strong_count(&pool), Arc::weak_count(&pool)), (1, 2));
+        let debug = format!("{pool:#?}");
+        assert!(!debug.is_empty());
+    }
+
+    #[test]
+    fn test_handler_thread_tcache_drop_guard_avoids_purge_on_thread_exit() {
+        let arenas = ArenaGroup::new(1, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        let arena = arenas[0];
+
+        let stats_before_thread_exit = std::thread::spawn(move || {
+            arena.bind_current_thread_permanently().unwrap();
+            let _disable_tcache_on_exit = DisableHandlerThreadTcacheOnDrop {
+                arena,
+                thread_index: 0,
+            };
+
+            const DIRTY_BYTES: usize = 8 * 1024 * 1024;
+            let allocation = vec![0u8; DIRTY_BYTES];
+            assert_eq!(allocation.len(), DIRTY_BYTES);
+            drop(allocation);
+
+            Jemalloc::advance_epoch().unwrap();
+            let stats = arena.stats().unwrap();
+            assert_eq!(stats.dirty_decay, Decay::Never);
+            assert_eq!(stats.muzzy_decay, Decay::Never);
+            assert!(
+                stats.dirty_pages > 0,
+                "test requires dirty pages before handler thread exit"
+            );
+
+            stats
+        })
+        .join()
+        .unwrap();
+
+        Jemalloc::advance_epoch().unwrap();
+        let stats_after_thread_exit = arena.stats().unwrap();
+
+        assert_eq!(
+            stats_after_thread_exit.dirty_purges,
+            stats_before_thread_exit.dirty_purges
+        );
+        assert_eq!(
+            stats_after_thread_exit.muzzy_purges,
+            stats_before_thread_exit.muzzy_purges
+        );
+    }
+
+    #[test_case(1, [0, 0]; "single_arena_shared")]
+    #[test_case(2, [1, 1]; "two_arenas")]
+    #[test_case(3, [1, 2]; "three_arenas")]
+    fn test_handler_threads_use_assigned_arenas(arena_count: usize, handler_arenas: [usize; 2]) {
+        const SECOND_ARENA_SHIFT: u32 = 32;
+        const TASK_SEQUENCE_SHIFT: u32 = 64;
+
+        #[derive(Debug)]
+        enum ArenaCheckPoint {
+            Started,
+            Released,
+        }
+
+        #[derive(Debug)]
+        struct ArenaCheckingHandler;
+
+        impl TaskHandler for ArenaCheckingHandler {
+            fn handle(
+                _timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                task: &Task,
+                _handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                let task_id = task.task_id();
+                sleepless_testing::at((ArenaCheckPoint::Started, task_id));
+                sleepless_testing::at((ArenaCheckPoint::Released, task_id));
+
+                let current_thread = thread::current();
+                let expected_arena_id = match current_thread.name() {
+                    Some("solScHandleV00") => task_id & u128::from(u32::MAX),
+                    Some("solScHandleV01") => {
+                        (task_id >> SECOND_ARENA_SHIFT) & u128::from(u32::MAX)
+                    }
+                    name => panic!("unexpected handler thread name: {name:?}"),
+                };
+                assert_eq!(
+                    u128::from(Jemalloc::current_thread_arena().unwrap().as_raw()),
+                    expected_arena_id
+                );
+                Ok(TrackedCost::default())
+            }
+        }
+
+        let arenas = ArenaGroup::new(arena_count, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        // Encode both arena IDs so either handler can verify its assigned arena from any task.
+        let encoded_arena_ids = u128::from(arenas[handler_arenas[0]].id().as_raw())
+            | (u128::from(arenas[handler_arenas[1]].id().as_raw()) << SECOND_ARENA_SHIFT);
+        let task_ids = [
+            encoded_arena_ids,
+            encoded_arena_ids | (1 << TASK_SEQUENCE_SHIFT),
+        ];
+        // Hold the first task until the second starts, forcing both handler threads to run.
+        let _progress = sleepless_testing::setup(&[
+            &(ArenaCheckPoint::Started, task_ids[0]),
+            &(ArenaCheckPoint::Started, task_ids[1]),
+            &(ArenaCheckPoint::Released, task_ids[0]),
+            &(ArenaCheckPoint::Released, task_ids[1]),
+        ]);
+        let pool = SchedulerPool::<PooledScheduler<ArenaCheckingHandler>, _>::new(
+            Some(2),
+            None,
+            None,
+            None,
+            None,
+            Some(arenas),
+        );
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let scheduler = pool
+            .take_scheduler(SchedulingContext::new(bank.clone()))
+            .unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        let transactions = task_ids.map(|task_id| {
+            (
+                ReplayTransaction::from(system_transaction::transfer(
+                    &Keypair::new(),
+                    &Pubkey::new_unique(),
+                    1,
+                    genesis_config.hash(),
+                )),
+                task_id,
+            )
+        });
+
+        bank.schedule_transaction_executions(transactions.into_iter())
+            .unwrap();
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+    }
+
+    #[test]
+    fn test_scheduler_spawn() {
+        agave_logger::setup();
+
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        let bank = Arc::new(Bank::default_for_tests());
+        let context = SchedulingContext::new(bank);
+        let scheduler = pool.take_scheduler(context).unwrap();
+
+        let debug = format!("{scheduler:#?}");
+        assert!(!debug.is_empty());
+    }
+
+    const SHORTENED_POOL_CLEANER_INTERVAL: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn test_scheduler_drop_idle() {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeIdleSchedulerCleaned,
+            &CheckPoint::IdleSchedulerCleaned(0),
+            &CheckPoint::IdleSchedulerCleaned(1),
+            &TestCheckPoint::AfterIdleSchedulerCleaned,
+        ]);
+
+        // Use 300ms pooling duration as a balance between:
+        // - Keeping the test fast (as small as possible)
+        // - Providing a large enough window to avoid the race condition where the second
+        //   scheduler could also be freed before we can assert only one remains
+        const TEST_MAX_POOLING_DURATION_MS: u64 = 300;
+        const TEST_MAX_POOLING_DURATION: Duration =
+            Duration::from_millis(TEST_MAX_POOLING_DURATION_MS);
+        const TEST_WAIT_FOR_IDLE_MS: u64 = TEST_MAX_POOLING_DURATION_MS + 200;
+        const TEST_WAIT_FOR_IDLE: Duration = Duration::from_millis(TEST_WAIT_FOR_IDLE_MS);
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            None,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            TEST_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+        let bank = Arc::new(Bank::default_for_tests());
+        let context1 = SchedulingContext::new(bank);
+        let context2 = context1.clone();
+
+        let old_scheduler = pool.do_take_scheduler(context1);
+        let new_scheduler = pool.do_take_scheduler(context2);
+        let new_scheduler_id = new_scheduler.id();
+        Box::new(old_scheduler.into_inner().1).return_to_pool();
+
+        // Wait for old_scheduler to be considered idle by the cleaner.
+        sleep(TEST_WAIT_FOR_IDLE);
+
+        Box::new(new_scheduler.into_inner().1).return_to_pool();
+
+        // Block solScCleaner until we see returned schedlers...
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 2);
+        sleepless_testing::at(TestCheckPoint::BeforeIdleSchedulerCleaned);
+
+        // See the old (= idle) scheduler gone only after solScCleaner did its job...
+        sleepless_testing::at(&TestCheckPoint::AfterIdleSchedulerCleaned);
+
+        // Only new_scheduler should remain. old_scheduler exceeds the
+        // TEST_MAX_POOLING_DURATION idle threshold, while new_scheduler does not.
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
+        assert_eq!(
+            pool_raw
+                .scheduler_inners
+                .lock()
+                .unwrap()
+                .first()
+                .as_ref()
+                .map(|(inner, _pooled_at)| inner.id())
+                .unwrap(),
+            new_scheduler_id
+        );
+    }
+
+    #[test]
+    fn test_scheduler_drop_overgrown() {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTrashedSchedulerCleaned,
+            &CheckPoint::TrashedSchedulerCleaned(0),
+            &CheckPoint::TrashedSchedulerCleaned(1),
+            &TestCheckPoint::AfterTrashedSchedulerCleaned,
+        ]);
+
+        const REDUCED_MAX_USAGE_QUEUE_COUNT: usize = 1;
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            None,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            REDUCED_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+        let bank = Arc::new(Bank::default_for_tests());
+        let context1 = SchedulingContext::new(bank);
+        let context2 = context1.clone();
+
+        let small_scheduler = pool.do_take_scheduler(context1);
+        let small_scheduler_id = small_scheduler.id();
+        for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT {
+            small_scheduler
+                .inner
+                .usage_queue_loader
+                .load(Pubkey::new_unique());
+        }
+        let big_scheduler = pool.do_take_scheduler(context2);
+        for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1 {
+            big_scheduler
+                .inner
+                .usage_queue_loader
+                .load(Pubkey::new_unique());
+        }
+
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        Box::new(small_scheduler.into_inner().1).return_to_pool();
+        Box::new(big_scheduler.into_inner().1).return_to_pool();
+
+        // Block solScCleaner until we see trashed schedler...
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 1);
+        sleepless_testing::at(TestCheckPoint::BeforeTrashedSchedulerCleaned);
+
+        // See the trashed scheduler gone only after solScCleaner did its job...
+        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        assert_eq!(
+            pool_raw
+                .scheduler_inners
+                .lock()
+                .unwrap()
+                .first()
+                .as_ref()
+                .map(|(inner, _pooled_at)| inner.id())
+                .unwrap(),
+            small_scheduler_id
+        );
+    }
+
+    const SHORTENED_TIMEOUT_DURATION: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn test_scheduler_drop_stale() {
+        const SHORTENED_MAX_POOLING_DURATION: Duration = Duration::from_millis(100);
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+            &CheckPoint::IdleSchedulerCleaned(1),
+            &TestCheckPoint::AfterIdleSchedulerCleaned,
+        ]);
+
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            None,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            SHORTENED_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            SHORTENED_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+        let bank = Arc::new(Bank::default_for_tests());
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.take_scheduler(context).unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        // See the stale scheduler gone only after solScCleaner did its job...
+        sleepless_testing::at(&TestCheckPoint::AfterIdleSchedulerCleaned);
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_scheduler_active_after_stale() {
+        agave_logger::setup();
+
+        // The cleaner may expire a listener on its first pass, so a zero count is optional.
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+        ]);
+
+        let pool_raw =
+            SchedulerPool::<PooledScheduler<ExecuteTimingCounter>, _>::do_new_for_verification(
+                None,
+                None,
+                None,
+                None,
+                None,
+                SHORTENED_POOL_CLEANER_INTERVAL,
+                DEFAULT_MAX_POOLING_DURATION,
+                DEFAULT_MAX_USAGE_QUEUE_COUNT,
+                SHORTENED_TIMEOUT_DURATION,
+            );
+
+        #[derive(Debug)]
+        struct ExecuteTimingCounter;
+        impl TaskHandler for ExecuteTimingCounter {
+            fn handle(
+                timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                _task: &Task,
+                _handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                timings.metrics[ExecuteTimingType::CheckUs] += 123;
+                Ok(TrackedCost::default())
+            }
+        }
+        let pool = pool_raw.clone();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context).unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+
+        let tx_before_stale = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        bank.schedule_transaction_executions([(tx_before_stale, 0)].into_iter())
+            .unwrap();
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+        let tx_after_stale = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        bank.schedule_transaction_executions([(tx_after_stale, 1)].into_iter())
+            .unwrap();
+
+        // Observe second occurrence of TimeoutListenerTriggered(1), which indicates a new timeout
+        // lister is registered correctly again for reactivated scheduler.
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+
+        let (result, timings) = bank.wait_for_completed_scheduler().unwrap();
+        assert_matches!(result, Ok(()));
+        // ResultWithTimings should be carried over across active=>stale=>active transitions.
+        assert_eq!(timings.metrics[ExecuteTimingType::CheckUs].0, 246);
+    }
+
+    #[test]
+    fn test_scheduler_pause_after_stale() {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+        ]);
+
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            None,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            SHORTENED_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context).unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+
+        // This calls register_recent_blockhash() internally, which in turn calls
+        // BankWithScheduler::wait_for_paused_scheduler().
+        bank.fill_bank_with_ticks_for_tests();
+        let (result, _timings) = bank.wait_for_completed_scheduler().unwrap();
+        assert_matches!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_scheduler_remain_stale_after_error() {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+        ]);
+
+        let pool_raw = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::do_new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            None,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            SHORTENED_TIMEOUT_DURATION,
+        );
+
+        let pool = pool_raw.clone();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context).unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+
+        let tx_before_stale = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        bank.schedule_transaction_executions([(tx_before_stale, 0)].into_iter())
+            .unwrap();
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+        let tx_after_stale = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let result = bank.schedule_transaction_executions([(tx_after_stale, 1)].into_iter());
+        assert_matches!(result, Err(TransactionError::AccountNotFound));
+
+        let (result, _timings) = bank.wait_for_completed_scheduler().unwrap();
+        assert_matches!(result, Err(TransactionError::AccountNotFound));
+    }
+
+    enum AbortCase {
+        Unhandled,
+        UnhandledWhilePanicking,
+        Handled,
+    }
+
+    #[derive(Debug)]
+    struct FaultyHandler;
+    impl TaskHandler for FaultyHandler {
+        fn handle(
+            _timings: &mut ExecuteTimings,
+            _scheduling_context: &SchedulingContext,
+            _task: &Task,
+            _handler_context: &HandlerContext,
+        ) -> Result<TrackedCost> {
+            Err(TransactionError::AccountNotFound)
+        }
+    }
+
+    #[test]
+    fn test_scheduler_aborts_on_commit_cancelled() {
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+        ]);
+
+        #[derive(Debug)]
+        struct CommitCancelledHandler;
+        impl TaskHandler for CommitCancelledHandler {
+            fn handle(
+                _timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                task: &Task,
+                _handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                assert_eq!(task.task_id(), 0);
+                Err(TransactionError::CommitCancelled)
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let pool =
+            SchedulerPool::<PooledScheduler<CommitCancelledHandler>, _>::new_for_verification(
+                None, None, None, None, None,
+            );
+        let scheduler = pool.do_take_scheduler(SchedulingContext::new(bank.clone()));
+        let cancelled_transaction = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let bank = BankWithScheduler::new(bank, Some(Box::new(scheduler)));
+        bank.schedule_transaction_executions([(cancelled_transaction, 0)].into_iter())
+            .unwrap();
+
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+
+        let transaction_after_abort = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        assert_matches!(
+            bank.schedule_transaction_executions([(transaction_after_abort, 1)].into_iter()),
+            Err(TransactionError::CommitCancelled)
+        );
+        assert_matches!(
+            bank.wait_for_completed_scheduler(),
+            Some((Err(TransactionError::CommitCancelled), _))
+        );
+    }
+
+    fn do_test_scheduler_drop_abort(abort_case: AbortCase) {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(match abort_case {
+            AbortCase::Unhandled => &[
+                &CheckPoint::SchedulerThreadAborted,
+                &TestCheckPoint::AfterSchedulerThreadAborted,
+            ],
+            _ => &[],
+        });
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        let tx = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let pool = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::new_for_verification(
+            None, None, None, None, None,
+        );
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.do_take_scheduler(context);
+        scheduler.schedule_execution(tx, 0).unwrap();
+
+        match abort_case {
+            AbortCase::Unhandled => {
+                sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+                // Directly dropping PooledScheduler is illegal unless panicking already, especially
+                // after being aborted. It must be converted to PooledSchedulerInner via
+                // ::into_inner();
+                drop::<PooledScheduler<_>>(scheduler);
+            }
+            AbortCase::UnhandledWhilePanicking => {
+                // no sleepless_testing::at(); panicking special-casing isn't racy
+                panic!("ThreadManager::drop() should be skipped...");
+            }
+            AbortCase::Handled => {
+                // no sleepless_testing::at(); ::into_inner() isn't racy
+                let ((result, _), mut scheduler_inner) = scheduler.into_inner();
+                assert_matches!(result, Err(TransactionError::AccountNotFound));
+
+                // Calling ensure_join_threads() repeatedly should be safe.
+                let dummy_flag = true; // doesn't matter because it's skipped anyway
+                scheduler_inner
+                    .thread_manager
+                    .ensure_join_threads(dummy_flag);
+
+                drop::<PooledSchedulerInner<_, _>>(scheduler_inner);
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "does not match `Some((Ok(_), _))")]
+    fn test_scheduler_drop_abort_unhandled() {
+        do_test_scheduler_drop_abort(AbortCase::Unhandled);
+    }
+
+    #[test]
+    #[should_panic(expected = "ThreadManager::drop() should be skipped...")]
+    fn test_scheduler_drop_abort_unhandled_while_panicking() {
+        do_test_scheduler_drop_abort(AbortCase::UnhandledWhilePanicking);
+    }
+
+    #[test]
+    fn test_scheduler_drop_abort_handled() {
+        do_test_scheduler_drop_abort(AbortCase::Handled);
+    }
+
+    #[test]
+    fn test_scheduler_drop_short_circuiting() {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeThreadManagerDrop,
+            &CheckPoint::NewTask(0),
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+        ]);
+
+        static TASK_COUNT: Mutex<OrderedTaskId> = Mutex::new(0);
+
+        #[derive(Debug)]
+        struct CountingHandler;
+        impl TaskHandler for CountingHandler {
+            fn handle(
+                _timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                _task: &Task,
+                _handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                *TASK_COUNT.lock().unwrap() += 1;
+                Ok(TrackedCost::default())
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let pool = SchedulerPool::<PooledScheduler<CountingHandler>, _>::new_for_verification(
+            None, None, None, None, None,
+        );
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.do_take_scheduler(context);
+
+        // This test is racy.
+        //
+        // That's because the scheduler needs to be aborted quickly as an expected behavior,
+        // leaving some readily-available work untouched. So, schedule rather large number of tasks
+        // to make the short-cutting abort code-path win the race easily.
+        const MAX_TASK_COUNT: OrderedTaskId = 100;
+
+        for i in 0..MAX_TASK_COUNT {
+            let tx = ReplayTransaction::from(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+            scheduler.schedule_execution(tx, i).unwrap();
+        }
+
+        // Make sure ThreadManager::drop() is properly short-circuiting for non-aborting scheduler.
+        sleepless_testing::at(TestCheckPoint::BeforeThreadManagerDrop);
+        drop::<PooledScheduler<_>>(scheduler);
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+        // All of handler threads should have been aborted before processing MAX_TASK_COUNT tasks.
+        assert!(*TASK_COUNT.lock().unwrap() < MAX_TASK_COUNT);
+    }
+
+    #[test]
+    fn test_scheduler_pool_filo() {
+        agave_logger::setup();
+
+        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
+        let bank = Arc::new(Bank::default_for_tests());
+        let context = &SchedulingContext::new(bank);
+
+        let scheduler1 = pool.do_take_scheduler(context.clone());
+        let scheduler_id1 = scheduler1.id();
+        let scheduler2 = pool.do_take_scheduler(context.clone());
+        let scheduler_id2 = scheduler2.id();
+        assert_ne!(scheduler_id1, scheduler_id2);
+
+        let (result_with_timings, scheduler1) = scheduler1.into_inner();
+        assert_matches!(result_with_timings, (Ok(()), _));
+        pool.return_scheduler(scheduler1);
+        let (result_with_timings, scheduler2) = scheduler2.into_inner();
+        assert_matches!(result_with_timings, (Ok(()), _));
+        pool.return_scheduler(scheduler2);
+
+        let scheduler3 = pool.do_take_scheduler(context.clone());
+        assert_eq!(scheduler_id2, scheduler3.id());
+        let scheduler4 = pool.do_take_scheduler(context.clone());
+        assert_eq!(scheduler_id1, scheduler4.id());
+    }
+
+    #[test]
+    fn test_scheduler_pool_context_drop_unless_reinitialized() {
+        agave_logger::setup();
+
+        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
+        let bank = Arc::new(Bank::default_for_tests());
+        let context = &SchedulingContext::new(bank);
+        let mut scheduler = pool.do_take_scheduler(context.clone());
+
+        // should never panic.
+        scheduler.pause_for_recent_blockhash();
+        assert_matches!(
+            Box::new(scheduler).wait_for_termination(false),
+            ((Ok(()), _), _)
+        );
+    }
+
+    #[test]
+    fn test_scheduler_pool_context_replace() {
+        agave_logger::setup();
+
+        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
+        let old_bank = &Arc::new(Bank::default_for_tests());
+        let new_bank = &Arc::new(Bank::default_for_tests());
+        assert!(!Arc::ptr_eq(old_bank, new_bank));
+
+        let old_context = &SchedulingContext::new(old_bank.clone());
+        let new_context = &SchedulingContext::new(new_bank.clone());
+
+        let scheduler = pool.do_take_scheduler(old_context.clone());
+        let scheduler_id = scheduler.id();
+        pool.return_scheduler(scheduler.into_inner().1);
+
+        let scheduler = pool.take_scheduler(new_context.clone()).unwrap();
+        assert_eq!(scheduler_id, scheduler.id());
+        assert!(Arc::ptr_eq(scheduler.context().bank(), new_bank));
+    }
+
+    #[test]
+    fn test_scheduler_pool_install_into_bank_forks() {
+        agave_logger::setup();
+
+        let bank = Bank::default_for_tests();
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let mut bank_forks = bank_forks.write().unwrap();
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        bank_forks.install_scheduler_pool(pool);
+    }
+
+    #[test]
+    fn test_scheduler_install_into_bank() {
+        agave_logger::setup();
+
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let bank = bank_forks.read().unwrap().root_bank();
+
+        // existing banks in bank_forks shouldn't process transactions anymore in general, so
+        // shouldn't be touched
+        {
+            let mut bank_forks_w = bank_forks.write().unwrap();
+            assert!(
+                !bank_forks_w
+                    .working_bank_with_scheduler()
+                    .has_installed_scheduler()
+            );
+            bank_forks_w.install_scheduler_pool(pool);
+            assert!(
+                !bank_forks_w
+                    .working_bank_with_scheduler()
+                    .has_installed_scheduler()
+            );
+        }
+
+        // child_bank inserted after pool so it gets a scheduler
+        Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, SlotLeader::default(), 1);
+        let mut bank_forks = bank_forks.write().unwrap();
+        let mut child_bank = bank_forks.get_with_scheduler(1).unwrap();
+        assert!(child_bank.has_installed_scheduler());
+        bank_forks.remove(child_bank.slot());
+        child_bank.drop_scheduler();
+        assert!(!child_bank.has_installed_scheduler());
+    }
+
+    fn setup_dummy_fork_graph(bank: Bank) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+        let slot = bank.slot();
+        let bank_fork = BankForks::new_rw_arc(bank);
+        let bank = bank_fork.read().unwrap().get(slot).unwrap();
+        bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_fork));
+        (bank, bank_fork)
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_success() {
+        agave_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let tx0 = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        let context = SchedulingContext::new(bank.clone());
+
+        assert_eq!(bank.transaction_count(), 0);
+        let scheduler = pool.take_scheduler(context).unwrap();
+        scheduler.schedule_execution(tx0, 0).unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+        assert_eq!(bank.transaction_count(), 1);
+    }
+
+    fn do_test_scheduler_cost_limits(
+        limits: CostTrackerLimits,
+        tx_count: usize,
+        bank_count: usize,
+    ) -> Vec<(Arc<Bank>, SchedulerId, Result<()>)> {
+        agave_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+
+        (0..bank_count)
+            .map(|_| {
+                let bank = Bank::new_for_tests(&genesis_config);
+                let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+                bank.write_cost_tracker().unwrap().set_limits(limits);
+                let scheduler = pool
+                    .take_scheduler(SchedulingContext::new(bank.clone()))
+                    .unwrap();
+                let scheduler_id = scheduler.id();
+
+                for task_id in 0..tx_count {
+                    let tx = ReplayTransaction::from(system_transaction::transfer(
+                        &mint_keypair,
+                        &solana_pubkey::new_rand(),
+                        2,
+                        genesis_config.hash(),
+                    ));
+                    scheduler
+                        .schedule_execution(tx, task_id as OrderedTaskId)
+                        .unwrap();
+                }
+                let (result, _timings) = BankWithScheduler::new(bank.clone(), Some(scheduler))
+                    .wait_for_completed_scheduler()
+                    .unwrap();
+                (bank, scheduler_id, result)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_scheduler_tracks_costs_per_bank() {
+        let results = do_test_scheduler_cost_limits(
+            CostTrackerLimits::new(u64::MAX, u64::MAX, u64::MAX),
+            1,
+            2,
+        );
+
+        // The second bank reuses the pooled scheduler, so it covers the subsequent session path.
+        assert_eq!(results[0].1, results[1].1);
+        for (bank, _scheduler_id, result) in results {
+            assert_matches!(result, Ok(()));
+            let cost_tracker = bank.read_cost_tracker().unwrap();
+            assert_eq!(cost_tracker.transaction_count(), 1);
+            assert!(cost_tracker.block_cost() > 0);
+            assert_eq!(cost_tracker.get_block_limit(), u64::MAX);
+        }
+    }
+
+    #[test]
+    fn test_scheduler_block_cost_limit_exceeded() {
+        let limits = CostTrackerLimits::new(u64::MAX, 1, u64::MAX);
+        let [(bank, _scheduler_id, result)] = do_test_scheduler_cost_limits(limits, 1, 1)
+            .try_into()
+            .unwrap();
+        assert_matches!(result, Err(TransactionError::WouldExceedMaxBlockCostLimit));
+        assert_eq!(bank.read_cost_tracker().unwrap().get_limits(), limits);
+    }
+
+    #[test]
+    fn test_scheduler_account_cost_limit_exceeded() {
+        let [(bank, _scheduler_id, _result)] = do_test_scheduler_cost_limits(
+            CostTrackerLimits::new(u64::MAX, u64::MAX, u64::MAX),
+            1,
+            1,
+        )
+        .try_into()
+        .unwrap();
+        let tx_cost = bank.read_cost_tracker().unwrap().block_cost();
+
+        // Both transfers write the mint account, so the second one exceeds the account limit.
+        let limits = CostTrackerLimits::new(tx_cost, u64::MAX, u64::MAX);
+        let [(bank, _scheduler_id, result)] = do_test_scheduler_cost_limits(limits, 2, 1)
+            .try_into()
+            .unwrap();
+        assert_matches!(
+            result,
+            Err(TransactionError::WouldExceedMaxAccountCostLimit)
+        );
+        assert_eq!(bank.read_cost_tracker().unwrap().get_limits(), limits);
+    }
+
+    fn do_test_scheduler_schedule_execution_failure(extra_tx_after_failure: bool) {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::TaskHandled(0),
+            &TestCheckPoint::AfterTaskHandled,
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+            &TestCheckPoint::BeforeTrashedSchedulerCleaned,
+            &CheckPoint::TrashedSchedulerCleaned(0),
+            &CheckPoint::TrashedSchedulerCleaned(1),
+            &TestCheckPoint::AfterTrashedSchedulerCleaned,
+        ]);
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            None,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.take_scheduler(context).unwrap();
+
+        let bad_tx = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            Hash::new_unique(),
+        ));
+        assert_eq!(bank.transaction_count(), 0);
+        scheduler.schedule_execution(bad_tx, 0).unwrap();
+        sleepless_testing::at(TestCheckPoint::AfterTaskHandled);
+        assert_eq!(bank.transaction_count(), 0);
+
+        let good_tx_after_bad_tx = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            3,
+            genesis_config.hash(),
+        ));
+        // make sure this tx is really a good one to execute.
+        assert_matches!(
+            bank.simulate_transaction_unchecked(&good_tx_after_bad_tx, false)
+                .result,
+            Ok(_)
+        );
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        if extra_tx_after_failure {
+            assert_matches!(
+                bank.schedule_transaction_executions([(good_tx_after_bad_tx, 1)].into_iter()),
+                Err(TransactionError::BlockhashNotFound)
+            );
+        }
+        // transaction_count should remain same as scheduler should be bailing out.
+        // That's because we're testing the serialized failing execution case in this test.
+        // Also note that bank.transaction_count() is generally racy by nature, because
+        // blockstore_processor and unified_scheduler both tend to process non-conflicting batches
+        // in parallel as part of the normal operation.
+        assert_eq!(bank.transaction_count(), 0);
+
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        assert_matches!(
+            bank.wait_for_completed_scheduler(),
+            Some((Err(TransactionError::BlockhashNotFound), _timings))
+        );
+
+        // Block solScCleaner until we see trashed schedler...
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 1);
+        sleepless_testing::at(TestCheckPoint::BeforeTrashedSchedulerCleaned);
+
+        // See the trashed scheduler gone only after solScCleaner did its job...
+        sleepless_testing::at(TestCheckPoint::AfterTrashedSchedulerCleaned);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_failure_with_extra_tx() {
+        do_test_scheduler_schedule_execution_failure(true);
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_failure_without_extra_tx() {
+        do_test_scheduler_schedule_execution_failure(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "This panic should be propagated. (From: ")]
+    fn test_scheduler_schedule_execution_panic() {
+        agave_logger::setup();
+
+        #[derive(Debug)]
+        enum PanickingHanlderCheckPoint {
+            BeforeNotifiedPanic,
+            BeforeIgnoredPanic,
+        }
+
+        let progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeNewTask,
+            &CheckPoint::NewTask(0),
+            &PanickingHanlderCheckPoint::BeforeNotifiedPanic,
+            &CheckPoint::SchedulerThreadAborted,
+            &PanickingHanlderCheckPoint::BeforeIgnoredPanic,
+            &TestCheckPoint::BeforeEndSession,
+        ]);
+
+        #[derive(Debug)]
+        struct PanickingHandler;
+        impl TaskHandler for PanickingHandler {
+            fn handle(
+                _timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                task: &Task,
+                _handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                let task_id = task.task_id();
+                if task_id == 0 {
+                    sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
+                } else if task_id == 1 {
+                    sleepless_testing::at(PanickingHanlderCheckPoint::BeforeIgnoredPanic);
+                } else {
+                    unreachable!();
+                }
+                panic!("This panic should be propagated.");
+            }
+        }
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        // Use 2 transactions with different timings to deliberately cover the two code paths of
+        // notifying panics in the handler threads, taken conditionally depending on whether the
+        // scheduler thread has been aborted already or not.
+        const TX_COUNT: OrderedTaskId = 2;
+
+        let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn_for_verification(
+            Some(TX_COUNT.try_into().unwrap()), // fix to use exactly 2 handlers
+            None,
+            None,
+            None,
+            None,
+        );
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context).unwrap();
+
+        for task_id in 0..TX_COUNT {
+            // Use 2 non-conflicting txes to exercise the channel disconnected case as well.
+            let tx = ReplayTransaction::from(system_transaction::transfer(
+                &Keypair::new(),
+                &solana_pubkey::new_rand(),
+                1,
+                genesis_config.hash(),
+            ));
+            scheduler.schedule_execution(tx, task_id).unwrap();
+        }
+        // finally unblock the scheduler thread; otherwise the above schedule_execution could
+        // return SchedulerAborted...
+        sleepless_testing::at(TestCheckPoint::BeforeNewTask);
+
+        sleepless_testing::at(TestCheckPoint::BeforeEndSession);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+
+        // the outer .unwrap() will panic. so, drop progress now.
+        drop(progress);
+        bank.wait_for_completed_scheduler().unwrap().0.unwrap();
+    }
+
+    #[test]
+    fn test_scheduler_execution_failure_short_circuiting() {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeNewTask,
+            &CheckPoint::NewTask(0),
+            &CheckPoint::TaskHandled(0),
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+        ]);
+
+        static TASK_COUNT: Mutex<usize> = Mutex::new(0);
+
+        #[derive(Debug)]
+        struct CountingFaultyHandler;
+        impl TaskHandler for CountingFaultyHandler {
+            fn handle(
+                _timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                task: &Task,
+                _handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                let task_id = task.task_id();
+                *TASK_COUNT.lock().unwrap() += 1;
+                let result = if task_id == 1 {
+                    Err(TransactionError::AccountNotFound)
+                } else {
+                    Ok(TrackedCost::default())
+                };
+                sleepless_testing::at(CheckPoint::TaskHandled(task_id));
+                result
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let pool = SchedulerPool::<PooledScheduler<CountingFaultyHandler>, _>::new_for_verification(
+            None, None, None, None, None,
+        );
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.do_take_scheduler(context);
+
+        for i in 0..10 {
+            let tx = ReplayTransaction::from(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+            scheduler.schedule_execution(tx, i).unwrap();
+        }
+        // finally unblock the scheduler thread; otherwise the above schedule_execution could
+        // return SchedulerAborted...
+        sleepless_testing::at(TestCheckPoint::BeforeNewTask);
+
+        // Make sure bank.wait_for_completed_scheduler() is properly short-circuiting for aborting scheduler.
+        let bank = BankWithScheduler::new(bank, Some(Box::new(scheduler)));
+        assert_matches!(
+            bank.wait_for_completed_scheduler(),
+            Some((Err(TransactionError::AccountNotFound), _timings))
+        );
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+        assert!(*TASK_COUNT.lock().unwrap() < 10);
+    }
+
+    fn create_genesis_config_for_block_production(lamports: u64) -> GenesisConfigInfo {
+        // The in-scope create_genesis_config() doesn't properly setup leader schedule, causing
+        // the following panic if used for poh recorder, so set up a bootstrap validator stake
+        // like `solana-ledger`'s genesis_utils does:
+        //
+        //   thread 'tests::...' panicked at ledger/src/leader_schedule.rs:LL:CC:
+        //   called `Result::unwrap()` on an `Err` value: NoItem
+        create_genesis_config_with_leader(
+            lamports,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        )
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_blocked_at_session_ending() {
+        agave_logger::setup();
+
+        const STALLED_TRANSACTION_INDEX: OrderedTaskId = 0;
+        const BLOCKED_TRANSACTION_INDEX: OrderedTaskId = 1;
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::BufferedOrDroppedTask(BLOCKED_TRANSACTION_INDEX),
+            &TestCheckPoint::AfterBufferedTask,
+            &CheckPoint::SessionEnding,
+            &TestCheckPoint::AfterSessionEnding,
+        ]);
+
+        #[derive(Debug)]
+        struct StallingHandler;
+        impl TaskHandler for StallingHandler {
+            fn handle(
+                timings: &mut ExecuteTimings,
+                scheduling_context: &SchedulingContext,
+                task: &Task,
+                handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                let task_id = task.task_id();
+                match task_id {
+                    STALLED_TRANSACTION_INDEX => {
+                        sleepless_testing::at(TestCheckPoint::AfterSessionEnding);
+                    }
+                    BLOCKED_TRANSACTION_INDEX => {}
+                    _ => unreachable!(),
+                };
+
+                DefaultTaskHandler::handle(timings, scheduling_context, task, handler_context)
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_for_block_production(10_000);
+
+        // tx0 and tx1 is definitely conflicting to write-lock the mint address
+        let tx0 = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let tx1 = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
+            None, None, None, None, None, None,
+        );
+
+        // This variable tracks the cumulative count of transactions since genesis, which is
+        // incremented as test is progressed.
+        let mut expected_transaction_count = Saturating(0);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.take_scheduler(context).unwrap();
+        let old_scheduler_id = scheduler.id();
+
+        scheduler
+            .schedule_execution(tx0, STALLED_TRANSACTION_INDEX)
+            .unwrap();
+        scheduler
+            .schedule_execution(tx1, BLOCKED_TRANSACTION_INDEX)
+            .unwrap();
+
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+
+        sleepless_testing::at(TestCheckPoint::AfterBufferedTask);
+
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        expected_transaction_count += 1;
+        // Block verification scheduler should fully clear its blocked transactions before
+        // finishing.
+        expected_transaction_count += 1;
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        // Create new bank to observe behavior difference around session ending
+        let bank = Arc::new(Bank::new_from_parent(
+            bank.clone_without_scheduler(),
+            SlotLeader::default(),
+            bank.slot().checked_add(1).unwrap(),
+        ));
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.take_scheduler(context).unwrap();
+        // make sure the same scheduler is used to test its internal cross-session behavior
+        // regardless scheduling_mode.
+        assert_eq!(scheduler.id(), old_scheduler_id);
+
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+    }
+
+    #[test]
+    fn test_scheduler_mismatched_scheduling_context_race() {
+        agave_logger::setup();
+
+        #[derive(Debug)]
+        struct TaskAndContextChecker;
+        impl TaskHandler for TaskAndContextChecker {
+            fn handle(
+                _timings: &mut ExecuteTimings,
+                scheduling_context: &SchedulingContext,
+                task: &Task,
+                _handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                // The task task_id must always be matched to the slot.
+                assert_eq!(task.task_id() as Slot, scheduling_context.slot());
+                Ok(TrackedCost::default())
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        // Create two banks for two contexts
+        let bank0 = Bank::new_for_tests(&genesis_config);
+        let (bank0, _bank_forks) = setup_dummy_fork_graph(bank0);
+        let bank1 = Arc::new(Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeader::default(),
+            bank0.slot().checked_add(1).unwrap(),
+        ));
+
+        let pool = SchedulerPool::<PooledScheduler<TaskAndContextChecker>, _>::new_for_verification(
+            Some(4), // spawn 4 threads
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // Create a dummy tx and two contexts
+        let dummy_tx: ReplayTransaction = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let context0 = &SchedulingContext::new(bank0.clone());
+        let context1 = &SchedulingContext::new(bank1.clone());
+
+        // Exercise the scheduler by busy-looping to expose the race condition
+        for (context, task_id) in [(context0, 0), (context1, 1)]
+            .into_iter()
+            .cycle()
+            .take(10000)
+        {
+            let scheduler = pool.take_scheduler(context.clone()).unwrap();
+            scheduler
+                .schedule_execution(dummy_tx.clone(), task_id)
+                .unwrap();
+            scheduler.wait_for_termination(false).1.return_to_pool();
+        }
+    }
+
+    #[derive(Debug)]
+    struct AsyncScheduler<const TRIGGER_RACE_CONDITION: bool>(
+        Mutex<ResultWithTimings>,
+        Mutex<Vec<JoinHandle<ResultWithTimings>>>,
+        SchedulingContext,
+        Arc<SchedulerPool<Self, DefaultTaskHandler>>,
+    );
+
+    impl<const TRIGGER_RACE_CONDITION: bool> AsyncScheduler<TRIGGER_RACE_CONDITION> {
+        fn do_wait(&self) {
+            let mut overall_result = Ok(());
+            let mut overall_timings = ExecuteTimings::default();
+            for handle in self.1.lock().unwrap().drain(..) {
+                let (result, timings) = handle.join().unwrap();
+                match result {
+                    Ok(()) => {}
+                    Err(e) => overall_result = Err(e),
+                }
+                overall_timings.accumulate(&timings);
+            }
+            *self.0.lock().unwrap() = (overall_result, overall_timings);
+        }
+    }
+
+    impl<const TRIGGER_RACE_CONDITION: bool> InstalledScheduler
+        for AsyncScheduler<TRIGGER_RACE_CONDITION>
+    {
+        fn id(&self) -> SchedulerId {
+            unimplemented!();
+        }
+
+        fn context(&self) -> &SchedulingContext {
+            &self.2
+        }
+
+        fn schedule_execution(
+            &self,
+            transaction: ReplayTransaction,
+            task_id: OrderedTaskId,
+        ) -> ScheduleResult {
+            let context = self.context().clone();
+            let pool = self.3.clone();
+
+            self.1.lock().unwrap().push(std::thread::spawn(move || {
+                // intentionally sleep to simulate race condition where register_recent_blockhash
+                // is handle before finishing executing scheduled transactions
+                std::thread::sleep(std::time::Duration::from_secs(1));
+
+                let mut timings = ExecuteTimings::default();
+
+                let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |_| {
+                    UsageQueue::new(&Capability::FifoQueueing)
+                });
+
+                let result = <DefaultTaskHandler as TaskHandler>::handle(
+                    &mut timings,
+                    &context,
+                    &task,
+                    &pool.create_handler_context(),
+                );
+                (result.map(|_| ()), timings)
+            }));
+
+            Ok(())
+        }
+
+        fn unpause_after_taken(&self) {
+            unimplemented!();
+        }
+
+        fn recover_error_after_abort(&mut self) -> TransactionError {
+            unimplemented!();
+        }
+
+        fn wait_for_termination(
+            self: Box<Self>,
+            _is_dropped: bool,
+        ) -> (ResultWithTimings, UninstalledSchedulerBox) {
+            self.do_wait();
+            let result_with_timings = std::mem::replace(
+                &mut *self.0.lock().unwrap(),
+                initialized_result_with_timings(),
+            );
+            (result_with_timings, self)
+        }
+
+        fn pause_for_recent_blockhash(&mut self) {
+            if TRIGGER_RACE_CONDITION {
+                // this is equivalent to NOT calling wait_for_paused_scheduler() in
+                // register_recent_blockhash().
+                return;
+            }
+            self.do_wait();
+        }
+    }
+
+    impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner for AsyncScheduler<TRIGGER_RACE_CONDITION> {
+        fn id(&self) -> SchedulerId {
+            42
+        }
+
+        fn is_trashed(&self) -> bool {
+            false
+        }
+
+        fn is_overgrown(&self) -> bool {
+            unimplemented!()
+        }
+
+        fn discard_buffer(&self) {
+            unimplemented!()
+        }
+    }
+
+    impl<const TRIGGER_RACE_CONDITION: bool> UninstalledScheduler
+        for AsyncScheduler<TRIGGER_RACE_CONDITION>
+    {
+        fn return_to_pool(self: Box<Self>) {
+            self.3.clone().return_scheduler(*self)
+        }
+    }
+
+    impl<const TRIGGER_RACE_CONDITION: bool> SpawnableScheduler<DefaultTaskHandler>
+        for AsyncScheduler<TRIGGER_RACE_CONDITION>
+    {
+        // well, i wish i can use ! (never type).....
+        type Inner = Self;
+
+        fn into_inner(self) -> (ResultWithTimings, Self::Inner) {
+            unimplemented!();
+        }
+
+        fn from_inner(
+            _inner: Self::Inner,
+            _context: SchedulingContext,
+            _result_with_timings: ResultWithTimings,
+        ) -> Self {
+            unimplemented!();
+        }
+
+        fn spawn(
+            pool: Arc<SchedulerPool<Self, DefaultTaskHandler>>,
+            context: SchedulingContext,
+            _result_with_timings: ResultWithTimings,
+        ) -> Self {
+            AsyncScheduler::<TRIGGER_RACE_CONDITION>(
+                Mutex::new(initialized_result_with_timings()),
+                Mutex::new(vec![]),
+                context,
+                pool,
+            )
+        }
+    }
+
+    fn do_test_scheduler_schedule_execution_recent_blockhash_edge_case<
+        const TRIGGER_RACE_CONDITION: bool,
+    >() {
+        agave_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let very_old_valid_tx = ReplayTransaction::from(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (mut bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        for _ in 0..bank.max_processing_age() {
+            bank.fill_bank_with_ticks_for_tests();
+            bank.freeze();
+            let slot = bank.slot();
+            bank = Arc::new(Bank::new_from_parent(
+                bank,
+                SlotLeader::default(),
+                slot.checked_add(1).unwrap(),
+            ));
+        }
+        let context = SchedulingContext::new(bank.clone());
+
+        let pool =
+            SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn_for_verification(
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+        let scheduler = pool.take_scheduler(context).unwrap();
+
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        assert_eq!(bank.transaction_count(), 0);
+
+        // schedule but not immediately execute transaction
+        bank.schedule_transaction_executions([(very_old_valid_tx, 0)].into_iter())
+            .unwrap();
+        // this calls register_recent_blockhash internally
+        bank.fill_bank_with_ticks_for_tests();
+
+        if TRIGGER_RACE_CONDITION {
+            // very_old_valid_tx is wrongly handled as expired!
+            assert_matches!(
+                bank.wait_for_completed_scheduler(),
+                Some((Err(TransactionError::BlockhashNotFound), _))
+            );
+            assert_eq!(bank.transaction_count(), 0);
+        } else {
+            assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+            assert_eq!(bank.transaction_count(), 1);
+        }
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_recent_blockhash_edge_case_with_race() {
+        do_test_scheduler_schedule_execution_recent_blockhash_edge_case::<true>();
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_recent_blockhash_edge_case_without_race() {
+        do_test_scheduler_schedule_execution_recent_blockhash_edge_case::<false>();
+    }
+
+    #[test]
+    fn test_default_handler_count() {
+        for (detected, expected) in [(32, 8), (4, 1), (2, 1)] {
+            assert_eq!(
+                DefaultSchedulerPool::calculate_default_handler_count(Some(detected)),
+                expected
+            );
+        }
+        assert_eq!(
+            DefaultSchedulerPool::calculate_default_handler_count(None),
+            4
+        );
+    }
+}

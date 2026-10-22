@@ -1,0 +1,313 @@
+#![cfg(feature = "dev-context-only-utils")]
+use {
+    crate::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
+    solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
+    solana_client_traits::{Client, SyncClient},
+    solana_clock::Clock,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_leader_schedule::SlotLeader,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_message::Message,
+    solana_program_binaries::{
+        bpf_loader_program_account, bpf_loader_upgradeable_program_accounts,
+    },
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::bpf_loader_upgradeable,
+    solana_signer::Signer,
+    std::{
+        env,
+        fs::File,
+        io::Read,
+        path::PathBuf,
+        sync::{Arc, RwLock},
+    },
+};
+
+const CHUNK_SIZE: usize = 512; // Size of chunk just needs to fit into tx
+
+pub fn load_program_from_file(name: &str) -> Vec<u8> {
+    let mut pathbuf = {
+        let current_exe = env::current_exe().unwrap();
+        PathBuf::from(
+            current_exe
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap(),
+        )
+    };
+    pathbuf.push("deploy");
+    pathbuf.push(name);
+    pathbuf.set_extension("so");
+    let mut file = File::open(&pathbuf).unwrap_or_else(|err| {
+        panic!("Failed to open {}: {}", pathbuf.display(), err);
+    });
+    let mut program = Vec::new();
+    file.read_to_end(&mut program).unwrap();
+    program
+}
+
+// Creates an unverified program by bypassing the loader built-in program
+pub fn create_program(bank: &Bank, loader_id: &Pubkey, name: &str) -> Pubkey {
+    create_program_with_elf(
+        bank,
+        loader_id,
+        &Pubkey::default(),
+        &load_program_from_file(name),
+    )
+}
+
+pub fn create_program_with_elf(
+    bank: &Bank,
+    loader_id: &Pubkey,
+    upgrade_authority: &Pubkey,
+    elf: &[u8],
+) -> Pubkey {
+    let program_id = Pubkey::new_unique();
+    let rent = Rent::default();
+    if bpf_loader_upgradeable::check_id(loader_id) {
+        let [(_, program_account), (programdata_id, programdata_account)] =
+            bpf_loader_upgradeable_program_accounts(&program_id, elf, upgrade_authority, &rent);
+        bank.store_account(&program_id, &AccountSharedData::from(program_account));
+        bank.store_account(
+            &programdata_id,
+            &AccountSharedData::from(programdata_account),
+        );
+    } else {
+        let (_, mut program_account) = bpf_loader_program_account(&program_id, elf, &rent);
+        program_account.owner = *loader_id;
+        bank.store_account(&program_id, &AccountSharedData::from(program_account));
+    }
+    program_id
+}
+
+pub fn create_buffer_with_elf(bank: &Bank, authority_address: &Pubkey, elf: &[u8]) -> Pubkey {
+    let buffer_address = Pubkey::new_unique();
+    let size = UpgradeableLoaderState::size_of_buffer(elf.len());
+    let mut account = AccountSharedData::new(
+        bank.get_minimum_balance_for_rent_exemption(size),
+        size,
+        &bpf_loader_upgradeable::id(),
+    );
+    account
+        .set_state(&UpgradeableLoaderState::Buffer {
+            authority_address: Some(*authority_address),
+        })
+        .unwrap();
+    account
+        .data_as_mut_slice()
+        .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
+        .unwrap()
+        .copy_from_slice(elf);
+    bank.store_account(&buffer_address, &account);
+    buffer_address
+}
+
+pub fn load_upgradeable_buffer<T: Client>(
+    bank_client: &T,
+    from_keypair: &Keypair,
+    buffer_keypair: &Keypair,
+    buffer_authority_keypair: &Keypair,
+    name: &str,
+) -> Vec<u8> {
+    let program = load_program_from_file(name);
+    let buffer_pubkey = buffer_keypair.pubkey();
+    let buffer_authority_pubkey = buffer_authority_keypair.pubkey();
+    let program_buffer_bytes = UpgradeableLoaderState::size_of_buffer(program.len());
+
+    bank_client
+        .send_and_confirm_message(
+            &[from_keypair, buffer_keypair],
+            Message::new(
+                &solana_loader_v3_interface::instruction::create_buffer(
+                    &from_keypair.pubkey(),
+                    &buffer_pubkey,
+                    &buffer_authority_pubkey,
+                    1.max(
+                        bank_client
+                            .get_minimum_balance_for_rent_exemption(program_buffer_bytes)
+                            .unwrap(),
+                    ),
+                    program.len(),
+                )
+                .unwrap(),
+                Some(&from_keypair.pubkey()),
+            ),
+        )
+        .unwrap();
+
+    let chunk_size = CHUNK_SIZE;
+    let mut offset = 0;
+    for chunk in program.chunks(chunk_size) {
+        let message = Message::new(
+            &[solana_loader_v3_interface::instruction::write(
+                &buffer_pubkey,
+                &buffer_authority_pubkey,
+                offset,
+                chunk.to_vec(),
+            )],
+            Some(&from_keypair.pubkey()),
+        );
+        bank_client
+            .send_and_confirm_message(&[from_keypair, buffer_authority_keypair], message)
+            .unwrap();
+        offset += chunk_size as u32;
+    }
+
+    program
+}
+
+pub fn load_upgradeable_program(
+    bank_client: &BankClient,
+    from_keypair: &Keypair,
+    buffer_keypair: &Keypair,
+    executable_keypair: &Keypair,
+    authority_keypair: &Keypair,
+    name: &str,
+) {
+    let program = load_upgradeable_buffer(
+        bank_client,
+        from_keypair,
+        buffer_keypair,
+        authority_keypair,
+        name,
+    );
+
+    #[allow(deprecated)]
+    let message = Message::new(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
+            &from_keypair.pubkey(),
+            &executable_keypair.pubkey(),
+            &buffer_keypair.pubkey(),
+            &authority_keypair.pubkey(),
+            1.max(
+                bank_client
+                    .get_minimum_balance_for_rent_exemption(
+                        UpgradeableLoaderState::size_of_program(),
+                    )
+                    .unwrap(),
+            ),
+            program.len() * 2,
+        )
+        .unwrap(),
+        Some(&from_keypair.pubkey()),
+    );
+    bank_client
+        .send_and_confirm_message(
+            &[from_keypair, executable_keypair, authority_keypair],
+            message,
+        )
+        .unwrap();
+    bank_client.set_sysvar_for_tests(&Clock {
+        slot: 1,
+        ..Clock::default()
+    });
+}
+
+pub fn load_upgradeable_program_wrapper(
+    bank_client: &BankClient,
+    mint_keypair: &Keypair,
+    authority_keypair: &Keypair,
+    name: &str,
+) -> Pubkey {
+    let buffer_keypair = Keypair::new();
+    let program_keypair = Keypair::new();
+    load_upgradeable_program(
+        bank_client,
+        mint_keypair,
+        &buffer_keypair,
+        &program_keypair,
+        authority_keypair,
+        name,
+    );
+    program_keypair.pubkey()
+}
+
+pub fn load_upgradeable_program_and_advance_slot(
+    bank_client: &mut BankClient,
+    bank_forks: &RwLock<BankForks>,
+    mint_keypair: &Keypair,
+    authority_keypair: &Keypair,
+    name: &str,
+) -> (Arc<Bank>, Pubkey) {
+    let program_id =
+        load_upgradeable_program_wrapper(bank_client, mint_keypair, authority_keypair, name);
+
+    // load_upgradeable_program sets clock sysvar to 1, which causes the program to be effective
+    // after 2 slots. They need to be called individually to create the correct fork graph in between.
+    bank_client
+        .advance_slot(1, bank_forks, SlotLeader::default())
+        .expect("Failed to advance the slot");
+
+    let bank = bank_client
+        .advance_slot(1, bank_forks, SlotLeader::default())
+        .expect("Failed to advance the slot");
+
+    (bank, program_id)
+}
+
+pub fn upgrade_program<T: Client>(
+    bank_client: &T,
+    payer_keypair: &Keypair,
+    buffer_keypair: &Keypair,
+    executable_pubkey: &Pubkey,
+    authority_keypair: &Keypair,
+    name: &str,
+) {
+    load_upgradeable_buffer(
+        bank_client,
+        payer_keypair,
+        buffer_keypair,
+        authority_keypair,
+        name,
+    );
+    let message = Message::new(
+        &[solana_loader_v3_interface::instruction::upgrade(
+            executable_pubkey,
+            &buffer_keypair.pubkey(),
+            &authority_keypair.pubkey(),
+            &payer_keypair.pubkey(),
+        )],
+        Some(&payer_keypair.pubkey()),
+    );
+    bank_client
+        .send_and_confirm_message(&[payer_keypair, authority_keypair], message)
+        .unwrap();
+}
+
+pub fn set_upgrade_authority<T: Client>(
+    bank_client: &T,
+    from_keypair: &Keypair,
+    program_pubkey: &Pubkey,
+    current_authority_keypair: &Keypair,
+    new_authority_pubkey: Option<&Pubkey>,
+) {
+    let message = Message::new(
+        &[
+            solana_loader_v3_interface::instruction::set_upgrade_authority(
+                program_pubkey,
+                &current_authority_keypair.pubkey(),
+                new_authority_pubkey,
+            ),
+        ],
+        Some(&from_keypair.pubkey()),
+    );
+    bank_client
+        .send_and_confirm_message(&[from_keypair, current_authority_keypair], message)
+        .unwrap();
+}
+
+// Return an Instruction that invokes `program_id` with `data` and required
+// a signature from `from_pubkey`.
+pub fn create_invoke_instruction<T: wincode::Serialize<Src = T>>(
+    from_pubkey: Pubkey,
+    program_id: Pubkey,
+    data: &T,
+) -> Instruction {
+    let account_metas = vec![AccountMeta::new(from_pubkey, true)];
+    Instruction::new_with_wincode(program_id, data, account_metas)
+}

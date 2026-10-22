@@ -1,0 +1,51 @@
+[package]
+name = "solana-transaction-context"
+description = "Solana data shared between program runtime and built-in programs as well as SBF programs."
+documentation = "https://docs.rs/solana-transaction-context"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = ["dep:qualifier_attr"]
+serde = ["serde/derive", "solana-pubkey/serde"]
+wincode = ["dep:wincode", "solana-account/wincode", "solana-pubkey/wincode"]
+
+[dependencies]
+solana-account = { workspace = true }
+solana-instruction = { workspace = true, features = ["std"] }
+solana-instruction-error = { workspace = true }
+solana-instructions-sysvar = { workspace = true }
+solana-pubkey = { workspace = true }
+wincode = { workspace = true, optional = true }
+
+[target.'cfg(not(any(target_arch = "sbf", target_arch = "bpf")))'.dependencies]
+qualifier_attr = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+solana-rent = { workspace = true }
+solana-sbpf = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true, optional = true }
+
+[dev-dependencies]
+solana-account-info = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-system-interface = { workspace = true }
+solana-transaction-context = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils", "wincode"] }
+static_assertions = { workspace = true }
+test-case = { workspace = true }
+
+[lints]
+workspace = true

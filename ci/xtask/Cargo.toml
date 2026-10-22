@@ -1,0 +1,58 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+description = "Blockchain, Rebuilt for Scale"
+repository = "https://github.com/anza-xyz/agave"
+homepage = "https://anza.xyz/"
+license = "Apache-2.0"
+edition = "2024"
+publish = false
+
+# Prevents auto-detection of parent workspace (ie. git worktrees).
+[workspace]
+
+[features]
+agave-unstable-api = []
+dummy-for-ci-check = []
+stable-abi = []
+integration-tests = []
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+env_logger = "0.11.11"
+futures-util = "0.3.34"
+log = "0.4.28"
+octocrab = { version = "0.54.4", features = ["stream"] }
+regex = "1.13.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+semver = { version = "1.0.27", features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
+tokio = { version = "1.53.3", features = ["full"] }
+toml = "1.0"
+xtask_shared = { package = "anza-xtask", version = "0.2.5" }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.full-dev]
+inherits = "dev"
+debug = "full"
+
+# Keep in sync with the root [workspace.lints.clippy].
+[lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"

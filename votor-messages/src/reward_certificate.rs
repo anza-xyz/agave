@@ -1,0 +1,154 @@
+//! Defines aggregates used for vote rewards.
+
+use {
+    crate::consensus_message::BlockId,
+    solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
+    solana_clock::Slot,
+    solana_short_vec::ShortU16,
+    solana_signer_store::EncodeError,
+    thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, pod_wrapper},
+};
+
+// Use `BLSSignatureCompressed` directly once `BLSSignature` wincode support
+// is released in solana-sdk.
+pod_wrapper! {
+    unsafe struct PodBLSSignatureCompressed(BLSSignatureCompressed);
+}
+
+/// Number of slots in the past that the the current leader is responsible for producing the reward certificates.
+pub const NUM_SLOTS_FOR_REWARD: u64 = 8;
+
+/// Different types of errors that can be returned when constructing a new reward certificate.
+#[derive(Debug, Error)]
+pub enum RewardCertError {
+    /// Invalid bitmap was supplied.
+    #[error("invalid bitmap was supplied")]
+    InvalidBitmap,
+}
+
+/// Reward certificate for the validators that voted skip.
+///
+/// Unlike the skip certificate which can be base-2 or base-3 encoded, this is guaranteed to be base-2 encoded.
+#[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
+pub struct SkipRewardCertificate {
+    /// The slot the certificate is for.
+    pub slot: Slot,
+    /// The signature.
+    #[wincode(with = "PodBLSSignatureCompressed")]
+    pub signature: BLSSignatureCompressed,
+    /// The bitmap for validators, see solana-signer-store for encoding format.
+    #[wincode(with = "WincodeVec<u8, ShortU16>")]
+    bitmap: Vec<u8>,
+}
+
+impl SkipRewardCertificate {
+    /// Returns a new instance of [`SkipRewardCertificate`].
+    pub fn try_new(
+        slot: Slot,
+        signature: BLSSignatureCompressed,
+        bitmap: Vec<u8>,
+    ) -> Result<Self, RewardCertError> {
+        if bitmap.len() > u16::MAX as usize {
+            return Err(RewardCertError::InvalidBitmap);
+        }
+        Ok(Self {
+            slot,
+            signature,
+            bitmap,
+        })
+    }
+
+    /// Returns a reference to the bitmap.
+    pub fn to_bitmap(&self) -> &[u8] {
+        &self.bitmap
+    }
+
+    /// Returns the bitmap consuming self.
+    pub fn into_bitmap(self) -> Vec<u8> {
+        self.bitmap
+    }
+
+    /// Returns every field of the certificate. Callers that must not
+    /// silently ignore new fields (e.g. the geyser boundary conversion)
+    /// bind this tuple exhaustively, so growing it breaks them at compile
+    /// time.
+    pub fn as_parts(&self) -> (Slot, &BLSSignatureCompressed, &[u8]) {
+        let Self {
+            slot,
+            signature,
+            bitmap,
+        } = self;
+        (*slot, signature, bitmap)
+    }
+}
+
+/// Reward certificate for the validators that voted notar.
+#[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
+pub struct NotarRewardCertificate {
+    /// The slot the certificate is for.
+    pub slot: Slot,
+    /// The block id the certificate is for.
+    pub block_id: BlockId,
+    /// The signature.
+    #[wincode(with = "PodBLSSignatureCompressed")]
+    pub signature: BLSSignatureCompressed,
+    /// The bitmap for validators, see solana-signer-store for encoding format.
+    #[wincode(with = "WincodeVec<u8, ShortU16>")]
+    bitmap: Vec<u8>,
+}
+
+impl NotarRewardCertificate {
+    /// Returns a new instance of [`NotarRewardCertificate`].
+    pub fn try_new(
+        slot: Slot,
+        block_id: BlockId,
+        signature: BLSSignatureCompressed,
+        bitmap: Vec<u8>,
+    ) -> Result<Self, RewardCertError> {
+        if bitmap.len() > u16::MAX as usize {
+            return Err(RewardCertError::InvalidBitmap);
+        }
+        Ok(Self {
+            slot,
+            block_id,
+            signature,
+            bitmap,
+        })
+    }
+
+    /// Returns a reference to the bitmap.
+    pub fn bitmap(&self) -> &[u8] {
+        &self.bitmap
+    }
+
+    /// Returns every field of the certificate. Callers that must not
+    /// silently ignore new fields (e.g. the geyser boundary conversion)
+    /// bind this tuple exhaustively, so growing it breaks them at compile
+    /// time.
+    pub fn as_parts(&self) -> (Slot, &BlockId, &BLSSignatureCompressed, &[u8]) {
+        let Self {
+            slot,
+            block_id,
+            signature,
+            bitmap,
+        } = self;
+        (*slot, block_id, signature, bitmap)
+    }
+
+    /// Returns the bitmap consuming self.
+    pub fn into_bitmap(self) -> Vec<u8> {
+        self.bitmap
+    }
+}
+
+/// Error returned when build reward certs fails.
+#[derive(Debug, Error)]
+pub enum BuildRewardCertsRespError {
+    /// Building either the skip or the notar reward cert failed.
+    #[error("try_new() on skip or notar cert failed with {0}")]
+    RewardCertTryNew(#[from] RewardCertError),
+    /// Encoding failed
+    #[error("encoding failed with {0:?}")]
+    Encoding(EncodeError),
+}

@@ -1,0 +1,338 @@
+//! Utility to deduplicate batches of incoming network packets.
+
+use {
+    crate::packet::PacketBatch,
+    ahash::RandomState,
+    arc_swap::ArcSwap,
+    rand::Rng,
+    std::{
+        hash::Hash,
+        iter::repeat_with,
+        marker::PhantomData,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::{Duration, Instant},
+    },
+};
+
+pub struct Deduper<const K: usize, T: ?Sized> {
+    num_bits: u64,
+    bits: Vec<AtomicU64>,
+    state: ArcSwap<DeduperGeneration<K>>,
+    popcount: AtomicU64, // Number of one bits in self.bits.
+    reset_guard: Mutex<()>,
+    _phantom: PhantomData<T>,
+}
+
+struct DeduperGeneration<const K: usize> {
+    random_states: [RandomState; K],
+    started_at: Instant,
+}
+
+impl<const K: usize> DeduperGeneration<K> {
+    fn new<R: Rng>(rng: &mut R) -> Self {
+        Self {
+            random_states: new_random_states(rng),
+            started_at: Instant::now(),
+        }
+    }
+}
+
+impl<const K: usize, T: ?Sized + Hash> Deduper<K, T> {
+    pub fn new<R: Rng>(rng: &mut R, num_bits: u64) -> Self {
+        let size = num_bits.checked_add(63).unwrap() / 64;
+        let size = usize::try_from(size).unwrap();
+        Self {
+            num_bits,
+            state: ArcSwap::from_pointee(DeduperGeneration::new(rng)),
+            bits: repeat_with(AtomicU64::default).take(size).collect(),
+            popcount: AtomicU64::default(),
+            reset_guard: Mutex::default(),
+            _phantom: PhantomData::<T>,
+        }
+    }
+
+    fn false_positive_rate(&self) -> f64 {
+        let popcount = self.popcount.load(Ordering::Relaxed);
+        let ones_ratio = popcount.min(self.num_bits) as f64 / self.num_bits as f64;
+        ones_ratio.powi(K as i32)
+    }
+
+    /// Reset is not synchronized with concurrent `dedup()` calls. A caller can
+    /// see an inconsistent snapshot across the old/new hash state and the
+    /// cleared/refilled bitset, but that is acceptable because reset already
+    /// starts a fresh deduplication window.
+    fn reset<R: Rng>(&self, rng: &mut R) {
+        for bits in &self.bits {
+            bits.store(0, Ordering::Relaxed);
+        }
+        self.popcount.store(0, Ordering::Relaxed);
+        self.state.store(Arc::new(DeduperGeneration::new(rng)));
+    }
+
+    /// Resets the Deduper if either it is older than the reset_cycle or it is
+    /// saturated enough that false positive rate exceeds specified threshold.
+    ///
+    /// This is not intended to be run in parallel with other resets, only in
+    /// parallel with `dedup()` calls.
+    ///
+    /// Returns true if the deduper was saturated.
+    pub fn maybe_reset<R: Rng>(
+        &self,
+        rng: &mut R,
+        false_positive_rate: f64,
+        reset_cycle: Duration,
+    ) -> bool {
+        assert!(0.0 < false_positive_rate && false_positive_rate < 1.0);
+        let _reset_guard = self.reset_guard.lock().unwrap();
+        let saturated = self.false_positive_rate() >= false_positive_rate;
+        if saturated || self.state.load().started_at.elapsed() >= reset_cycle {
+            self.reset(rng);
+        }
+        saturated
+    }
+
+    // Returns true if the data is duplicate.
+    #[must_use]
+    #[allow(clippy::arithmetic_side_effects)]
+    pub fn dedup(&self, data: &T) -> bool {
+        let mut out = true;
+        let state = self.state.load();
+        for random_state in state.random_states.iter() {
+            let hash: u64 = random_state.hash_one(data) % self.num_bits;
+            let index = (hash >> 6) as usize;
+            let mask: u64 = 1u64 << (hash & 63);
+            let old = self.bits[index].fetch_or(mask, Ordering::Relaxed);
+            if old & mask == 0u64 {
+                self.popcount.fetch_add(1, Ordering::Relaxed);
+                out = false;
+            }
+        }
+        out
+    }
+}
+
+fn new_random_states<const K: usize, R: Rng>(rng: &mut R) -> [RandomState; K] {
+    std::array::from_fn(|_| new_random_state(rng))
+}
+
+fn new_random_state<R: Rng>(rng: &mut R) -> RandomState {
+    RandomState::with_seeds(rng.random(), rng.random(), rng.random(), rng.random())
+}
+
+pub fn dedup_packets_and_count_discards<const K: usize>(
+    deduper: &Deduper<K, [u8]>,
+    batches: &mut [PacketBatch],
+) -> u64 {
+    batches
+        .iter_mut()
+        .flat_map(|batch| batch.iter_mut())
+        .map(|packet| {
+            if !packet.meta().discard()
+                && packet
+                    .data(..)
+                    .map(|data| deduper.dedup(data))
+                    .unwrap_or(true)
+            {
+                packet.meta_mut().set_discard(true);
+            }
+            u64::from(packet.meta().discard())
+        })
+        .sum()
+}
+
+#[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
+mod tests {
+    use {
+        super::*,
+        crate::{
+            packet::{PACKET_DATA_SIZE, to_packet_batches},
+            sigverify,
+            test_tx::test_tx,
+        },
+        agave_random::range::random_u64_range,
+        rand::SeedableRng as _,
+        rand_chacha::ChaChaRng,
+        test_case::test_case,
+    };
+
+    const NUM_BITS: u64 = 63_999_979;
+
+    #[test]
+    fn test_dedup_same() {
+        let tx = test_tx();
+
+        let mut batches =
+            to_packet_batches(&std::iter::repeat_n(tx, 1024).collect::<Vec<_>>(), 128);
+        let packet_count = sigverify::count_packets_in_batches(&batches);
+        let mut rng = rand::rng();
+        let filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
+        let discard = dedup_packets_and_count_discards(&filter, &mut batches) as usize;
+        assert_eq!(packet_count, discard + 1);
+    }
+
+    #[test]
+    fn test_dedup_diff() {
+        let mut rng = rand::rng();
+        let filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
+        let mut batches = to_packet_batches(&(0..1024).map(|_| test_tx()).collect::<Vec<_>>(), 128);
+        let discard = dedup_packets_and_count_discards(&filter, &mut batches) as usize;
+        // because dedup uses a threadpool, there maybe up to N threads of txs that go through
+        assert_eq!(discard, 0);
+        assert!(!filter.maybe_reset(
+            &mut rng,
+            0.001,                    // false_positive_rate
+            Duration::from_millis(0), // reset_cycle
+        ));
+        for i in filter.bits {
+            assert_eq!(i.load(Ordering::Relaxed), 0);
+        }
+    }
+
+    fn get_capacity<const K: usize>(num_bits: u64, false_positive_rate: f64) -> u64 {
+        (num_bits as f64 * false_positive_rate.powf(1f64 / K as f64)) as u64
+    }
+
+    #[test]
+    fn test_dedup_saturated() {
+        // Use smaller value to saturate the deduper quicker.
+        const NUM_BITS: u64 = 1_000_000;
+        const FALSE_POSITIVE_RATE: f64 = 0.001;
+        let mut rng = rand::rng();
+        let filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
+        let capacity = get_capacity::<2>(NUM_BITS, FALSE_POSITIVE_RATE);
+        let mut discard = 0;
+        assert!(filter.popcount.load(Ordering::Relaxed) < capacity);
+        for i in 0..1000 {
+            let mut batches =
+                to_packet_batches(&(0..1000).map(|_| test_tx()).collect::<Vec<_>>(), 128);
+            discard += dedup_packets_and_count_discards(&filter, &mut batches) as usize;
+            trace!("{i} {discard}");
+            if filter.popcount.load(Ordering::Relaxed) > capacity {
+                break;
+            }
+        }
+        assert!(filter.popcount.load(Ordering::Relaxed) > capacity);
+        assert!(filter.false_positive_rate() >= FALSE_POSITIVE_RATE);
+        assert!(filter.maybe_reset(
+            &mut rng,
+            FALSE_POSITIVE_RATE,
+            Duration::from_millis(0), // reset_cycle
+        ));
+        assert_eq!(filter.popcount.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_reset_reseeds() {
+        let mut rng = ChaChaRng::from_seed([0u8; 32]);
+        let deduper = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
+        let data: &[u8] = b"reseed reset test";
+        let hashes_before_reset = deduper
+            .state
+            .load()
+            .random_states
+            .iter()
+            .map(|state| state.hash_one(data))
+            .collect::<Vec<_>>();
+        assert!(!deduper.dedup(data));
+        assert!(deduper.dedup(data));
+
+        deduper.reset(&mut rng);
+
+        let hashes_after_reset = deduper
+            .state
+            .load()
+            .random_states
+            .iter()
+            .map(|state| state.hash_one(data))
+            .collect::<Vec<_>>();
+        assert_ne!(hashes_before_reset, hashes_after_reset);
+        assert_eq!(deduper.popcount.load(Ordering::Relaxed), 0);
+        assert!(!deduper.dedup(data));
+        assert!(deduper.dedup(data));
+    }
+
+    #[test]
+    fn test_dedup_false_positive() {
+        let mut rng = rand::rng();
+        let filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
+        let mut discard = 0;
+        for i in 0..10 {
+            let mut batches =
+                to_packet_batches(&(0..1024).map(|_| test_tx()).collect::<Vec<_>>(), 128);
+            discard += dedup_packets_and_count_discards(&filter, &mut batches) as usize;
+            debug!("false positive rate: {}/{}", discard, i * 1024);
+        }
+        //allow for 1 false positive even if extremely unlikely
+        assert!(discard < 2);
+    }
+
+    #[test_case(63_999_979, 0.001, 2_023_857)]
+    #[test_case(622_401_961, 0.001, 19_682_078)]
+    #[test_case(622_401_979, 0.001, 19_682_078)]
+    #[test_case(629_145_593, 0.001, 19_895_330)]
+    #[test_case(632_455_543, 0.001, 20_000_000)]
+    #[test_case(637_534_199, 0.001, 20_160_601)]
+    #[test_case(622_401_961, 0.0001, 6_224_019)]
+    #[test_case(622_401_979, 0.0001, 6_224_019)]
+    #[test_case(629_145_593, 0.0001, 6_291_455)]
+    #[test_case(632_455_543, 0.0001, 6_324_555)]
+    #[test_case(637_534_199, 0.0001, 6_375_341)]
+    fn test_dedup_capacity(num_bits: u64, false_positive_rate: f64, capacity: u64) {
+        let mut rng = rand::rng();
+        assert_eq!(get_capacity::<2>(num_bits, false_positive_rate), capacity);
+        let deduper = Deduper::<2, [u8]>::new(&mut rng, num_bits);
+        assert_eq!(deduper.false_positive_rate(), 0.0);
+        deduper.popcount.store(capacity, Ordering::Relaxed);
+        assert!(deduper.false_positive_rate() < false_positive_rate);
+        deduper.popcount.store(capacity + 1, Ordering::Relaxed);
+        assert!(deduper.false_positive_rate() >= false_positive_rate);
+        assert!(deduper.maybe_reset(
+            &mut rng,
+            false_positive_rate,
+            Duration::from_millis(0), // reset_cycle
+        ));
+        assert_eq!(deduper.popcount.load(Ordering::Relaxed), 0);
+    }
+
+    #[test_case([0xf9; 32],  3_199_997,  51_414)]
+    #[test_case([0xdc; 32],  3_200_003,  51_414)]
+    #[test_case([0xa5; 32],  6_399_971, 102_828)]
+    #[test_case([0xdb; 32],  6_400_013, 102_828)]
+    #[test_case([0xcd; 32], 12_799_987, 205_655)]
+    #[test_case([0xc3; 32], 12_800_009, 205_656)]
+    fn test_dedup_seeded(seed: [u8; 32], num_bits: u64, num_packets: usize) {
+        const FALSE_POSITIVE_RATE: f64 = 0.001;
+        let mut rng = ChaChaRng::from_seed(seed);
+        let deduper = Deduper::<2, [u8]>::new(&mut rng, num_bits);
+        assert!((num_packets as u64) < get_capacity::<2>(num_bits, FALSE_POSITIVE_RATE));
+        let mut buffer = [0u8; PACKET_DATA_SIZE];
+        let mut dup_count = 0usize;
+        for _ in 0..num_packets {
+            let size = random_u64_range(&mut rng, 0..PACKET_DATA_SIZE as u64) as usize;
+            let data = &mut buffer[..size];
+            rng.fill(&mut *data);
+            if deduper.dedup(data) {
+                dup_count += 1;
+            }
+            assert!(deduper.dedup(data));
+        }
+        // `ahash` output varies with its target-specific implementation. Check
+        // distribution quality instead of pinning exact false-positive and bit
+        // counts to one build configuration.
+        assert!(dup_count < num_packets / 100);
+        let popcount = deduper.popcount.load(Ordering::Relaxed);
+        let max_popcount = 2 * (num_packets - dup_count) as u64;
+        assert!(popcount <= max_popcount);
+        assert!(popcount > max_popcount * 95 / 100);
+        assert!(deduper.false_positive_rate() < FALSE_POSITIVE_RATE);
+        assert!(!deduper.maybe_reset(
+            &mut rng,
+            FALSE_POSITIVE_RATE,
+            Duration::from_millis(0), // reset_cycle
+        ));
+    }
+}

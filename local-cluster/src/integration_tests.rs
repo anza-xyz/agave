@@ -1,0 +1,424 @@
+//! Code used by the integration tests in the `local-cluster/tests` folder.
+//!
+//! According to the cargo documentation, integration tests are compiled as individual crates.
+//!
+//!   https://doc.rust-lang.org/book/ch11-03-test-organization.html#the-tests-directory
+//!
+//! Putting shared code into the `tests/` folder, causes it to be recompiled for every test, rather
+//! than being compiled once when it is part of the main crate.  And, at the same time, unused code
+//! analysis is broken, as it is literally included.  If a shared function is not used in one of the
+//! integration tests, it will be flagged as unused, when compiling this test crate.
+
+use {
+    crate::{
+        cluster_tests,
+        local_cluster::{ClusterConfig, LocalCluster},
+        validator_configs::*,
+    },
+    agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
+    arc_swap::ArcSwap,
+    log::*,
+    solana_account::AccountSharedData,
+    solana_accounts_db::utils::create_accounts_run_dir,
+    solana_clock::{self as clock, DEFAULT_TICKS_PER_SLOT},
+    solana_core::{
+        snapshot_packager_service::SnapshotPackagerService,
+        validator::{ValidatorConfig, is_snapshot_config_valid},
+    },
+    solana_gossip::gossip_service::discover_validators,
+    solana_keypair::Keypair,
+    solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
+    solana_ledger::{
+        blockstore::Blockstore,
+        blockstore_options::{AccessType, BlockstoreOptions},
+        shred::filter::{TurbineMode, TurbineModeKind},
+    },
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_pubkey::Pubkey,
+    solana_rpc_client::rpc_client::RpcClient,
+    solana_signer::Signer,
+    std::{
+        collections::{HashMap, HashSet},
+        fs, iter,
+        net::SocketAddr,
+        num::{NonZeroU64, NonZeroUsize},
+        path::{Path, PathBuf},
+        sync::{Arc, atomic::AtomicBool},
+        thread::sleep,
+        time::Duration,
+    },
+    tempfile::TempDir,
+};
+
+pub const RUST_LOG_FILTER: &str =
+    "error,solana_core::replay_stage=warn,solana_local_cluster=info,local_cluster=info";
+
+pub const AG_DEBUG_LOG_FILTER: &str =
+    "error,solana_core::replay_stage=info,solana_local_cluster=info,local_cluster=info,\
+     solana_core::block_creation_loop=trace,agave_votor=trace,agave_votor::voting_service=info,\
+     agave_votor::vote_history_storage=info,solana_core::validator=info,\
+     agave_votor::consensus_metrics=info,solana_core::consensus=info,\
+     solana_ledger::blockstore_processor=info";
+pub const DEFAULT_NODE_STAKE: u64 = 10 * LAMPORTS_PER_SOL;
+
+#[derive(Clone)]
+pub struct ValidatorKeys {
+    pub node_keypair: Arc<Keypair>,
+    pub vote_keypair: Arc<Keypair>,
+}
+
+impl ValidatorKeys {
+    pub fn new() -> Self {
+        Self {
+            node_keypair: Arc::new(Keypair::new()),
+            vote_keypair: Arc::new(Keypair::new()),
+        }
+    }
+}
+
+impl From<&ValidatorKeys> for SlotLeader {
+    fn from(validator_keys: &ValidatorKeys) -> Self {
+        SlotLeader {
+            id: validator_keys.node_keypair.pubkey(),
+            vote_address: validator_keys.vote_keypair.pubkey(),
+        }
+    }
+}
+pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
+    Blockstore::open_with_options(
+        ledger_path,
+        BlockstoreOptions {
+            access_type: AccessType::Primary,
+            recovery_mode: None,
+            ..BlockstoreOptions::default()
+        },
+    )
+    // Fall back on ReadOnly if Primary fails; Primary will fail if
+    // a handle to Blockstore is being held somewhere else
+    .unwrap_or_else(|_| {
+        Blockstore::open_with_options(
+            ledger_path,
+            BlockstoreOptions {
+                access_type: AccessType::ReadOnly,
+                recovery_mode: None,
+                ..BlockstoreOptions::default()
+            },
+        )
+        .unwrap_or_else(|e| {
+            panic!("Failed to open ledger at {ledger_path:?}, err: {e}");
+        })
+    })
+}
+
+fn create_custom_leader_schedule(
+    slot_leader_to_slots: impl Iterator<Item = (SlotLeader, usize)>,
+) -> LeaderSchedule {
+    let mut leader_schedule = vec![];
+    for (leader, num_slots) in slot_leader_to_slots {
+        for _ in 0..num_slots {
+            leader_schedule.push(leader)
+        }
+    }
+
+    info!("leader_schedule: {}", leader_schedule.len());
+    LeaderSchedule::new_from_schedule(leader_schedule, NonZeroUsize::new(1).unwrap())
+}
+
+pub fn create_custom_leader_schedule_with_random_keys(
+    validator_num_slots: &[usize],
+) -> (LeaderSchedule, Vec<ValidatorKeys>) {
+    let validator_keys: Vec<_> = iter::repeat_with(ValidatorKeys::new)
+        .take(validator_num_slots.len())
+        .collect();
+    let leader_schedule = create_custom_leader_schedule(
+        validator_keys
+            .iter()
+            .map(SlotLeader::from)
+            .zip(validator_num_slots.iter().cloned()),
+    );
+    (leader_schedule, validator_keys)
+}
+
+/// Simulates a network partition test scenario by creating a cluster, triggering a partition,
+/// allowing the partition to heal, and then verifying the network's ability to recover and
+/// achieve consensus after the partition is resolved.
+///
+/// This function:
+/// 1. Creates a local cluster with nodes configured according to the provided stakes
+/// 2. Induces a network partition by disabling communication between validators
+/// 3. Runs the partition for a predetermined duration
+/// 4. Resolves the partition by re-enabling communication
+/// 5. Verifies the network can recover and continue to make progress
+///
+/// # Arguments
+/// * `partitions` - A slice of partition configurations, where each usize represents a validator's
+///   stake weight. This determines the relative voting power of each node in the network.
+/// * `leader_schedule` - An option that specifies whether the cluster should run with a fixed,
+///   predetermined leader schedule. If provided, the partition will last for one complete
+///   iteration of the leader schedule.
+/// * `context` - A user-defined context object that is passed to the callback functions.
+/// * `on_partition_start` - Callback function that runs when the partition begins. Can be used
+///   to perform custom actions or checks at the start of the partition.
+/// * `on_before_partition_resolved` - Callback function that runs just before the partition
+///   is resolved. Can be used to verify partition state or prepare for resolution.
+/// * `on_partition_resolved` - Callback function that runs after the partition is resolved and
+///   the network has had time to recover. Can be used to verify recovery.
+/// * `ticks_per_slot` - Optional override for the default ticks per slot. Controls the
+///   rate at which slots advance in the cluster.
+/// * `additional_accounts` - Additional accounts to be added to the genesis configuration.
+#[allow(clippy::cognitive_complexity, clippy::too_many_arguments)]
+pub fn run_cluster_partition<C>(
+    partitions: &[usize],
+    leader_schedule: Option<(LeaderSchedule, Vec<ValidatorKeys>)>,
+    mut context: C,
+    on_partition_start: impl FnOnce(&mut LocalCluster, &mut C),
+    on_before_partition_resolved: impl FnOnce(&mut LocalCluster, &mut C),
+    on_partition_resolved: impl FnOnce(&mut LocalCluster, &mut C),
+    ticks_per_slot: Option<u64>,
+    no_wait_for_vote_to_start_leader: bool,
+    additional_accounts: Vec<(Pubkey, AccountSharedData)>,
+) {
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    info!("PARTITION_TEST!");
+    let num_nodes = partitions.len();
+    let node_stakes: Vec<_> = partitions
+        .iter()
+        .map(|stake_weight| 100 * *stake_weight as u64)
+        .collect();
+    assert_eq!(node_stakes.len(), num_nodes);
+    let mint_lamports = crate::local_cluster::DEFAULT_MINT_LAMPORTS
+        + node_stakes.iter().sum::<u64>().saturating_mul(2);
+    let turbine_mode = TurbineMode::new(TurbineModeKind::Enabled);
+    let wait_for_supermajority = if no_wait_for_vote_to_start_leader {
+        // This helps nodes get a little more in sync by waiting for
+        // supermajority to observe slot 0. It still doesn't provide perfect
+        // synchronization because there is quite a bit of work todo after the
+        // sync point before nodes are fully operational.
+        Some(0)
+    } else {
+        // If we sync nodes on a slot, this overrides the flag to wait on
+        // building blocks until the node votes. But waiting for the bootstrap
+        // to build a block provides greater synchronization (less
+        // partitioning), so let that take precedence for these tests.
+        None
+    };
+    let mut validator_config = ValidatorConfig {
+        wait_for_supermajority,
+        no_wait_for_vote_to_start_leader,
+        turbine_mode: turbine_mode.clone(),
+        ..ValidatorConfig::default_for_test()
+    };
+
+    let (validator_keys, partition_duration): (Vec<_>, Duration) = {
+        if let Some((leader_schedule, validator_keys)) = leader_schedule {
+            assert_eq!(validator_keys.len(), num_nodes);
+            let num_slots_per_rotation = leader_schedule.num_slots() as u64;
+            let fixed_schedule = FixedSchedule {
+                leader_schedule: Arc::new(leader_schedule),
+            };
+            validator_config.fixed_leader_schedule = Some(fixed_schedule);
+            (
+                validator_keys,
+                // partition for the duration of one full iteration of the  leader schedule
+                Duration::from_millis(num_slots_per_rotation * clock::DEFAULT_MS_PER_SLOT),
+            )
+        } else {
+            (
+                iter::repeat_with(ValidatorKeys::new)
+                    .take(partitions.len())
+                    .collect(),
+                // Approximately enough time to run through a leader span for all nodes
+                Duration::from_secs(10),
+            )
+        }
+    };
+
+    // Always ensure at least one node is allowed to build blocks.
+    let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
+    validator_configs
+        .first_mut()
+        .unwrap()
+        .no_wait_for_vote_to_start_leader = true;
+    let slots_per_epoch = 2048;
+    // Shared handle to the votor peer-socket override maps on each validator.
+    // We populate it below to blackhole all peers (simulating a partition),
+    // then clear it to heal the cluster.
+    // Every validator's cache reads this same handle on each refresh.
+    let alpenglow_port_override = Arc::new(ArcSwap::from_pointee(HashMap::new()));
+    for config in &mut validator_configs {
+        config.votor_peer_overrides = alpenglow_port_override.clone();
+    }
+    let mut config = ClusterConfig {
+        mint_lamports,
+        node_stakes,
+        validator_configs,
+        validator_keys: Some(
+            validator_keys
+                .into_iter()
+                .zip(iter::repeat_with(|| true))
+                .collect(),
+        ),
+        slots_per_epoch,
+        stakers_slot_offset: slots_per_epoch,
+        skip_warmup_slots: true,
+        additional_accounts,
+        ticks_per_slot: ticks_per_slot.unwrap_or(DEFAULT_TICKS_PER_SLOT),
+        ..ClusterConfig::default()
+    };
+
+    info!(
+        "PARTITION_TEST starting cluster with {:?} partitions slots_per_epoch: {}",
+        partitions, config.slots_per_epoch,
+    );
+
+    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+
+    info!("PARTITION_TEST spend_and_verify_all_nodes(), ensure all nodes are caught up");
+    cluster_tests::spend_and_verify_all_nodes(
+        &cluster.entry_point_info,
+        &cluster.funding_keypair,
+        num_nodes,
+        HashSet::new(),
+        SocketAddrSpace::Unspecified,
+        &cluster_tests::TpuSender::new(),
+    );
+
+    let cluster_nodes = discover_validators(
+        &cluster.entry_point_info.gossip().unwrap(),
+        num_nodes,
+        cluster.entry_point_info.shred_version(),
+        SocketAddrSpace::Unspecified,
+    )
+    .unwrap();
+
+    // Check each node reports epochs that have correct number of slots
+    info!("PARTITION_TEST sleeping until partition starting condition",);
+    for node in &cluster_nodes {
+        let node_client = RpcClient::new_socket(node.rpc().unwrap());
+        let epoch_info = node_client.get_epoch_info().unwrap();
+        assert_eq!(epoch_info.slots_in_epoch, slots_per_epoch);
+    }
+
+    info!("PARTITION_TEST start partition");
+    on_partition_start(&mut cluster, &mut context);
+    turbine_mode.set(TurbineModeKind::TurbineAndRepairDisabled);
+
+    // Make all to all votes/certs not able to reach each other by overriding the
+    // alpenglow port override to SocketAddr which no one is listening on.
+    let blackhole_socket = bind_to_localhost_unique().unwrap();
+    let blackhole_addr: SocketAddr = blackhole_socket.local_addr().unwrap();
+    let new_override: HashMap<_, _> = cluster_nodes
+        .iter()
+        .map(|node| (*node.pubkey(), Some(blackhole_addr)))
+        .collect();
+    alpenglow_port_override.store(Arc::new(new_override));
+    sleep(partition_duration);
+
+    on_before_partition_resolved(&mut cluster, &mut context);
+    info!("PARTITION_TEST remove partition");
+    turbine_mode.set(TurbineModeKind::Enabled);
+    // Restore the alpenglow port override to the default, so that the nodes can communicate again.
+    alpenglow_port_override.store(Arc::new(HashMap::new()));
+
+    // Give partitions time to propagate their blocks from during the partition
+    // after the partition resolves
+    let propagation_duration = partition_duration + Duration::from_secs(5);
+    info!(
+        "PARTITION_TEST waiting for blocks to propagate after partition {}ms",
+        propagation_duration.as_millis()
+    );
+    sleep(propagation_duration);
+    info!("PARTITION_TEST resuming normal operation");
+    on_partition_resolved(&mut cluster, &mut context);
+}
+
+pub fn farf_dir() -> PathBuf {
+    std::env::var("FARF_DIR")
+        .unwrap_or_else(|_| "farf".to_string())
+        .into()
+}
+
+pub fn generate_account_paths(num_account_paths: usize) -> (Vec<TempDir>, Vec<PathBuf>) {
+    let account_storage_dirs: Vec<TempDir> = (0..num_account_paths)
+        .map(|_| tempfile::tempdir_in(farf_dir()).unwrap())
+        .collect();
+    let account_storage_paths: Vec<_> = account_storage_dirs
+        .iter()
+        .map(|a| create_accounts_run_dir(a.path()).unwrap())
+        .collect();
+    (account_storage_dirs, account_storage_paths)
+}
+
+pub struct SnapshotValidatorConfig {
+    pub bank_snapshots_dir: TempDir,
+    pub full_snapshot_archives_dir: TempDir,
+    pub incremental_snapshot_archives_dir: TempDir,
+    pub account_storage_dirs: Vec<TempDir>,
+    pub validator_config: ValidatorConfig,
+}
+
+impl SnapshotValidatorConfig {
+    pub fn new(
+        full_snapshot_archive_interval: SnapshotInterval,
+        incremental_snapshot_archive_interval: SnapshotInterval,
+        num_account_paths: usize,
+    ) -> SnapshotValidatorConfig {
+        // Ensure that some snapshots will be created
+        assert_ne!(full_snapshot_archive_interval, SnapshotInterval::Disabled);
+
+        // Create the snapshot config
+        let _ = fs::create_dir_all(farf_dir());
+        let bank_snapshots_dir = tempfile::tempdir_in(farf_dir()).unwrap();
+        let full_snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
+        let incremental_snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archive_interval,
+            incremental_snapshot_archive_interval,
+            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .path()
+                .to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            maximum_full_snapshot_archives_to_retain: NonZeroUsize::new(usize::MAX).unwrap(),
+            maximum_incremental_snapshot_archives_to_retain: NonZeroUsize::new(usize::MAX).unwrap(),
+            ..SnapshotConfig::default()
+        };
+        assert!(is_snapshot_config_valid(&snapshot_config));
+
+        // Create the account paths
+        let (account_storage_dirs, account_storage_paths) =
+            generate_account_paths(num_account_paths);
+
+        // Create the validator config
+        let validator_config = ValidatorConfig {
+            snapshot_config,
+            account_paths: account_storage_paths,
+            validator_exit_backpressure: [(
+                SnapshotPackagerService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            )]
+            .into(),
+            ..ValidatorConfig::default_for_test()
+        };
+
+        SnapshotValidatorConfig {
+            bank_snapshots_dir,
+            full_snapshot_archives_dir,
+            incremental_snapshot_archives_dir,
+            account_storage_dirs,
+            validator_config,
+        }
+    }
+}
+
+pub fn setup_snapshot_validator_config(
+    snapshot_interval_slots: NonZeroU64,
+    num_account_paths: usize,
+) -> SnapshotValidatorConfig {
+    SnapshotValidatorConfig::new(
+        SnapshotInterval::Slots(snapshot_interval_slots),
+        SnapshotInterval::Disabled,
+        num_account_paths,
+    )
+}

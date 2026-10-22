@@ -1,0 +1,30 @@
+[package]
+name = "solana-tls-utils"
+description = "Solana TLS utilities"
+documentation = "https://docs.rs/solana-tls-utils"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+quinn = { workspace = true }
+rustls = { workspace = true, features = ["ring"] }
+rustls-webpki = { workspace = true }
+solana-keypair = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signer = { workspace = true }
+
+[lints]
+workspace = true

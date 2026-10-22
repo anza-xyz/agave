@@ -1,0 +1,360 @@
+use {
+    crate::weighted_shuffle::WeightedShuffle,
+    indexmap::IndexMap,
+    rand::Rng,
+    solana_bloom::bloom::{Bloom, ConcurrentBloom},
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_pubkey::Pubkey,
+    std::collections::HashMap,
+};
+
+const NUM_PUSH_ACTIVE_SET_ENTRIES: usize = 25;
+
+// Each entry corresponds to a stake bucket for
+//     min stake of { this node, crds value owner }
+// The entry represents set of gossip nodes to actively
+// push to for crds values belonging to the bucket.
+#[derive(Default)]
+pub(crate) struct PushActiveSet([PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES]);
+
+// Keys are gossip nodes to push messages to.
+// Values are which origins the node has pruned.
+#[derive(Default)]
+struct PushActiveSetEntry(IndexMap</*node:*/ Pubkey, /*origins:*/ ConcurrentBloom<Pubkey>>);
+
+impl PushActiveSet {
+    const MIN_NUM_BLOOM_ITEMS: usize = crate::cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY;
+
+    pub(crate) fn get_nodes<'a>(
+        &'a self,
+        pubkey: &'a Pubkey, // This node.
+        origin: &'a Pubkey, // CRDS value owner.
+        stakes: &HashMap<Pubkey, u64>,
+    ) -> impl Iterator<Item = &'a Pubkey> + 'a + use<'a> {
+        let stake = stakes.get(pubkey).min(stakes.get(origin));
+        self.get_entry(stake).get_nodes(pubkey, origin)
+    }
+
+    // Prunes origins for the given gossip node.
+    // We will stop pushing messages from the specified origins to the node.
+    pub(crate) fn prune(
+        &self,
+        pubkey: &Pubkey,    // This node.
+        node: &Pubkey,      // Gossip node.
+        origins: &[Pubkey], // CRDS value owners.
+        stakes: &HashMap<Pubkey, u64>,
+    ) {
+        let stake = stakes.get(pubkey);
+        for origin in origins {
+            if origin == pubkey {
+                continue;
+            }
+            let stake = stake.min(stakes.get(origin));
+            self.get_entry(stake).prune(node, origin)
+        }
+    }
+
+    pub(crate) fn rotate<R: Rng>(
+        &mut self,
+        rng: &mut R,
+        size: usize, // Number of nodes to retain in each active-set entry.
+        cluster_size: usize,
+        // Gossip nodes to be sampled for each push active set.
+        nodes: impl IntoIterator<Item = (u64 /* stake */, Pubkey)>,
+    ) {
+        let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
+        // Active set of nodes to push to are sampled from these gossip nodes,
+        // using sampling probabilities obtained from the stake bucket of each
+        // node.
+        let (pubkeys, buckets): (Vec<_>, Vec<_>) = nodes
+            .into_iter()
+            .map(|(stake, pubkey)| (pubkey, get_stake_bucket(Some(&stake))))
+            .unzip();
+        // (k, entry) represents push active set where the stake bucket of
+        //     min stake of {this node, crds value owner}
+        // is equal to `k`. The `entry` maintains set of gossip nodes to
+        // actively push to for crds values belonging to this bucket.
+        for (k, entry) in self.0.iter_mut().enumerate() {
+            let weights = buckets.iter().map(|&bucket| {
+                // bucket <- get_stake_bucket(min stake of {
+                //  this node, crds value owner and gossip peer
+                // })
+                // weight <- (bucket + 1)^2
+                // min stake of {...} is a proxy for how much we care about
+                // the link, and tries to mirror similar logic on the
+                // receiving end when pruning incoming links:
+                // https://github.com/solana-labs/solana/blob/81394cf92/gossip/src/received_cache.rs#L100-L105
+                let bucket = bucket.min(k) as u64;
+                bucket.saturating_add(1).saturating_pow(2)
+            });
+            entry.rotate(rng, size, num_bloom_filter_items, &pubkeys, weights);
+        }
+    }
+
+    fn get_entry(&self, stake: Option<&u64>) -> &PushActiveSetEntry {
+        &self.0[get_stake_bucket(stake)]
+    }
+}
+
+impl PushActiveSetEntry {
+    const BLOOM_FALSE_RATE: f64 = 0.1;
+    const BLOOM_MAX_BITS: usize = 1024 * 8 * 4;
+
+    fn get_nodes<'a>(
+        &'a self,
+        pubkey: &'a Pubkey, // This node.
+        origin: &'a Pubkey, // CRDS value owner.
+    ) -> impl Iterator<Item = &'a Pubkey> + 'a {
+        let pubkey_eq_origin = pubkey == origin;
+        self.0
+            .iter()
+            .filter(move |(node, bloom_filter)| {
+                // Bloom filter can return false positive for origin == pubkey
+                // but a node should always be able to push its own values.
+                !bloom_filter.contains(origin) || (pubkey_eq_origin && &pubkey != node)
+            })
+            .map(|(node, _bloom_filter)| node)
+    }
+
+    fn prune(
+        &self,
+        node: &Pubkey,   // Gossip node.
+        origin: &Pubkey, // CRDS value owner
+    ) {
+        if let Some(bloom_filter) = self.0.get(node) {
+            bloom_filter.add(origin);
+        }
+    }
+
+    fn rotate<R: Rng>(
+        &mut self,
+        rng: &mut R,
+        size: usize, // Number of nodes to retain.
+        num_bloom_filter_items: usize,
+        nodes: &[Pubkey],
+        weights: impl ExactSizeIterator<Item = u64> + Clone,
+    ) {
+        debug_assert_eq!(nodes.len(), weights.len());
+        debug_assert!(weights.clone().all(|weight| weight != 0u64));
+        let mut weighted_shuffle = WeightedShuffle::new("rotate-active-set", weights);
+        for node in weighted_shuffle.shuffle(rng).map(|k| &nodes[k]) {
+            // We intend to discard the oldest/first entry in the index-map.
+            if self.0.len() > size {
+                break;
+            }
+            if self.0.contains_key(node) {
+                continue;
+            }
+            let bloom = ConcurrentBloom::from(Bloom::random(
+                num_bloom_filter_items,
+                Self::BLOOM_FALSE_RATE,
+                Self::BLOOM_MAX_BITS,
+            ));
+            bloom.add(node);
+            self.0.insert(*node, bloom);
+        }
+        // Drop the oldest entry while preserving the ordering of others.
+        while self.0.len() > size {
+            self.0.shift_remove_index(0);
+        }
+    }
+}
+
+// Maps stake to bucket index.
+fn get_stake_bucket(stake: Option<&u64>) -> usize {
+    let stake = stake.copied().unwrap_or_default() / LAMPORTS_PER_SOL;
+    let bucket = u64::BITS - stake.leading_zeros();
+    (bucket as usize).min(NUM_PUSH_ACTIVE_SET_ENTRIES - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*, agave_random::range::random_u64_range, itertools::iproduct, rand::SeedableRng,
+        rand_chacha::ChaCha8Rng, std::iter::repeat_with,
+    };
+
+    #[test]
+    fn test_get_stake_bucket() {
+        assert_eq!(get_stake_bucket(None), 0);
+        let buckets = [0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5];
+        for (k, bucket) in buckets.into_iter().enumerate() {
+            let stake = (k as u64) * LAMPORTS_PER_SOL;
+            assert_eq!(get_stake_bucket(Some(&stake)), bucket);
+        }
+        for (stake, bucket) in [
+            (4_194_303, 22),
+            (4_194_304, 23),
+            (8_388_607, 23),
+            (8_388_608, 24),
+        ] {
+            let stake = stake * LAMPORTS_PER_SOL;
+            assert_eq!(get_stake_bucket(Some(&stake)), bucket);
+        }
+        assert_eq!(
+            get_stake_bucket(Some(&u64::MAX)),
+            NUM_PUSH_ACTIVE_SET_ENTRIES - 1
+        );
+    }
+
+    #[test]
+    fn test_push_active_set() {
+        const CLUSTER_SIZE: usize = 117;
+        const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
+        let mut rng = ChaCha8Rng::from_seed([189u8; 32]);
+        let pubkey = Pubkey::new_unique();
+        let addrs: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
+        let nodes: Vec<(u64, Pubkey)> = repeat_with(|| random_u64_range(&mut rng, 1..MAX_STAKE))
+            .take(20)
+            .zip(addrs.iter().copied())
+            .collect();
+        let mut stakes: HashMap<_, _> = nodes.iter().map(|&(stake, addr)| (addr, stake)).collect();
+        stakes.insert(pubkey, random_u64_range(&mut rng, 1..MAX_STAKE));
+        let mut active_set = PushActiveSet::default();
+        assert!(active_set.0.iter().all(|entry| entry.0.is_empty()));
+        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, nodes.iter().copied());
+        assert!(active_set.0.iter().all(|entry| entry.0.len() == 5));
+        // Assert that for all entries, each filter already prunes the key.
+        for entry in &active_set.0 {
+            for (node, filter) in entry.0.iter() {
+                assert!(filter.contains(node));
+            }
+        }
+        let other = &addrs[17];
+        let origin = &addrs[5];
+        assert!(
+            active_set
+                .get_nodes(&pubkey, origin, &stakes)
+                .eq([17, 14, 11, 18, 16].into_iter().map(|k| &addrs[k]))
+        );
+        assert!(
+            active_set
+                .get_nodes(&pubkey, other, &stakes)
+                .eq([14, 11, 18, 16].into_iter().map(|k| &addrs[k]))
+        );
+        active_set.prune(&pubkey, &addrs[17], &[*origin], &stakes);
+        active_set.prune(&pubkey, &addrs[3], &[*origin], &stakes);
+        active_set.prune(&pubkey, &addrs[16], &[*origin], &stakes);
+        assert!(
+            active_set
+                .get_nodes(&pubkey, origin, &stakes)
+                .eq([14, 11, 18].into_iter().map(|k| &addrs[k]))
+        );
+        assert!(
+            active_set
+                .get_nodes(&pubkey, other, &stakes)
+                .eq([14, 11, 18, 16].into_iter().map(|k| &addrs[k]))
+        );
+        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, nodes.iter().copied());
+        assert!(active_set.0.iter().all(|entry| entry.0.len() == 7));
+        assert!(
+            active_set
+                .get_nodes(&pubkey, origin, &stakes)
+                .eq([14, 11, 18, 0, 1, 12].into_iter().map(|k| &addrs[k]))
+        );
+        assert!(
+            active_set
+                .get_nodes(&pubkey, other, &stakes)
+                .eq([14, 11, 18, 16, 0, 1, 12].into_iter().map(|k| &addrs[k]))
+        );
+        let origins = [*origin, *other];
+        active_set.prune(&pubkey, &addrs[18], &origins, &stakes);
+        active_set.prune(&pubkey, &addrs[0], &origins, &stakes);
+        active_set.prune(&pubkey, &addrs[3], &origins, &stakes);
+        assert!(
+            active_set
+                .get_nodes(&pubkey, origin, &stakes)
+                .eq([14, 11, 1, 12].into_iter().map(|k| &addrs[k]))
+        );
+        assert!(
+            active_set
+                .get_nodes(&pubkey, other, &stakes)
+                .eq([14, 11, 16, 1, 12].into_iter().map(|k| &addrs[k]))
+        );
+    }
+
+    #[test]
+    fn test_push_active_set_entry() {
+        const NUM_BLOOM_FILTER_ITEMS: usize = 100;
+        let mut rng = ChaCha8Rng::from_seed([147u8; 32]);
+        let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
+        let weights: Vec<_> = repeat_with(|| random_u64_range(&mut rng, 1..1000))
+            .take(20)
+            .collect();
+        let mut entry = PushActiveSetEntry::default();
+        entry.rotate(
+            &mut rng,
+            5, // size
+            NUM_BLOOM_FILTER_ITEMS,
+            &nodes,
+            weights.iter().copied(),
+        );
+        assert_eq!(entry.0.len(), 5);
+        let keys = [&nodes[6], &nodes[4], &nodes[16], &nodes[13], &nodes[2]];
+        assert!(entry.0.keys().eq(keys));
+        for (pubkey, origin) in iproduct!(&nodes, &nodes) {
+            if !keys.contains(&origin) {
+                assert!(entry.get_nodes(pubkey, origin).eq(keys));
+            } else {
+                assert!(
+                    entry
+                        .get_nodes(pubkey, origin)
+                        .eq(keys.into_iter().filter(|&key| key != origin))
+                );
+            }
+        }
+        // Assert that each filter already prunes the key.
+        for (node, filter) in entry.0.iter() {
+            assert!(filter.contains(node));
+        }
+        for (pubkey, origin) in iproduct!(&nodes, keys) {
+            assert!(
+                entry
+                    .get_nodes(pubkey, origin)
+                    .eq(keys.into_iter().filter(|&node| node != origin))
+            );
+        }
+        // Assert that prune excludes node from get.
+        let origin = &nodes[3];
+        entry.prune(&nodes[4], origin);
+        entry.prune(&nodes[13], origin);
+        entry.prune(&nodes[19], origin);
+        for pubkey in &nodes {
+            assert!(
+                entry.get_nodes(pubkey, origin).eq(keys
+                    .into_iter()
+                    .filter(|&&node| pubkey == origin || (node != nodes[4] && node != nodes[13])))
+            );
+        }
+        // Assert that rotate adds new nodes.
+        entry.rotate(
+            &mut rng,
+            5,
+            NUM_BLOOM_FILTER_ITEMS,
+            &nodes,
+            weights.iter().copied(),
+        );
+        let keys = [&nodes[4], &nodes[16], &nodes[13], &nodes[2], &nodes[10]];
+        assert!(entry.0.keys().eq(keys));
+        entry.rotate(
+            &mut rng,
+            6,
+            NUM_BLOOM_FILTER_ITEMS,
+            &nodes,
+            weights.iter().copied(),
+        );
+        let keys = [
+            &nodes[16], &nodes[13], &nodes[2], &nodes[10], &nodes[0], &nodes[3],
+        ];
+        assert!(entry.0.keys().eq(keys));
+        entry.rotate(
+            &mut rng,
+            4,
+            NUM_BLOOM_FILTER_ITEMS,
+            &nodes,
+            weights.iter().copied(),
+        );
+        let keys = [&nodes[2], &nodes[10], &nodes[0], &nodes[3]];
+        assert!(entry.0.keys().eq(keys));
+    }
+}

@@ -1,0 +1,388 @@
+//! The `packet` module defines data structures and methods to pull data from the network.
+#[cfg(unix)]
+use nix::poll::{PollFd, PollTimeout, poll};
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+))]
+use nix::{poll::ppoll, sys::time::TimeSpec};
+use {
+    crate::recvmmsg::{PacketBufferPool, recv_mmsg},
+    solana_net_utils::SocketAddrSpace,
+    std::{
+        io::{ErrorKind, Result},
+        net::UdpSocket,
+        time::{Duration, Instant},
+    },
+};
+pub use {
+    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::{
+        BytesPacket, BytesPacketBatch, Meta, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch,
+    },
+};
+
+/** Receive multiple messages from `sock` into buffer provided in `batch`.
+This is a wrapper around recvmmsg(7) call.
+
+ This function is *supposed to* timeout in 1 second and *may* block forever
+ due to a bug in the linux kernel.
+ You may want to call `sock.set_read_timeout(Some(Duration::from_secs(1)));` or similar
+ prior to calling this function if you require this to actually time out after 1 second.
+*/
+#[cfg(not(unix))]
+pub(crate) fn recv_from(
+    batch: &mut BytesPacketBatch,
+    socket: &UdpSocket,
+    // If max_wait is None, reads from the socket until either:
+    //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
+    //   * There are no more data available to read from the socket.
+    max_wait: Option<Duration>,
+    pool: &mut PacketBufferPool,
+) -> Result<usize> {
+    batch.clear();
+    //DOCUMENTED SIDE-EFFECT
+    //Performance out of the IO without poll
+    //  * block on the socket until it's readable
+    //  * set the socket to non blocking
+    //  * read until it fails
+    //  * set it back to blocking before returning
+    socket.set_nonblocking(false)?;
+    trace!("receiving on {}", socket.local_addr().unwrap());
+    let should_wait = max_wait.is_some();
+    let start = should_wait.then(Instant::now);
+    loop {
+        match recv_mmsg(socket, batch, pool) {
+            Err(err) if !batch.is_empty() => {
+                if !should_wait && err.kind() == ErrorKind::WouldBlock {
+                    break;
+                }
+            }
+            Err(e) => {
+                trace!("recv_from err {e:?}");
+                return Err(e);
+            }
+            Ok(npkts) => {
+                // The batch is cleared on entry, so it holding exactly the packets of this
+                // call means this was the first one.
+                if batch.len() == npkts {
+                    socket.set_nonblocking(true)?;
+                }
+                trace!("got {npkts} packets");
+                // Try to batch into big enough buffers
+                // will cause less re-shuffling later on.
+                if batch.len() >= PACKETS_PER_BATCH {
+                    break;
+                }
+            }
+        }
+        if start.as_ref().map(Instant::elapsed) > max_wait {
+            break;
+        }
+    }
+    Ok(batch.len())
+}
+
+/// Receive multiple messages from `sock` into buffer provided in `batch`.
+/// This is a wrapper around recvmmsg(7) call.
+#[cfg(unix)]
+pub(crate) fn recv_from(
+    batch: &mut BytesPacketBatch,
+    socket: &UdpSocket,
+    // If max_wait is None, reads from the socket until either:
+    //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
+    //   * There are no more data available to read from the socket.
+    max_wait: Option<Duration>,
+    poll_fd: &mut [PollFd],
+    pool: &mut PacketBufferPool,
+) -> Result<usize> {
+    use crate::streamer::SOCKET_READ_TIMEOUT;
+
+    // Implementation note:
+    // This is a reimplementation of the above (now, non-unix) `recv_from` function, and
+    // is explicitly meant to preserve the existing behavior, refactored for performance.
+    //
+    // This implementation is broken into two separate functions:
+    // 1. `recv_from_coalesce` - when `max_wait` is provided.
+    // 2. `recv_from_once` - when `max_wait` is not provided.
+    //
+    // This is done to avoid excessive branching in the main loop.
+
+    /// The initial socket polling timeout.
+    ///
+    /// The socket will be polled for this duration in the event that the initial
+    /// `recv_mmsg` call fails with `WouldBlock`.
+    ///
+    /// This is meant to emulate the blocking behavior of the original `recv_from` function.
+    /// The original implementation explicitly sets the socket its given as blocking, and implicitly
+    /// expects that the caller will set `socket.set_read_timeout(Some(Duration::from_millis(SOCKET_READ_TIMEOUT)))`
+    /// some time before invocation.
+    ///
+    /// Given that we are using `poll` in this implementation, and we assume the socket is set to
+    /// non-blocking, we don't need to worry about `recv_mmsg` hanging indefinitely.
+    const SOCKET_READ_TIMEOUT_MS: u16 = SOCKET_READ_TIMEOUT.as_millis() as u16;
+
+    /// Read and batch packets from the socket until batch size is [`PACKETS_PER_BATCH`] or there are no more packets to read.
+    ///
+    /// Upon calling, this will attempt to read packets from the socket, and poll for [`SOCKET_READ_TIMEOUT`]
+    /// when [`ErrorKind::WouldBlock`] is encountered.
+    ///
+    /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered:
+    /// - If any packets were read, the function will exit.
+    /// - If no packets were read, the function will return an error.
+    fn recv_from_once(
+        batch: &mut BytesPacketBatch,
+        socket: &UdpSocket,
+        poll_fd: &mut [PollFd],
+        pool: &mut PacketBufferPool,
+    ) -> Result<usize> {
+        let mut did_poll = false;
+
+        loop {
+            match recv_mmsg(socket, batch, pool) {
+                Ok(_) => {
+                    if batch.len() >= PACKETS_PER_BATCH {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    // If we have read any packets, we can exit.
+                    if !batch.is_empty() {
+                        break;
+                    }
+                    // If we have already polled once, return the error.
+                    if did_poll {
+                        return Err(e);
+                    }
+                    did_poll = true;
+                    // If we have not read any packets or polled, poll for `SOCKET_READ_TIMEOUT`.
+                    if poll(poll_fd, PollTimeout::from(SOCKET_READ_TIMEOUT_MS))? == 0 {
+                        return Err(e);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(batch.len())
+    }
+
+    /// Read and batch packets from the socket until batch size is [`PACKETS_PER_BATCH`] or `max_wait` is reached.
+    ///
+    /// Upon calling, this will attempt to read packets from the socket, and poll for [`SOCKET_READ_TIMEOUT`]
+    /// when [`ErrorKind::WouldBlock`] is encountered.
+    ///
+    /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered, poll for the
+    /// saturating duration since the start of the loop.
+    fn recv_from_coalesce(
+        batch: &mut BytesPacketBatch,
+        socket: &UdpSocket,
+        max_wait: Duration,
+        poll_fd: &mut [PollFd],
+        pool: &mut PacketBufferPool,
+    ) -> Result<usize> {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+        ))]
+        const MIN_POLL_DURATION: Duration = Duration::from_micros(100);
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+        )))]
+        // `ppoll` is not supported on non-linuxish platforms, so we use `poll`, which only
+        // supports millisecond precision.
+        const MIN_POLL_DURATION: Duration = Duration::from_millis(1);
+        let deadline = Instant::now() + max_wait;
+        let mut did_poll = false;
+
+        loop {
+            match recv_mmsg(socket, batch, pool) {
+                Ok(_) => {
+                    if batch.len() >= PACKETS_PER_BATCH {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    let timeout = if batch.is_empty() && !did_poll {
+                        // This emulates the behavior of the original `recv_from` function,
+                        // where it anticipates that the first read of the socket will block for
+                        // `crate::streamer::SOCKET_READ_TIMEOUT` before failing with
+                        // `ErrorKind::WouldBlock`. An empty batch indicates that we are just
+                        // after the initial read, which did not result in any packets being read.
+                        did_poll = true;
+                        SOCKET_READ_TIMEOUT
+                    } else {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        // Avoid excessively short ppoll calls.
+                        if remaining < MIN_POLL_DURATION {
+                            // Deadline reached.
+                            break;
+                        }
+                        remaining
+                    };
+                    #[cfg(any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "dragonfly",
+                        target_os = "freebsd",
+                    ))]
+                    {
+                        // Use `ppoll` for its sub-millisecond precision, which ensures that
+                        // short coalescing waits (e.g., `max_wait` = 1ms, common in the codebase)
+                        // are effective.
+                        //
+                        // The `poll()` syscall takes an integer millisecond timeout. After a
+                        // `recv_mmsg` call, with `max_wait` = 1ms, the remaining wait time is
+                        // virtually guaranteed to be a sub-millisecond duration. `poll` would
+                        // truncate this remainder to 0ms, preventing any actual polling.
+                        // `ppoll` makes coalescing in 1ms windows actually viable.
+                        if ppoll(poll_fd, Some(TimeSpec::from_duration(timeout)), None)? == 0 {
+                            break;
+                        }
+                    }
+                    #[cfg(not(any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "dragonfly",
+                        target_os = "freebsd",
+                    )))]
+                    {
+                        if poll(poll_fd, PollTimeout::from(timeout.as_millis() as u16))? == 0 {
+                            break;
+                        }
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(batch.len())
+    }
+
+    trace!("receiving on {}", socket.local_addr().unwrap());
+
+    batch.clear();
+    let i = match max_wait {
+        Some(max_wait) => recv_from_coalesce(batch, socket, max_wait, poll_fd, pool),
+        None => recv_from_once(batch, socket, poll_fd, pool),
+    }?;
+
+    Ok(i)
+}
+pub fn send_to(
+    batch: &BytesPacketBatch,
+    socket: &UdpSocket,
+    socket_addr_space: &SocketAddrSpace,
+) -> Result<()> {
+    for p in batch.iter() {
+        let addr = p.meta().socket_addr();
+        if socket_addr_space.check(&addr)
+            && let Some(data) = p.data(..)
+        {
+            socket.send_to(data, addr)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::{recv_from as recv_from_impl, *},
+        bytes::Bytes,
+        solana_net_utils::sockets::bind_to_localhost_unique,
+        std::net::SocketAddr,
+    };
+
+    fn test_packet(dest: &SocketAddr, size: usize) -> BytesPacket {
+        let mut meta = Meta::default();
+        meta.size = size;
+        meta.set_socket_addr(dest);
+        BytesPacket::new(Bytes::from(vec![0u8; size]), meta)
+    }
+
+    fn recv_from(
+        batch: &mut BytesPacketBatch,
+        socket: &UdpSocket,
+        max_wait: Option<Duration>,
+    ) -> Result<usize> {
+        #[cfg(unix)]
+        {
+            use {nix::poll::PollFlags, std::os::fd::AsFd};
+
+            let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
+            recv_from_impl(
+                batch,
+                socket,
+                max_wait,
+                &mut poll_fd,
+                &mut PacketBufferPool::new(),
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            recv_from_impl(batch, socket, max_wait, &mut PacketBufferPool::new())
+        }
+    }
+
+    #[test]
+    pub fn packet_send_recv() {
+        agave_logger::setup();
+        let recv_socket = bind_to_localhost_unique().expect("should bind - receiver");
+        let addr = recv_socket.local_addr().unwrap();
+        let send_socket = bind_to_localhost_unique().expect("should bind - sender");
+        let saddr = send_socket.local_addr().unwrap();
+
+        let batch = BytesPacketBatch::from(vec![
+            test_packet(&addr, PACKET_DATA_SIZE);
+            PACKETS_PER_BATCH
+        ]);
+        send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
+
+        let mut batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
+        let recvd = recv_from(
+            &mut batch,
+            &recv_socket,
+            Some(Duration::from_millis(1)), // max_wait
+        )
+        .unwrap();
+        assert_eq!(recvd, batch.len());
+
+        for m in batch.iter() {
+            assert_eq!(m.meta().size, PACKET_DATA_SIZE);
+            assert_eq!(m.meta().socket_addr(), saddr);
+        }
+    }
+
+    #[test]
+    fn test_packet_resize() {
+        agave_logger::setup();
+        let recv_socket = bind_to_localhost_unique().expect("should bind - receiver");
+        let addr = recv_socket.local_addr().unwrap();
+        let send_socket = bind_to_localhost_unique().expect("should bind - sender");
+
+        // Should only get PACKETS_PER_BATCH packets per iteration even
+        // if a lot more were sent, and regardless of packet size
+        for _ in 0..2 * PACKETS_PER_BATCH {
+            let batch = BytesPacketBatch::from(vec![test_packet(&addr, 1)]);
+            send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
+        }
+        let mut batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
+        let recvd = recv_from(
+            &mut batch,
+            &recv_socket,
+            Some(Duration::from_millis(100)), // max_wait
+        )
+        .unwrap();
+        // Check we only got PACKETS_PER_BATCH packets
+        assert_eq!(recvd, PACKETS_PER_BATCH);
+        assert_eq!(batch.capacity(), PACKETS_PER_BATCH);
+    }
+}

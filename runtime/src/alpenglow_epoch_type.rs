@@ -1,0 +1,245 @@
+use {
+    crate::bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
+    solana_clock::{Epoch, Slot},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::system_program,
+    solana_vote::vote_account::VoteAccounts,
+    std::{cmp::Ordering, collections::HashMap, sync::LazyLock},
+    wincode::{SchemaRead, SchemaWrite},
+};
+
+/// For alpenglow rewards we only reward lamports earned in the previous epoch.
+/// For this prior epoch we need to know the delegated stake for each vote account.
+/// Note that this is not the same as `epoch_stakes`, which is calculated an epoch
+/// in advance.
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub(crate) struct RewardEpochDelegatedStakes {
+    pub(crate) epoch: Epoch,
+    pub(crate) delegated_stakes: HashMap<Pubkey, u64>,
+}
+
+#[derive(Debug, SchemaRead, SchemaWrite)]
+struct RewardEpochDelegatedStakesAccount {
+    pub(crate) epoch: Epoch,
+    pub(crate) delegated_stakes: Vec<RewardEpochDelegatedStake>,
+}
+
+#[derive(Debug, Clone, SchemaRead, SchemaWrite)]
+struct RewardEpochDelegatedStake {
+    pub(crate) vote_pubkey: Pubkey,
+    pub(crate) delegated_stake: u64,
+}
+
+/// The off-curve account where we store the bounded reward-epoch delegated stake
+/// denominators used for non-Tower reward recalculation after snapshot restore.
+pub(crate) static REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
+    let (pubkey, _) = Pubkey::find_program_address(
+        &[b"reward_epoch_delegated_stakes"],
+        &agave_feature_set::alpenglow::id(),
+    );
+    pubkey
+});
+
+impl RewardEpochDelegatedStakesAccount {
+    pub(crate) fn max_size() -> usize {
+        static REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT_MAX_SIZE: LazyLock<usize> =
+            LazyLock::new(|| {
+                let account = RewardEpochDelegatedStakesAccount {
+                    epoch: u64::MAX,
+                    delegated_stakes: vec![
+                        RewardEpochDelegatedStake {
+                            vote_pubkey: Pubkey::new_from_array([u8::MAX; 32]),
+                            delegated_stake: u64::MAX,
+                        };
+                        MAX_ALPENGLOW_VOTE_ACCOUNTS
+                    ],
+                };
+                wincode::serialized_size(&account)
+                    .expect("reward epoch delegated stakes account must serialize")
+                    .try_into()
+                    .expect(
+                        "reward epoch delegated stakes account serialized size must fit in usize",
+                    )
+            });
+
+        *REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT_MAX_SIZE
+    }
+}
+
+impl RewardEpochDelegatedStakes {
+    pub(crate) fn set(&mut self, bank: &Bank, distribution_vote_accounts: &VoteAccounts) {
+        assert!(
+            distribution_vote_accounts.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS,
+            "reward epoch delegated stakes account must be bounded by MAX_ALPENGLOW_VOTE_ACCOUNTS"
+        );
+
+        // Drop entries that didn't pay VAT
+        self.delegated_stakes
+            .retain(|vote_address, _| distribution_vote_accounts.get(vote_address).is_some());
+        // Add new vote accounts that paid VAT (note: this shouldn't ever do
+        // anything, but provides some extra safety)
+        distribution_vote_accounts
+            .delegated_stakes()
+            .for_each(|(&vote_address, _)| {
+                self.delegated_stakes.entry(vote_address).or_insert(0);
+            });
+        let mut delegated_stakes = self
+            .delegated_stakes
+            .iter()
+            .map(
+                |(&vote_pubkey, &delegated_stake)| RewardEpochDelegatedStake {
+                    vote_pubkey,
+                    delegated_stake,
+                },
+            )
+            .collect::<Vec<_>>();
+        delegated_stakes.sort_unstable_by_key(|stake| stake.vote_pubkey);
+
+        let delegated_stakes_account = RewardEpochDelegatedStakesAccount {
+            epoch: self.epoch,
+            delegated_stakes,
+        };
+        let data = wincode::serialize(&delegated_stakes_account).unwrap();
+        let lamports = bank
+            .get_minimum_balance_for_rent_exemption(RewardEpochDelegatedStakesAccount::max_size());
+        let account = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
+
+        bank.store_account_and_update_capitalization(
+            &REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT,
+            &account,
+        );
+    }
+
+    pub(crate) fn get(bank: &Bank) -> Option<Self> {
+        let account = bank.get_account(&REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT)?;
+        (!account.data().is_empty()).then(|| {
+            let account: RewardEpochDelegatedStakesAccount = account
+                .state()
+                .expect("Couldn't deserialize reward epoch delegated stakes");
+            assert!(
+                account.delegated_stakes.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS,
+                "reward epoch delegated stakes account exceeds MAX_ALPENGLOW_VOTE_ACCOUNTS"
+            );
+            account.into()
+        })
+    }
+}
+
+#[cfg(test)]
+impl RewardEpochDelegatedStakes {
+    pub(crate) fn new_for_tests(epoch: u64) -> Self {
+        Self {
+            epoch,
+            delegated_stakes: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn account_lamports_for_tests(bank: &Bank) -> u64 {
+        bank.get_balance(&REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT)
+    }
+}
+
+impl From<RewardEpochDelegatedStakesAccount> for RewardEpochDelegatedStakes {
+    fn from(account: RewardEpochDelegatedStakesAccount) -> Self {
+        Self {
+            epoch: account.epoch,
+            delegated_stakes: account
+                .delegated_stakes
+                .into_iter()
+                .map(|stake| (stake.vote_pubkey, stake.delegated_stake))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum AlpenglowEpochType<'a> {
+    /// This is a full tower epoch.
+    Tower,
+    /// The epoch started in tower and then switched to alpenglow
+    MigrationEpoch {
+        num_tower_slots: Slot,
+        num_ag_slots: Slot,
+        migration_epoch: Epoch,
+        reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
+    },
+    /// This is a full alpenglow epoch
+    Alpenglow {
+        migration_epoch: Epoch,
+        reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
+    },
+}
+
+impl<'a> AlpenglowEpochType<'a> {
+    pub(crate) fn is_alpenglow_or_migration_epoch(bank: &Bank, epoch: Epoch) -> bool {
+        debug_assert!(epoch < bank.epoch());
+        bank.get_alpenglow_migration_slot()
+            .map(|migration_slot| bank.epoch_schedule().get_epoch(migration_slot) <= epoch)
+            .unwrap_or(false)
+    }
+
+    /// Returns `AlpenglowEpochType` for the given `epoch`.
+    ///
+    /// Calling this function with an epoch >= `Bank::epoch` can return false information as it is
+    /// possible that we have not observed the genesis cert yet but will in the upcoming slots.
+    pub(crate) fn get(
+        bank: &Bank,
+        epoch: Epoch,
+        reward_epoch_delegated_stakes: Option<&'a RewardEpochDelegatedStakes>,
+    ) -> Self {
+        debug_assert!(epoch < bank.epoch());
+        let Some(migration_slot) = bank.get_alpenglow_migration_slot() else {
+            return Self::Tower;
+        };
+        let migration_epoch = bank.epoch_schedule().get_epoch(migration_slot);
+        match migration_epoch.cmp(&epoch) {
+            Ordering::Less => {
+                let reward_epoch_delegated_stakes =
+                    reward_epoch_delegated_stakes.unwrap_or_else(|| {
+                        panic!(
+                            "Missing reward epoch delegated stakes for non-Tower reward epoch \
+                             {epoch}"
+                        )
+                    });
+                assert_eq!(
+                    reward_epoch_delegated_stakes.epoch, epoch,
+                    "reward epoch delegated stakes must match rewarded epoch"
+                );
+                Self::Alpenglow {
+                    migration_epoch,
+                    reward_epoch_delegated_stakes,
+                }
+            }
+            Ordering::Greater => Self::Tower,
+            Ordering::Equal => {
+                let first_slot_in_epoch = bank
+                    .epoch_schedule()
+                    .get_first_slot_in_epoch(migration_epoch);
+                // + 1 because the migration_slot is still tower.
+                let num_tower_slots = migration_slot - first_slot_in_epoch + 1;
+                let slots_in_epoch = bank.epoch_schedule().get_slots_in_epoch(migration_epoch);
+                let num_ag_slots = slots_in_epoch - num_tower_slots;
+                assert_eq!(slots_in_epoch, num_tower_slots + num_ag_slots);
+                let reward_epoch_delegated_stakes =
+                    reward_epoch_delegated_stakes.unwrap_or_else(|| {
+                        panic!(
+                            "Missing reward epoch delegated stakes for non-Tower reward epoch \
+                             {epoch}"
+                        )
+                    });
+                assert_eq!(
+                    reward_epoch_delegated_stakes.epoch, epoch,
+                    "reward epoch delegated stakes must match rewarded epoch"
+                );
+                Self::MigrationEpoch {
+                    num_tower_slots,
+                    num_ag_slots,
+                    migration_epoch,
+                    reward_epoch_delegated_stakes,
+                }
+            }
+        }
+    }
+}

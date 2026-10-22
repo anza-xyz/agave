@@ -1,0 +1,476 @@
+use {
+    crate::{
+        IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION, transaction::TransactionContext,
+        transaction_accounts::AccountRefMut,
+    },
+    solana_account::{ReadableAccount, WritableAccount},
+    solana_instruction_error::InstructionError,
+    solana_pubkey::Pubkey,
+};
+
+/// Contains account meta data which varies between instruction.
+///
+/// It also contains indices to other structures for faster lookup.
+///
+/// This data structure is supposed to be shared with programs in ABIv2, so do not modify it
+/// without consulting SIMD-0177.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct InstructionAccount {
+    /// Points to the account and its key in the `TransactionContext`
+    pub index_in_transaction: IndexOfAccount,
+    /// Is this account supposed to sign
+    is_signer: u8,
+    /// Is this account allowed to become writable
+    is_writable: u8,
+}
+
+impl InstructionAccount {
+    pub fn new(
+        index_in_transaction: IndexOfAccount,
+        is_signer: bool,
+        is_writable: bool,
+    ) -> InstructionAccount {
+        InstructionAccount {
+            index_in_transaction,
+            is_signer: is_signer as u8,
+            is_writable: is_writable as u8,
+        }
+    }
+
+    pub fn is_signer(&self) -> bool {
+        self.is_signer != 0
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.is_writable != 0
+    }
+
+    pub fn set_is_signer(&mut self, value: bool) {
+        self.is_signer = value as u8;
+    }
+
+    pub fn set_is_writable(&mut self, value: bool) {
+        self.is_writable = value as u8;
+    }
+}
+
+/// Shared account borrowed from the TransactionContext and an InstructionContext.
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
+#[derive(Debug)]
+pub struct BorrowedInstructionAccount<'a, 'ix_data> {
+    pub(crate) transaction_context: &'a TransactionContext<'ix_data>,
+    pub(crate) account: AccountRefMut<'a>,
+    pub(crate) instruction_account: InstructionAccount,
+    pub(crate) index_in_transaction_of_instruction_program: IndexOfAccount,
+}
+
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
+impl BorrowedInstructionAccount<'_, '_> {
+    /// Returns the index of this account (transaction wide)
+    #[inline]
+    pub fn get_index_in_transaction(&self) -> IndexOfAccount {
+        self.instruction_account.index_in_transaction
+    }
+
+    /// Returns the public key of this account (transaction wide)
+    #[inline]
+    pub fn get_key(&self) -> &Pubkey {
+        self.transaction_context
+            .get_key_of_account_at_index(self.instruction_account.index_in_transaction)
+            .unwrap()
+    }
+
+    /// Returns the owner of this account (transaction wide)
+    #[inline]
+    pub fn get_owner(&self) -> &Pubkey {
+        self.account.owner()
+    }
+
+    /// Assignes the owner of this account (transaction wide)
+    pub fn set_owner(&mut self, pubkey: &[u8]) -> Result<(), InstructionError> {
+        // Only the owner can assign a new owner
+        if !self.is_owned_by_current_program() {
+            return Err(InstructionError::ModifiedProgramId);
+        }
+        // and only if the account is writable
+        if !self.is_writable() {
+            return Err(InstructionError::ModifiedProgramId);
+        }
+        // and only if the data is zero-initialized or empty
+        if !is_zeroed(self.get_data()) {
+            return Err(InstructionError::ModifiedProgramId);
+        }
+        // don't touch the account if the owner does not change
+        if self.get_owner().to_bytes() == pubkey {
+            return Ok(());
+        }
+        self.touch()?;
+        self.account.copy_into_owner_from_slice(pubkey);
+        Ok(())
+    }
+
+    /// Returns the number of lamports of this account (transaction wide)
+    #[inline]
+    pub fn get_lamports(&self) -> u64 {
+        self.account.lamports()
+    }
+
+    /// Overwrites the number of lamports of this account (transaction wide)
+    pub fn set_lamports(&mut self, lamports: u64) -> Result<(), InstructionError> {
+        // An account not owned by the program cannot have its balance decrease
+        if !self.is_owned_by_current_program() && lamports < self.get_lamports() {
+            return Err(InstructionError::ExternalAccountLamportSpend);
+        }
+        // The balance of read-only may not change
+        if !self.is_writable() {
+            return Err(InstructionError::ReadonlyLamportChange);
+        }
+        // don't touch the account if the lamports do not change
+        let old_lamports = self.get_lamports();
+        if old_lamports == lamports {
+            return Ok(());
+        }
+
+        let lamports_balance = (lamports as i128).saturating_sub(old_lamports as i128);
+        self.transaction_context
+            .add_lamports_delta(lamports_balance)?;
+
+        self.touch()?;
+        self.account.set_lamports(lamports);
+        Ok(())
+    }
+
+    /// Adds lamports to this account (transaction wide)
+    pub fn checked_add_lamports(&mut self, lamports: u64) -> Result<(), InstructionError> {
+        self.set_lamports(
+            self.get_lamports()
+                .checked_add(lamports)
+                .ok_or(InstructionError::ArithmeticOverflow)?,
+        )
+    }
+
+    /// Subtracts lamports from this account (transaction wide)
+    pub fn checked_sub_lamports(&mut self, lamports: u64) -> Result<(), InstructionError> {
+        self.set_lamports(
+            self.get_lamports()
+                .checked_sub(lamports)
+                .ok_or(InstructionError::ArithmeticOverflow)?,
+        )
+    }
+
+    /// Returns a read-only slice of the account data (transaction wide)
+    #[inline]
+    pub fn get_data(&self) -> &[u8] {
+        self.account.data()
+    }
+
+    /// Returns a writable slice of the account data (transaction wide)
+    pub fn get_data_mut(&mut self) -> Result<&mut [u8], InstructionError> {
+        self.can_data_be_changed()?;
+        self.touch()?;
+        self.make_data_mut();
+        Ok(self.account.data_as_mut_slice())
+    }
+
+    /// Overwrites the account data and size (transaction wide).
+    ///
+    /// Call this when you have a slice of data you do not own and want to
+    /// replace the account data with it.
+    pub fn set_data_from_slice(&mut self, data: &[u8]) -> Result<(), InstructionError> {
+        self.can_data_be_resized(data.len())?;
+        self.touch()?;
+        self.update_accounts_resize_delta(data.len())?;
+        // Note that we intentionally don't call self.make_data_mut() here.  make_data_mut() will
+        // allocate + memcpy the current data if self.account is shared. We don't need the memcpy
+        // here tho because account.set_data_from_slice(data) is going to replace the content
+        // anyway.
+        self.account.set_data_from_slice(data);
+
+        Ok(())
+    }
+
+    /// Resizes the account data (transaction wide)
+    ///
+    /// Fills it with zeros at the end if is extended or truncates at the end otherwise.
+    pub fn set_data_length(&mut self, new_length: usize) -> Result<(), InstructionError> {
+        self.can_data_be_resized(new_length)?;
+        // don't touch the account if the length does not change
+        if self.get_data().len() == new_length {
+            return Ok(());
+        }
+        self.touch()?;
+        self.update_accounts_resize_delta(new_length)?;
+        self.account.resize(new_length, 0);
+        Ok(())
+    }
+
+    /// Appends all elements in a slice to the account
+    pub fn extend_from_slice(&mut self, data: &[u8]) -> Result<(), InstructionError> {
+        let new_len = self.get_data().len().saturating_add(data.len());
+        self.can_data_be_resized(new_len)?;
+
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        self.touch()?;
+        self.update_accounts_resize_delta(new_len)?;
+        // Even if extend_from_slice never reduces capacity, still realloc using
+        // make_data_mut() if necessary so that we grow the account of the full
+        // max realloc length in one go, avoiding smaller reallocations.
+        self.make_data_mut();
+        self.account.extend_from_slice(data);
+        Ok(())
+    }
+
+    /// Returns whether the underlying AccountSharedData is shared.
+    ///
+    /// The data is shared if the account has been loaded from the accounts database and has never
+    /// been written to. Writing to an account unshares it.
+    ///
+    /// During account serialization, if an account is shared it'll get mapped as CoW, else it'll
+    /// get mapped directly as writable.
+    pub fn is_shared(&self) -> bool {
+        self.account.is_shared()
+    }
+
+    fn make_data_mut(&mut self) {
+        // if the account is still shared, it means this is the first time we're
+        // about to write into it. Make the account mutable by copying it in a
+        // buffer with MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION capacity so that if the
+        // transaction reallocs, we don't have to copy the whole account data a
+        // second time to fullfill the realloc.
+        if self.account.is_shared() {
+            self.account
+                .reserve(MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION);
+        }
+    }
+
+    /// Deserializes the account data into a state
+    #[cfg(feature = "wincode")]
+    pub fn get_state<T>(&self) -> Result<T, InstructionError>
+    where
+        T: for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>,
+    {
+        wincode::config::deserialize(self.account.data(), solana_account::WINCODE_CONFIG)
+            .map_err(|_| InstructionError::InvalidAccountData)
+    }
+
+    /// Serializes a state into the account data
+    #[cfg(feature = "wincode")]
+    pub fn set_state<T>(&mut self, state: &T) -> Result<(), InstructionError>
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>,
+    {
+        self.can_data_be_changed()?;
+        self.touch()?;
+        let serialized_size =
+            wincode::config::serialized_size(state, solana_account::WINCODE_CONFIG)
+                .map_err(|_| InstructionError::GenericError)?;
+        if serialized_size > self.get_data().len() as u64 {
+            return Err(InstructionError::AccountDataTooSmall);
+        }
+        self.account.set_state(state)
+    }
+
+    // Returns whether or the lamports currently in the account is sufficient for rent exemption should the
+    // data be resized to the given size
+    pub fn is_rent_exempt_at_data_length(&self, data_length: usize) -> bool {
+        self.transaction_context
+            .rent
+            .is_exempt(self.get_lamports(), data_length)
+    }
+
+    /// Returns whether this account is executable (transaction wide)
+    #[inline]
+    #[deprecated(since = "2.1.0", note = "Use `get_owner` instead")]
+    pub fn is_executable(&self) -> bool {
+        self.account.executable()
+    }
+
+    /// Configures whether this account is executable (transaction wide)
+    pub fn set_executable(&mut self, is_executable: bool) -> Result<(), InstructionError> {
+        // To become executable an account must be rent exempt
+        if !self
+            .transaction_context
+            .rent
+            .is_exempt(self.get_lamports(), self.get_data().len())
+        {
+            return Err(InstructionError::ExecutableAccountNotRentExempt);
+        }
+        // Only the owner can set the executable flag
+        if !self.is_owned_by_current_program() {
+            return Err(InstructionError::ExecutableModified);
+        }
+        // and only if the account is writable
+        if !self.is_writable() {
+            return Err(InstructionError::ExecutableModified);
+        }
+        // don't touch the account if the executable flag does not change
+        #[expect(deprecated)]
+        if self.is_executable() == is_executable {
+            return Ok(());
+        }
+        self.touch()?;
+        self.account.set_executable(is_executable);
+        Ok(())
+    }
+
+    /// Returns the rent epoch of this account (transaction wide)
+    #[inline]
+    pub fn get_rent_epoch(&self) -> u64 {
+        self.account.rent_epoch()
+    }
+
+    /// Returns whether this account is a signer (instruction wide)
+    pub fn is_signer(&self) -> bool {
+        self.instruction_account.is_signer()
+    }
+
+    /// Returns whether this account is writable (instruction wide)
+    pub fn is_writable(&self) -> bool {
+        self.instruction_account.is_writable()
+    }
+
+    /// Returns true if the owner of this account is the current `InstructionContext`s last program (instruction wide)
+    pub fn is_owned_by_current_program(&self) -> bool {
+        self.transaction_context
+            .get_key_of_account_at_index(self.index_in_transaction_of_instruction_program)
+            .map(|program_key| program_key == self.get_owner())
+            .unwrap_or_default()
+    }
+
+    /// Returns an error if the account data can not be mutated by the current program
+    pub fn can_data_be_changed(&self) -> Result<(), InstructionError> {
+        // and only if the account is writable
+        if !self.is_writable() {
+            return Err(InstructionError::ReadonlyDataModified);
+        }
+        // and only if we are the owner
+        if !self.is_owned_by_current_program() {
+            return Err(InstructionError::ExternalAccountDataModified);
+        }
+        Ok(())
+    }
+
+    /// Returns an error if the account data can not be resized to the given length
+    pub fn can_data_be_resized(&self, new_len: usize) -> Result<(), InstructionError> {
+        let old_len = self.get_data().len();
+        self.transaction_context
+            .accounts
+            .can_data_be_resized(old_len, new_len)?;
+        self.can_data_be_changed()
+    }
+
+    fn touch(&self) -> Result<(), InstructionError> {
+        self.transaction_context
+            .accounts
+            .touch(self.instruction_account.index_in_transaction)
+    }
+
+    fn update_accounts_resize_delta(&mut self, new_len: usize) -> Result<(), InstructionError> {
+        self.transaction_context
+            .accounts
+            .update_accounts_resize_delta(self.get_data().len(), new_len)
+    }
+}
+
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
+fn is_zeroed(buf: &[u8]) -> bool {
+    const ZEROS_LEN: usize = 1024;
+    const ZEROS: [u8; ZEROS_LEN] = [0; ZEROS_LEN];
+    let (chunks, remainder) = buf.as_chunks::<ZEROS_LEN>();
+
+    #[expect(clippy::indexing_slicing)]
+    {
+        chunks.iter().all(|chunk| chunk == &ZEROS[..]) && remainder == &ZEROS[..remainder.len()]
+    }
+}
+
+#[cfg(all(test, feature = "wincode"))]
+mod tests {
+    use {
+        super::*, crate::transaction::TransactionContext, solana_account::AccountSharedData,
+        solana_rent::Rent,
+    };
+
+    fn new_transaction_context(account: AccountSharedData) -> TransactionContext<'static> {
+        let mut transaction_context = TransactionContext::new(
+            vec![
+                (*account.owner(), AccountSharedData::default()),
+                (Pubkey::new_unique(), account),
+            ],
+            Rent::default(),
+            1,
+            1,
+            1,
+        );
+        transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        transaction_context.push(true).unwrap();
+        transaction_context
+    }
+
+    fn with_account<R>(data: Vec<u8>, f: impl FnOnce(&mut BorrowedInstructionAccount) -> R) -> R {
+        let account = AccountSharedData::new_with_data(1, data, &Pubkey::new_unique());
+        let transaction_context = new_transaction_context(account);
+        let instruction_context = transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        f(&mut instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap())
+    }
+
+    #[test]
+    fn test_set_state_copies_shared_data_without_headroom() {
+        let state = 42u64;
+        let tail = [7u8; 100];
+        let data = [vec![0; size_of::<u64>()], tail.to_vec()].concat();
+        let account = AccountSharedData::new_with_data(1, data.clone(), &Pubkey::new_unique());
+        let shared = account.clone();
+        let mut transaction_context = new_transaction_context(account);
+        transaction_context
+            .get_current_instruction_context()
+            .unwrap()
+            .try_borrow_instruction_account(0)
+            .unwrap()
+            .set_state(&state)
+            .unwrap();
+        transaction_context.pop().unwrap();
+        let account = transaction_context
+            .deconstruct_without_keys()
+            .unwrap()
+            .swap_remove(1);
+
+        assert_eq!(account.capacity(), data.len());
+        assert_eq!(
+            account.data(),
+            [state.to_le_bytes().as_slice(), &tail].concat()
+        );
+        assert_eq!(shared.data(), data);
+    }
+
+    #[test]
+    fn test_set_state_get_state() {
+        let state = (Some(Pubkey::new_unique()), vec![1u64, 2, 3]);
+        let len = wincode::serialized_size(&state).unwrap() as usize;
+        assert_eq!(
+            with_account(vec![0; len], |account| {
+                account.set_state(&state)?;
+                account.get_state()
+            }),
+            Ok(state.clone()),
+        );
+        assert_eq!(
+            with_account(vec![0; len - 1], |account| account.set_state(&state)),
+            Err(InstructionError::AccountDataTooSmall),
+        );
+    }
+}

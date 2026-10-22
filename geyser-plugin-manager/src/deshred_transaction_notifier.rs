@@ -1,0 +1,118 @@
+/// Module responsible for notifying plugins of transactions when deshredded
+use {
+    agave_geyser_plugin_host::GeyserPluginHost,
+    agave_geyser_plugin_interface::geyser_plugin_interface::{
+        ReplicaDeshredTransactionInfoV2, ReplicaDeshredTransactionInfoVersions,
+        ReplicaDeshredUpdateParentInfo, ReplicaDeshredUpdateParentInfoVersions,
+    },
+    arc_swap::ArcSwap,
+    log::*,
+    solana_clock::Slot,
+    solana_ledger::{
+        blockstore_meta::UpdateParentInfo,
+        deshred_transaction_notifier_interface::DeshredTransactionNotifier,
+    },
+    solana_measure::measure::Measure,
+    solana_message::v0::LoadedAddresses,
+    solana_signature::Signature,
+    solana_transaction::versioned::VersionedTransaction,
+    std::sync::Arc,
+};
+
+/// This implementation of DeshredTransactionNotifier is passed to the CompletedDataSetsService
+/// at validator startup. CompletedDataSetsService invokes the notify_deshred_transaction method
+/// when entries are formed from shreds. The implementation in turn invokes the
+/// notify_deshred_transaction of each plugin enabled with deshred transaction notification
+/// managed by the GeyserPluginHost.
+pub(crate) struct DeshredTransactionNotifierImpl {
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
+}
+
+impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
+    fn notify_deshred_transaction(
+        &self,
+        slot: Slot,
+        completed_data_set_starting_shred_index: u32,
+        completed_data_set_ending_shred_index_exclusive: u32,
+        signature: &Signature,
+        is_vote: bool,
+        transaction: &VersionedTransaction,
+        loaded_addresses: Option<&LoadedAddresses>,
+    ) {
+        let plugin_manager = self.plugin_manager.load();
+
+        if plugin_manager.plugins().next().is_none() {
+            return;
+        }
+
+        let mut measure =
+            Measure::start("geyser-plugin-notify_plugins_of_deshred_transaction_info");
+        let transaction_info = ReplicaDeshredTransactionInfoV2 {
+            signature,
+            is_vote,
+            transaction,
+            loaded_addresses,
+            completed_data_set_starting_shred_index,
+            completed_data_set_ending_shred_index_exclusive,
+        };
+
+        for plugin in plugin_manager.plugins() {
+            if !plugin.deshred_transaction_notifications_enabled() {
+                continue;
+            }
+            match plugin.notify_deshred_transaction(
+                ReplicaDeshredTransactionInfoVersions::V0_0_2(&transaction_info),
+                slot,
+            ) {
+                Err(err) => {
+                    error!(
+                        "Failed to notify deshred transaction, error: ({}) to plugin {}",
+                        err,
+                        plugin.name()
+                    )
+                }
+                Ok(_) => {
+                    trace!(
+                        "Successfully notified deshred transaction to plugin {}",
+                        plugin.name()
+                    );
+                }
+            }
+        }
+        measure.stop();
+    }
+
+    fn alt_resolution_enabled(&self) -> bool {
+        self.plugin_manager
+            .load()
+            .deshred_transaction_alt_resolution_enabled()
+    }
+
+    fn notify_deshred_update_parent(&self, update_parent: &UpdateParentInfo) {
+        let plugin_manager = self.plugin_manager.load();
+        let update_parent_info = ReplicaDeshredUpdateParentInfo {
+            slot: update_parent.slot,
+            update_parent_fec_set_index: update_parent.update_parent_fec_set_index,
+            parent_slot: update_parent.parent_slot,
+            parent_block_id: &update_parent.parent_block_id,
+        };
+        for plugin in plugin_manager.plugins() {
+            if plugin.deshred_transaction_notifications_enabled()
+                && let Err(err) = plugin.notify_deshred_update_parent(
+                    ReplicaDeshredUpdateParentInfoVersions::V0_0_1(&update_parent_info),
+                )
+            {
+                error!(
+                    "Failed to notify deshred UpdateParent, error: ({err}) to plugin {}",
+                    plugin.name()
+                );
+            }
+        }
+    }
+}
+
+impl DeshredTransactionNotifierImpl {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginHost>>) -> Self {
+        Self { plugin_manager }
+    }
+}

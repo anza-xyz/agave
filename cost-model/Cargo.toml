@@ -1,0 +1,64 @@
+[package]
+name = "solana-cost-model"
+description = "Solana cost model"
+documentation = "https://docs.rs/solana-cost-model"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_cost_model"
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = [
+    "dep:solana-hash",
+    "dep:solana-message",
+    "dep:solana-transaction",
+    "solana-compute-budget-interface/dev-context-only-utils",
+]
+
+[dependencies]
+agave-feature-set = { workspace = true }
+ahash = { workspace = true }
+log = { workspace = true }
+solana-bincode = { workspace = true }
+solana-compute-budget = { workspace = true }
+solana-hash = { workspace = true, optional = true }
+solana-message = { workspace = true, optional = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-runtime-transaction = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-svm-transaction = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true, optional = true }
+solana-transaction-error = { workspace = true }
+solana-vote-program = { workspace = true }
+
+[dev-dependencies]
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+solana-compute-budget-interface = { workspace = true }
+solana-cost-model = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-hash = { workspace = true, features = ["atomic"] }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-signer = { workspace = true }
+solana-system-transaction = { workspace = true }
+solana-vote = { path = "../vote", features = ["agave-unstable-api"] }
+
+[lints]
+workspace = true

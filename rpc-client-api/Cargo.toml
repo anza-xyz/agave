@@ -1,0 +1,39 @@
+[package]
+name = "solana-rpc-client-api"
+description = "Solana Client Common Utilities"
+documentation = "https://docs.rs/solana-rpc-client-api"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+anyhow = { workspace = true }
+jsonrpc-core = { workspace = true }
+reqwest = { workspace = true, default-features = false, features = ["rustls-tls"] }
+reqwest-middleware = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+solana-clock = { workspace = true }
+solana-rpc-client-types = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction-error = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+test-case = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,426 @@
+use {
+    crossbeam_channel::{Receiver, Sender, unbounded},
+    futures::StreamExt,
+    solana_account::Account,
+    solana_banks_interface::{
+        Banks, BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
+        BanksTransactionResultWithSimulation, TransactionConfirmationStatus, TransactionMetadata,
+        TransactionSimulationDetails, TransactionStatus,
+    },
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentLevel,
+    solana_hash::Hash,
+    solana_message::{Message, SanitizedMessage},
+    solana_pubkey::Pubkey,
+    solana_runtime::{
+        bank::{Bank, TransactionSimulationResult},
+        bank_forks::BankForks,
+        commitment::BlockCommitmentCache,
+    },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_send_transaction_service::send_transaction_service::TransactionInfo,
+    solana_signature::Signature,
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::VersionedTransaction,
+    },
+    std::{
+        sync::{Arc, RwLock},
+        thread::Builder,
+        time::Duration,
+    },
+    tarpc::{
+        ClientMessage, Response,
+        context::Context,
+        server::{self, Channel},
+        transport::{self, channel::UnboundedChannel},
+    },
+    tokio::time::sleep,
+};
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
+
+#[derive(Clone)]
+struct BanksServer {
+    bank_forks: Arc<RwLock<BankForks>>,
+    block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    transaction_sender: Sender<TransactionInfo>,
+    poll_signature_status_sleep_duration: Duration,
+}
+
+impl BanksServer {
+    /// Return a BanksServer that forwards transactions to the
+    /// given sender. If unit-testing, those transactions can go to
+    /// a bank in the given BankForks. Otherwise, the receiver should
+    /// forward them to a validator in the leader schedule.
+    fn new(
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        transaction_sender: Sender<TransactionInfo>,
+        poll_signature_status_sleep_duration: Duration,
+    ) -> Self {
+        Self {
+            bank_forks,
+            block_commitment_cache,
+            transaction_sender,
+            poll_signature_status_sleep_duration,
+        }
+    }
+
+    fn run(bank_forks: Arc<RwLock<BankForks>>, transaction_receiver: Receiver<TransactionInfo>) {
+        while let Ok(info) = transaction_receiver.recv() {
+            let mut transaction_infos = vec![info];
+            while let Ok(info) = transaction_receiver.try_recv() {
+                transaction_infos.push(info);
+            }
+            let transactions: Vec<_> = transaction_infos
+                .into_iter()
+                .map(|info| wincode::deserialize(&info.wire_transaction).unwrap())
+                .collect();
+            loop {
+                let bank = bank_forks.read().unwrap().working_bank();
+                // bank forks lock released, now verify bank hasn't been frozen yet
+                // in the mean-time the bank can not be frozen until this tx batch
+                // has been processed
+                let lock = bank.freeze_lock();
+                if *lock == Hash::default() {
+                    let _ = bank.try_process_entry_transactions(transactions);
+                    // break out of inner loop and release bank freeze lock
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Useful for unit-testing
+    fn new_loopback(
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        poll_signature_status_sleep_duration: Duration,
+    ) -> Self {
+        let (transaction_sender, transaction_receiver) = unbounded();
+        let bank = bank_forks.read().unwrap().working_bank();
+        let slot = bank.slot();
+        {
+            // ensure that the commitment cache and bank are synced
+            let mut w_block_commitment_cache = block_commitment_cache.write().unwrap();
+            w_block_commitment_cache.set_all_slots(slot, slot);
+        }
+        let server_bank_forks = bank_forks.clone();
+        Builder::new()
+            .name("solBankForksCli".to_string())
+            .spawn(move || Self::run(server_bank_forks, transaction_receiver))
+            .unwrap();
+        Self::new(
+            bank_forks,
+            block_commitment_cache,
+            transaction_sender,
+            poll_signature_status_sleep_duration,
+        )
+    }
+
+    fn slot(&self, commitment: CommitmentLevel) -> Slot {
+        self.block_commitment_cache
+            .read()
+            .unwrap()
+            .slot_with_commitment(commitment)
+    }
+
+    fn bank(&self, commitment: CommitmentLevel) -> Arc<Bank> {
+        self.bank_forks.read().unwrap()[self.slot(commitment)].clone()
+    }
+
+    async fn poll_signature_status(
+        self,
+        signature: &Signature,
+        blockhash: &Hash,
+        last_valid_block_height: u64,
+        commitment: CommitmentLevel,
+    ) -> Option<transaction::Result<()>> {
+        let mut status = self
+            .bank(commitment)
+            .get_signature_status_with_blockhash(signature, blockhash);
+        while status.is_none() {
+            sleep(self.poll_signature_status_sleep_duration).await;
+            let bank = self.bank(commitment);
+            if bank.block_height() > last_valid_block_height {
+                break;
+            }
+            status = bank.get_signature_status_with_blockhash(signature, blockhash);
+        }
+        status
+    }
+}
+
+fn simulate_transaction(
+    bank: &Bank,
+    transaction: VersionedTransaction,
+) -> BanksTransactionResultWithSimulation {
+    let sanitized_transaction = match RuntimeTransaction::try_create(
+        transaction,
+        MessageHash::Compute,
+        Some(false), // is_simple_vote_tx
+        bank,
+        bank.get_reserved_account_keys(),
+    ) {
+        Err(err) => {
+            return BanksTransactionResultWithSimulation {
+                result: Some(Err(err)),
+                simulation_details: None,
+            };
+        }
+        Ok(tx) => tx,
+    };
+    let TransactionSimulationResult {
+        result,
+        logs,
+        post_simulation_accounts: _,
+        units_consumed,
+        loaded_accounts_data_size,
+        return_data,
+        inner_instructions,
+        fee: _,
+        pre_balances: _,
+        post_balances: _,
+        pre_token_balances: _,
+        post_token_balances: _,
+    } = bank.simulate_transaction_unchecked(&sanitized_transaction, true);
+
+    let simulation_details = TransactionSimulationDetails {
+        logs,
+        units_consumed,
+        loaded_accounts_data_size,
+        return_data,
+        inner_instructions,
+    };
+    BanksTransactionResultWithSimulation {
+        result: Some(result),
+        simulation_details: Some(simulation_details),
+    }
+}
+
+impl Banks for BanksServer {
+    async fn send_transaction_with_context(self, _: Context, transaction: VersionedTransaction) {
+        let message_hash = transaction.message.hash();
+        let blockhash = transaction.message.recent_blockhash();
+        let last_valid_block_height = self
+            .bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .get_blockhash_last_valid_block_height(blockhash)
+            .unwrap();
+        let signature = transaction.signatures.first().cloned().unwrap_or_default();
+        let info = TransactionInfo::new(
+            message_hash,
+            signature,
+            *blockhash,
+            wincode::serialize(&transaction).unwrap(),
+            last_valid_block_height,
+            None,
+            None,
+            None,
+        );
+        self.transaction_sender.send(info).unwrap();
+    }
+
+    async fn get_transaction_status_with_context(
+        self,
+        _: Context,
+        signature: Signature,
+    ) -> Option<TransactionStatus> {
+        let bank = self.bank(CommitmentLevel::Processed);
+        let (slot, status) = bank.get_signature_status_slot(&signature)?;
+        let r_block_commitment_cache = self.block_commitment_cache.read().unwrap();
+
+        let optimistically_confirmed_bank = self.bank(CommitmentLevel::Confirmed);
+        let optimistically_confirmed =
+            optimistically_confirmed_bank.get_signature_status_slot(&signature);
+
+        let confirmations = if r_block_commitment_cache.root() >= slot
+            && r_block_commitment_cache.highest_super_majority_root() >= slot
+        {
+            None
+        } else {
+            r_block_commitment_cache
+                .get_confirmation_count(slot)
+                .or(Some(0))
+        };
+        Some(TransactionStatus {
+            slot,
+            confirmations,
+            err: status.err(),
+            confirmation_status: if confirmations.is_none() {
+                Some(TransactionConfirmationStatus::Finalized)
+            } else if optimistically_confirmed.is_some() {
+                Some(TransactionConfirmationStatus::Confirmed)
+            } else {
+                Some(TransactionConfirmationStatus::Processed)
+            },
+        })
+    }
+
+    async fn get_slot_with_context(self, _: Context, commitment: CommitmentLevel) -> Slot {
+        self.slot(commitment)
+    }
+
+    async fn get_block_height_with_context(self, _: Context, commitment: CommitmentLevel) -> u64 {
+        self.bank(commitment).block_height()
+    }
+
+    async fn process_transaction_with_preflight_and_commitment_and_context(
+        self,
+        ctx: Context,
+        transaction: VersionedTransaction,
+        commitment: CommitmentLevel,
+    ) -> BanksTransactionResultWithSimulation {
+        let mut simulation_result =
+            simulate_transaction(&self.bank(commitment), transaction.clone());
+        // Simulation was ok, so process the real transaction and replace the
+        // simulation's result with the real transaction result
+        if let Some(Ok(_)) = simulation_result.result {
+            simulation_result.result = self
+                .process_transaction_with_commitment_and_context(ctx, transaction, commitment)
+                .await;
+        }
+        simulation_result
+    }
+
+    async fn simulate_transaction_with_commitment_and_context(
+        self,
+        _: Context,
+        transaction: VersionedTransaction,
+        commitment: CommitmentLevel,
+    ) -> BanksTransactionResultWithSimulation {
+        simulate_transaction(&self.bank(commitment), transaction)
+    }
+
+    async fn process_transaction_with_commitment_and_context(
+        self,
+        _: Context,
+        transaction: VersionedTransaction,
+        commitment: CommitmentLevel,
+    ) -> Option<transaction::Result<()>> {
+        let blockhash = *transaction.message.recent_blockhash();
+        let wire_transaction = wincode::serialize(&transaction).unwrap();
+
+        let bank = self.bank(commitment);
+        let sanitized_transaction = match SanitizedTransaction::try_create(
+            transaction,
+            MessageHash::Compute,
+            Some(false), // is_simple_vote_tx
+            bank.as_ref(),
+            bank.get_reserved_account_keys(),
+        ) {
+            Ok(tx) => tx,
+            Err(err) => return Some(Err(err)),
+        };
+
+        if let Err(err) = sanitized_transaction.verify() {
+            return Some(Err(err));
+        }
+
+        let message_hash = sanitized_transaction.message_hash();
+        let last_valid_block_height = self
+            .bank(commitment)
+            .get_blockhash_last_valid_block_height(&blockhash)
+            .unwrap();
+        let signature = sanitized_transaction.signature();
+        let info = TransactionInfo::new(
+            *message_hash,
+            *signature,
+            blockhash,
+            wire_transaction,
+            last_valid_block_height,
+            None,
+            None,
+            None,
+        );
+        self.transaction_sender.send(info).unwrap();
+        self.poll_signature_status(signature, &blockhash, last_valid_block_height, commitment)
+            .await
+    }
+
+    async fn process_transaction_with_metadata_and_context(
+        self,
+        _: Context,
+        transaction: VersionedTransaction,
+    ) -> BanksTransactionResultWithMetadata {
+        let bank = self.bank_forks.read().unwrap().working_bank();
+        match bank.process_transaction_with_metadata(transaction) {
+            Err(error) => BanksTransactionResultWithMetadata {
+                result: Err(error),
+                metadata: None,
+            },
+            Ok(details) => BanksTransactionResultWithMetadata {
+                result: details.status,
+                metadata: Some(TransactionMetadata {
+                    compute_units_consumed: details.executed_units,
+                    log_messages: details.log_messages.unwrap_or_default(),
+                    return_data: details.return_data,
+                }),
+            },
+        }
+    }
+
+    async fn get_account_with_commitment_and_context(
+        self,
+        _: Context,
+        address: Pubkey,
+        commitment: CommitmentLevel,
+    ) -> Option<Account> {
+        let bank = self.bank(commitment);
+        bank.get_account(&address).map(Account::from)
+    }
+
+    async fn get_latest_blockhash_with_context(self, _: Context) -> Hash {
+        let bank = self.bank(CommitmentLevel::default());
+        bank.last_blockhash()
+    }
+
+    async fn get_latest_blockhash_with_commitment_and_context(
+        self,
+        _: Context,
+        commitment: CommitmentLevel,
+    ) -> Option<(Hash, u64)> {
+        let bank = self.bank(commitment);
+        let blockhash = bank.last_blockhash();
+        let last_valid_block_height = bank.get_blockhash_last_valid_block_height(&blockhash)?;
+        Some((blockhash, last_valid_block_height))
+    }
+
+    async fn get_fee_for_message_with_commitment_and_context(
+        self,
+        _: Context,
+        message: Message,
+        commitment: CommitmentLevel,
+    ) -> Option<u64> {
+        let bank = self.bank(commitment);
+        let sanitized_message =
+            SanitizedMessage::try_from_legacy_message(message, bank.get_reserved_account_keys())
+                .ok()?;
+        bank.get_fee_for_message(&sanitized_message)
+    }
+}
+
+pub async fn start_local_server(
+    bank_forks: Arc<RwLock<BankForks>>,
+    block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    poll_signature_status_sleep_duration: Duration,
+) -> UnboundedChannel<Response<BanksResponse>, ClientMessage<BanksRequest>> {
+    let banks_server = BanksServer::new_loopback(
+        bank_forks,
+        block_commitment_cache,
+        poll_signature_status_sleep_duration,
+    );
+    let (client_transport, server_transport) = transport::channel::unbounded();
+    let server = server::BaseChannel::with_defaults(server_transport)
+        .execute(banks_server.serve())
+        .for_each(|rpc| async move {
+            tokio::spawn(rpc);
+        });
+    tokio::spawn(server);
+    client_transport
+}

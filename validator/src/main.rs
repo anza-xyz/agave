@@ -1,0 +1,139 @@
+#![allow(clippy::arithmetic_side_effects)]
+use {
+    agave_validator::{
+        cli::{DefaultArgs, app},
+        commands,
+    },
+    jemallocator::Jemalloc,
+    log::error,
+    std::{path::PathBuf, process::exit},
+};
+
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+pub fn main() {
+    let default_args = DefaultArgs::new();
+    let solana_version = solana_version::version!();
+    let cli_app = app(solana_version, &default_args);
+    let matches = cli_app.get_matches();
+
+    let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
+
+    let (subcommand, maybe_subcommand_matches) = matches.subcommand();
+
+    #[cfg(target_os = "linux")]
+    let run_config = {
+        use caps::{CapSet, Capability::CAP_DAC_OVERRIDE, CapsHashSet};
+
+        // we don't aim to execve from the validator, so we can clear most of the
+        // capability sets. clear the ambient set explicitly even though it is
+        // implicitly cleared by clearing the inheritable set
+        caps::clear(None, CapSet::Ambient).expect("linux allows ambient capset to be cleared");
+        caps::clear(None, CapSet::Inheritable)
+            .expect("linux allows inheritable capset to be cleared");
+
+        // we'll raise caps when and where we need them
+        let primordial_caps = if subcommand.is_empty() || subcommand == "run" {
+            // the CAP_DAC_OVERRIDE (file permissions bypass) cap isn't typically needed.
+            // however if it is already in our effective set, likely due to the operator
+            // foolishly running the node as root, either via sudo or suid, we need to
+            // retain it to ensure expected filesystem accessibility
+            let retain_if_set = CapsHashSet::from([CAP_DAC_OVERRIDE]);
+            let permitted = caps::read(None, CapSet::Permitted)
+                .expect("linux allows permitted capset to be read");
+            let effective = caps::read(None, CapSet::Effective)
+                .expect("linux allows effective capset to be read");
+            let primordial_caps =
+                CapsHashSet::from_iter(retain_if_set.intersection(&permitted).copied());
+            let primordial_caps =
+                CapsHashSet::from_iter(primordial_caps.intersection(&effective).copied());
+
+            caps::set(None, CapSet::Effective, &primordial_caps)
+                .expect("linux allows effective capset to be set");
+
+            primordial_caps
+        } else {
+            caps::clear(None, CapSet::Effective)
+                .expect("linux allows effective capset to be cleared");
+            // we only need caps to run the actual valididator. clear them here
+            // for all other subcommands
+            caps::clear(None, CapSet::Permitted)
+                .expect("linux allows permitted capset to be cleared");
+
+            CapsHashSet::new()
+        };
+
+        commands::run::Config { primordial_caps }
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let run_config = commands::run::Config {};
+
+    match (subcommand, maybe_subcommand_matches) {
+        ("init", _) => commands::run::execute(
+            &matches,
+            solana_version,
+            commands::run::execute::Operation::Initialize,
+            run_config,
+        )
+        .inspect_err(|err| error!("Failed to initialize validator: {err}"))
+        .map_err(commands::Error::Dynamic),
+        ("", _) | ("run", _) => commands::run::execute(
+            &matches,
+            solana_version,
+            commands::run::execute::Operation::Run,
+            run_config,
+        )
+        .inspect_err(|err| error!("Failed to start validator: {err}"))
+        .map_err(commands::Error::Dynamic),
+        ("authorized-voter", Some(authorized_voter_subcommand_matches)) => {
+            commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path)
+        }
+        ("plugin", Some(plugin_subcommand_matches)) => {
+            commands::plugin::execute(plugin_subcommand_matches, &ledger_path)
+        }
+        ("contact-info", Some(subcommand_matches)) => {
+            commands::contact_info::execute(subcommand_matches, &ledger_path)
+        }
+        ("exit", Some(subcommand_matches)) => {
+            commands::exit::execute(subcommand_matches, &ledger_path)
+        }
+        ("monitor", _) => commands::monitor::execute(&matches, &ledger_path),
+        ("staked-nodes-overrides", Some(subcommand_matches)) => {
+            commands::staked_nodes_overrides::execute(subcommand_matches, &ledger_path)
+        }
+        ("set-identity", Some(subcommand_matches)) => {
+            commands::set_identity::execute(subcommand_matches, &ledger_path)
+        }
+        ("set-event-filter", Some(subcommand_matches)) => {
+            commands::set_event_filter::execute(subcommand_matches, &ledger_path)
+        }
+        ("set-log-filter", Some(subcommand_matches)) => {
+            commands::set_log_filter::execute(subcommand_matches, &ledger_path)
+        }
+        ("wait-for-restart-window", Some(subcommand_matches)) => {
+            commands::wait_for_restart_window::execute(subcommand_matches, &ledger_path)
+        }
+        ("repair-shred-from-peer", Some(subcommand_matches)) => {
+            commands::repair_shred_from_peer::execute(subcommand_matches, &ledger_path)
+        }
+        ("repair-whitelist", Some(repair_whitelist_subcommand_matches)) => {
+            commands::repair_whitelist::execute(repair_whitelist_subcommand_matches, &ledger_path)
+        }
+        ("set-public-address", Some(subcommand_matches)) => {
+            commands::set_public_address::execute(subcommand_matches, &ledger_path)
+        }
+        ("manage-block-production", Some(subcommand_matches)) => {
+            commands::manage_block_production::execute(subcommand_matches, &ledger_path)
+        }
+        ("blockstore", Some(subcommand_matches)) => {
+            commands::blockstore::execute(subcommand_matches, &ledger_path)
+        }
+        _ => unreachable!(),
+    }
+    .unwrap_or_else(|err| {
+        println!("Validator command failed: {err}");
+        exit(1);
+    })
+}

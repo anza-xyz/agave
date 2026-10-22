@@ -1,0 +1,58 @@
+[package]
+name = "agave-precompiles"
+description = "Solana precompiled programs."
+documentation = "https://docs.rs/agave-precompiles"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+agave-feature-set = { workspace = true }
+ed25519-dalek = "=1.0.1"
+libsecp256k1 = { workspace = true, features = ["hmac"] }
+openssl = { workspace = true }
+solana-ed25519-program = { workspace = true }
+solana-keccak-hasher = { workspace = true, features = ["sha3"] }
+solana-message = { workspace = true }
+solana-precompile-error = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-secp256k1-program = { workspace = true, features = ["wincode"] }
+solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
+wincode = { workspace = true }
+
+[dev-dependencies]
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-precompiles = { path = ".", features = ["agave-unstable-api"] }
+bytemuck = { workspace = true }
+criterion = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+solana-instruction = { workspace = true }
+
+[[bench]]
+name = "ed25519_instructions"
+harness = false
+
+[[bench]]
+name = "secp256k1_instructions"
+harness = false
+
+[[bench]]
+name = "secp256r1_instructions"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,41 @@
+[package]
+name = "solana-lattice-hash"
+description = "Solana Lattice Hash"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+base64 = { workspace = true }
+blake3 = { workspace = true }
+bs58 = { workspace = true }
+bytemuck = { workspace = true, features = ["must_cast"] }
+
+[dev-dependencies]
+criterion = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+solana-lattice-hash = { path = ".", features = ["agave-unstable-api"] }
+
+[[bench]]
+name = "bench_lt_hash"
+harness = false
+
+[[bench]]
+name = "bench_batch"
+harness = false
+
+[lints]
+workspace = true

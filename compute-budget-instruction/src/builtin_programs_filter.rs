@@ -1,0 +1,148 @@
+use {
+    solana_builtins_default_costs::{
+        BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY, get_builtin_migration_feature_index,
+    },
+    solana_pubkey::Pubkey,
+};
+
+// The maximum number of pubkeys that a packet can contain.
+pub(crate) const FILTER_SIZE: usize = u8::MAX as usize + 1;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ProgramKind {
+    NotBuiltin,
+    Builtin,
+    // Builtin program maybe in process of being migrated to core bpf,
+    // if core_bpf_migration_feature is activated, then the migration has
+    // completed and it should no longer be considered as builtin
+    MigratingBuiltin {
+        core_bpf_migration_feature_index: usize,
+    },
+}
+
+pub(crate) struct BuiltinProgramsFilter {
+    // array of slots for all possible static and sanitized program_id_index,
+    // each slot indicates if a program_id_index has not been checked (eg, None),
+    // or already checked with result (eg, Some(ProgramKind)) that can be reused.
+    program_kind: [Option<ProgramKind>; FILTER_SIZE],
+}
+
+impl BuiltinProgramsFilter {
+    pub(crate) fn new() -> Self {
+        BuiltinProgramsFilter {
+            program_kind: [None; FILTER_SIZE],
+        }
+    }
+
+    pub(crate) fn get_program_kind(&mut self, index: usize, program_id: &Pubkey) -> ProgramKind {
+        *self
+            .program_kind
+            .get_mut(index)
+            .expect("program id index is sanitized")
+            .get_or_insert_with(|| Self::check_program_kind(program_id))
+    }
+
+    #[inline]
+    fn check_program_kind(program_id: &Pubkey) -> ProgramKind {
+        if !MAYBE_BUILTIN_KEY[program_id.as_ref()[0] as usize] {
+            return ProgramKind::NotBuiltin;
+        }
+
+        match get_builtin_migration_feature_index(program_id) {
+            BuiltinMigrationFeatureIndex::NotBuiltin => ProgramKind::NotBuiltin,
+            BuiltinMigrationFeatureIndex::BuiltinNoMigrationFeature => ProgramKind::Builtin,
+            BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(
+                core_bpf_migration_feature_index,
+            ) => ProgramKind::MigratingBuiltin {
+                core_bpf_migration_feature_index,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use {
+        super::*,
+        solana_builtins_default_costs::{
+            BuiltinCost, MIGRATING_BUILTINS_COSTS, MigratingBuiltinCost, get_migration_feature_id,
+        },
+    };
+
+    const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
+
+    #[test]
+    fn get_program_kind() {
+        let mut test_store = BuiltinProgramsFilter::new();
+        let mut index = 9;
+
+        // initial state is Unchecked
+        assert!(test_store.program_kind[index].is_none());
+
+        // non builtin returns None
+        assert_eq!(
+            test_store.get_program_kind(index, &DUMMY_PROGRAM_ID.parse().unwrap()),
+            ProgramKind::NotBuiltin
+        );
+        // but its state is now checked (eg, Some(...))
+        assert_eq!(
+            test_store.program_kind[index],
+            Some(ProgramKind::NotBuiltin)
+        );
+        // lookup same `index` will return cached data, will not lookup `program_id`
+        // again
+        assert_eq!(
+            test_store.get_program_kind(index, &solana_sdk_ids::bpf_loader_upgradeable::id()),
+            ProgramKind::NotBuiltin
+        );
+
+        // not-migrating builtin
+        index += 1;
+        assert_eq!(
+            test_store.get_program_kind(index, &solana_sdk_ids::bpf_loader_upgradeable::id()),
+            ProgramKind::Builtin,
+        );
+
+        // compute-budget
+        index += 1;
+        assert_eq!(
+            test_store.get_program_kind(index, &solana_sdk_ids::compute_budget::id()),
+            ProgramKind::Builtin,
+        );
+
+        // migrating builtins
+        for (program_id, migrating_builtin) in MIGRATING_BUILTINS_COSTS {
+            index += 1;
+
+            let BuiltinCost::Migrating(MigratingBuiltinCost {
+                core_bpf_migration_feature,
+                position,
+            }) = migrating_builtin
+            else {
+                panic!("MIGRATING_BUILTINS_COSTS must only contain BuiltinCost::Migrating");
+            };
+
+            assert_eq!(
+                get_migration_feature_id(*position),
+                core_bpf_migration_feature
+            );
+
+            assert_eq!(
+                test_store.get_program_kind(index, program_id),
+                ProgramKind::MigratingBuiltin {
+                    core_bpf_migration_feature_index: *position,
+                }
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "program id index is sanitized")]
+    fn test_get_program_kind_out_of_bound_index() {
+        let mut test_store = BuiltinProgramsFilter::new();
+        assert_eq!(
+            test_store.get_program_kind(FILTER_SIZE + 1, &DUMMY_PROGRAM_ID.parse().unwrap(),),
+            ProgramKind::NotBuiltin
+        );
+    }
+}

@@ -1,0 +1,502 @@
+#![allow(clippy::arithmetic_side_effects)]
+
+//! File i/o helper functions.
+use {
+    crate::{FileInfo, FileSize, io_setup::IoSetupState},
+    std::{
+        fs::{self, File, OpenOptions},
+        io::{self, BufWriter, Seek, Write},
+        ops::Range,
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
+};
+
+/// Open `path` for reading, applying `O_DIRECT` on Linux when `use_direct_io`
+/// is true.
+///
+/// Use this when handing the resulting `File` to a `FileBufRead` reader that
+/// was built with a matching `use_direct_io` setting: opening with `O_DIRECT`
+/// here is what actually engages direct I/O at the kernel level. Reusing an
+/// `&File` opened without `O_DIRECT` will result in cached reads regardless of
+/// the reader's configuration.
+pub fn open_for_reading(path: &Path, use_direct_io: bool) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut flags = libc::O_NOATIME;
+        if use_direct_io {
+            flags |= libc::O_DIRECT;
+        }
+        options.custom_flags(flags);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = use_direct_io;
+    }
+    options.open(path)
+}
+
+/// `buffer` contains `valid_bytes` of data at its end.
+/// Move those valid bytes to the beginning of `buffer`, then read from `offset` to fill the rest of `buffer`.
+/// Update `offset` for the next read and update `valid_bytes` to specify valid portion of `buffer`.
+/// `valid_file_len` is # of valid bytes in the file. This may be <= file length.
+pub fn read_more_buffer(
+    file: &File,
+    valid_file_len: FileSize,
+    offset: &mut FileSize,
+    buffer: &mut [u8],
+    valid_bytes: &mut Range<usize>,
+) -> std::io::Result<()> {
+    // copy remainder of `valid_bytes` into beginning of `buffer`.
+    // These bytes were left over from the last read but weren't enough for the next desired contiguous read chunk.
+    buffer.copy_within(valid_bytes.clone(), 0);
+
+    // read the rest of `buffer`
+    let bytes_read = read_into_buffer(
+        file,
+        valid_file_len,
+        *offset,
+        &mut buffer[valid_bytes.len()..],
+    )?;
+    *offset += bytes_read as FileSize;
+    *valid_bytes = 0..(valid_bytes.len() + bytes_read);
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn arch_read_at(file: &File, buffer: &mut [u8], offset: FileSize) -> std::io::Result<usize> {
+    use std::os::unix::prelude::FileExt;
+    file.read_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn arch_read_at(file: &File, buffer: &mut [u8], offset: FileSize) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    // Note: as opposed to unix `read_at` this call will update the internal file offset,
+    // so all callers should consistently use the file only through this module
+    file.seek_read(buffer, offset)
+}
+
+#[cfg(unix)]
+fn arch_write_at(file: &File, buffer: &[u8], offset: FileSize) -> io::Result<usize> {
+    use std::os::unix::prelude::FileExt;
+    file.write_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn arch_write_at(file: &File, buffer: &[u8], offset: FileSize) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    // Note: as opposed to unix `write_at` this call will update the internal file offset,
+    // so all callers should consistently use the file only through this module
+    file.seek_write(buffer, offset)
+}
+
+/// Write, starting at `offset`, the whole buffer to a file irrespective of the file's current length.
+///
+/// After this operation file size may be extended and the file cursor may be moved (platform-dependent).
+pub fn write_buffer_to_file(
+    file: &File,
+    mut buffer: &[u8],
+    mut offset: FileSize,
+) -> io::Result<()> {
+    while !buffer.is_empty() {
+        let wrote_len = arch_write_at(file, buffer, offset)?;
+        if wrote_len == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        buffer = &buffer[wrote_len..];
+        offset += wrote_len as FileSize;
+    }
+    Ok(())
+}
+
+/// Read, starting at `start_offset`, until `buffer` is full or we read past `valid_file_len`/eof.
+/// `valid_file_len` is # of valid bytes in the file. This may be <= file length.
+/// return # bytes read
+pub fn read_into_buffer(
+    file: &File,
+    valid_file_len: FileSize,
+    start_offset: FileSize,
+    buffer: &mut [u8],
+) -> std::io::Result<usize> {
+    let mut offset = start_offset;
+    let mut buffer_offset = 0;
+    let mut total_bytes_read = 0;
+    if start_offset >= valid_file_len {
+        return Ok(0);
+    }
+
+    while buffer_offset < buffer.len() {
+        match arch_read_at(file, &mut buffer[buffer_offset..], offset as FileSize) {
+            Err(err) => {
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(err);
+            }
+            Ok(bytes_read_this_time) => {
+                total_bytes_read += bytes_read_this_time;
+                if total_bytes_read as FileSize + start_offset >= valid_file_len {
+                    total_bytes_read -=
+                        ((total_bytes_read as FileSize + start_offset) - valid_file_len) as usize;
+                    // we've read all there is in the file
+                    break;
+                }
+                // There is possibly more to read. `read_at` may have returned partial results, so prepare to loop and read again.
+                buffer_offset += bytes_read_this_time;
+                offset += bytes_read_this_time as FileSize;
+            }
+        }
+    }
+    Ok(total_bytes_read)
+}
+
+/// An asynchronous queue for file creation.
+pub trait FileCreator {
+    /// Schedule creating a file at `path` with `mode` permissions and bytes read from `contents`.
+    ///
+    /// `parent_dir_handle` is assumed to be a parent directory of `path` such that file may be
+    /// created using optimized kernel API to create `path.file_name()` inside `parent_dir_handle`.
+    fn schedule_create_at_dir(
+        &mut self,
+        path: PathBuf,
+        mode: u32,
+        parent_dir_handle: Arc<File>,
+        contents: &mut dyn io::Read,
+    ) -> io::Result<()>;
+
+    /// Invoke implementation specific logic to handle file creation completion.
+    fn file_complete(&mut self, created_file: File, path: PathBuf, file_size: FileSize);
+
+    /// Waits for all operations to be completed
+    fn drain(&mut self) -> io::Result<()>;
+}
+
+pub fn file_creator<'a>(
+    buf_size: usize,
+    io_setup: &IoSetupState,
+    file_complete: impl FnMut(FileInfo) -> Option<File> + 'a,
+) -> io::Result<Box<dyn FileCreator + 'a>> {
+    #[cfg(target_os = "linux")]
+    if agave_io_uring::io_uring_supported() {
+        use crate::io_uring::file_creator::{DEFAULT_WRITE_SIZE, IoUringFileCreatorBuilder};
+
+        if buf_size >= DEFAULT_WRITE_SIZE as usize {
+            let io_uring_creator = IoUringFileCreatorBuilder::new()
+                .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+                .write_with_direct_io(io_setup.use_direct_io)
+                .shared_sqpoll(io_setup.shared_sqpoll_fd())
+                .build(buf_size, file_complete)?;
+            return Ok(Box::new(io_uring_creator));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = io_setup;
+    }
+    Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
+}
+
+pub struct SyncIoFileCreator<'a> {
+    file_complete: Box<dyn FnMut(FileInfo) -> Option<File> + 'a>,
+}
+
+impl<'a> SyncIoFileCreator<'a> {
+    fn new(_buf_size: usize, file_complete: impl FnMut(FileInfo) -> Option<File> + 'a) -> Self {
+        Self {
+            file_complete: Box::new(file_complete),
+        }
+    }
+}
+
+/// Update permissions mode of an existing directory or file path
+///
+/// Note: on-non Unix platforms, this functions only updates readonly mode.
+pub fn set_path_permissions(path: &Path, mode: u32) -> io::Result<()> {
+    let perm;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        perm = fs::Permissions::from_mode(mode);
+    }
+    #[cfg(not(unix))]
+    {
+        let mut current_perm = fs::metadata(path)?.permissions();
+        current_perm.set_readonly(mode & 0o200 == 0);
+        perm = current_perm;
+    }
+    fs::set_permissions(path, perm)
+}
+
+impl FileCreator for SyncIoFileCreator<'_> {
+    fn schedule_create_at_dir(
+        &mut self,
+        path: PathBuf,
+        mode: u32,
+        _parent_dir_handle: Arc<File>,
+        contents: &mut dyn io::Read,
+    ) -> io::Result<()> {
+        // Open for writing (also allows overwrite) and apply `mode`
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(true).read(true).write(true);
+
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
+
+        let mut file_buf = BufWriter::new(options.open(&path)?);
+        io::copy(contents, &mut file_buf)?;
+        file_buf.flush()?;
+
+        // On unix the file was opened with proper permissions, only update the mode on non-unix
+        #[cfg(not(unix))]
+        set_path_permissions(&path, mode)?;
+
+        let mut file = file_buf.into_inner()?;
+        file.rewind()?;
+        let file_info = FileInfo::new_from_path_and_file(path, file)?;
+        (self.file_complete)(file_info);
+        Ok(())
+    }
+
+    fn file_complete(&mut self, file: File, path: PathBuf, size: FileSize) {
+        (self.file_complete)(FileInfo { file, path, size });
+    }
+
+    fn drain(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::{
+            fs,
+            io::{Cursor, Read, Write},
+        },
+        tempfile::tempfile,
+        test_case::test_case,
+    };
+
+    #[test]
+    fn test_read_into_buffer() {
+        // Setup a sample file with 32 bytes of data
+        let mut sample_file = tempfile().unwrap();
+        let file_size = 32;
+        let bytes: Vec<u8> = (0..file_size as u8).collect();
+        sample_file.write_all(&bytes).unwrap();
+
+        // Read all 32 bytes into buffer
+        let mut buffer = [0; 32];
+        let mut buffer_len = buffer.len();
+        let mut valid_len = 32;
+        let mut start_offset = 0;
+        let num_bytes_read =
+            read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
+        assert_eq!(num_bytes_read, buffer_len);
+        assert_eq!(bytes, buffer);
+
+        // Given a 64-byte buffer, it should only read 32 bytes into the buffer
+        let mut buffer = [0; 64];
+        buffer_len = buffer.len();
+        let num_bytes_read =
+            read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
+        assert_eq!(num_bytes_read, valid_len as usize);
+        assert_eq!(bytes, buffer[0..valid_len as usize]);
+        assert_eq!(buffer[valid_len as usize..buffer_len], [0; 32]);
+
+        // Given the `valid_file_len` is 16, it should only read 16 bytes into the buffer
+        let mut buffer = [0; 32];
+        buffer_len = buffer.len();
+        valid_len = 16;
+        let num_bytes_read =
+            read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
+        assert_eq!(num_bytes_read, valid_len as usize);
+        assert_eq!(bytes[0..valid_len as usize], buffer[0..valid_len as usize]);
+        // As a side effect of the `read_into_buffer` the data passed `valid_file_len` was
+        // read and put into the buffer, though these data should not be
+        // consumed.
+        assert_eq!(
+            buffer[valid_len as usize..buffer_len],
+            bytes[valid_len as usize..buffer_len]
+        );
+
+        // Given the start offset 8, it should only read 24 bytes into buffer
+        let mut buffer = [0; 32];
+        buffer_len = buffer.len();
+        valid_len = 32;
+        start_offset = 8;
+        let num_bytes_read =
+            read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
+        assert_eq!(num_bytes_read as FileSize, valid_len - start_offset);
+        assert_eq!(
+            buffer[0..num_bytes_read],
+            bytes[start_offset as usize..buffer_len]
+        );
+        assert_eq!(buffer[num_bytes_read..buffer_len], [0; 8])
+    }
+
+    #[test]
+    fn test_read_more_buffer() {
+        // Setup a sample file with 32 bytes of data
+        let mut sample_file = tempfile().unwrap();
+        let file_size = 32;
+        let bytes: Vec<u8> = (0..file_size as u8).collect();
+        sample_file.write_all(&bytes).unwrap();
+
+        // Should move left-over 8 bytes to and read 24 bytes from file
+        let mut buffer = [0xFFu8; 32];
+        let buffer_len = buffer.len();
+        let mut offset = 0;
+        let mut valid_bytes = 24..32;
+        let mut valid_bytes_len = valid_bytes.len();
+        let valid_len = 32;
+        read_more_buffer(
+            &sample_file,
+            valid_len,
+            &mut offset,
+            &mut buffer,
+            &mut valid_bytes,
+        )
+        .unwrap();
+        assert_eq!(offset as usize, buffer_len - valid_bytes_len);
+        assert_eq!(valid_bytes, 0..buffer_len);
+        assert_eq!(buffer[0..valid_bytes_len], [0xFFu8; 8]);
+        assert_eq!(
+            buffer[valid_bytes_len..buffer_len],
+            bytes[0..buffer_len - valid_bytes_len]
+        );
+
+        // Should move left-over 8 bytes to and read 16 bytes from file due to EOF
+        let mut buffer = [0xFFu8; 32];
+        let start_offset = 16;
+        let mut offset = 16;
+        let mut valid_bytes = 24..32;
+        valid_bytes_len = valid_bytes.len();
+        read_more_buffer(
+            &sample_file,
+            valid_len,
+            &mut offset,
+            &mut buffer,
+            &mut valid_bytes,
+        )
+        .unwrap();
+        assert_eq!(offset, file_size);
+        assert_eq!(valid_bytes, 0..24);
+        assert_eq!(buffer[0..valid_bytes_len], [0xFFu8; 8]);
+        assert_eq!(
+            buffer[valid_bytes_len..valid_bytes.end],
+            bytes[start_offset as usize..file_size as usize]
+        );
+    }
+
+    fn read_file_to_string(path: &PathBuf) -> String {
+        String::from_utf8(fs::read(path).expect("Failed to read file"))
+            .expect("Failed to decode file contents")
+    }
+
+    #[test]
+    fn test_create_writes_contents() -> io::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.txt");
+        let contents = "Hello, world!";
+
+        // Shared state to capture callback invocations
+        let mut callback_invoked_path = None;
+
+        // Instantiate FileCreator
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
+            callback_invoked_path.replace(file_info.path);
+            Some(file_info.file)
+        })?;
+
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        creator.schedule_create_at_dir(
+            file_path.clone(),
+            0o644,
+            dir,
+            &mut Cursor::new(contents),
+        )?;
+        creator.drain()?;
+        drop(creator);
+
+        assert_eq!(read_file_to_string(&file_path), contents);
+        assert_eq!(callback_invoked_path, Some(file_path));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_file_creations() -> io::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let mut callback_counter = 0;
+
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
+            let contents = read_file_to_string(&file_info.path);
+            assert!(contents.starts_with("File "));
+            callback_counter += 1;
+            Some(file_info.file)
+        })?;
+
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        for i in 0..5 {
+            let file_path = temp_dir.path().join(format!("file_{i}.txt"));
+            let data = format!("File {i}");
+            creator.schedule_create_at_dir(
+                file_path,
+                0o600,
+                dir.clone(),
+                &mut Cursor::new(data),
+            )?;
+        }
+        creator.drain()?;
+        drop(creator);
+
+        assert_eq!(callback_counter, 5);
+        Ok(())
+    }
+
+    // Test sync io (small buf size) and io-uring (large buf size) file creator
+    #[test_case(1024)]
+    #[test_case(2 * 1024 * 1024)]
+    fn test_create_callback_claims_owned_file(buf_size: usize) -> io::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.txt");
+        let contents = "Hello, world!";
+
+        // Shared state to capture callback invocations
+        let mut callback_provided_file_info = None;
+
+        let mut creator = file_creator(buf_size, &IoSetupState::default(), |file_info| {
+            callback_provided_file_info = Some(file_info);
+            None
+        })?;
+
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        creator.schedule_create_at_dir(
+            file_path.clone(),
+            0o644,
+            dir,
+            &mut Cursor::new(contents),
+        )?;
+        creator.drain()?;
+        drop(creator);
+
+        let mut read_buf = String::new();
+        let mut file_info = callback_provided_file_info.unwrap();
+        assert_eq!(
+            file_info.file.metadata().unwrap().len(),
+            contents.len() as FileSize,
+        );
+        assert_eq!(file_info.size, contents.len() as FileSize);
+        file_info.file.read_to_string(&mut read_buf).unwrap();
+        assert_eq!(&read_buf, contents);
+
+        Ok(())
+    }
+}

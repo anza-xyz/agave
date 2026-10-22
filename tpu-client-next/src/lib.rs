@@ -1,0 +1,42 @@
+#![cfg(feature = "agave-unstable-api")]
+//! # Feature flags
+//!
+//! Tpu-client-next supports three features:
+//!
+//! - **`metrics`**: Enables implementation of the method `report_to_influxdb` for
+//!   [`SendTransactionStats`] structure.
+//! - **`log`**: Enables logging using `log` crate. It is enabled by default.
+//! - **`tracing`**: Enables logging using `tracing` crate instead of `log`. This feature is
+//!   mutually exclusive with `log`.
+//! - **`websocket-node-address-service`**: Enables implementation of
+//!   `WebsocketNodeAddressService` that provides slot updates via WebSocket interface.
+
+pub mod client_builder;
+pub(crate) mod connection_worker;
+pub mod connection_workers_scheduler;
+pub mod send_transaction_stats;
+pub mod workers_cache;
+
+pub use crate::{
+    client_builder::{Client, ClientBuilder, ClientError, TransactionSender},
+    connection_workers_scheduler::{ConnectionWorkersScheduler, ConnectionWorkersSchedulerError},
+    send_transaction_stats::SendTransactionStats,
+};
+pub(crate) mod quic_networking;
+pub(crate) use crate::quic_networking::QuicError;
+pub mod leader_updater;
+
+#[cfg(feature = "metrics")]
+pub mod metrics;
+
+// Logging abstraction module
+pub(crate) mod logging;
+
+pub mod node_address_service;
+#[cfg(feature = "websocket-node-address-service")]
+pub mod websocket_node_address_service;
+
+use bytes::Bytes;
+
+/// Wire-format transaction bytes sent by the TPU client.
+pub type WireTransaction = Bytes;

@@ -1,0 +1,1407 @@
+use {
+    crate::{
+        bit_vec::{BitVec, BitVecRef},
+        blockstore::ParentInfo,
+        shred::{
+            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
+            merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
+        },
+    },
+    bitflags::bitflags,
+    smallvec::SmallVec,
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::{HASH_BYTES, Hash},
+    std::{
+        fmt::{self, Debug, Display},
+        ops::{Range, RangeBounds},
+    },
+    wincode::{SchemaRead, SchemaWrite, adapter::DefaultOnEmptyRead},
+};
+
+bitflags! {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    /// Flags to indicate whether a slot is a descendant of a slot on the main fork
+    pub struct ConnectedFlags:u8 {
+        // A slot S should be considered to be connected if:
+        // 1) S is a rooted slot itself OR
+        // 2) S's parent is connected AND S is full (S's complete block present)
+        //
+        // 1) is a straightforward case, roots are finalized blocks on the main fork
+        // so by definition, they are connected. All roots are connected, but not
+        // all connected slots are (or will become) roots.
+        //
+        // Based on the criteria stated in 2), S is connected iff it has a series
+        // of ancestors (that are each connected) that form a chain back to
+        // some root slot.
+        //
+        // A ledger that is updating with a cluster will have either begun at
+        // genesis or at some snapshot slot.
+        // - Genesis is obviously a special case, and slot 0's parent is deemed
+        //   to be connected in order to kick off the induction
+        // - Snapshots are taken at rooted slots, and as such, the snapshot slot
+        //   should be marked as connected so that a connected chain can start
+        //
+        // CONNECTED is explicitly the first bit to ensure backwards compatibility
+        // with the boolean field that ConnectedFlags replaced in SlotMeta.
+        const CONNECTED        = 0b0000_0001;
+        // Parent is connected; the slot becomes CONNECTED once it is also full.
+        const PARENT_CONNECTED = 0b1000_0000;
+    }
+}
+
+wincode::pod_wrapper! {
+    unsafe struct PodConnectedFlags(ConnectedFlags);
+}
+
+impl Default for ConnectedFlags {
+    fn default() -> Self {
+        ConnectedFlags::empty()
+    }
+}
+
+/// A fixed size BitVec offers fast lookup and fast de/serialization.
+#[derive(Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite)]
+pub struct CompletedDataIndexes {
+    index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
+}
+
+// API of CompletedDataIndexes that semantically mirrors BTreeSet<u32>.
+impl CompletedDataIndexes {
+    #[inline]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.index.iter_ones().map(|i| i as u32)
+    }
+
+    #[inline]
+    pub fn insert(&mut self, index: u32) {
+        self.index.insert_unchecked(index as usize);
+    }
+
+    #[inline]
+    pub fn contains(&self, index: &u32) -> bool {
+        self.index.contains(*index as usize)
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    #[inline]
+    pub fn range<R>(&self, bounds: R) -> impl DoubleEndedIterator<Item = u32> + '_
+    where
+        R: RangeBounds<u32>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index.range((start, end)).iter_ones().map(|i| i as u32)
+    }
+
+    /// Equivalent to `range(..bound).next_back()`.
+    #[inline]
+    pub(crate) fn previous_completed_index(&self, bound: u32) -> Option<u32> {
+        self.index.prev_set_bit(bound as usize).map(|i| i as u32)
+    }
+
+    /// Equivalent to `range(from..end).next()`.
+    #[inline]
+    pub(crate) fn next_completed_index(&self, from: u32, end: u32) -> Option<u32> {
+        self.index
+            .next_set_bit_in_range(from as usize..end as usize)
+            .map(|i| i as u32)
+    }
+}
+
+impl FromIterator<u32> for CompletedDataIndexes {
+    fn from_iter<T: IntoIterator<Item = u32>>(iter: T) -> Self {
+        let index = iter.into_iter().map(|i| i as usize).collect();
+        CompletedDataIndexes { index }
+    }
+}
+
+// Manually implement Debug to display indices instead of raw u8's
+impl Debug for CompletedDataIndexes {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.iter().collect::<Vec<_>>())
+    }
+}
+
+/// Inline storage for [`SlotMeta::next_slots`].
+///
+/// On a chain with little forking, [`SlotMeta::next_slots`] usually contains
+/// one child (occasionally two), but its size is not strictly bounded.
+///
+/// On 64-bit targets, inline capacities 1 and 2 produce the same `SmallVec` size,
+/// so consume that space with an extra inline `Slot` which would otherwise be
+/// padding bytes. This also avoids a heap spill for intermittent cases where
+/// [`SlotMeta::next_slots`] contains two children.
+pub type NextSlots = SmallVec<[Slot; 2]>;
+
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, Eq, PartialEq)]
+/// The Meta column family
+pub struct SlotMetaBase<T> {
+    /// The number of slots above the root (the genesis block). The first
+    /// slot has slot 0.
+    pub slot: Slot,
+    /// The total number of consecutive shreds starting from index 0 we have received for this slot.
+    /// At the same time, it is also an index of the first missing shred for this slot, while the
+    /// slot is incomplete.
+    pub consumed: u64,
+    /// The index *plus one* of the highest shred received for this slot. Useful
+    /// for checking if the slot has received any shreds yet, and to calculate the
+    /// range that may contain holes: `(consumed..received)`.
+    pub received: u64,
+    /// The timestamp of the first time a shred was added for this slot
+    pub first_shred_timestamp: u64,
+    /// The index of the shred that is flagged as the last shred for this slot.
+    /// None until the shred with LAST_SHRED_IN_SLOT flag is received.
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub last_index: Option<u64>,
+    /// The slot height of the block this one derives from.
+    /// The parent slot of the head of a detached chain of slots is None.
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub parent_slot: Option<Slot>,
+    /// The list of slots, each of which contains a block that derives
+    /// from this one.
+    pub next_slots: NextSlots,
+    /// Connected status flags of this slot
+    #[wincode(with = "PodConnectedFlags")]
+    pub connected_flags: ConnectedFlags,
+    /// Shreds indices which are marked data complete.  That is, those that have the
+    /// [`ShredFlags::DATA_COMPLETE_SHRED`][`crate::shred::ShredFlags::DATA_COMPLETE_SHRED`] set.
+    pub completed_data_indexes: T,
+}
+
+pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexes>;
+
+/// Slot metadata persisted by blockstore.
+///
+/// V3 adds `parent_block_id` and `replay_fec_set_index` so replay can validate
+/// and restart slots that switch parent through an UpdateParent marker. The new
+/// fields default on old ledger reads, preserving backward-compatible reads of
+/// V2 data.
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, Eq, PartialEq)]
+pub struct SlotMetaV3 {
+    pub slot: Slot,
+    pub consumed: u64,
+    pub received: u64,
+    pub first_shred_timestamp: u64,
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub last_index: Option<u64>,
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub parent_slot: Option<Slot>,
+    pub next_slots: NextSlots,
+    #[wincode(with = "PodConnectedFlags")]
+    pub connected_flags: ConnectedFlags,
+    pub completed_data_indexes: CompletedDataIndexes,
+    /// Block id paired with `parent_slot`.
+    ///
+    /// Populated by the block header initially, then replaced if an UpdateParent
+    /// marker changes the replay parent for this slot.
+    #[wincode(with = "DefaultOnEmptyRead<Hash>")]
+    pub parent_block_id: Hash,
+    /// Shred/FEC-set index where replay should start for this slot.
+    ///
+    /// A value of zero means replay starts from the block header. A non-zero
+    /// value means an UpdateParent marker was observed and replay must skip the
+    /// optimistic-parent prefix before this FEC set.
+    #[wincode(with = "DefaultOnEmptyRead<u32>")]
+    pub replay_fec_set_index: u32,
+}
+
+pub type SlotMeta = SlotMetaV3;
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct UpdateParentInfo {
+    pub slot: Slot,
+    pub update_parent_fec_set_index: u32,
+    pub parent_slot: Slot,
+    pub parent_block_id: Hash,
+}
+
+impl UpdateParentInfo {
+    pub fn from_slot_meta(slot: Slot, slot_meta: &SlotMeta) -> Option<Self> {
+        Some(Self {
+            slot,
+            update_parent_fec_set_index: slot_meta
+                .has_update_parent()
+                .then_some(slot_meta.replay_fec_set_index)?,
+            parent_slot: slot_meta.parent_slot?,
+            parent_block_id: slot_meta.parent_block_id,
+        })
+    }
+}
+
+/// Lighter-weight version of [`SlotMeta`] containing just the set
+/// of fields needed for repair.
+///
+/// wincode deserializes in field declaration order, so [`SlotMetaRepair`]
+/// can always be deserialized from [`SlotMeta`].
+#[derive(Clone, Debug, Default, SchemaRead, Eq, PartialEq)]
+pub struct SlotMetaRepair {
+    pub slot: Slot,
+    pub consumed: u64,
+    pub received: u64,
+    pub first_shred_timestamp: u64,
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub last_index: Option<u64>,
+    #[wincode(with = "wincode_compat::OptionCompat")]
+    pub parent_slot: Option<Slot>,
+    pub next_slots: NextSlots,
+}
+
+// Wincode implementation of serialize and deserialize for Option<u64>
+// where None is represented as u64::MAX; for backward compatibility.
+mod wincode_compat {
+    use {
+        super::*,
+        std::mem::MaybeUninit,
+        wincode::{
+            ReadResult, WriteResult,
+            config::ConfigCore,
+            io::{Reader, Writer},
+        },
+    };
+
+    pub(crate) struct OptionCompat;
+    unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for OptionCompat {
+        type Dst = Option<Slot>;
+
+        const TYPE_META: wincode::TypeMeta =
+            <Slot as SchemaRead<'de, C>>::TYPE_META.keep_zero_copy(false);
+
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            let val = <Slot as SchemaRead<'de, C>>::get(reader)?;
+            dst.write((val != Slot::MAX).then_some(val));
+            Ok(())
+        }
+    }
+    unsafe impl<C: ConfigCore> SchemaWrite<C> for OptionCompat {
+        type Src = Option<Slot>;
+
+        const TYPE_META: wincode::TypeMeta =
+            <Slot as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
+            <Slot as SchemaWrite<C>>::size_of(&src.unwrap_or(Slot::MAX))
+        }
+
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+            <Slot as SchemaWrite<C>>::write(writer, &src.unwrap_or(Slot::MAX))
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, PartialEq, Eq)]
+pub struct Index {
+    pub slot: Slot,
+    data: ShredIndex,
+    coding: ShredIndex,
+}
+
+#[derive(Debug, SchemaRead, PartialEq, Eq)]
+pub struct IndexRef<'a> {
+    pub slot: Slot,
+    data: ShredIndexRef<'a>,
+    coding: ShredIndexRef<'a>,
+}
+
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite, Eq, PartialEq)]
+/// Erasure coding information
+pub struct ErasureMeta {
+    /// Which erasure set in the slot this is
+    #[wincode(with = "wincode_compat_cast::U32AsU64")]
+    fec_set_index: u32,
+    /// First coding index in the FEC set
+    first_coding_index: u64,
+    /// Index of the first received coding shred in the FEC set
+    first_received_coding_index: u64,
+    /// Erasure configuration for this erasure set
+    config: ErasureConfig,
+}
+
+// Helper module to serialize values by type-casting to an intermediate
+// type for backward compatibility.
+mod wincode_compat_cast {
+    use {
+        super::*,
+        std::mem::MaybeUninit,
+        wincode::{
+            ReadResult, WriteResult,
+            config::ConfigCore,
+            io::{Reader, Writer},
+        },
+    };
+
+    /// Serializes a `u32` as `u64` for backward compatibility with on-disk data
+    /// that stored the field with 8-byte width.
+    pub(super) struct U32AsU64;
+    unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for U32AsU64 {
+        type Dst = u32;
+
+        const TYPE_META: wincode::TypeMeta =
+            <u64 as SchemaRead<'de, C>>::TYPE_META.keep_zero_copy(false);
+
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            let val = <u64 as SchemaRead<'de, C>>::get(reader)?;
+            dst.write(val as u32);
+            Ok(())
+        }
+    }
+    unsafe impl<C: ConfigCore> SchemaWrite<C> for U32AsU64 {
+        type Src = u32;
+
+        const TYPE_META: wincode::TypeMeta =
+            <u64 as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
+            <u64 as SchemaWrite<C>>::size_of(&u64::from(*src))
+        }
+
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+            <u64 as SchemaWrite<C>>::write(writer, &u64::from(*src))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
+pub(crate) struct ErasureConfig {
+    pub(crate) num_data: usize,
+    pub(crate) num_coding: usize,
+}
+
+impl ErasureConfig {
+    pub(crate) fn is_fixed(&self) -> bool {
+        self.num_data == DATA_SHREDS_PER_FEC_BLOCK && self.num_coding == DATA_SHREDS_PER_FEC_BLOCK
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
+pub struct MerkleRootMeta {
+    /// The merkle root, `None` for legacy shreds
+    merkle_root: Option<Hash>,
+    /// The first received shred index
+    first_received_shred_index: u32,
+    /// The shred type of the first received shred
+    first_received_shred_type: ShredType,
+}
+
+#[derive(SchemaRead, SchemaWrite)]
+pub struct DuplicateSlotProof {
+    pub shred1: shred::Payload,
+    pub shred2: shred::Payload,
+}
+
+/// Which column an associated block currently resides
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlockLocation {
+    Original,
+    Alternate { block_id: Hash },
+}
+
+impl BlockLocation {
+    pub(crate) fn from_bytes(bytes: [u8; HASH_BYTES]) -> Self {
+        let block_id = Hash::new_from_array(bytes);
+        if block_id == Hash::default() {
+            Self::Original
+        } else {
+            Self::Alternate { block_id }
+        }
+    }
+
+    pub(crate) fn as_bytes(&self) -> [u8; HASH_BYTES] {
+        match self {
+            BlockLocation::Original => Hash::default().to_bytes(),
+            BlockLocation::Alternate { block_id } => block_id.to_bytes(),
+        }
+    }
+}
+
+impl Display for BlockLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockLocation::Original => write!(f, "Original"),
+            BlockLocation::Alternate { block_id } => write!(f, "Alternate({block_id})"),
+        }
+    }
+}
+
+#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
+pub enum FrozenHashVersioned {
+    Current(FrozenHashStatus),
+}
+
+impl FrozenHashVersioned {
+    pub fn frozen_hash(&self) -> Hash {
+        match self {
+            FrozenHashVersioned::Current(frozen_hash_status) => frozen_hash_status.frozen_hash,
+        }
+    }
+
+    pub fn is_duplicate_confirmed(&self) -> bool {
+        match self {
+            FrozenHashVersioned::Current(frozen_hash_status) => {
+                frozen_hash_status.is_duplicate_confirmed
+            }
+        }
+    }
+}
+
+#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
+pub struct FrozenHashStatus {
+    pub frozen_hash: Hash,
+    pub is_duplicate_confirmed: bool,
+}
+
+impl Index {
+    pub(crate) fn new(slot: Slot) -> Self {
+        Self {
+            slot,
+            data: ShredIndex::default(),
+            coding: ShredIndex::default(),
+        }
+    }
+
+    pub fn data(&self) -> &ShredIndex {
+        &self.data
+    }
+    pub fn coding(&self) -> &ShredIndex {
+        &self.coding
+    }
+
+    pub(crate) fn data_mut(&mut self) -> &mut ShredIndex {
+        &mut self.data
+    }
+    pub(crate) fn coding_mut(&mut self) -> &mut ShredIndex {
+        &mut self.coding
+    }
+}
+
+impl IndexRef<'_> {
+    pub fn data(&self) -> &ShredIndexRef<'_> {
+        &self.data
+    }
+}
+
+/// A bitvec (`Box<[u8]>`) of shred indices, where each u8 represents 8 shred indices.
+///
+/// Bit vec implementation provides:
+/// - **Contiguous Memory**: All bits are stored in a contiguous array of words,
+///   allowing direct indexing and efficient memory access patterns.
+/// - **Direct Range Access**: Can load only the specific words that overlap with a
+///   requested range, avoiding unnecessary traversal.
+/// - **Simplified Serialization**: The contiguous memory layout allows for efficient
+///   serialization/deserialization without tree reconstruction.
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Default)]
+pub struct ShredIndex {
+    index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
+    num_shreds: usize,
+}
+
+impl ShredIndex {
+    pub fn num_shreds(&self) -> usize {
+        self.num_shreds
+    }
+
+    #[cfg(test)]
+    fn remove(&mut self, index: u64) {
+        if self.index.remove_unchecked(index as usize) {
+            self.num_shreds -= 1;
+        }
+    }
+
+    pub fn contains(&self, idx: u64) -> bool {
+        self.index.contains(idx as usize)
+    }
+
+    pub(crate) fn insert(&mut self, idx: u64) {
+        if let Ok(true) = self.index.insert(idx as usize) {
+            self.num_shreds += 1;
+        }
+    }
+
+    pub(crate) fn count_range<R>(&self, bounds: R) -> usize
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index.range((start, end)).count_ones()
+    }
+
+    /// Returns true when every index in `bounds` is present.
+    /// Empty and reversed ranges are vacuously true.
+    pub(crate) fn contains_range(&self, bounds: Range<u64>) -> bool {
+        let width = bounds.end.saturating_sub(bounds.start);
+        width <= self.num_shreds as u64 && self.count_range(bounds) as u64 == width
+    }
+
+    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index
+            .range((start, end))
+            .iter_ones()
+            .map(|idx| idx as u64)
+    }
+}
+
+impl FromIterator<u64> for ShredIndex {
+    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
+        let mut index = ShredIndex::default();
+        for idx in iter {
+            index.insert(idx);
+        }
+        index
+    }
+}
+
+/// A reference to a [`ShredIndex`].
+#[derive(Debug, SchemaRead, PartialEq, Eq)]
+pub struct ShredIndexRef<'a> {
+    index: BitVecRef<'a, MAX_DATA_SHREDS_PER_SLOT>,
+    num_shreds: usize,
+}
+
+impl ShredIndexRef<'_> {
+    pub fn num_shreds(&self) -> usize {
+        self.num_shreds
+    }
+
+    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index
+            .range((start, end))
+            .iter_ones()
+            .map(|idx| idx as u64)
+    }
+}
+
+fn slot_meta_is_full(last_index: Option<u64>, consumed: u64) -> bool {
+    // last_index is None when it has no information about how
+    // many shreds will fill this slot.
+    // Note: A full slot with zero shreds is not possible.
+    // Should never happen
+    if last_index.map(|ix| consumed > ix + 1).unwrap_or_default() {
+        datapoint_error!(
+            "blockstore_error",
+            (
+                "error",
+                format!(
+                    "Observed a slot meta with consumed: {} > meta.last_index + 1: {:?}",
+                    consumed,
+                    last_index.map(|ix| ix + 1),
+                ),
+                String
+            )
+        );
+    }
+
+    Some(consumed) == last_index.map(|ix| ix + 1)
+}
+
+impl SlotMeta {
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        slot_meta_is_full(self.last_index, self.consumed)
+    }
+
+    /// Returns a boolean indicating whether this meta's parent slot is known.
+    /// This value being true indicates that this meta's slot is the head of a
+    /// detached chain of slots.
+    pub(crate) fn is_orphan(&self) -> bool {
+        self.parent_slot.is_none()
+    }
+
+    /// Returns a boolean indicating whether the meta is connected.
+    pub fn is_connected(&self) -> bool {
+        self.connected_flags.contains(ConnectedFlags::CONNECTED)
+    }
+
+    /// Mark the meta as connected.
+    pub fn set_connected(&mut self) {
+        assert!(self.is_parent_connected());
+        self.connected_flags.set(ConnectedFlags::CONNECTED, true);
+    }
+
+    /// Returns a boolean indicating whether the meta's parent is connected.
+    pub fn is_parent_connected(&self) -> bool {
+        self.connected_flags
+            .contains(ConnectedFlags::PARENT_CONNECTED)
+    }
+
+    /// Mark the meta's parent as connected.
+    /// If the meta is also full, the meta is now connected as well. Return a
+    /// boolean indicating whether the meta became connected from this call.
+    pub fn set_parent_connected(&mut self) -> bool {
+        // Already connected so nothing to do, bail early
+        if self.is_connected() {
+            return false;
+        }
+
+        self.connected_flags
+            .set(ConnectedFlags::PARENT_CONNECTED, true);
+
+        if self.is_full() {
+            self.set_connected();
+        }
+
+        self.is_connected()
+    }
+
+    /// Clear the meta's parent_connected and connected flags.
+    /// Returns true if the meta was connected, indicating children need clearing.
+    pub fn clear_parent_connected(&mut self) -> bool {
+        let originally_connected = self.is_connected();
+        self.connected_flags
+            .remove(ConnectedFlags::PARENT_CONNECTED | ConnectedFlags::CONNECTED);
+        originally_connected
+    }
+
+    /// Dangerous.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn unset_parent(&mut self) {
+        self.parent_slot = None;
+    }
+
+    pub fn clear_unconfirmed_slot(&mut self) {
+        let old = std::mem::replace(self, SlotMeta::new_orphan(self.slot));
+        self.next_slots = old.next_slots;
+    }
+
+    pub(crate) fn new(slot: Slot, parent_slot: Option<Slot>) -> Self {
+        let connected_flags = if slot == 0 {
+            // Slot 0 is the start, mark it as having its' parent connected
+            // such that slot 0 becoming full will be updated as connected
+            ConnectedFlags::PARENT_CONNECTED
+        } else {
+            ConnectedFlags::default()
+        };
+        SlotMeta {
+            slot,
+            parent_slot,
+            connected_flags,
+            ..SlotMeta::default()
+        }
+    }
+
+    pub(crate) fn new_orphan(slot: Slot) -> Self {
+        Self::new(slot, /*parent_slot:*/ None)
+    }
+
+    pub(crate) fn update_from_parent_info(&mut self, parent_info: ParentInfo) {
+        self.parent_slot = Some(parent_info.parent_slot);
+        self.parent_block_id = parent_info.parent_block_id;
+        self.replay_fec_set_index = parent_info.replay_fec_set_index;
+    }
+
+    pub(crate) fn populated_from_block_header(&self) -> bool {
+        self.replay_fec_set_index == 0
+    }
+
+    /// Returns true once this slot's replay parent has been changed by an
+    /// `UpdateParent` marker.
+    pub fn has_update_parent(&self) -> bool {
+        self.replay_fec_set_index > 0
+    }
+}
+
+impl SlotMetaRepair {
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        slot_meta_is_full(self.last_index, self.consumed)
+    }
+}
+
+impl ErasureMeta {
+    pub(crate) fn from_coding_shred(shred: &Shred) -> Option<Self> {
+        match shred.shred_type() {
+            ShredType::Data => None,
+            ShredType::Code => {
+                let config = ErasureConfig {
+                    num_data: usize::from(shred.num_data_shreds().ok()?),
+                    num_coding: usize::from(shred.num_coding_shreds().ok()?),
+                };
+                let first_coding_index = u64::from(shred.first_coding_index()?);
+                let first_received_coding_index = u64::from(shred.index());
+                let erasure_meta = ErasureMeta {
+                    fec_set_index: shred.fec_set_index(),
+                    config,
+                    first_coding_index,
+                    first_received_coding_index,
+                };
+                Some(erasure_meta)
+            }
+        }
+    }
+
+    // Returns true if the erasure fields on the shred
+    // are consistent with the erasure-meta.
+    pub(crate) fn check_coding_shred(&self, shred: &Shred) -> bool {
+        let Some(mut other) = Self::from_coding_shred(shred) else {
+            return false;
+        };
+        other.first_received_coding_index = self.first_received_coding_index;
+        self == &other
+    }
+
+    /// Returns true if both shreds are coding shreds and have a
+    /// consistent erasure config
+    pub fn check_erasure_consistency(shred1: &Shred, shred2: &Shred) -> bool {
+        let Some(coding_shred) = Self::from_coding_shred(shred1) else {
+            return false;
+        };
+        coding_shred.check_coding_shred(shred2)
+    }
+
+    pub(crate) fn config(&self) -> ErasureConfig {
+        self.config
+    }
+
+    pub(crate) fn fec_set_index(&self) -> u32 {
+        self.fec_set_index
+    }
+
+    pub(crate) fn data_shreds_indices(&self) -> Range<u64> {
+        let num_data = self.config.num_data as u64;
+        let fec_set_index = u64::from(self.fec_set_index);
+        fec_set_index..fec_set_index + num_data
+    }
+
+    pub(crate) fn coding_shreds_indices(&self) -> Range<u64> {
+        let num_coding = self.config.num_coding as u64;
+        self.first_coding_index..self.first_coding_index + num_coding
+    }
+
+    pub(crate) fn first_received_coding_shred_index(&self) -> Option<u32> {
+        u32::try_from(self.first_received_coding_index).ok()
+    }
+
+    // Returns true if some data shreds are missing, but there are enough data
+    // and coding shreds to recover the erasure batch.
+    // TODO: In order to retransmit all shreds from the erasure batch, we need
+    // to always recover the batch as soon as possible, even if no data shreds
+    // are missing. But because we currently do not store recovered coding
+    // shreds into the blockstore we cannot identify if the batch was already
+    // recovered (and retransmitted) or not.
+    pub(crate) fn should_recover_shreds(&self, index: &Index) -> bool {
+        let num_data = index.data().range(self.data_shreds_indices()).count();
+        if num_data >= self.config.num_data {
+            return false; // No data shreds is missing.
+        }
+        let num_coding = index.coding().range(self.coding_shreds_indices()).count();
+        self.config.num_data <= num_data + num_coding
+    }
+}
+
+impl MerkleRootMeta {
+    pub(crate) fn from_shred(shred: &Shred) -> Self {
+        Self {
+            // An error here after the shred has already sigverified
+            // can only indicate that the leader is sending
+            // legacy or malformed shreds. We should still store
+            // `None` for those cases in blockstore, as a later
+            // shred that contains a proper merkle root would constitute
+            // a valid duplicate shred proof.
+            merkle_root: shred.merkle_root().ok(),
+            first_received_shred_index: shred.index(),
+            first_received_shred_type: shred.shred_type(),
+        }
+    }
+
+    pub fn merkle_root(&self) -> Option<Hash> {
+        self.merkle_root
+    }
+
+    pub(crate) fn first_received_shred_index(&self) -> u32 {
+        self.first_received_shred_index
+    }
+
+    pub(crate) fn first_received_shred_type(&self) -> ShredType {
+        self.first_received_shred_type
+    }
+}
+
+impl DuplicateSlotProof {
+    pub(crate) fn new<S, T>(shred1: S, shred2: T) -> Self
+    where
+        shred::Payload: From<S> + From<T>,
+    {
+        DuplicateSlotProof {
+            shred1: shred::Payload::from(shred1),
+            shred2: shred::Payload::from(shred2),
+        }
+    }
+}
+
+#[derive(Debug, Default, SchemaRead, SchemaWrite, PartialEq, Eq)]
+pub struct AddressSignatureMeta {
+    pub writeable: bool,
+}
+
+/// Performance information about validator execution during a time slice.
+///
+#[repr(C)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub struct PerfSample {
+    // `PerfSampleV1` part
+    pub num_transactions: u64,
+    pub num_slots: u64,
+    pub sample_period_secs: u16,
+
+    // New fields.
+    pub num_non_vote_transactions: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, PartialEq, Eq)]
+pub struct OptimisticSlotMetaV0 {
+    pub hash: Hash,
+    pub timestamp: UnixTimestamp,
+}
+
+#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
+pub enum OptimisticSlotMetaVersioned {
+    V0(OptimisticSlotMetaV0),
+}
+
+impl OptimisticSlotMetaVersioned {
+    pub fn new(hash: Hash, timestamp: UnixTimestamp) -> Self {
+        OptimisticSlotMetaVersioned::V0(OptimisticSlotMetaV0 { hash, timestamp })
+    }
+
+    pub fn hash(&self) -> Hash {
+        match self {
+            OptimisticSlotMetaVersioned::V0(meta) => meta.hash,
+        }
+    }
+
+    pub fn timestamp(&self) -> UnixTimestamp {
+        match self {
+            OptimisticSlotMetaVersioned::V0(meta) => meta.timestamp,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub struct DoubleMerkleMeta {
+    /// The double merkle root computed as the root of the merkle tree
+    /// containing the merkle roots of each fec set + the parent info (parent_slot, parent_double_merkle_root)
+    pub(crate) double_merkle_root: Hash,
+
+    /// The number of fec sets in this block
+    pub(crate) fec_set_count: u32,
+
+    /// The merkle proofs.
+    /// Each proof is of size `get_proof_size(fec_set_count + 1)`
+    /// This `Vec<u8>` contains the concatenated proofs for all the fec set leaves and the parent info leaf
+    ///
+    /// The size of this vec is `(fec_set_count + 1) * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY`
+    /// To access the proof for the i-th leaf:
+    ///   `proofs[i * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY
+    ///      ..(i + 1) * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY]`
+    pub(crate) proofs: Vec<u8>,
+}
+
+impl DoubleMerkleMeta {
+    /// Returns the number of fec sets in the block.
+    pub fn fec_set_count(&self) -> u32 {
+        self.fec_set_count
+    }
+
+    /// Return the proof associated with the leaf of fec set `fec_set_index`
+    /// Returns `None` if the proofs are yet to be populated or `fec_set_index` is out of bounds
+    pub fn get_fec_set_proof(&self, fec_set_index: u32) -> Option<&[u8]> {
+        if fec_set_index >= self.fec_set_count {
+            return None;
+        }
+        if self.proofs.is_empty() {
+            return None;
+        }
+        let fec_set_count =
+            usize::try_from(self.fec_set_count).expect("fec_set_count should fit in usize");
+        let fec_set_index = usize::try_from(fec_set_index).ok()?;
+
+        let proof_size =
+            usize::from(get_proof_size(fec_set_count + 1)) * SIZE_OF_MERKLE_PROOF_ENTRY;
+        Some(&self.proofs[fec_set_index * proof_size..(fec_set_index + 1) * proof_size])
+    }
+
+    /// Return the proof associated with the parent info leaf
+    /// Returns `None` if the proofs are yet to be populated
+    pub fn get_parent_info_proof(&self) -> Option<&[u8]> {
+        if self.proofs.is_empty() {
+            return None;
+        }
+
+        let fec_set_count =
+            usize::try_from(self.fec_set_count).expect("fec_set_count should fit in usize");
+        let proof_size =
+            usize::from(get_proof_size(fec_set_count + 1)) * SIZE_OF_MERKLE_PROOF_ENTRY;
+        Some(&self.proofs[fec_set_count * proof_size..])
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use {
+        super::*,
+        proptest::prelude::*,
+        rand::{prelude::IndexedRandom as _, rng},
+    };
+
+    #[test]
+    #[allow(clippy::reversed_empty_ranges)]
+    fn test_shred_index_contains_range() {
+        let index: ShredIndex = [2u64, 3, 4, 7].into_iter().collect();
+        // Exhaustively cross-check against the iterator definition over every
+        // window, including empty (start == end) and reversed (end < start).
+        for start in 0..10u64 {
+            for end in 0..10u64 {
+                assert_eq!(
+                    index.contains_range(start..end),
+                    index.range(start..end).eq(start..end),
+                    "window {start}..{end}"
+                );
+            }
+        }
+        assert!(index.contains_range(2..5));
+        assert!(!index.contains_range(2..6));
+        assert!(!index.contains_range(1..3));
+        assert!(index.contains_range(7..8));
+        assert!(index.contains_range(5..5));
+        assert!(index.contains_range(5..2));
+    }
+
+    #[test]
+    fn test_slot_meta_slot_zero_connected() {
+        let meta = SlotMeta::new(0 /* slot */, None /* parent */);
+        assert!(meta.is_parent_connected());
+        assert!(!meta.is_connected());
+    }
+
+    #[test]
+    fn test_should_recover_shreds() {
+        let fec_set_index = 0;
+        let erasure_config = ErasureConfig {
+            num_data: 8,
+            num_coding: 16,
+        };
+        let e_meta = ErasureMeta {
+            fec_set_index,
+            first_coding_index: u64::from(fec_set_index),
+            config: erasure_config,
+            first_received_coding_index: 0,
+        };
+        let mut rng = rng();
+        let mut index = Index::new(0);
+
+        let data_indexes = 0..erasure_config.num_data as u64;
+        let coding_indexes = 0..erasure_config.num_coding as u64;
+
+        assert!(!e_meta.should_recover_shreds(&index));
+
+        for ix in data_indexes.clone() {
+            index.data_mut().insert(ix);
+        }
+
+        assert!(!e_meta.should_recover_shreds(&index));
+
+        for ix in coding_indexes.clone() {
+            index.coding_mut().insert(ix);
+        }
+
+        for &idx in data_indexes
+            .clone()
+            .collect::<Vec<_>>()
+            .choose_multiple(&mut rng, erasure_config.num_data)
+        {
+            index.data_mut().remove(idx);
+
+            assert!(e_meta.should_recover_shreds(&index));
+        }
+
+        for ix in data_indexes {
+            index.data_mut().insert(ix);
+        }
+
+        for &idx in coding_indexes
+            .collect::<Vec<_>>()
+            .choose_multiple(&mut rng, erasure_config.num_coding)
+        {
+            index.coding_mut().remove(idx);
+
+            assert!(!e_meta.should_recover_shreds(&index));
+        }
+    }
+
+    /// Generate a random Range<u64>.
+    fn rand_range(range: Range<u64>) -> impl Strategy<Value = Range<u64>> {
+        (range.clone(), range).prop_map(
+            // Avoid descending (empty) ranges
+            |(start, end)| {
+                if start > end { end..start } else { start..end }
+            },
+        )
+    }
+
+    proptest! {
+        // Property: range queries should return correct indices
+        #[test]
+        fn range_query_correctness(
+            indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
+        ) {
+            let mut index = ShredIndex::default();
+
+            for idx in indices.clone() {
+                index.insert(idx);
+            }
+
+            assert_eq!(
+                index.range(indices.clone()).collect::<Vec<_>>(),
+                indices.into_iter().collect::<Vec<_>>()
+            );
+        }
+    }
+
+    fn arb_slot_meta() -> impl Strategy<Value = SlotMeta> {
+        (
+            any::<Slot>(),
+            any::<u64>(),
+            any::<u64>(),
+            any::<u64>(),
+            proptest::option::of(any::<u64>()),
+            proptest::option::of(any::<Slot>()),
+            proptest::collection::vec(any::<Slot>(), 0..32),
+            any::<u8>(),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u32, 0..64),
+            any::<[u8; HASH_BYTES]>(),
+            any::<u32>(),
+        )
+            .prop_map(
+                |(
+                    slot,
+                    consumed,
+                    received,
+                    first_shred_timestamp,
+                    last_index,
+                    parent_slot,
+                    next_slots,
+                    connected_flags,
+                    completed_data_indexes,
+                    parent_block_id,
+                    replay_fec_set_index,
+                )| SlotMeta {
+                    slot,
+                    consumed,
+                    received,
+                    first_shred_timestamp,
+                    last_index,
+                    parent_slot,
+                    next_slots: next_slots.into(),
+                    connected_flags: ConnectedFlags::from_bits_truncate(connected_flags),
+                    completed_data_indexes: completed_data_indexes.into_iter().collect(),
+                    parent_block_id: Hash::new_from_array(parent_block_id),
+                    replay_fec_set_index,
+                },
+            )
+    }
+
+    fn arb_index() -> impl Strategy<Value = Index> {
+        (
+            any::<Slot>(),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u64, 0..128),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u64, 0..128),
+        )
+            .prop_map(|(slot, data_indexes, coding_indexes)| {
+                let mut index = Index::new(slot);
+                for index_to_insert in data_indexes {
+                    index.data_mut().insert(index_to_insert);
+                }
+                for index_to_insert in coding_indexes {
+                    index.coding_mut().insert(index_to_insert);
+                }
+                index
+            })
+    }
+
+    proptest! {
+        // Property: `SlotMetaRepair` is always deserializable from serialized `SlotMeta`.
+        #[test]
+        fn test_slot_meta_repair_deserialization(
+            slot_meta in arb_slot_meta(),
+        ) {
+            let serialized = wincode::serialize(&slot_meta).unwrap();
+            let deserialized: SlotMetaRepair = wincode::deserialize(&serialized).unwrap();
+
+            prop_assert_eq!(deserialized.slot, slot_meta.slot);
+            prop_assert_eq!(deserialized.consumed, slot_meta.consumed);
+            prop_assert_eq!(deserialized.received, slot_meta.received);
+            prop_assert_eq!(
+                deserialized.first_shred_timestamp,
+                slot_meta.first_shred_timestamp
+            );
+            prop_assert_eq!(deserialized.last_index, slot_meta.last_index);
+            prop_assert_eq!(deserialized.parent_slot, slot_meta.parent_slot);
+            prop_assert_eq!(deserialized.next_slots, slot_meta.next_slots);
+        }
+    }
+
+    proptest! {
+        // Property: `IndexRef` is always deserializable from `Index`.
+        #[test]
+        fn test_index_ref_deserialization(
+            index in arb_index(),
+        ) {
+            let serialized = wincode::serialize(&index).unwrap();
+            let deserialized: IndexRef = wincode::deserialize(&serialized).unwrap();
+
+            prop_assert_eq!(deserialized.slot, index.slot);
+            prop_assert_eq!(
+                deserialized.data().range(..).collect::<Vec<_>>(),
+                index.data().range(..).collect::<Vec<_>>()
+            );
+            prop_assert_eq!(
+                deserialized.coding.range(..).collect::<Vec<_>>(),
+                index.coding().range(..).collect::<Vec<_>>()
+            );
+            prop_assert_eq!(deserialized.data().num_shreds(), index.data().num_shreds());
+            prop_assert_eq!(deserialized.coding.num_shreds(), index.coding().num_shreds());
+        }
+    }
+
+    #[test]
+    fn test_shred_index_range_bounds() {
+        let mut index = ShredIndex::default();
+
+        index.insert(10);
+        index.insert(20);
+        index.insert(30);
+        index.insert(40);
+
+        use std::ops::Bound::*;
+
+        // Test all combinations of bounds
+        let test_cases = [
+            // (start_bound, end_bound, expected_result)
+            (Included(10), Included(30), vec![10, 20, 30]),
+            (Included(10), Excluded(30), vec![10, 20]),
+            (Excluded(10), Included(30), vec![20, 30]),
+            (Excluded(10), Excluded(30), vec![20]),
+            // Unbounded start
+            (Unbounded, Included(20), vec![10, 20]),
+            (Unbounded, Excluded(20), vec![10]),
+            // Unbounded end
+            (Included(30), Unbounded, vec![30, 40]),
+            (Excluded(30), Unbounded, vec![40]),
+            // Both Unbounded
+            (Unbounded, Unbounded, vec![10, 20, 30, 40]),
+        ];
+
+        for (start_bound, end_bound, expected) in test_cases {
+            let result: Vec<_> = index.range((start_bound, end_bound)).collect();
+            assert_eq!(
+                result, expected,
+                "Failed for bounds: start={start_bound:?}, end={end_bound:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shred_index_boundary_conditions() {
+        let mut index = ShredIndex::default();
+
+        // First possible index
+        index.insert(0);
+        // Last index in first word (bits 0-7)
+        index.insert(7);
+        // First index in second word (bits 8-15)
+        index.insert(8);
+        // Last index in second word
+        index.insert(15);
+        // Last valid index
+        index.insert(MAX_DATA_SHREDS_PER_SLOT as u64 - 1);
+        // Should be ignored (too large)
+        index.insert(MAX_DATA_SHREDS_PER_SLOT as u64);
+
+        // Verify contents
+        assert!(index.contains(0));
+        assert!(index.contains(7));
+        assert!(index.contains(8));
+        assert!(index.contains(15));
+        assert!(index.contains(MAX_DATA_SHREDS_PER_SLOT as u64 - 1));
+        assert!(!index.contains(MAX_DATA_SHREDS_PER_SLOT as u64));
+
+        // Cross-word boundary
+        assert_eq!(index.range(6..10).collect::<Vec<_>>(), vec![7, 8]);
+        // Full first word
+        assert_eq!(index.range(0..8).collect::<Vec<_>>(), vec![0, 7]);
+        // Full second word
+        assert_eq!(index.range(8..16).collect::<Vec<_>>(), vec![8, 15]);
+
+        // Empty ranges
+        assert_eq!(index.range(0..0).count(), 0);
+        assert_eq!(index.range(1..1).count(), 0);
+
+        // Test range that exceeds max
+        let oversized_range = index.range(0..MAX_DATA_SHREDS_PER_SLOT as u64 + 1);
+        assert_eq!(oversized_range.count(), 5);
+        assert_eq!(index.num_shreds(), 5);
+
+        index.remove(0);
+        assert!(!index.contains(0));
+        index.remove(7);
+        assert!(!index.contains(7));
+        index.remove(8);
+        assert!(!index.contains(8));
+        index.remove(15);
+        assert!(!index.contains(15));
+        index.remove(MAX_DATA_SHREDS_PER_SLOT as u64 - 1);
+        assert!(!index.contains(MAX_DATA_SHREDS_PER_SLOT as u64 - 1));
+
+        assert_eq!(index.num_shreds(), 0);
+    }
+
+    #[test]
+    fn test_connected_flags_compatibility() {
+        // Define a couple structs with bool and ConnectedFlags to illustrate
+        // that that ConnectedFlags can be deserialized into a bool if the
+        // PARENT_CONNECTED bit is NOT set
+        #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
+        struct WithBool {
+            slot: Slot,
+            connected: bool,
+        }
+        #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
+        struct WithFlags {
+            slot: Slot,
+            #[wincode(with = "PodConnectedFlags")]
+            connected: ConnectedFlags,
+        }
+
+        let slot = 3;
+        let mut with_bool = WithBool {
+            slot,
+            connected: false,
+        };
+        let mut with_flags = WithFlags {
+            slot,
+            connected: ConnectedFlags::default(),
+        };
+
+        // Confirm that serialized byte arrays are same length
+        assert_eq!(
+            wincode::serialized_size(&with_bool).unwrap(),
+            wincode::serialized_size(&with_flags).unwrap()
+        );
+
+        // Confirm that connected=false equivalent to ConnectedFlags::default()
+        assert_eq!(
+            wincode::serialize(&with_bool).unwrap(),
+            wincode::serialize(&with_flags).unwrap()
+        );
+
+        // Set connected in WithBool and confirm inequality
+        with_bool.connected = true;
+        assert_ne!(
+            wincode::serialize(&with_bool).unwrap(),
+            wincode::serialize(&with_flags).unwrap()
+        );
+
+        // Set connected in WithFlags and confirm equality regained
+        with_flags.connected.set(ConnectedFlags::CONNECTED, true);
+        assert_eq!(
+            wincode::serialize(&with_bool).unwrap(),
+            wincode::serialize(&with_flags).unwrap()
+        );
+
+        // Deserializing WithBool into WithFlags succeeds
+        assert_eq!(
+            with_flags,
+            wincode::deserialize::<WithFlags>(&wincode::serialize(&with_bool).unwrap()).unwrap()
+        );
+
+        // Deserializing WithFlags into WithBool succeeds
+        assert_eq!(
+            with_bool,
+            wincode::deserialize::<WithBool>(&wincode::serialize(&with_flags).unwrap()).unwrap()
+        );
+
+        // Deserializing WithFlags with extra bit set into WithBool fails
+        with_flags
+            .connected
+            .set(ConnectedFlags::PARENT_CONNECTED, true);
+        assert!(
+            wincode::deserialize::<WithBool>(&wincode::serialize(&with_flags).unwrap()).is_err()
+        );
+    }
+
+    #[test]
+    fn test_clear_unconfirmed_slot() {
+        let mut slot_meta = SlotMeta::new_orphan(5);
+        slot_meta.consumed = 5;
+        slot_meta.received = 5;
+        slot_meta.next_slots = smallvec::smallvec![6, 7];
+        slot_meta.clear_unconfirmed_slot();
+
+        let mut expected = SlotMeta::new_orphan(5);
+        expected.next_slots = smallvec::smallvec![6, 7];
+        assert_eq!(slot_meta, expected);
+    }
+
+    #[test]
+    fn test_erasure_meta_transition() {
+        #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
+        struct OldErasureMeta {
+            set_index: u64,
+            first_coding_index: u64,
+            __unused_size: usize,
+            config: ErasureConfig,
+        }
+
+        let set_index = 64;
+        let erasure_config = ErasureConfig {
+            num_data: 8,
+            num_coding: 16,
+        };
+        let mut old_erasure_meta = OldErasureMeta {
+            set_index,
+            first_coding_index: set_index,
+            __unused_size: 0,
+            config: erasure_config,
+        };
+        let mut new_erasure_meta = ErasureMeta {
+            fec_set_index: u32::try_from(set_index).unwrap(),
+            first_coding_index: set_index,
+            first_received_coding_index: 0,
+            config: erasure_config,
+        };
+
+        assert_eq!(
+            wincode::serialized_size(&old_erasure_meta).unwrap(),
+            wincode::serialized_size(&new_erasure_meta).unwrap(),
+        );
+
+        assert_eq!(
+            wincode::deserialize::<ErasureMeta>(&wincode::serialize(&old_erasure_meta).unwrap())
+                .unwrap(),
+            new_erasure_meta
+        );
+
+        new_erasure_meta.first_received_coding_index = u64::from(u32::MAX);
+        old_erasure_meta.__unused_size = usize::try_from(u32::MAX).unwrap();
+
+        assert_eq!(
+            wincode::deserialize::<OldErasureMeta>(&wincode::serialize(&new_erasure_meta).unwrap())
+                .unwrap(),
+            old_erasure_meta
+        );
+    }
+}

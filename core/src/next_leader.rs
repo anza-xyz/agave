@@ -1,0 +1,34 @@
+use {
+    itertools::Itertools,
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
+    solana_poh::poh_recorder::PohRecorder,
+    std::{net::SocketAddr, sync::RwLock},
+};
+
+/// Returns a list of tpu vote sockets for the leaders of the next N fanout
+/// slots. Leaders and sockets are deduped.
+pub(crate) fn upcoming_leader_tpu_vote_sockets(
+    cluster_info: &ClusterInfo,
+    poh_recorder: &RwLock<PohRecorder>,
+    fanout_slots: u64,
+    protocol: Protocol,
+) -> Vec<SocketAddr> {
+    let upcoming_leaders = {
+        let poh_recorder = poh_recorder.read().unwrap();
+        (0..fanout_slots)
+            .filter_map(|n_slots| poh_recorder.leader_after_n_slots(n_slots))
+            .collect_vec()
+    };
+
+    upcoming_leaders
+        .into_iter()
+        .dedup()
+        .filter_map(|leader_pubkey| {
+            cluster_info
+                .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(protocol))?
+                .filter(|addr| cluster_info.socket_addr_space().check(addr))
+        })
+        // dedup again since leaders could potentially share the same tpu vote socket
+        .dedup()
+        .collect()
+}

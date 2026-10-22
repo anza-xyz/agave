@@ -1,0 +1,1584 @@
+//! Crds Gossip Pull overlay.
+//!
+//! This module implements the anti-entropy protocol for the network.
+//!
+//! The basic strategy is as follows:
+//!
+//! 1. Construct a bloom filter of the local data set
+//! 2. Randomly ask a node on the network for data that is not contained in the bloom filter.
+//!
+//! Bloom filters have a false positive rate.  Each requests uses a different bloom filter
+//! with random hash functions.  So each subsequent request will have a different distribution
+//! of false positives.
+
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
+use {
+    crate::{
+        cluster_info_metrics::GossipStats,
+        contact_info::ContactInfo,
+        crds::{Crds, GossipRoute, LOCK_CHUNK_SIZE, VersionedCrdsValue},
+        crds_gossip,
+        crds_gossip_error::CrdsGossipError,
+        crds_value::CrdsValue,
+        protocol::{Ping, PingCache},
+    },
+    itertools::Itertools,
+    parking_lot::{RwLock, RwLockReadGuard},
+    rand::{
+        Rng,
+        distr::{Distribution, weighted::WeightedIndex},
+    },
+    rayon::{ThreadPool, prelude::*},
+    solana_bloom::bloom::{Bloom, ConcurrentBloom},
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::SocketAddrSpace,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
+    std::{
+        collections::{HashMap, HashSet, VecDeque},
+        convert::TryInto,
+        iter::{repeat, repeat_with},
+        net::SocketAddr,
+        ops::Index,
+        sync::{
+            LazyLock, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    },
+    wincode::{SchemaRead, SchemaWrite},
+};
+
+pub const CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS: u64 = 15000;
+/// How long staked CRDS values are retained before being purged.
+///
+/// This is fixed across clients and intentionally independent of slot and epoch duration.
+pub const CRDS_GOSSIP_PURGE_DURATION: Duration = Duration::from_secs(2 * 24 * 60 * 60);
+// Retention period of hashes of received outdated values.
+const FAILED_INSERTS_RETENTION_MS: u64 = 20_000;
+pub const FALSE_RATE: f64 = 0.1f64;
+pub const KEYS: f64 = 8f64;
+
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
+pub struct CrdsFilter {
+    pub filter: Bloom<Hash>,
+    mask: u64,
+    mask_bits: u32,
+}
+
+pub(crate) const MIN_NUM_BLOOM_ITEMS: usize = 65_536;
+
+// Loosest mask_bits floor accepted for incoming pull requests.
+// `PACKET_DATA_SIZE` avoids rejecting honest smaller bloom filters.
+static MIN_PULL_REQUEST_MASK_BITS: LazyLock<u32> = LazyLock::new(|| {
+    let max_bits = (PACKET_DATA_SIZE * 8) as f64;
+    let max_items = CrdsFilter::max_items(max_bits, FALSE_RATE, KEYS);
+    CrdsFilter::mask_bits(MIN_NUM_BLOOM_ITEMS as f64, max_items)
+});
+
+// Incoming gossip pull request from a remote node.
+pub struct PullRequest {
+    pub pubkey: Pubkey,   // remote node's pubkey
+    pub addr: SocketAddr, // socket-addr the request was received from
+    pub wallclock: u64,   // remote node's wallclock
+    pub filter: CrdsFilter,
+}
+
+impl Default for CrdsFilter {
+    fn default() -> Self {
+        CrdsFilter {
+            filter: Bloom::default(),
+            mask: !0u64,
+            mask_bits: 0u32,
+        }
+    }
+}
+
+impl solana_sanitize::Sanitize for CrdsFilter {
+    fn sanitize(&self) -> std::result::Result<(), solana_sanitize::SanitizeError> {
+        if self.mask_bits < *MIN_PULL_REQUEST_MASK_BITS {
+            return Err(solana_sanitize::SanitizeError::InvalidValue);
+        }
+        Ok(())
+    }
+}
+
+impl CrdsFilter {
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn mask(&self) -> u64 {
+        self.mask
+    }
+
+    pub fn get_mask_bits(&self) -> u32 {
+        self.mask_bits
+    }
+
+    pub fn bloom_hash_count(&self) -> usize {
+        self.filter.keys.len()
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn new_rand(num_items: usize, max_bytes: usize) -> Self {
+        let max_bits = (max_bytes * 8) as f64;
+        let max_items = Self::max_items(max_bits, FALSE_RATE, KEYS);
+        let mask_bits = Self::mask_bits(num_items as f64, max_items);
+        let filter = Bloom::random(max_items as usize, FALSE_RATE, max_bits as usize);
+        let seed: u64 = rand::rng().random_range(0..2u64.pow(mask_bits));
+        let mask = Self::compute_mask(seed, mask_bits);
+        CrdsFilter {
+            filter,
+            mask,
+            mask_bits,
+        }
+    }
+
+    fn compute_mask(seed: u64, mask_bits: u32) -> u64 {
+        assert!(seed <= 2u64.pow(mask_bits));
+        let seed: u64 = seed.checked_shl(64 - mask_bits).unwrap_or(0x0);
+        seed | (!0u64).checked_shr(mask_bits).unwrap_or(!0x0)
+    }
+    fn max_items(max_bits: f64, false_rate: f64, num_keys: f64) -> f64 {
+        let m = max_bits;
+        let p = false_rate;
+        let k = num_keys;
+        (m / (-k / (1f64 - (p.ln() / k).exp()).ln())).ceil()
+    }
+    fn mask_bits(num_items: f64, max_items: f64) -> u32 {
+        // for small ratios this can result in a negative number, ensure it returns 0 instead
+        ((num_items / max_items).log2().ceil()).max(0.0) as u32
+    }
+    pub fn hash_as_u64(item: &Hash) -> u64 {
+        let buf = item.as_ref()[..8].try_into().unwrap();
+        u64::from_le_bytes(buf)
+    }
+    fn test_mask(&self, item: &Hash) -> bool {
+        Self::hash_matches_mask_prefix(self.mask, self.mask_bits, Self::hash_as_u64(item))
+    }
+    #[cfg(test)]
+    fn add(&mut self, item: &Hash) {
+        if self.test_mask(item) {
+            self.filter.add(item);
+        }
+    }
+    #[cfg(test)]
+    fn contains(&self, item: &Hash) -> bool {
+        if !self.test_mask(item) {
+            return true;
+        }
+        self.filter.contains(item)
+    }
+    fn filter_contains(&self, item: &Hash) -> bool {
+        self.filter.contains(item)
+    }
+    #[inline]
+    fn lsb_mask(mask_bits: u32) -> u64 {
+        // Mask with all least-significant (64 - mask_bits) bits set to 1.
+        (!0u64).checked_shr(mask_bits).unwrap_or(0)
+    }
+    #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn canonical_mask(mask: u64, mask_bits: u32) -> u64 {
+        // Normalize a mask so that all bits below mask_bits are 1s
+        mask | Self::lsb_mask(mask_bits)
+    }
+    #[inline]
+    pub(crate) fn hash_matches_mask_prefix(mask: u64, mask_bits: u32, hash_u64: u64) -> bool {
+        let lsb_mask = Self::lsb_mask(mask_bits);
+        (hash_u64 | lsb_mask) == Self::canonical_mask(mask, mask_bits)
+    }
+}
+
+/// A vector of crds filters that together hold a complete set of Hashes.
+struct CrdsFilterSet {
+    filters: Vec<Option<ConcurrentBloom<Hash>>>,
+    mask_bits: u32,
+}
+
+/// Fraction of hash-space buckets that get active bloom filters per request
+/// set: `1/SAMPLE_RATE`. The rest are skipped to bound bandwidth per round.
+pub const SAMPLE_RATE: usize = 8;
+
+impl CrdsFilterSet {
+    fn new<R: Rng>(rng: &mut R, num_items: usize, max_bytes: usize) -> Self {
+        const MAX_NUM_FILTERS: usize = 1024;
+        let max_bits = (max_bytes * 8) as f64;
+        let max_items = CrdsFilter::max_items(max_bits, FALSE_RATE, KEYS);
+        let mask_bits = CrdsFilter::mask_bits(num_items as f64, max_items);
+        let mut filters: Vec<_> = repeat_with(|| None).take(1usize << mask_bits).collect();
+        let mut indices: Vec<_> = (0..filters.len()).collect();
+        let size = filters.len().div_ceil(SAMPLE_RATE);
+        for _ in 0..MAX_NUM_FILTERS.min(size) {
+            let k = rng.random_range(0..indices.len());
+            let k = indices.swap_remove(k);
+            let filter = Bloom::random(max_items as usize, FALSE_RATE, max_bits as usize);
+            filters[k] = Some(ConcurrentBloom::<Hash>::from(filter));
+        }
+        Self { filters, mask_bits }
+    }
+
+    fn filter(&self, hash_value: &Hash) -> Option<&ConcurrentBloom<Hash>> {
+        let shift = u64::BITS.checked_sub(self.mask_bits).unwrap();
+        let index = usize::try_from(
+            CrdsFilter::hash_as_u64(hash_value)
+                .checked_shr(shift)
+                .unwrap_or_default(),
+        )
+        .unwrap();
+        self.filters[index].as_ref()
+    }
+
+    fn is_active(&self, hash_value: &Hash) -> bool {
+        self.filter(hash_value).is_some()
+    }
+
+    fn add(&self, hash_value: Hash) {
+        if let Some(filter) = self.filter(&hash_value) {
+            filter.add(&hash_value);
+        }
+    }
+}
+
+impl From<CrdsFilterSet> for Vec<CrdsFilter> {
+    fn from(cfs: CrdsFilterSet) -> Self {
+        let mask_bits = cfs.mask_bits;
+        cfs.filters
+            .into_iter()
+            .enumerate()
+            .filter_map(|(seed, filter)| {
+                Some(CrdsFilter {
+                    filter: Bloom::<Hash>::from(filter?),
+                    mask: CrdsFilter::compute_mask(seed as u64, mask_bits),
+                    mask_bits,
+                })
+            })
+            .collect()
+    }
+}
+
+#[derive(Default)]
+pub struct ProcessPullStats {
+    pub success: usize,
+    pub failed_insert: usize,
+    pub failed_timeout: usize,
+}
+
+pub struct CrdsGossipPull {
+    // Hash value and record time (ms) of the pull responses which failed to be
+    // inserted in crds table; Preserved to stop the sender to send back the
+    // same outdated payload again by adding them to the filter for the next
+    // pull request.
+    failed_inserts: RwLock<VecDeque<(Hash, /*timestamp:*/ u64)>>,
+    pub crds_timeout: u64,
+    pub num_pulls: AtomicUsize,
+}
+
+impl Default for CrdsGossipPull {
+    fn default() -> Self {
+        Self {
+            failed_inserts: RwLock::default(),
+            crds_timeout: CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+            num_pulls: AtomicUsize::default(),
+        }
+    }
+}
+impl CrdsGossipPull {
+    /// Generate a random request
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_pull_request(
+        &self,
+        thread_pool: &ThreadPool,
+        crds: &RwLock<Crds>,
+        self_keypair: &Keypair,
+        self_shred_version: u16,
+        now: u64,
+        gossip_validators: Option<&HashSet<Pubkey>>,
+        stakes: &HashMap<Pubkey, u64>,
+        bloom_size: usize,
+        ping_cache: &Mutex<PingCache>,
+        pings: &mut Vec<(SocketAddr, Ping)>,
+        socket_addr_space: &SocketAddrSpace,
+    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<>, CrdsGossipError>
+    {
+        let mut rng = rand::rng();
+        // Active and valid gossip nodes with matching shred-version.
+        let nodes = crds_gossip::get_gossip_nodes(
+            &mut rng,
+            now,
+            &self_keypair.pubkey(),
+            // Pull from nodes with the same shred version, unless this is a
+            // spy node which then can pull from any node.
+            |shred_version| shred_version == self_shred_version,
+            crds,
+            gossip_validators,
+            stakes,
+            socket_addr_space,
+        );
+        // Check for nodes which have responded to ping messages.
+        let nodes = crds_gossip::maybe_ping_gossip_addresses(
+            &mut rng,
+            nodes,
+            self_keypair,
+            ping_cache,
+            pings,
+        );
+        let stake_cap = stakes
+            .get(&self_keypair.pubkey())
+            .copied()
+            .unwrap_or_default();
+        let (weights, gossips): (Vec<u64>, Vec<SocketAddr>) =
+            crds_gossip::dedup_gossip_addresses(nodes)
+                .into_iter()
+                .map(|(gossip, stake, _pubkey)| {
+                    let stake = stake.min(stake_cap) / LAMPORTS_PER_SOL;
+                    let weight = u64::BITS - stake.leading_zeros();
+                    let weight = u64::from(weight).saturating_add(1).saturating_pow(2);
+                    (weight, gossip)
+                })
+                .unzip();
+        if gossips.is_empty() {
+            return Err(CrdsGossipError::NoPeers);
+        }
+        let filters = self.build_crds_filters(thread_pool, crds, bloom_size);
+        // Associate each pull-request filter with a randomly selected peer.
+        let dist = WeightedIndex::new(weights).unwrap();
+        Ok(filters
+            .into_iter()
+            .map(move |filter| (gossips[dist.sample(&mut rng)], filter)))
+    }
+
+    /// Create gossip responses to pull requests
+    ///
+    /// `requests` are served in the given order until `output_size_limit` runs out.
+    /// Returns pairs (destination, missing CRDS values); empty responses are omitted.
+    pub(crate) fn generate_pull_responses<'a>(
+        crds: &RwLock<Crds>,
+        requests: impl IntoIterator<Item = &'a PullRequest>,
+        mut output_size_limit: usize,
+        now: u64,
+        // Predicate returning false if the CRDS value should be discarded.
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
+        // False drops the request before scanning CRDS.
+        // Implementations may consume caller-owned scan budget.
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
+        stats: &GossipStats,
+    ) -> Vec<(SocketAddr, Vec<CrdsValue>)> {
+        let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
+        let jitter = rand::rng().random_range(0..msg_timeout / 4);
+        //skip filters from callers that are too old
+        let caller_wallclock_window =
+            now.saturating_sub(msg_timeout)..now.saturating_add(msg_timeout);
+        let mut dropped_requests = 0usize;
+        let mut total_skipped = 0usize;
+        let mut crds = crds.read();
+        let mut ret = Vec::new();
+        for (batch_index, request) in requests.into_iter().enumerate() {
+            if output_size_limit == 0 {
+                break;
+            }
+            // Let pending writers through between chunks of requests.
+            if batch_index > 0 && batch_index.is_multiple_of(LOCK_CHUNK_SIZE) {
+                RwLockReadGuard::bump(&mut crds);
+            }
+            let filter = &request.filter;
+            let caller_wallclock = request.wallclock;
+            if !caller_wallclock_window.contains(&caller_wallclock) {
+                dropped_requests += 1;
+                continue;
+            }
+            let scan_len = crds.filter_bitmask_scan_count(filter.mask, filter.mask_bits);
+            // Charge only requests that passed cheaper pre-scan checks.
+            if !try_consume_scan_budget(request, scan_len) {
+                continue;
+            }
+            let caller_wallclock = caller_wallclock.checked_add(jitter).unwrap_or(0);
+            let pred = |entry: &&VersionedCrdsValue| {
+                debug_assert!(filter.test_mask(entry.value.hash()));
+                // Skip values that are too new.
+                if entry.value.wallclock() > caller_wallclock {
+                    total_skipped += 1;
+                    false
+                } else {
+                    !filter.filter_contains(entry.value.hash())
+                        && should_retain_crds_value(&entry.value)
+                }
+            };
+            let out: Vec<_> = crds
+                .filter_bitmask(filter.mask, filter.mask_bits)
+                .filter(pred)
+                .map(|entry| entry.value.clone())
+                .take(output_size_limit)
+                .collect();
+            output_size_limit = output_size_limit.saturating_sub(out.len());
+            if !out.is_empty() {
+                ret.push((request.addr, out));
+            }
+        }
+        stats
+            .filter_crds_values_dropped_requests
+            .add_relaxed(dropped_requests as u64);
+        stats
+            .filter_crds_values_dropped_values
+            .add_relaxed(total_skipped as u64);
+        ret
+    }
+
+    // Checks if responses should be inserted and
+    // returns those responses converted to VersionedCrdsValue
+    // Separated in three vecs as:
+    //  .0 => responses that update the owner timestamp
+    //  .1 => responses that do not update the owner timestamp
+    //  .2 => hash value of outdated values which will fail to insert.
+    pub(crate) fn filter_pull_responses(
+        &self,
+        crds: &RwLock<Crds>,
+        timeouts: &CrdsTimeouts,
+        mut responses: Vec<CrdsValue>,
+        now: u64,
+        stats: &mut ProcessPullStats,
+    ) -> (Vec<CrdsValue>, Vec<CrdsValue>, Vec<Hash>) {
+        // Number of responses checked per crds read lock.
+        const RESPONSES_PER_LOCK: usize = 16;
+        enum Outcome {
+            Active,
+            Expired,
+            Failed,
+        }
+        // Classify all responses before moving any of them, so that active
+        // responses stay in place and the other outputs are allocated once
+        // with their exact sizes.
+        let mut outcomes = Vec::with_capacity(responses.len());
+        let (mut num_expired, mut num_failed) = (0, 0);
+        for chunk in responses.chunks(RESPONSES_PER_LOCK) {
+            // Check if the crds value is older than the msg_timeout
+            let mut is_expired = [false; RESPONSES_PER_LOCK];
+            for (expired, response) in is_expired.iter_mut().zip(chunk) {
+                let timeout = timeouts[&response.pubkey()];
+                *expired = now > response.wallclock().saturating_add(timeout);
+            }
+            let crds = crds.read();
+            for (response, &expired) in chunk.iter().zip(&is_expired) {
+                let outcome = if !crds.upserts(response) {
+                    num_failed += 1;
+                    Outcome::Failed
+                } else if !expired {
+                    Outcome::Active
+                } else if crds.get::<&ContactInfo>(response.pubkey()).is_some() {
+                    // Silently insert this old value without bumping
+                    // record timestamps
+                    num_expired += 1;
+                    Outcome::Expired
+                } else {
+                    // The owner has no ContactInfo in the table, so this
+                    // expired value can be discarded.
+                    stats.failed_timeout += 1;
+                    num_failed += 1;
+                    Outcome::Failed
+                };
+                outcomes.push(outcome);
+            }
+        }
+        let mut expired_values = Vec::with_capacity(num_expired);
+        let mut failed_inserts = Vec::with_capacity(num_failed);
+        let mut response_outcomes = outcomes.iter();
+        let extracted_responses = responses.extract_if(.., |_| {
+            !matches!(response_outcomes.next(), Some(Outcome::Active))
+        });
+        let extracted_outcomes = outcomes
+            .iter()
+            .filter(|outcome| !matches!(outcome, Outcome::Active));
+        for (response, outcome) in extracted_responses.zip(extracted_outcomes) {
+            match outcome {
+                Outcome::Expired => expired_values.push(response),
+                _ => failed_inserts.push(*response.hash()),
+            }
+        }
+        let active_values = responses;
+        (active_values, expired_values, failed_inserts)
+    }
+
+    /// Process a vec of pull responses
+    pub(crate) fn process_pull_responses(
+        &self,
+        crds: &RwLock<Crds>,
+        responses: Vec<CrdsValue>,
+        responses_expired_timeout: Vec<CrdsValue>,
+        failed_inserts: Vec<Hash>,
+        now: u64,
+        stats: &mut ProcessPullStats,
+    ) {
+        let mut owners = HashSet::new();
+        let mut crds = crds.write();
+        for response in responses_expired_timeout {
+            let _ = crds.insert(response, now, GossipRoute::PullResponse);
+        }
+        let mut num_inserts = 0;
+        for response in responses {
+            let owner = response.pubkey();
+            if let Ok(()) = crds.insert(response, now, GossipRoute::PullResponse) {
+                num_inserts += 1;
+                owners.insert(owner);
+            }
+        }
+        stats.success += num_inserts;
+        self.num_pulls.fetch_add(num_inserts, Ordering::Relaxed);
+        for owner in owners {
+            crds.update_record_timestamp(&owner, now);
+        }
+        drop(crds);
+        stats.failed_insert += failed_inserts.len();
+        self.purge_failed_inserts(now);
+        let failed_inserts = failed_inserts.into_iter().zip(repeat(now));
+        self.failed_inserts.write().extend(failed_inserts);
+    }
+
+    pub(crate) fn purge_failed_inserts(&self, now: u64) {
+        if FAILED_INSERTS_RETENTION_MS < now {
+            let cutoff = now - FAILED_INSERTS_RETENTION_MS;
+            let mut failed_inserts = self.failed_inserts.write();
+            let outdated = failed_inserts
+                .iter()
+                .take_while(|(_, ts)| *ts < cutoff)
+                .count();
+            failed_inserts.drain(..outdated);
+        }
+    }
+
+    pub(crate) fn failed_inserts_size(&self) -> usize {
+        self.failed_inserts.read().len()
+    }
+
+    // build a set of filters of the current crds table
+    // num_filters - used to increase the likelihood of a value in crds being added to some filter
+    pub fn build_crds_filters(
+        &self,
+        thread_pool: &ThreadPool,
+        crds: &RwLock<Crds>,
+        bloom_size: usize,
+    ) -> Vec<CrdsFilter> {
+        const PAR_MIN_LENGTH: usize = 512;
+        let failed_inserts = self.failed_inserts.read();
+        // crds should be locked last after self.failed_inserts.
+        let (num_values, num_purged) = {
+            let crds = crds.read();
+            (crds.len(), crds.num_purged())
+        };
+        let num_items = MIN_NUM_BLOOM_ITEMS.max(num_values + num_purged + failed_inserts.len());
+        let filters = CrdsFilterSet::new(&mut rand::rng(), num_items, bloom_size);
+        thread_pool.install(|| {
+            failed_inserts
+                .par_iter()
+                .with_min_len(PAR_MIN_LENGTH)
+                .for_each(|(v, _)| filters.add(*v));
+        });
+        drop(failed_inserts);
+        // Values removed from the table between chunks may cause other values
+        // to be skipped, which only results in redundant pull responses.
+        thread_pool.install(|| {
+            (0..num_values)
+                .into_par_iter()
+                .step_by(LOCK_CHUNK_SIZE)
+                .for_each(|start| {
+                    let mut hashes = [Hash::default(); LOCK_CHUNK_SIZE];
+                    let mut len = 0;
+                    {
+                        let crds = crds.read();
+                        for hash in crds
+                            .value_hashes(start..start + LOCK_CHUNK_SIZE)
+                            .filter(|v| filters.is_active(v))
+                        {
+                            hashes[len] = *hash;
+                            len += 1;
+                        }
+                    }
+                    hashes[..len].iter().for_each(|v| filters.add(*v));
+                });
+            (0..num_purged)
+                .into_par_iter()
+                .step_by(LOCK_CHUNK_SIZE)
+                .for_each(|start| {
+                    let mut hashes = [Hash::default(); LOCK_CHUNK_SIZE];
+                    let mut len = 0;
+                    {
+                        let crds = crds.read();
+                        for hash in crds
+                            .purged_hashes(start..start + LOCK_CHUNK_SIZE)
+                            .filter(|v| filters.is_active(v))
+                        {
+                            hashes[len] = *hash;
+                            len += 1;
+                        }
+                    }
+                    hashes[..len].iter().for_each(|v| filters.add(*v));
+                });
+        });
+        filters.into()
+    }
+
+    pub(crate) fn make_timeouts<'a>(
+        &self,
+        self_pubkey: Pubkey,
+        stakes: &'a HashMap<Pubkey, u64>,
+        purge_duration: Duration,
+    ) -> CrdsTimeouts<'a> {
+        CrdsTimeouts::new(self_pubkey, self.crds_timeout, purge_duration, stakes)
+    }
+
+    /// Purge values from the crds that are older then `active_timeout`
+    pub(crate) fn purge_active(
+        thread_pool: &ThreadPool,
+        crds: &RwLock<Crds>,
+        now: u64,
+        timeouts: &CrdsTimeouts,
+    ) -> usize {
+        let mut crds = crds.write();
+        let labels = crds.find_old_labels(thread_pool, now, timeouts);
+        for label in &labels {
+            crds.remove(label, now);
+        }
+        labels.len()
+    }
+}
+
+pub struct CrdsTimeouts<'a> {
+    pubkey: Pubkey,
+    stakes: &'a HashMap<Pubkey, /*lamports:*/ u64>,
+    default_timeout: u64,
+    extended_timeout: u64,
+}
+
+impl<'a> CrdsTimeouts<'a> {
+    pub fn new(
+        pubkey: Pubkey,
+        default_timeout: u64,
+        purge_duration: Duration,
+        stakes: &'a HashMap<Pubkey, u64>,
+    ) -> Self {
+        let extended_timeout = default_timeout.max(purge_duration.as_millis() as u64);
+        let default_timeout = if stakes.values().all(|&stake| stake == 0u64) {
+            extended_timeout
+        } else {
+            default_timeout
+        };
+        Self {
+            pubkey,
+            stakes,
+            default_timeout,
+            extended_timeout,
+        }
+    }
+}
+
+impl Index<&Pubkey> for CrdsTimeouts<'_> {
+    type Output = u64;
+
+    fn index(&self, pubkey: &Pubkey) -> &Self::Output {
+        if pubkey == &self.pubkey {
+            &u64::MAX
+        } else if self.stakes.get(pubkey) > Some(&0u64) {
+            &self.extended_timeout
+        } else {
+            &self.default_timeout
+        }
+    }
+}
+
+// Returns max_bytes for the bloom filter such that the serialized
+// Protocol::PullRequest(CrdsFilter, CrdsValue) fits in a packet.
+pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
+    // Maps serialized size of CrdsFilter to max_bytes of bloom filter.
+    static MAX_BYTES_CACHE: LazyLock<[u16; PACKET_DATA_SIZE + 1]> = LazyLock::new(|| {
+        let mut rng = rand::rng();
+        let mut out = [0u16; PACKET_DATA_SIZE + 1];
+        for max_bytes in 1..=PACKET_DATA_SIZE {
+            let filters = CrdsFilterSet::new(&mut rng, /*num_items:*/ 1, max_bytes);
+            let mut iter = Vec::<CrdsFilter>::from(filters)
+                .into_iter()
+                .map(|filter| {
+                    wincode::serialized_size(&filter)
+                        .map(usize::try_from)
+                        .unwrap()
+                        .unwrap()
+                })
+                .dedup();
+            let size_of_filter = iter.next().unwrap();
+            // All filters should have the same serialzied size.
+            assert_eq!(iter.next(), None);
+            out[size_of_filter] = u16::try_from(max_bytes).unwrap();
+        }
+        // Forward fill zero entries by assigning the last non-zero value.
+        let _ = out.iter_mut().fold(0, |state, entry| {
+            if *entry == 0 {
+                *entry = state;
+            }
+            *entry
+        });
+        out
+    });
+    // Maximum serialized size of CrdsFilter in
+    // Protocol::PullRequest(CrdsFilter, CrdsValue)
+    let size_of_filter = PACKET_DATA_SIZE
+        .checked_sub(
+            // 4 bytes for u32 enum variant identifier of Protocol.
+            4 + caller.serialized_size(),
+        )
+        .unwrap();
+    MAX_BYTES_CACHE
+        .get(size_of_filter)
+        .copied()
+        .map(usize::from)
+        .unwrap()
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use {
+        super::*,
+        crate::{
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
+            crds_data::CrdsData,
+            protocol::Protocol,
+        },
+        itertools::Itertools,
+        rand::{SeedableRng, prelude::IndexedRandom as _},
+        rand_chacha::ChaChaRng,
+        rayon::ThreadPoolBuilder,
+        solana_hash::HASH_BYTES,
+        solana_keypair::keypair_from_seed,
+        solana_packet::PACKET_DATA_SIZE,
+        solana_sha256_hasher::hash,
+        solana_time_utils::timestamp,
+        std::{net::Ipv4Addr, time::Instant},
+        test_case::test_case,
+    };
+
+    // Active filter slots per request set for these tests:
+    pub(crate) const MIN_NUM_BLOOM_FILTERS: usize = 64usize.div_ceil(super::SAMPLE_RATE);
+
+    impl CrdsGossipPull {
+        // Wrapper for CrdsGossipPush.new_pull_request replicating old return
+        // type for legacy tests.
+        #[allow(clippy::too_many_arguments)]
+        fn old_pull_request(
+            &self,
+            thread_pool: &ThreadPool,
+            crds: &RwLock<Crds>,
+            self_keypair: &Keypair,
+            self_shred_version: u16,
+            now: u64,
+            gossip_validators: Option<&HashSet<Pubkey>>,
+            stakes: &HashMap<Pubkey, u64>,
+            bloom_size: usize,
+            ping_cache: &Mutex<PingCache>,
+            pings: &mut Vec<(SocketAddr, Ping)>,
+            socket_addr_space: &SocketAddrSpace,
+        ) -> Result<Vec<(ContactInfo, Vec<CrdsFilter>)>, CrdsGossipError> {
+            let out = self.new_pull_request(
+                thread_pool,
+                crds,
+                self_keypair,
+                self_shred_version,
+                now,
+                gossip_validators,
+                stakes,
+                bloom_size,
+                ping_cache,
+                pings,
+                socket_addr_space,
+            )?;
+            let nodes: HashMap<SocketAddr, ContactInfo> = crds
+                .read()
+                .get_nodes_contact_info()
+                .map(|node| (node.gossip().unwrap(), node.clone()))
+                .collect();
+            Ok(out
+                .into_group_map()
+                .into_iter()
+                .map(|(addr, filters)| (nodes.get(&addr).cloned().unwrap(), filters))
+                .collect())
+        }
+    }
+
+    fn new_ping_cache() -> PingCache {
+        PingCache::new(
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            128, // capacity (small for tests)
+        )
+    }
+
+    #[test]
+    fn test_hash_as_u64() {
+        let arr: [u8; HASH_BYTES] = std::array::from_fn(|i| i as u8 + 1);
+        let hash = Hash::new_from_array(arr);
+        assert_eq!(CrdsFilter::hash_as_u64(&hash), 0x807060504030201);
+    }
+
+    #[test]
+    fn test_hash_as_u64_random() {
+        fn hash_as_u64_bitops(hash: &Hash) -> u64 {
+            let mut out = 0;
+            for (i, val) in hash.as_ref().iter().enumerate().take(8) {
+                out |= (u64::from(*val)) << (i * 8) as u64;
+            }
+            out
+        }
+        for _ in 0..100 {
+            let hash = Hash::new_unique();
+            assert_eq!(CrdsFilter::hash_as_u64(&hash), hash_as_u64_bitops(&hash));
+        }
+    }
+
+    #[test]
+    fn test_crds_filter_default() {
+        let filter = CrdsFilter::default();
+        let mask = CrdsFilter::compute_mask(0, filter.mask_bits);
+        assert_eq!(filter.mask, mask);
+        for _ in 0..10 {
+            let hash = Hash::new_unique();
+            assert!(filter.test_mask(&hash));
+        }
+    }
+
+    #[test]
+    fn test_crds_filter_sanitize_mask_bits_floor() {
+        use solana_sanitize::{Sanitize, SanitizeError};
+
+        assert_eq!(MIN_NUM_BLOOM_ITEMS, 65_536);
+        assert_eq!(*MIN_PULL_REQUEST_MASK_BITS, 6);
+        let filter = CrdsFilter {
+            mask_bits: 5,
+            ..CrdsFilter::default()
+        };
+        assert_eq!(filter.sanitize(), Err(SanitizeError::InvalidValue));
+        let filter = CrdsFilter {
+            mask_bits: 6,
+            ..CrdsFilter::default()
+        };
+        assert_eq!(filter.sanitize(), Ok(()));
+    }
+
+    #[test]
+    fn test_crds_filter_set_add() {
+        let mut rng = rand::rng();
+        let crds_filter_set = CrdsFilterSet::new(
+            &mut rng, /*num_items=*/ 59672788, /*max_bytes=*/ 8196,
+        );
+        let hash_values: Vec<_> = repeat_with(|| {
+            let buf: [u8; 32] = rng.random();
+            solana_sha256_hasher::hashv(&[&buf])
+        })
+        .take(1024)
+        .collect();
+        assert_eq!(crds_filter_set.filters.len(), 8192);
+        for hash_value in &hash_values {
+            crds_filter_set.add(*hash_value);
+        }
+        let filters: Vec<CrdsFilter> = crds_filter_set.into();
+        let mut num_hits = 0;
+        assert_eq!(filters.len(), 1024);
+        for hash_value in hash_values {
+            let mut hit = false;
+            let mut false_positives = 0;
+            for filter in &filters {
+                if filter.test_mask(&hash_value) {
+                    num_hits += 1;
+                    assert!(!hit);
+                    hit = true;
+                    assert!(filter.contains(&hash_value));
+                    assert!(filter.filter.contains(&hash_value));
+                } else if filter.filter.contains(&hash_value) {
+                    false_positives += 1;
+                }
+            }
+            assert!(false_positives < 5);
+        }
+        assert!(num_hits > 96, "num_hits: {num_hits}");
+    }
+
+    #[test]
+    fn test_crds_filter_set_new() {
+        // Validates invariances required by CrdsFilterSet::get in the
+        // vector of filters generated by CrdsFilterSet::new.
+        let filters = CrdsFilterSet::new(
+            &mut rand::rng(),
+            55345017, // num_items
+            4098,     // max_bytes
+        );
+        assert_eq!(filters.filters.len(), 16384);
+        let filters = Vec::<CrdsFilter>::from(filters);
+        assert_eq!(filters.len(), 1024);
+        let mask_bits = filters[0].mask_bits;
+        let right_shift = 64 - mask_bits;
+        let ones = !0u64 >> mask_bits;
+        for filter in &filters {
+            // Check that all mask_bits are equal.
+            assert_eq!(mask_bits, filter.mask_bits);
+            assert!((0..16384).contains(&(filter.mask >> right_shift)));
+            assert_eq!(ones, ones & filter.mask);
+        }
+    }
+
+    #[test_case(2_000)]
+    #[test_case(10_000)]
+    #[test_case(100_000)]
+    fn test_crds_filter_set_respects_sample_rate(num_items: usize) {
+        let mut rng = ChaChaRng::from_seed([0x42; 32]);
+        let filters = CrdsFilterSet::new(
+            &mut rng, num_items, 128, // max_bytes
+        );
+        let num_buckets = filters.filters.len();
+        let expected_active_filters = num_buckets.div_ceil(super::SAMPLE_RATE);
+        assert!(expected_active_filters < 1024);
+        assert_eq!(
+            filters
+                .filters
+                .iter()
+                .filter(|filter| filter.is_some())
+                .count(),
+            expected_active_filters
+        );
+
+        let filters = Vec::<CrdsFilter>::from(filters);
+        assert_eq!(filters.len(), expected_active_filters);
+        let unique_masks = filters.iter().map(CrdsFilter::mask).unique().count();
+        assert_eq!(unique_masks, filters.len());
+    }
+
+    #[test]
+    fn test_build_crds_filter() {
+        const SEED: [u8; 32] = [0x55; 32];
+        let mut rng = ChaChaRng::from_seed(SEED);
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let crds_gossip_pull = CrdsGossipPull::default();
+        let mut crds = Crds::default();
+        let keypairs: Vec<_> = repeat_with(|| {
+            let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
+            rng.fill(&mut seed[..]);
+            keypair_from_seed(&seed).unwrap()
+        })
+        .take(10_000)
+        .collect();
+        let mut num_inserts = 0;
+        for _ in 0..40_000 {
+            let keypair = keypairs.choose(&mut rng).unwrap();
+            let value = CrdsValue::new_rand(&mut rng, Some(keypair));
+            if crds
+                .insert(value, rng.random(), GossipRoute::LocalMessage)
+                .is_ok()
+            {
+                num_inserts += 1;
+            }
+        }
+        let crds = RwLock::new(crds);
+        assert!(num_inserts > 30_000, "num inserts: {num_inserts}");
+        let filters = crds_gossip_pull.build_crds_filters(
+            &thread_pool,
+            &crds,
+            992, // max_bloom_filter_bytes
+        );
+        assert_eq!(filters.len(), MIN_NUM_BLOOM_FILTERS.max(4));
+        let crds = crds.read();
+        let purged: Vec<_> = crds.purged_hashes(0..crds.num_purged()).copied().collect();
+        let hash_values: Vec<_> = crds
+            .values()
+            .map(|v| *v.value.hash())
+            .chain(purged)
+            .collect();
+        // CrdsValue::new_rand may generate exact same value twice in which
+        // case its hash-value is not added to purged values.
+        assert!(
+            hash_values.len() >= 40_000 - 5,
+            "hash_values.len(): {}",
+            hash_values.len()
+        );
+        let mut num_hits = 0;
+        let mut false_positives = 0;
+        for hash_value in hash_values {
+            let mut hit = false;
+            for filter in &filters {
+                if filter.test_mask(&hash_value) {
+                    num_hits += 1;
+                    assert!(!hit);
+                    hit = true;
+                    assert!(filter.contains(&hash_value));
+                    assert!(filter.filter.contains(&hash_value));
+                } else if filter.filter.contains(&hash_value) {
+                    false_positives += 1;
+                }
+            }
+        }
+        assert!(num_hits > 4000, "num_hits: {num_hits}");
+        assert!(false_positives < 20_000, "fp: {false_positives}");
+    }
+
+    #[test]
+    fn test_new_pull_request() {
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let crds = RwLock::<Crds>::default();
+        let node_keypair = Keypair::new();
+        let entry = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &node_keypair.pubkey(),
+            0,
+        )));
+        let node = CrdsGossipPull::default();
+        let mut pings = Vec::new();
+        let ping_cache = Mutex::new(new_ping_cache());
+        assert_eq!(
+            node.old_pull_request(
+                &thread_pool,
+                &crds,
+                &node_keypair,
+                0,
+                0,
+                None,
+                &HashMap::new(),
+                PACKET_DATA_SIZE,
+                &ping_cache,
+                &mut pings,
+                &SocketAddrSpace::Unspecified,
+            ),
+            Err(CrdsGossipError::NoPeers)
+        );
+
+        crds.write()
+            .insert(entry, 0, GossipRoute::LocalMessage)
+            .unwrap();
+        assert_eq!(
+            node.old_pull_request(
+                &thread_pool,
+                &crds,
+                &node_keypair,
+                0,
+                0,
+                None,
+                &HashMap::new(),
+                PACKET_DATA_SIZE,
+                &ping_cache,
+                &mut pings,
+                &SocketAddrSpace::Unspecified,
+            ),
+            Err(CrdsGossipError::NoPeers)
+        );
+        let now = 1625029781069;
+        let mut new = ContactInfo::new_localhost(&solana_pubkey::new_rand(), now);
+        new.set_gossip(([127, 0, 0, 1], 8020)).unwrap();
+        ping_cache
+            .lock()
+            .unwrap()
+            .mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        let new = CrdsValue::new_unsigned(CrdsData::from(new));
+        crds.write()
+            .insert(new.clone(), now, GossipRoute::LocalMessage)
+            .unwrap();
+        let req = node.old_pull_request(
+            &thread_pool,
+            &crds,
+            &node_keypair,
+            0,
+            now,
+            None,
+            &HashMap::new(),
+            PACKET_DATA_SIZE,
+            &ping_cache,
+            &mut pings,
+            &SocketAddrSpace::Unspecified,
+        );
+        let peers: Vec<_> = req.unwrap().into_iter().map(|(node, _)| node).collect();
+        assert_eq!(peers, vec![new.contact_info().unwrap().clone()]);
+
+        let mut offline = ContactInfo::new_localhost(&solana_pubkey::new_rand(), now);
+        offline.set_gossip(([127, 0, 0, 1], 8021)).unwrap();
+        let offline = CrdsValue::new_unsigned(CrdsData::from(offline));
+        crds.write()
+            .insert(offline, now, GossipRoute::LocalMessage)
+            .unwrap();
+        let req = node.old_pull_request(
+            &thread_pool,
+            &crds,
+            &node_keypair,
+            0,
+            now,
+            None,
+            &HashMap::new(),
+            PACKET_DATA_SIZE,
+            &ping_cache,
+            &mut pings,
+            &SocketAddrSpace::Unspecified,
+        );
+        // Even though the offline node should have higher weight, we shouldn't request from it
+        // until we receive a ping.
+        let peers: Vec<_> = req.unwrap().into_iter().map(|(node, _)| node).collect();
+        assert_eq!(peers, vec![new.contact_info().unwrap().clone()]);
+    }
+
+    #[test]
+    fn test_new_mark_creation_time() {
+        let now: u64 = 1_605_127_770_789;
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let mut ping_cache = new_ping_cache();
+        let mut crds = Crds::default();
+        let node_keypair = Keypair::new();
+        let entry = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &node_keypair.pubkey(),
+            0,
+        )));
+        let node = CrdsGossipPull::default();
+        crds.insert(entry, now, GossipRoute::LocalMessage).unwrap();
+        let mut old = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);
+        old.set_gossip(([127, 0, 0, 1], 8020)).unwrap();
+        ping_cache.mock_pong(*old.pubkey(), old.gossip().unwrap(), Instant::now());
+        let old = CrdsValue::new_unsigned(CrdsData::from(old));
+        crds.insert(old.clone(), now, GossipRoute::LocalMessage)
+            .unwrap();
+        let mut new = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);
+        new.set_gossip(([127, 0, 0, 1], 8021)).unwrap();
+        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        let new = CrdsValue::new_unsigned(CrdsData::from(new));
+        crds.insert(new, now, GossipRoute::LocalMessage).unwrap();
+        let crds = RwLock::new(crds);
+
+        // set request creation time to now.
+        let now = now + 50_000;
+
+        // odds of getting the other request should be close to 1.
+        let now = now + 1_000;
+        let mut pings = Vec::new();
+        let ping_cache = Mutex::new(ping_cache);
+        let old = old.contact_info().unwrap();
+        let count = repeat_with(|| {
+            let requests = node
+                .old_pull_request(
+                    &thread_pool,
+                    &crds,
+                    &node_keypair,
+                    0, // self_shred_version
+                    now,
+                    None,             // gossip_validators
+                    &HashMap::new(),  // stakes
+                    PACKET_DATA_SIZE, // bloom_size
+                    &ping_cache,
+                    &mut pings,
+                    &SocketAddrSpace::Unspecified,
+                )
+                .unwrap();
+            requests.into_iter().map(|(node, _)| node)
+        })
+        .flatten()
+        .take(100)
+        .filter(|peer| peer != old)
+        .count();
+        assert!(count < 75, "count of peer != old: {count}");
+    }
+
+    #[test]
+    fn test_generate_pull_responses() {
+        let now = timestamp();
+        let new_wallclock = now + CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
+        let new = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &solana_pubkey::new_rand(),
+            new_wallclock,
+        )));
+        let dest_crds = RwLock::<Crds>::default();
+        dest_crds
+            .write()
+            .insert(new.clone(), new_wallclock, GossipRoute::LocalMessage)
+            .unwrap();
+
+        let filter = CrdsFilter::new_rand(1, PACKET_DATA_SIZE);
+        assert_eq!(filter.get_mask_bits(), 0);
+        let make_request = |wallclock| PullRequest {
+            pubkey: Pubkey::new_unique(),
+            addr: SocketAddr::from(([0; 4], 0)),
+            wallclock,
+            filter: filter.clone(),
+        };
+        let requests = [
+            make_request(now),               // too old to see `new`
+            make_request(new_wallclock + 1), // recent enough to see `new`
+        ];
+        let rsp = CrdsGossipPull::generate_pull_responses(
+            &dest_crds,
+            &requests,
+            usize::MAX,
+            new_wallclock,
+            |_| true,    // should_retain_crds_value
+            |_, _| true, // try_consume_scan_budget
+            &GossipStats::default(),
+        );
+        assert_eq!(rsp.len(), 1, "Stale requests must be dropped");
+        assert_eq!(rsp[0].1, vec![new], "Valid request must be served");
+    }
+
+    #[test]
+    fn test_process_pull_request_response() {
+        let node_keypair = Keypair::new();
+        let mut node_crds = Crds::default();
+        let entry = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &node_keypair.pubkey(),
+            1,
+        )));
+        let node_pubkey = entry.label().pubkey();
+        let node = CrdsGossipPull::default();
+        node_crds
+            .insert(entry, 0, GossipRoute::LocalMessage)
+            .unwrap();
+
+        let new_id = solana_pubkey::new_rand();
+        let same_key = ContactInfo::new_localhost(&new_id, 0);
+        let new = ContactInfo::new_localhost(&new_id, 1);
+        let new = CrdsValue::new_unsigned(CrdsData::from(new));
+
+        // The node already has this label, but with an older wallclock.
+        let same_key = CrdsValue::new_unsigned(CrdsData::from(same_key));
+        assert_eq!(same_key.label(), new.label());
+        assert!(same_key.wallclock() < new.wallclock());
+        node_crds
+            .insert(same_key.clone(), 0, GossipRoute::LocalMessage)
+            .unwrap();
+        assert_eq!(0, {
+            let entry: &VersionedCrdsValue = node_crds.get(&same_key.label()).unwrap();
+            entry.local_timestamp
+        });
+        let node_crds = RwLock::new(node_crds);
+        let stakes = HashMap::new();
+        let timeouts = node.make_timeouts(node_pubkey, &stakes, Duration::default());
+        let mut stats = ProcessPullStats::default();
+        let (responses, responses_expired_timeout, failed_inserts) =
+            node.filter_pull_responses(&node_crds, &timeouts, vec![new.clone()], 1, &mut stats);
+        assert_eq!(responses, vec![new.clone()]);
+        assert!(responses_expired_timeout.is_empty());
+        assert!(failed_inserts.is_empty());
+
+        node.process_pull_responses(
+            &node_crds,
+            responses,
+            responses_expired_timeout,
+            failed_inserts,
+            1,
+            &mut stats,
+        );
+        assert_eq!(stats.failed_insert, 0);
+        assert_eq!(stats.failed_timeout, 0);
+        assert_eq!(stats.success, 1);
+        let node_crds = node_crds.read();
+        let entry: &VersionedCrdsValue = node_crds.get(&new.label()).unwrap();
+        assert_eq!(entry.value, new);
+        assert_eq!(entry.local_timestamp, 1);
+    }
+
+    #[test]
+    fn test_gossip_purge() {
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let mut node_crds = Crds::default();
+        let entry = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &solana_pubkey::new_rand(),
+            0,
+        )));
+        let node_label = entry.label();
+        let node_pubkey = node_label.pubkey();
+        let node = CrdsGossipPull::default();
+        node_crds
+            .insert(entry, 0, GossipRoute::LocalMessage)
+            .unwrap();
+        let old = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &solana_pubkey::new_rand(),
+            0,
+        )));
+        node_crds
+            .insert(old.clone(), 0, GossipRoute::LocalMessage)
+            .unwrap();
+        let value_hash = *node_crds.get::<&CrdsValue>(&old.label()).unwrap().hash();
+        //verify self is valid
+        assert_eq!(
+            node_crds.get::<&CrdsValue>(&node_label).unwrap().label(),
+            node_label
+        );
+        // purge
+        let node_crds = RwLock::new(node_crds);
+        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let timeouts = node.make_timeouts(node_pubkey, &stakes, Duration::default());
+        CrdsGossipPull::purge_active(&thread_pool, &node_crds, node.crds_timeout, &timeouts);
+
+        //verify self is still valid after purge
+        assert_eq!(node_label, {
+            let node_crds = node_crds.read();
+            node_crds.get::<&CrdsValue>(&node_label).unwrap().label()
+        });
+        assert_eq!(node_crds.read().get::<&CrdsValue>(&old.label()), None);
+        assert_eq!(node_crds.read().num_purged(), 1);
+        for _ in 0..30 {
+            // there is a chance of a false positive with bloom filters
+            // assert that purged value is still in the set
+            // chance of 30 consecutive false positives is 0.1^30
+            let filters = node.build_crds_filters(&thread_pool, &node_crds, PACKET_DATA_SIZE);
+            assert!(filters.iter().any(|filter| filter.contains(&value_hash)));
+        }
+
+        // purge the value
+        let mut node_crds = node_crds.write();
+        node_crds.trim_purged(node.crds_timeout + 1);
+        assert_eq!(node_crds.num_purged(), 0);
+    }
+    #[test]
+    fn test_crds_filter_mask() {
+        let filter = CrdsFilter::new_rand(1, 128);
+        assert_eq!(filter.mask, !0x0);
+        assert_eq!(CrdsFilter::max_items(80f64, 0.01, 8f64), 9f64);
+        //1000/9 = 111, so 7 bits are needed to mask it
+        assert_eq!(CrdsFilter::mask_bits(1000f64, 9f64), 7u32);
+        let filter = CrdsFilter::new_rand(1000, 10);
+        assert_eq!(filter.mask & 0x00_ffff_ffff, 0x00_ffff_ffff);
+    }
+    #[test]
+    fn test_crds_filter_add_no_mask() {
+        let mut filter = CrdsFilter::new_rand(1, 128);
+        let h: Hash = hash(Hash::default().as_ref());
+        assert!(!filter.contains(&h));
+        filter.add(&h);
+        assert!(filter.contains(&h));
+        let h: Hash = hash(h.as_ref());
+        assert!(!filter.contains(&h));
+    }
+    #[test]
+    fn test_crds_filter_add_mask() {
+        let mut filter = CrdsFilter::new_rand(1000, 10);
+        let mut h: Hash = Hash::default();
+        while !filter.test_mask(&h) {
+            h = hash(h.as_ref());
+        }
+        assert!(filter.test_mask(&h));
+        //if the mask succeeds, we want the guaranteed negative
+        assert!(!filter.contains(&h));
+        filter.add(&h);
+        assert!(filter.contains(&h));
+    }
+    #[test]
+    fn test_crds_filter_complete_set_add_mask() {
+        let mut filters = Vec::<CrdsFilter>::from(CrdsFilterSet::new(&mut rand::rng(), 1000, 10));
+        assert!(filters.iter().all(|f| f.mask_bits > 0));
+        let mut h: Hash = Hash::default();
+        // rev to make the hash::default() miss on the first few test_masks
+        while !filters.iter().rev().any(|f| f.test_mask(&h)) {
+            h = hash(h.as_ref());
+        }
+        let filter = filters.iter_mut().find(|f| f.test_mask(&h)).unwrap();
+        assert!(filter.test_mask(&h));
+        //if the mask succeeds, we want the guaranteed negative
+        assert!(!filter.contains(&h));
+        filter.add(&h);
+        assert!(filter.contains(&h));
+    }
+    #[test]
+    fn test_crds_filter_contains_mask() {
+        let filter = CrdsFilter::new_rand(1000, 10);
+        assert!(filter.mask_bits > 0);
+        let mut h: Hash = Hash::default();
+        while filter.test_mask(&h) {
+            h = hash(h.as_ref());
+        }
+        assert!(!filter.test_mask(&h));
+        //if the mask fails, the hash is contained in the set, and can be treated as a false
+        //positive
+        assert!(filter.contains(&h));
+    }
+    #[test]
+    fn test_mask() {
+        for i in 0..16 {
+            run_test_mask(i);
+        }
+    }
+    fn run_test_mask(mask_bits: u32) {
+        assert_eq!(
+            (0..2u64.pow(mask_bits))
+                .map(|seed| CrdsFilter::compute_mask(seed, mask_bits))
+                .dedup()
+                .count(),
+            2u64.pow(mask_bits) as usize
+        )
+    }
+
+    // Asserts that all serialized pull requests fit in a Packet.
+    fn verify_get_max_bloom_filter_bytes<R: Rng>(
+        rng: &mut R,
+        caller: &CrdsValue,
+        num_items: usize,
+    ) {
+        let packet_data_size_range = (PACKET_DATA_SIZE - 7)..=PACKET_DATA_SIZE;
+        let max_bytes = get_max_bloom_filter_bytes(caller);
+        let filters = CrdsFilterSet::new(rng, num_items, max_bytes);
+        let request_bytes = caller.serialized_size() as u64;
+        for filter in Vec::<CrdsFilter>::from(filters) {
+            let filter_size = wincode::serialized_size(&filter).unwrap();
+            let request_bytes = 4 + request_bytes + filter_size;
+            let request = Protocol::PullRequest(filter, caller.clone());
+            let request = wincode::serialize(&request).unwrap();
+            assert!(packet_data_size_range.contains(&request.len()));
+            assert_eq!(request.len() as u64, request_bytes);
+        }
+    }
+
+    // MAX_BYTES_CACHE maps each filter size to the largest max_bytes producing
+    // it, so max_bytes + 1 always overflows the packet.
+    fn verify_max_bloom_filter_bytes_is_maximal<R: Rng>(rng: &mut R, caller: &CrdsValue) {
+        let max_bytes = get_max_bloom_filter_bytes(caller);
+        let filters = CrdsFilterSet::new(rng, /*num_items:*/ 1, max_bytes + 1);
+
+        for filter in Vec::<CrdsFilter>::from(filters) {
+            let request = Protocol::PullRequest(filter, caller.clone());
+            let request_bytes = wincode::serialized_size(&request).unwrap();
+            assert!(request_bytes > PACKET_DATA_SIZE as u64);
+        }
+    }
+
+    #[test_case(1)]
+    #[test_case(7)]
+    #[test_case(81)]
+    #[test_case(329)]
+    #[test_case(5691)]
+    #[test_case(85689)]
+    #[test_case(645043)]
+    #[test_case(3873238)]
+    fn test_get_max_bloom_filter_bytes(num_items: usize) {
+        let mut rng = rand::rng();
+        let keypair = Keypair::new();
+        let node = {
+            let mut node =
+                ContactInfo::new_localhost(&keypair.pubkey(), /*wallclock:*/ timestamp());
+            node.set_shred_version(rng.random());
+            node
+        };
+        {
+            let caller: CrdsValue = CrdsValue::new(CrdsData::from(&node), &keypair);
+            verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
+            verify_max_bloom_filter_bytes_is_maximal(&mut rng, &caller);
+        }
+        let node = {
+            let socket = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 1), 8053));
+            let mut node = ContactInfo::new_with_socketaddr(&keypair.pubkey(), &socket);
+            node.set_shred_version(rng.random());
+            node
+        };
+        {
+            let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
+            verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
+            verify_max_bloom_filter_bytes_is_maximal(&mut rng, &caller);
+        }
+    }
+
+    #[test]
+    fn test_lsb_mask() {
+        assert_eq!(CrdsFilter::lsb_mask(0), !0u64);
+        assert_eq!(CrdsFilter::lsb_mask(1), !0u64 >> 1);
+        assert_eq!(CrdsFilter::lsb_mask(4), !0u64 >> 4);
+        assert_eq!(CrdsFilter::lsb_mask(64), 0);
+        assert_eq!(CrdsFilter::lsb_mask(65), 0);
+    }
+
+    #[test]
+    fn test_canonical_mask_normalizes_low_bits() {
+        let mask_bits = 8;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+
+        // Construct a mask with some garbage in the low bits
+        let prefix: u64 = 0b1010_1100;
+        let high = prefix << (64 - mask_bits);
+        let garbage_low = 0x1234_5678_u64;
+        let raw_mask = high | garbage_low;
+
+        let canonical = CrdsFilter::canonical_mask(raw_mask, mask_bits);
+
+        // High bits (prefix) are preserved
+        assert_eq!(canonical >> (64 - mask_bits), prefix);
+        // Low bits are all 1
+        assert_eq!(canonical & lsb, lsb);
+    }
+
+    #[test]
+    fn test_hash_matches_mask_prefix_positive_and_negative() {
+        let mask_bits = 4;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+
+        // Prefix 0b1010 for the high 4 bits
+        let prefix: u64 = 0b1010;
+        let high = prefix << (64 - mask_bits);
+        let canonical_mask = CrdsFilter::canonical_mask(high, mask_bits);
+
+        // Hash with same high 4 bits -> should match
+        let hash_match: u64 = high | 0x1234;
+        assert!(CrdsFilter::hash_matches_mask_prefix(
+            canonical_mask,
+            mask_bits,
+            hash_match
+        ));
+
+        // Hash with different high 4 bits -> should not match
+        let other_prefix: u64 = 0b1011;
+        let other_high = other_prefix << (64 - mask_bits);
+        let hash_nomatch: u64 = other_high | 0x1234;
+        assert!(!CrdsFilter::hash_matches_mask_prefix(
+            canonical_mask,
+            mask_bits,
+            hash_nomatch
+        ));
+
+        // Test malformed mask: same high bits,
+        // but low bits cleared instead of all 1s
+        let malformed_mask = canonical_mask & !lsb;
+        // Should be the same after canonicalization
+        assert!(CrdsFilter::hash_matches_mask_prefix(
+            malformed_mask,
+            mask_bits,
+            hash_match
+        ));
+        assert!(!CrdsFilter::hash_matches_mask_prefix(
+            malformed_mask,
+            mask_bits,
+            hash_nomatch
+        ));
+    }
+
+    #[test]
+    fn test_mask_prefix_matching_with_malformed_mask() {
+        let mask_bits = 5;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+        let prefix: u64 = 0b1_0011;
+        let high = prefix << (64 - mask_bits);
+        // canonical mask = high | lsb = 0b1_0011_1111...111 (5 prefix bits, 59 ones)
+        let canonical_mask = CrdsFilter::canonical_mask(high, mask_bits);
+
+        let mut filter = CrdsFilter {
+            mask_bits,
+            mask: canonical_mask,
+            ..Default::default()
+        };
+
+        // Build a Hash whose u64 view has the correct prefix
+        let h_u64 = high | 0x55u64; //random low bits
+        let mut arr = [0u8; HASH_BYTES];
+        arr[..8].copy_from_slice(&h_u64.to_le_bytes());
+        let hash = arr.into();
+
+        // Positive case: canonical mask
+        assert!(filter.test_mask(&hash));
+
+        // Negative case: flip a high bit -> hash with a different prefix bit
+        let bad_u64 = h_u64 ^ (1u64 << (64 - mask_bits)); // flip one of the prefix bits
+        let mut bad_arr = [0u8; HASH_BYTES];
+        bad_arr[..8].copy_from_slice(&bad_u64.to_le_bytes());
+        let bad_hash = bad_arr.into();
+        assert!(!filter.test_mask(&bad_hash));
+
+        // Malformed mask: clear low bits -> should still match the hash with the correct prefix
+        filter.mask = canonical_mask & !lsb;
+        assert!(filter.test_mask(&hash));
+        assert!(!filter.test_mask(&bad_hash));
+    }
+}

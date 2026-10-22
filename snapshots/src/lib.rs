@@ -1,0 +1,26 @@
+#![cfg(feature = "agave-unstable-api")]
+
+mod archive;
+mod archive_format;
+pub mod error;
+pub mod hardened_unpack;
+mod kind;
+mod multiframe;
+pub mod paths;
+pub mod snapshot_archive_info;
+pub mod snapshot_config;
+pub mod snapshot_hash;
+mod snapshot_interval;
+mod snapshot_version;
+mod unarchive;
+
+pub type Result<T> = std::result::Result<T, error::SnapshotError>;
+
+pub use {
+    archive::archive_snapshot,
+    archive_format::*,
+    kind::{SnapshotArchiveKind, SnapshotKind},
+    snapshot_interval::SnapshotInterval,
+    snapshot_version::SnapshotVersion,
+    unarchive::{streaming_unarchive_snapshot, unpack_genesis_archive},
+};

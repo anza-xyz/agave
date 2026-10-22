@@ -1,0 +1,66 @@
+[package]
+name = "solana-tpu-client-next"
+description = "Client code to send transaction to TPU."
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+metrics = ["dep:solana-metrics"]
+tracing = ["dep:tracing"]
+websocket-node-address-service = ["dep:solana-pubsub-client", "dep:tokio-stream"]
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+itertools = { workspace = true }
+log = { workspace = true }
+lru = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-keypair = { workspace = true }
+solana-leader-schedule = { workspace = true }
+solana-measure = { workspace = true }
+solana-metrics = { workspace = true, optional = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-pubsub-client = { workspace = true, optional = true }
+solana-rpc-client = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+solana-streamer = { workspace = true }
+solana-time-utils = { workspace = true }
+solana-tls-utils = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true, optional = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+crossbeam-channel = { workspace = true }
+futures = { workspace = true }
+serde_json = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+solana-pubkey = { workspace = true }
+solana-signer = { workspace = true }
+solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-tpu-client-next = { path = ".", features = ["agave-unstable-api", "websocket-node-address-service", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

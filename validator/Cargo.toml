@@ -1,0 +1,119 @@
+[package]
+name = "agave-validator"
+readme = "../README.md"
+documentation = "https://docs.rs/agave-validator"
+default-run = "agave-validator"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+agave-cpu-utils = { workspace = true }
+agave-event-system = { workspace = true }
+agave-logger = { workspace = true }
+agave-snapshots = { workspace = true }
+agave-votor = { workspace = true }
+agave-votor-transport = { workspace = true }
+agave-xdp = { workspace = true }
+arc-swap = { workspace = true }
+bytesize = { workspace = true }
+chrono = { workspace = true, features = ["default", "serde"] }
+clap = { workspace = true }
+console = { workspace = true }
+crossbeam-channel = { workspace = true }
+fd-lock = { workspace = true }
+indicatif = { workspace = true }
+itertools = { workspace = true }
+jemallocator = { workspace = true }
+jsonrpc-core = { workspace = true }
+jsonrpc-core-client = { workspace = true, features = ["ipc"] }
+jsonrpc-derive = { workspace = true }
+jsonrpc-ipc-server = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+num_cpus = { workspace = true }
+qualifier_attr = { workspace = true }
+rand = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+solana-account = { workspace = true }
+solana-accounts-db = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-cli-config = { workspace = true }
+solana-cli-output = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-core = { workspace = true }
+solana-download-utils = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-faucet = { workspace = true }
+solana-genesis-utils = { workspace = true }
+solana-geyser-plugin-manager = { workspace = true }
+solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
+solana-inflation = { workspace = true }
+solana-keypair = { workspace = true }
+solana-ledger = { workspace = true }
+solana-message = { workspace = true }
+solana-metrics = { workspace = true }
+solana-native-token = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-perf = { workspace = true }
+solana-poh = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rayon-threadlimit = { workspace = true }
+solana-rent = { workspace = true }
+solana-rpc = { workspace = true }
+solana-rpc-client = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+solana-runtime = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-send-transaction-service = { workspace = true }
+solana-signer = { workspace = true }
+solana-storage-bigtable = { workspace = true }
+solana-streamer = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-test-validator = { workspace = true }
+solana-turbine = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true }
+solana-validator-exit = { workspace = true }
+solana-version = { workspace = true }
+solana-vote-program = { workspace = true }
+symlink = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+caps = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-time-utils = { workspace = true }
+tempfile = { workspace = true }
+test-case = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,221 @@
+//! Example Rust-based SBF program that tests sysvar use
+
+#[allow(deprecated)]
+use solana_sysvar::recent_blockhashes::RecentBlockhashes;
+use {
+    solana_account_info::AccountInfo,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_instructions_sysvar as instructions,
+    solana_msg::msg,
+    solana_program_error::{ProgramError, ProgramResult},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::sysvar,
+    solana_stake_history::{StakeHistory, StakeHistoryGetEntry, sysvar::StakeHistorySysvar},
+    solana_sysvar::{
+        Sysvar, clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
+        rent::Rent, slot_hashes::PodSlotHashes, slot_history::SlotHistory,
+    },
+    solana_sysvar_id::SysvarId,
+};
+
+fn from_account_info<T>(account_info: &AccountInfo) -> Result<T, ProgramError>
+where
+    T: wincode::DeserializeOwned<Dst = T> + SysvarId,
+{
+    if !T::check_id(account_info.unsigned_key()) {
+        return Err(ProgramError::InvalidArgument);
+    }
+    wincode::deserialize(&account_info.data.borrow()).map_err(|_| ProgramError::InvalidArgument)
+}
+
+fn sol_get_sysvar<T>(data_len: usize) -> Result<T, ProgramError>
+where
+    T: wincode::DeserializeOwned<Dst = T> + SysvarId,
+{
+    #[cfg(target_os = "solana")]
+    {
+        let mut data = vec![0; data_len];
+
+        solana_sysvar::get_sysvar(&mut data, &T::id(), 0, data_len as u64)?;
+
+        wincode::deserialize(&data).map_err(|_| ProgramError::InvalidArgument)
+    }
+    #[cfg(not(target_os = "solana"))]
+    {
+        let _ = data_len;
+        Err(ProgramError::UnsupportedSysvar)
+    }
+}
+
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    // `sol_get_sysvar` can eat up some heap space for calls like
+    // `PodSlotHashes`, so break up the instructions.
+    //
+    // * 0: Fixed-size sysvars (Clock, Rent, etc.).
+    // * 1: Instruction sysvar.
+    // * 2: Stake History.
+    // * 3: Slot Hashes.
+    match instruction_data.first() {
+        Some(&0) => {
+            // Clock
+            {
+                msg!("Clock identifier:");
+                sysvar::clock::id().log();
+                let clock = from_account_info::<Clock>(&accounts[2]).unwrap();
+                assert_ne!(clock, Clock::default());
+                let got_clock = Clock::get()?;
+                assert_eq!(clock, got_clock);
+                // Syscall `sol_get_sysvar`.
+                let sgs_clock = sol_get_sysvar::<Clock>(solana_sysvar::clock::SIZE)?;
+                assert_eq!(clock, sgs_clock);
+            }
+
+            // Epoch Rewards
+            {
+                msg!("EpochRewards identifier:");
+                sysvar::epoch_rewards::id().log();
+                let epoch_rewards = from_account_info::<EpochRewards>(&accounts[10]).unwrap();
+                let got_epoch_rewards = EpochRewards::get()?;
+                assert_eq!(epoch_rewards, got_epoch_rewards);
+                // Syscall `sol_get_sysvar`.
+                let sgs_epoch_rewards =
+                    sol_get_sysvar::<EpochRewards>(solana_sysvar::epoch_rewards::SIZE)?;
+                assert_eq!(epoch_rewards, sgs_epoch_rewards);
+            }
+
+            // Epoch Schedule
+            {
+                msg!("EpochSchedule identifier:");
+                sysvar::epoch_schedule::id().log();
+                let epoch_schedule = from_account_info::<EpochSchedule>(&accounts[3]).unwrap();
+                assert_eq!(epoch_schedule, EpochSchedule::default());
+                let got_epoch_schedule = EpochSchedule::get()?;
+                assert_eq!(epoch_schedule, got_epoch_schedule);
+                // Syscall `sol_get_sysvar`.
+                let sgs_epoch_schedule =
+                    sol_get_sysvar::<EpochSchedule>(solana_sysvar::epoch_schedule::SIZE)?;
+                assert_eq!(epoch_schedule, sgs_epoch_schedule);
+            }
+
+            // Recent Blockhashes
+            #[allow(deprecated)]
+            {
+                msg!("RecentBlockhashes identifier:");
+                sysvar::recent_blockhashes::id().log();
+                let recent_blockhashes =
+                    from_account_info::<RecentBlockhashes>(&accounts[5]).unwrap();
+                assert_ne!(recent_blockhashes, RecentBlockhashes::default());
+            }
+
+            // Rent
+            {
+                msg!("Rent identifier:");
+                sysvar::rent::id().log();
+                let rent = from_account_info::<Rent>(&accounts[6]).unwrap();
+                let got_rent = Rent::get()?;
+                assert_eq!(rent, got_rent);
+                // Syscall `sol_get_sysvar`.
+                let sgs_rent = sol_get_sysvar::<Rent>(solana_sysvar::rent::SIZE)?;
+                assert_eq!(rent, sgs_rent);
+            }
+
+            // Slot History
+            {
+                msg!("SlotHistory identifier:");
+                sysvar::slot_history::id().log();
+                // SlotHistory exceeds the default SBF heap, so inspecting without deserializing.
+                // Its final `u64` field is `next_slot`.
+                assert_eq!(accounts[8].data_len(), solana_sysvar::slot_history::SIZE);
+                let data = accounts[8].data.borrow();
+                let next_slot = u64::from_le_bytes(*data.last_chunk().unwrap());
+                assert_eq!(next_slot, Clock::get()?.slot);
+                // Slot History is not stored in the runtime sysvar cache, so syscall
+                // `sol_get_sysvar` does not support it.
+                assert_eq!(
+                    Err(ProgramError::UnsupportedSysvar),
+                    sol_get_sysvar::<SlotHistory>(1)
+                );
+            }
+
+            Ok(())
+        }
+        Some(&1) => {
+            // Instructions
+            msg!("Instructions identifier:");
+            instructions::id().log();
+            assert_eq!(*accounts[4].owner, sysvar::id());
+            let index = instructions::load_current_index_checked(&accounts[4])?;
+            let instruction =
+                instructions::load_instruction_at_checked(index as usize, &accounts[4])?;
+            assert_eq!(0, index);
+            assert_eq!(
+                instruction,
+                Instruction::new_with_bytes(
+                    *program_id,
+                    instruction_data,
+                    vec![
+                        AccountMeta::new(*accounts[0].key, true),
+                        AccountMeta::new(*accounts[1].key, false),
+                        AccountMeta::new_readonly(*accounts[2].key, false),
+                        AccountMeta::new_readonly(*accounts[3].key, false),
+                        AccountMeta::new_readonly(*accounts[4].key, false),
+                        AccountMeta::new_readonly(*accounts[5].key, false),
+                        AccountMeta::new_readonly(*accounts[6].key, false),
+                        AccountMeta::new_readonly(*accounts[7].key, false),
+                        AccountMeta::new_readonly(*accounts[8].key, false),
+                        AccountMeta::new_readonly(*accounts[9].key, false),
+                        AccountMeta::new_readonly(*accounts[10].key, false),
+                    ],
+                )
+            );
+
+            Ok(())
+        }
+        Some(&2) => {
+            // Stake History
+            {
+                msg!("StakeHistory identifier:");
+                sysvar::stake_history::id().log();
+                let _ = from_account_info::<StakeHistory>(&accounts[9]).unwrap();
+                // Syscall `sol_get_sysvar`.
+                let stake_history_sysvar = StakeHistorySysvar(1);
+                assert!(stake_history_sysvar.get_entry(0).is_some());
+            }
+
+            Ok(())
+        }
+        Some(&3) => {
+            // Slot Hashes
+            {
+                msg!("SlotHashes identifier:");
+                sysvar::slot_hashes::id().log();
+                // Account deserialization is unsupported.
+                // Inspecting first entry and comparing with the syscall value.
+                assert_eq!(accounts[7].data_len(), solana_sysvar::slot_hashes::SIZE);
+                let data = accounts[7].data.borrow();
+                let account_slot = u64::from_le_bytes(data[8..16].try_into().unwrap());
+                let account_hash = &data[16..48];
+                let syscall_hash = PodSlotHashes::fetch()?.get(&account_slot)?.unwrap();
+                assert_eq!(syscall_hash.as_ref(), account_hash);
+            }
+
+            Ok(())
+        }
+        Some(&4) => {
+            // Attempt to store the result in the input region instead of the stack or heap
+            unsafe {
+                solana_define_syscall::definitions::sol_get_epoch_rewards_sysvar(
+                    accounts[2].data.borrow_mut().as_mut_ptr(),
+                )
+            };
+
+            Ok(())
+        }
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}

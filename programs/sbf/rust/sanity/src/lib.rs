@@ -1,0 +1,116 @@
+//! Example Rust-based SBF sanity program that prints out the parameters passed to it
+
+#![allow(unreachable_code)]
+#![allow(clippy::arithmetic_side_effects)]
+
+use {
+    solana_account_info::AccountInfo,
+    solana_msg::msg,
+    solana_program::{
+        log::{sol_log_compute_units, sol_log_params},
+        program::check_type_assumptions,
+    },
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader,
+};
+
+#[derive(Debug, PartialEq)]
+struct SStruct {
+    x: u64,
+    y: u64,
+    z: u64,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+enum TestEnum {
+    VariantOne,
+    VariantTwo,
+}
+
+#[allow(dead_code)]
+#[repr(u64)]
+enum Test64BitEnum {
+    VariantOne,
+    VariantTwo = 0xFFFFFFFFF,
+}
+
+#[inline(never)]
+fn return_sstruct() -> SStruct {
+    SStruct { x: 1, y: 2, z: 3 }
+}
+
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    msg!("Program identifier:");
+    program_id.log();
+
+    assert!(!bpf_loader::check_id(program_id));
+
+    // Log the provided account keys and instruction input data.  In the case of
+    // the no-op program, no account keys or input data are expected but real
+    // programs will have specific requirements so they can do their work.
+    msg!("Account keys and instruction input data:");
+    sol_log_params(accounts, instruction_data);
+
+    {
+        // Test - use std methods, unwrap
+
+        // valid bytes, in a stack-allocated array
+        let sparkle_heart = [240, 159, 146, 150];
+        let result_str = std::str::from_utf8(&sparkle_heart).unwrap();
+        assert_eq!(4, result_str.len());
+        assert_eq!("💖", result_str);
+        msg!(result_str);
+    }
+
+    {
+        // Test - struct return
+
+        let s = return_sstruct();
+        assert_eq!(s.x + s.y + s.z, 6);
+    }
+
+    {
+        // Test - arch config
+        #[cfg(not(target_os = "solana"))]
+        panic!();
+    }
+
+    {
+        // Test - float math functions
+        let zero = accounts[0].try_borrow_mut_data()?.len() as f64;
+        let num = zero + 8.0f64;
+        let num = num.powf(0.333f64);
+        // check that the result is in a correct interval close to 1.998614185980905
+        assert!(1.9986f64 < num && num < 2.0f64);
+    }
+
+    {
+        // #[repr(C) enums must not change size between compiler version
+        // 32-bit for #[repr(C)] enum
+        assert_eq!(std::mem::size_of::<TestEnum>(), 4);
+        // 64-bit for enum with a declared value
+        assert_eq!(std::mem::size_of::<Test64BitEnum>(), 8);
+    }
+
+    check_type_assumptions();
+
+    sol_log_compute_units();
+    Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_return_sstruct() {
+        assert_eq!(SStruct { x: 1, y: 2, z: 3 }, return_sstruct());
+    }
+}

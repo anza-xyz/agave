@@ -1,0 +1,765 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+Please follow the [guidance](#adding-to-this-changelog) at the bottom of this file when making changes
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
+
+Release channels have their own copy of this changelog:
+
+* [edge - v4.5](#450-unreleased)
+* [beta - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
+* [stable - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
+
+## 4.5.0-Unreleased
+
+### RPC
+
+#### Breaking
+
+#### Changes
+
+* `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns
+  `MinContextSlotNotReached` (-32016) when the node's context slot at the finalized commitment is
+  below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
+  `getBlocks` behavior.
+* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
+  for the epoch containing a requested slot, with an optional identity filter. Always queries
+  finalized state; there is no commitment parameter.
+* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
+  instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
+  preserves the existing parsed output.
+
+### Validator
+
+#### Breaking
+
+* `agave-validator repair-shred-from-peer` now requires `--pubkey`, and the `repairShredFromPeer`
+  admin RPC now requires `pubkey`. Sampling repair peers when no pubkey is given is no longer supported
+  due to the Alpenglow migration. The request now returns an error if the peer has no valid repair socket.
+
+#### Changes
+
+* Added `agave-validator --no-xdp-zero-copy` to explicitly select XDP copy mode. It conflicts
+  with `--xdp-zero-copy` and `--no-xdp`.
+* The default full snapshot interval is now 200,000 slots.
+* XDP interface, address, and transmitter setup failures now report startup errors instead of
+  panicking.
+
+#### Deprecations
+
+* `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+* `--tpu-max-connections-per-peer` is deprecated and will be removed in a future release. Until then,
+  it still overrides `--tpu-max-connections-per-staked-peer` and `--tpu-max-connections-per-unstaked-peer`.
+  Replace `--tpu-max-connections-per-peer N` with
+  `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
+
+### CLI
+
+#### Breaking
+
+* Prebuilt Windows releases are no longer provided.
+* `solana-genesis` no longer accepts the `--alpenglow` option.
+
+#### Changes
+
+* `airdrop` now prints a link to <https://faucet.solana.com>, pre-populated with the recipient address,
+  when the request fails on devnet or testnet.
+* `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
+  no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
+* `solana-genesis` now activates Alpenglow consensus at genesis by default.
+* `--url` now accepts `mainnet` as a moniker (`mainnet-beta` and `m` still work). The mainnet moniker and
+  the default RPC URL now point to <https://api.mainnet.solana.com>.
+
+### Geyser
+
+#### Changes
+
+* Contact info notifications now include unchanged gossip republishes. Plugins that subscribe to
+  contact info should be prepared for thousands of callbacks per second, many carrying duplicates.
+  Deduplicate locally if only field changes are needed. Keep callbacks short: a blocked callback
+  can fill the shared channel and cause updates to be dropped for all subscribed plugins.
+  Plugins loaded later can learn about unchanged nodes from subsequent republishes.
+
+## 4.4.0
+
+### RPC
+
+#### Breaking
+
+#### Changes
+
+* `getTransaction` now accepts `minContextSlot`, and `getSignatureStatuses` now accepts `commitment`
+  and `minContextSlot`, in their config objects. Both return `MinContextSlotNotReached` (-32016) when
+  the node's context slot at the requested commitment is below the minimum. `getSignatureStatuses`
+  still defaults to `processed` when no commitment is given.
+* Added `RpcClient::get_signature_statuses_with_config`.
+* `accountSubscribe` and `programSubscribe` now honor `dataSlice` for binary account data.
+  A zero-length slice returns empty data; omitting `dataSlice` returns the full account data.
+* `getLeaderSchedule` now returns a new error code `-32022` if the specified
+  `identity` does not appear in the leader schedule
+
+### Validator
+
+#### Breaking
+
+* scheduler-bindings version has been increased to 5. Connecting external schedulers must be updated.
+* Previously deprecated `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`
+  and `--experimental-retransmit-xdp-zero-copy` have been removed. Use `--xdp-interface`, `--xdp-cpu-cores`
+  and `--xdp-zero-copy` instead.
+
+#### Changes
+
+### CLI
+
+#### Breaking
+
+#### Changes
+
+* Added `vote-update-commission-bps` to set a vote account's commission in basis points. The
+  `--commission-kind` argument selects which commission to update: `inflation-rewards` or
+  `block-revenue`.
+* Added `vote-update-commission-collector` to set the account that collects a vote account's
+  commission. The `COMMISSION_KIND` argument selects which collector to update:
+  `inflation-rewards` or `block-revenue`.
+* `leader-schedule` now accepts `--key-by-vote-account` to show each slot's leader by vote
+  account instead of validator identity.
+
+## 4.3.0
+
+### RPC
+
+#### Breaking
+
+* Failing to successfully establish a Bigtable connection will now result in a
+  fatal error when running with either `--enable-rpc-bigtable-ledger-storage` or
+  `--enable-bigtable-ledger-upload`. Previously, the error would be logged and
+  the process would continue without a Bigtable connection.
+
+#### Changes
+
+* `getLeaderSchedule` now accepts a `keyByVoteAccount` config option to key the returned
+  schedule by vote account instead of validator identity. The `identity` filter continues
+  to match on validator identity in both modes.
+
+### Validator
+
+#### Breaking
+
+* Loading a snapshot that contains an invalid vote account is now a hard error. Previously such
+  accounts were silently dropped for compatibility with snapshots created before v2.1.0.
+* Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
+* Previously deprecated `--tpu-connection-pool-size` has been removed. The connection pool size is fixed at the previous default of 1.
+
+#### Deprecations
+
+* `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
+  default). The flag is still accepted for backward compatibility.
+* `--limit-ledger-size` is now deprecated in favor of `--limit-blockstore-size`. The argument is
+still accepted for backwards compatibility but slated for full removal in the future.
+  * `--limit-blockstore-size` uses a more precise counting mechanism than `--limit-ledger-size`.
+  * If using a non-default value with `--limit-ledger-size`, a good starting point is to double
+  that value for `--limit-blockstore-size`.
+  * `--limit-blockstore-size` may occupy more disk footprint at steady state with current cluster
+  activity; however, disk usage should be more stable during abnormal cluster activity.
+
+#### Changes
+
+* Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
+  store transaction signature keys in the status cache. Message hashes remain cached for duplicate
+  transaction detection.
+* External scheduler execution responses now report `PARTIAL_BATCH_CANCELLED` for
+  `CommitCancelled` errors in non-all-or-nothing batches. All-or-nothing batches continue to use
+  `ALL_OR_NOTHING_BATCH_FAILURE`.
+* Using the deprecated value `minimal` for `--accounts-index-limit` now defaults to 25GB.
+* Unstaked nodes can now receive consensus messages via votor from any staked node.
+  Specify `--votor-peer-overrides <VALIDATOR IDENTITY>...` to additionally send votor
+  messages to identities outside the staked set.
+
+### Geyser
+
+#### Deprecations
+
+* The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
+  `notify_block_metadata` are slated for removal in the next major release.
+
+#### Changes
+
+* Added `GeyserPlugin` methods to replace deprecated methods: `update_account_from_snapshot` and
+  `update_account_for_bank` replace `update_account`, `notify_transaction_for_bank` replaces
+  `notify_transaction`, `notify_entry_for_bank` replaces `notify_entry`, and
+  `notify_block_metadata_for_bank` replaces `notify_block_metadata`.
+* Added `update_bank_status` for bank-scoped slot status updates with `bank_id`;
+  `update_slot_status` remains for non-bank slot statuses.
+* Added `GeyserPlugin::notify_block_footer` and
+  `GeyserPlugin::block_footer_notifications_enabled`; plugins can opt in to receive the complete
+  versioned Alpenglow block footer, slot, and bank ID in entry order independently of entry
+  notifications.
+* Added `GeyserPlugin::notify_entry_update_parent` and
+  `GeyserPlugin::notify_deshred_update_parent` so plugins can discard earlier notifications after
+  an UpdateParent marker.
+
+### SDK
+
+#### Breaking
+
+* solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
+  `ProgramError::UnsupportedSysvar` in native-mode processors (programs registered with `processor!`). Programs
+  executed as BPF (including the bundled SPL programs), are unaffected, even when invoked via CPI from a native
+  processor. Native-mode processors can use the `solana_program_test::sol_get_*` sysvar helpers directly. See
+  `program-test/tests/sysvar.rs` for examples of what is and is not supported.
+
+## 4.2.0
+
+### RPC
+
+#### Breaking
+
+* The `jsonParsed` output for confidential transfer `Deposit` (`depositConfidentialTransfer`) and `Withdraw` (`withdrawConfidentialTransfer`) instructions has been corrected. These instructions operate on a single token account, so the mislabeled `source` and `destination` fields have been replaced by a single `account` field (the `mint` field is unchanged).
+* Blockstore reward column legacy format support removed.
+  * The `Rewards` column was updated in v1.5 (Solana Labs client) to switch from
+  storing bincode serialized values to protobuf encoded values. The old bincode
+  format will no longer be supported for fallback reads as of v4.2
+
+#### Changes
+
+* Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
+  `getLatestBlockhash` response together with its context (notably `context.slot`).
+
+### Validator
+
+#### Breaking
+
+* XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires
+  `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilities (plus `CAP_BPF` and `CAP_PERFMON` for
+  `--xdp-zero-copy`). Pass `--no-xdp` to fall back to UDP sockets. The XDP CPU
+  core is auto-selected to avoid overlapping the PoH core; passing `--xdp-cpu-cores`
+  with a core that conflicts with the PoH core is an error.
+
+#### Deprecations
+
+* `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
+  deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
+  backward compatibility, but account storages are always accessed via file I/O.
+* `--accounts-db-cache-limit-mb` is now deprecated. Use `--accounts-db-write-cache-limit` instead.
+* `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
+
+#### Changes
+
+* Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+* When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+* The default incremental snapshot interval is now 200 slots.
+
+### CLI
+
+#### Breaking
+
+#### Changes
+
+* `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
+* Support Keystone hardware wallets using `usb://keystone`
+
+## 4.1.0
+
+### RPC
+
+#### Breaking
+
+#### Changes
+
+### Validator
+
+#### Breaking
+
+* `--block-production-method central-scheduler` is no longer supported. If passed, a warning is emitted and behavior
+  will default to the greedy-scheduler implementation.
+* scheduler-bindings version has been increased to 4. Connecting external schedulers must be updated.
+* Validator now requires 26 ports, `--dynamic-port-range` must be at least 26 wide.
+
+#### Deprecations
+
+* Using `minimal` for `--accounts-index-limit` is now deprecated.
+* `--account-shrink-path` is now deprecated.
+* `sbf-sdk.tar.bz2` is not included anymore in the Agave release tarball. The file will be made available in the new
+  [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+* XDP support is no longer experimental. The `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`, and
+  `--experimental-retransmit-xdp-zero-copy` flags have been deprecated. Use `--xdp-interface`, `--xdp-cpu-cores`, and `--xdp-zero-copy` instead. Behavior is unchanged: pass `--xdp-cpu-cores` to enable XDP on the specified cores.
+
+#### Changes
+
+## 4.0.0
+
+### RPC
+
+#### Breaking
+
+* `--public-tpu-address` and `--public-tpu-forwards-address` CLI arguments and `setPublicTpuForwardsAddress`, `setPublicTpuAddress` RPC methods now specify QUIC ports, not UDP.
+* Blockstore `PerfSamples` column legacy format removed.
+  * The `PerfSamples` column format was updated in agave v1.15 to write `PerfSampleV2`. The old format, `PerfSampleV1`, will no longer be supported for fallback reads as of v4.0.
+* Blockstore transaction metadata column legacy format support removed.
+  * The `TransactionStatus`, `TransactionMemos`, and `AddressSignatures` columns
+  were updated in v1.18 to write a new key format. The old key format will no
+  no longer be supported for fallback reads as of v4.0
+* `getSignaturesForAddress` returns an error with code `-32020` if the `before` or `until` signatures are not found, rather than a successful response with an empty array
+
+#### Changes
+
+* Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
+* Added `clientId` field to each node in `getClusterNodes` response
+
+### Validator
+
+#### Breaking
+
+* Removed deprecated arguments
+  * `--accounts-db-clean-threads`
+  * `--accounts-db-hash-threads`
+  * `--accounts-db-read-cache-limit-mb`
+  * `--accounts-hash-cache-path`
+  * `--cuda`
+  * `--disable-accounts-disk-index`
+  * `--dev-halt-at-slot`
+  * `--monitor` (`exit` subcommand)
+  * `--transaction-struct`
+  * `--wait-for-exit` (`exit` subcommand)
+  * `--tpu-coalesce-ms`
+  * `--tpu-disable-quic`
+  * `--tpu-enable-udp`
+* `--block-verification-method blockstore-processor` is no longer supported. Remove the argument or switch to `--block-verification-method unified-scheduler` instead.
+* Removed support for ingestion of transactions via UDP. QUIC is now the only option.
+* All monorepo crates falling outside the
+[backward compatibility policy](https://docs.anza.xyz/backwards-compatibility) are now part
+of the Agave Unstable API and their symbols have been made private. Enable the
+`agave-unstable-api` crate feature to acknowledge use of an interface that may break
+without warning.
+* Linux Capability handling has been hardened wrt requirements for configuring XDP (#9133)
+  * It is now an explicit **error** + exit(1) if the process has not been permitted a
+    capability required by the current configuration
+  * A warning is logged if the process has been permitted capabilities not required by
+    any configuration supported by the binary
+  * All permitted capabilities not required by the current configuration are now dropped
+    at startup. This includes all validator subcommands which never require capabilities
+  * Operations which require capabilities are now performed on the main thread and
+    capabilities dropped before any other threads are spawned, with two exceptions
+    1. One thread retains cap_net_admin in order to reinitialize its netlink socket upon error
+    2. If any niceness flags are passed, all threads retain cap_sys_nice, which has been
+    the case since those feature were originally added
+  * Updated instructions for permitting Linux Capabilities for the validator process are
+    as follow. Either of these two options is supported. Choose whichever best fits your
+    operational procedures
+    * Add the following to the `[Service]` section of you Systemd service file
+
+        ```text
+        # Permit Linux Capabilities required to configure XDP
+        AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON
+
+        # Disallow inheritance of any Linux Capabilities not required by any configuration
+        CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON
+        ```
+
+    **-- OR --**
+    * set xattr capabilities directly on the binary file. note that this step must be
+      repeated every time that the binary file is replaced
+
+        ```text
+        sudo setcap cap_net_raw,cap_net_admin,cap_bpf,cap_perfmon=p /path/to/agave-validator
+        ```
+
+* Interpretation of the `Version` struct fields in gossip `ContactInfo` has been
+[changed](https://github.com/anza-xyz/agave/pull/10286) to support communicating
+[semver prerelease notation](https://semver.org/#spec-item-9). Implementations lacking this
+support will observe a larger than expected *`min` version* field from node publishing from a
+prerelease version. The new interpretation is as follows:
+  * The top two bits (14 and 15) of the `minor` field are now reserved for prerelease status
+  * Prerelease status bit values are;
+    3 - alpha, 2 - beta, 1 - release candidate (rc), 0 - stable
+  * When prerelease status bits are non-zero, the `Version::patch` field is interpreted as
+    the prerelease number and the actual `patch` value is implicitly zero
+  * Examples:
+    * { min: 0x0001, patch: 0x0003 } -> X.1.3
+    * { min: 0x4002, patch: 0x0002 } -> X.2.0-rc.2
+    * { min: 0x8003, patch: 0x0001 } -> X.3.0-beta.1
+    * { min: 0xC004, patch: 0x0000 } -> X.4.0-alpha.0
+* Blockstore `SlotMeta` and `Index` columns legacy format removed.
+  * The `Index` column was updated in v2.2 to write `IndexV2`.
+  * The `SlotMeta` column format was updated in v3.1 to write `SlotMetaV2`.
+  * The old formats, `SlotMetaV1` and `IndexV1`, will no longer be supported for fallback reads as of v4.0
+
+#### Deprecations
+
+* Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
+* The `--enable-accounts-disk-index` flag is now deprecated. Use `--accounts-index-limit` instead. To retain the same behavior, use `--accounts-index-limit minimal`.
+
+#### Changes
+
+* `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
+* Added `--accounts-index-limit` to specify the memory limit of the accounts index.
+* Snapshot archive unpacking now uses direct I/O by default to improve performance by bypassing the OS page cache. Use `--no-accounts-db-snapshots-direct-io` to opt out if your file system does not support `O_DIRECT`. Direct I/O will be extended to snapshot creation in a future release.
+* `--block-production-method central-scheduler` is now deprecated and will be removed in a future release. Use `central-scheduler-greedy` instead.
+
+### CLI
+
+#### Breaking
+
+* Removed deprecated arguments
+  * `--use-quic`
+  * `--use-udp`
+
+#### Deprecations
+
+* The `ping` command is deprecated and will be removed in v4.1.
+
+#### Changes
+
+* Support Trezor hardware wallets using `usb://trezor`
+
+### Platform tools
+
+#### Breaking
+
+* `cargo-build-sbf --debug` now generates a file `program.so.debug` instead of `program.debug`.
+* `cargo-build-sbf --debug` places all debug related objects inside `target/deploy/debug`.
+
+### Geyser
+
+#### Changes
+
+* Account update notifications have their fields populated from the account values post transaction execution. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc manually zeroed out. Note that if the on-chain program *does* zero out any fields itself, those will remain zeroed out in the notification.
+
+### Test Validator
+
+#### Changes
+
+* Now shows TPU QUIC address instead of TPU UDP in the dashboard.
+
+## 3.1.0
+
+### RPC
+
+#### Breaking
+
+* A signature verification failure in `simulateTransaction()` or the preflight stage of `sendTransaction()` will now be attached to the simulation result's `err` property as `TransactionError::SignatureFailure` instead of being thrown as a JSON RPC API error (-32003). Applications that already guard against JSON RPC exceptions should expect signature verification errors to appear on the simulation result instead. Applications that already handle the materialization of `TransactionErrors` on simulation results can now expect to receive errors of type `TransactionError::SignatureFailure` at those verification sites.
+
+#### Changes
+
+* The `getProgramAccounts` RPC endpoint now returns JSON-RPC errors when malformed filters are provided (previously these malformed filters would be silently ignored and the RPC call would execute an unfiltered query).
+* `PubsubClient` can now be constructed with the URI of an RPC (as a `str`, `String`, or `Uri`) as well as an `http::Request<()>`. The addition of `Request` allows you to set request headers when establishing a websocket connection with an RPC.
+
+### Validator
+
+#### Breaking
+
+#### Deprecations
+
+* The `--monitor` flag with `agave-validator exit` is now deprecated. Operators can use the `monitor` command after `exit` instead.
+* The `--disable-accounts-disk-index` flag is now deprecated.
+* All monorepo crates falling outside the
+[backward compatibility policy](https://docs.anza.xyz/backwards-compatibility) are now
+deprecated, signaling their inclusion in the Agave Unstable API. Enable the
+`agave-unstable-api` crate feature to acknowledge use of an interface that may break
+without warning. From v4.0.0 onward, symbols in these crates will be unavailable without
+`agave-unstable-api` enabled.
+* The `--dev-halt-at-slot` flag is now deprecated.
+
+#### Changes
+
+* The accounts index is now kept entirely in memory by default.
+
+## 3.0.0
+
+### RPC
+
+#### Breaking
+
+* Added a `slot` property to `EpochRewardsPeriodActiveErrorData`
+* Added error data containing a `slot` property to `RpcCustomError::SlotNotEpochBoundary`
+
+#### Changes
+
+* The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
+
+### Validator
+
+#### Breaking
+
+* When XDP is enabled, the validator process requires the `CAP_NET_RAW`, `CAP_NET_ADMIN`, `CAP_BPF`, and `CAP_PERFMON` capabilities. These can be configured in the systemd service file by setting `CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON` under the `[Service]` section or directly on the binary with the command `sudo setcap cap_net_raw,cap_net_admin,cap_bpf,cap_perfmon=p <path/to/agave-validator>` (this command must be run each time the binary is replaced)
+* Enabling XDP zero copy on systems configured with LACP bond requires manually passing `--experimental-retransmit-xdp-interface <real-interface>` (e.g.: `eno17395np0` not `bond0`), as zero copy is only available on physical interfaces.
+* Require increased `memlock` limits - recommended setting is `LimitMEMLOCK=2000000000` in systemd service configuration. Lack of sufficient limit (on Linux) will cause startup error.
+* Remove deprecated arguments
+  * `--accounts-index-memory-limit-mb`
+  * `--accountsdb-repl-bind-address`, `--accountsdb-repl-port`, `--accountsdb-repl-threads`, `--enable-accountsdb-repl`
+  * `--disable-quic-servers`, `--enable-quic-servers`
+  * `--etcd-cacert-file`, `--etcd-cert-file`, `--etcd-domain-name`, `--etcd-endpoint`, `--etcd-key-file`, `--tower-storage`
+  * `--no-check-vote-account`
+  * `--no-rocksdb-compaction`, `--rocksdb-compaction-interval-slots`, `--rocksdb-max-compaction-jitter-slots`
+  * `--replay-slots-concurrently`
+    * Use `--replay-forks-threads` with a value of `4` to match preexisting behavior
+  * `--rpc-pubsub-max-connections`, `--rpc-pubsub-max-fragment-size`, `--rpc-pubsub-max-in-buffer-capacity`, `--rpc-pubsub-max-out-buffer-capacity`, `--enable-cpi-and-log-storage`, `--minimal-rpc-api`
+  * `--skip-poh-verify`
+* Deprecated snapshot archive formats have been removed and are no longer loadable.
+* Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
+* Validator will now bind all ports within provided `--dynamic-port-range`, including the client ports. A range of at least 25 ports is recommended to avoid failures to bind during startup.
+* Agave and agave-ledger-tool can no longer operate with legacy shreds. Legacy shreds have not been in circulation since the activation of <https://explorer.solana.com/address/GV49KKQdBNaiv2pgqhS2Dy3GWYJGXMTVYbYkdk91orRy>. This change may break operations with old ledgers that may still contain legacy shreds.
+
+#### Changes
+
+* `--transaction-structure view` is now the default.
+* The default full snapshot interval is now 100,000 slots.
+* `SOLANA_BANKING_THREADS` environment variable is no longer supported. Use `--block-prouduction-num-workers` instead.
+* By default, `agave-validator exit` will now wait for the validator process to terminate before returning. The `--wait-for-exit` flag has been deprecated, but operators can still opt out with the new `--no-wait-for-exit` flag.
+
+## 2.3.0
+
+### Validator
+
+#### Breaking
+
+* ABI of `TimedTracedEvent` changed, since `PacketBatch` became an enum, which carries different packet batch types. (#5646)
+
+#### Changes
+
+* Account notifications for Geyser are no longer deduplicated when restoring from a snapshot.
+* Add `--no-snapshots` to disable generating snapshots.
+* `--block-production-method central-scheduler-greedy` is now the default.
+* The default full snapshot interval is now 50,000 slots.
+* Graceful exit (via `agave-validtor exit`) is required in order to boot from local state. Refer to the help of `--use-snapshot-archives-at-startup` for more information about booting from local state.
+
+#### Deprecations
+
+* Using `--snapshot-interval-slots 0` to disable generating snapshots is now deprecated.
+* Using `blockstore-processor` for `--block-verification-method` is now deprecated.
+
+### Platform Tools SDK
+
+#### Changes
+
+* `cargo-build-sbf` and `cargo-test-sbf` now accept `v0`, `v1`, `v2` and `v3` for the `--arch` argument. These parameters specify the SBPF version to build for.
+* SBFPv1 and SBPFv2 are also available for Anza's C compiler toolchain.
+* SBPFv3 will be only available for the Rust toolchain. The C toolchain will no longer be supported for SBPFv3 onwards.
+* `cargo-build-sbf` now supports the `--optimize-size` argument, which reduces program size, potentially at the cost of increased CU usage.
+
+#### Breaking
+
+* Although the solana rust toolchain still supports the `sbf-solana-solana` target, the new `cargo-build-sbf` version target defaults to `sbpf-solana-solana`. The generated programs will be available on `target/deploy` and `target/sbpf-solana-solana/release`.
+* If the `sbf-solana-solana` target folder is still necessary, use `cargo +solana build --triple sbf-solana-solana --release`.
+* The target triple changes as well for the new SBPF versions. Triples will be `sbpfv1-solana-solana` for version `v1`, `sbpfv2-solana-solana` for `v2`, and `sbpfv3-solana-solana` for `v3`. Generated programs are available on both the `target/deploy` folder and the `target/<triple>/release` folder. The binary in `target/deploy` has smaller size, since we strip unnecessary sections from the one available in `target/<triple>/release`.
+* `cargo-build-sbf` no longer automatically enables the `program` feature to the `solana-sdk` dependency. This feature allowed `solana-sdk` to work in on-chain programs. Users must enable the `program` feature explicitly or use `solana-program` instead. This new behavior only breaks programs using `solana-sdk` v1.3 and earlier.
+
+### CLI
+
+#### Changes
+
+* `withdraw-stake` now accepts the `AVAILABLE` keyword for the amount, allowing withdrawal of unstaked lamports (#4483)
+* `solana-test-validator` will now bind to localhost (127.0.0.1) by default rather than all interfaces to improve security. Provide `--bind-address 0.0.0.0` to bind to all interfaces to restore the previous default behavior.
+
+### RPC
+
+#### Changes
+
+* `simulateTransaction` now includes `loadedAccountsDataSize` in its result. `loadedAccountsDataSize` is the total number of bytes loaded for all accounts in the simulated transaction.
+
+## 2.2.0
+
+### CLI
+
+#### Changes
+
+* Add global `--skip-preflight` option for skipping preflight checks on all transactions sent through RPC. This flag, along with `--use-rpc`, can improve success rate with program deployments using the public RPC nodes.
+* Add new command `solana feature revoke` for revoking pending feature activations. When a feature is activated, `solana feature revoke <feature-keypair> <cluster>` can be used to deallocate and reassign the account to the System program, undoing the operation. This can only be done before the feature becomes active.
+
+### Validator
+
+#### Breaking
+
+* Blockstore Index column format change
+  * The Blockstore Index column format has been updated. The column format written in v2.2 is compatible with v2.1, but incompatible with v2.0 and older.
+* Snapshot format change
+  * The snapshot format has been modified to implement SIMD-215. Since only adjacent versions are guaranteed to maintain snapshot compatibility, this means snapshots created with v2.2 are compatible with v2.1 and incompatible with v2.0 and older.
+
+#### Changes
+
+* Add new variant to `--block-production-method` for `central-scheduler-greedy`. This is a simplified scheduler that has much better performance than the more strict `central-scheduler` variant.
+* Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool and change default to `file`
+* Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
+* Add `--snapshot-zstd-compression-level` to set the compression level when archiving snapshots with zstd.
+
+#### Deprecations
+
+* Deprecate `--tower-storage` and all `--etcd-*` arguments
+
+### SDK
+
+#### Changes
+
+* `cargo-build-sbf`: add `--skip-tools-install` flag to avoid downloading platform tools and `--no-rustup-override` flag to not use rustup when invoking `cargo`. Useful for immutable environments like Nix.
+
+## 2.1.0
+
+* Breaking:
+  * SDK:
+    * `cargo-build-bpf` and `cargo-test-bpf` have been deprecated for two years and have now been definitely removed.
+      Use `cargo-build-sbf` and `cargo-test-sbf` instead.
+    * dependency: `curve25519-dalek` upgraded to new major version 4 (#1693). This causes breakage when mixing v2.0 and v2.1 Solana crates, so be sure to use all of one or the other. Please use only crates compatible with v2.1.
+  * Stake:
+    * removed the unreleased `redelegate` instruction processor and CLI commands (#2213)
+  * Banks-client:
+    * relax functions to use `&self` instead of `&mut self` (#2591)
+  * `agave-validator`:
+    * Remove the deprecated value of `fifo` for `--rocksdb-shred-compaction` (#3451)
+* Changes
+  * SDK:
+    * removed the `respan` macro. This was marked as "internal use only" and was no longer used internally.
+    * add `entrypoint_no_alloc!`, a more performant program entrypoint that avoids allocations, saving 20-30 CUs per unique account
+    * `cargo-build-sbf`: a workspace or package-level Cargo.toml may specify `tools-version` for overriding the default platform tools version when building on-chain programs. For example:
+
+```toml
+[package.metadata.solana]
+tools-version = "1.43"
+```
+
+or
+
+```toml
+[workspace.metadata.solana]
+tools-version = "1.43"
+```
+
+The order of precedence for the chosen tools version goes: `--tools-version` argument, package version, workspace version, and finally default version.
+
+* `package-metadata`: specify a program's id in Cargo.toml for easy consumption by downstream users and tools using `solana-package-metadata` (#1806). For example:
+
+```toml
+[package.metadata.solana]
+program-id = "MyProgram1111111111111111111111111111111111"
+```
+
+Can be consumed in the program crate:
+
+```rust
+solana_package_metadata::declare_id_with_package_metadata!("solana.program-id");
+```
+
+This is equivalent to writing:
+
+```rust
+solana_pubkey::declare_id!("MyProgram1111111111111111111111111111111111");
+```
+
+* `agave-validator`: Update PoH speed check to compare against current hash rate from a Bank (#2447)
+* `solana-test-validator`: Add `--clone-feature-set` flag to mimic features from a target cluster (#2480)
+* `solana-genesis`: the `--cluster-type` parameter now clones the feature set from the target cluster (#2587)
+* `unified-scheduler` as default option for `--block-verification-method` (#2653)
+* warn that `thread-local-multi-iterator` option for `--block-production-method` is deprecated (#3113)
+
+## 2.0.0
+
+* Breaking
+  * SDK:
+    * Support for Borsh v0.9 removed, please use v1 or v0.10 (#1440)
+    * `Copy` is no longer derived on `Rent` and `EpochSchedule`, please switch to using `clone()` (solana-labs#32767)
+    * `solana-sdk`: deprecated symbols removed
+    * `solana-program`: deprecated symbols removed
+  * RPC: obsolete and deprecated v1 endpoints are removed. These endpoints are:
+    confirmTransaction, getSignatureStatus, getSignatureConfirmation, getTotalSupply,
+    getConfirmedSignaturesForAddress, getConfirmedBlock, getConfirmedBlocks, getConfirmedBlocksWithLimit,
+    getConfirmedTransaction, getConfirmedSignaturesForAddress2, getRecentBlockhash, getFees,
+    getFeeCalculatorForBlockhash, getFeeRateGovernor, getSnapshotSlot getStakeActivation
+  * Deprecated methods are removed from `RpcClient` and `RpcClient::nonblocking`
+  * `solana-client`: deprecated re-exports removed; please import `solana-connection-cache`, `solana-quic-client`, or `solana-udp-client` directly
+  * Deprecated arguments removed from `agave-validator`:
+    * `--enable-rpc-obsolete_v1_7` (#1886)
+    * `--accounts-db-caching-enabled` (#2063)
+    * `--accounts-db-index-hashing` (#2063)
+    * `--no-accounts-db-index-hashing` (#2063)
+    * `--incremental-snapshots` (#2148)
+    * `--halt-on-known-validators-accounts-hash-mismatch` (#2157)
+* Changes
+  * `central-scheduler` as default option for `--block-production-method` (#34891)
+  * `solana-rpc-client-api`: `RpcFilterError` depends on `base64` version 0.22, so users may need to upgrade to `base64` version 0.22
+  * Changed default value for `--health-check-slot-distance` from 150 to 128
+  * CLI: Can specify `--with-compute-unit-price`, `--max-sign-attempts`, and `--use-rpc` during program deployment
+  * RPC's `simulateTransaction` now returns an extra `replacementBlockhash` field in the response
+    when the `replaceRecentBlockhash` config param is `true` (#380)
+  * SDK: `cargo test-sbf` accepts `--tools-version`, just like `build-sbf` (#1359)
+  * CLI: Can specify `--full-snapshot-archive-path` (#1631)
+  * transaction-status: The SPL Token `amountToUiAmount` instruction parses the amount into a string instead of a number (#1737)
+  * Implemented partitioned epoch rewards as per [SIMD-0118](https://github.com/solana-foundation/solana-improvement-documents/blob/fae25d5a950f43bd787f1f5d75897ef1fdd425a7/proposals/0118-partitioned-epoch-reward-distribution.md). Feature gate: #426. Specific changes include:
+    * EpochRewards sysvar expanded and made persistent (#428, #572)
+    * Stake Program credits now allowed during distribution (#631)
+    * Updated type in Bank::epoch_rewards_status (#1277)
+    * Partitions are recalculated on boot from snapshot (#1159)
+    * `epoch_rewards_status` removed from snapshot (#1274)
+  * Added `unified-scheduler` option for `--block-verification-method` (#1668)
+  * Deprecate the `fifo` option for `--rocksdb-shred-compaction` (#1882)
+    * `fifo` will remain supported in v2.0 with plans to fully remove in v2.1
+
+## 1.18.0
+
+* Changes
+  * Added a github check to support `changelog` label
+  * The default for `--use-snapshot-archives-at-startup` is now `when-newest` (#33883)
+    * The default for `solana-ledger-tool`, however, remains `always` (#34228)
+  * Added `central-scheduler` option for `--block-production-method` (#33890)
+  * Updated to Borsh v1
+  * Added allow_commission_decrease_at_any_time feature which will allow commission on a vote account to be
+    decreased even in the second half of epochs when the commission_updates_only_allowed_in_first_half_of_epoch
+    feature would have prevented it
+  * Updated local ledger storage so that the RPC endpoint
+    `getSignaturesForAddress` always returns signatures in block-inclusion order
+  * RPC's `simulateTransaction` now returns `innerInstructions` as `json`/`jsonParsed` (#34313).
+  * Bigtable upload now includes entry summary data for each slot, stored in a
+    new `entries` table
+  * Forbid multiple values for the `--signer` CLI flag, forcing users to specify multiple occurrences of `--signer`, one for each signature
+  * New program deployments default to the exact size of a program, instead of
+    double the size. Program accounts must be extended with `solana program extend`
+    before an upgrade if they need to accommodate larger programs.
+  * Interface for `gossip_service::get_client()` has changed. `gossip_service::get_multi_client()` has been removed.
+  * CLI: Can specify `--with-compute-unit-price`, `--max-sign-attempts`, and `--use-rpc` during program deployment
+* Upgrade Notes
+  * `solana-program` and `solana-sdk` default to support for Borsh v1, with
+limited backward compatibility for v0.10 and v0.9. Please upgrade to Borsh v1.
+  * Operators running their own bigtable instances need to create the `entries`
+    table before upgrading their warehouse nodes
+
+## 1.17.0
+
+* Changes
+  * Added a changelog.
+  * Added `--use-snapshot-archives-at-startup` for faster validator restarts
+* Upgrade Notes
+
+## Adding to this Changelog
+
+### Audience
+
+* Entries in this log are intended to be easily understood by contributors,
+consensus validator operators, rpc operators, and dapp developers.
+
+### Noteworthy
+
+* A change is noteworthy if it:
+  * Adds a feature gate, or
+  * Implements a SIMD, or
+  * Modifies a public API, or
+  * Changes normal validator / rpc run configurations, or
+  * Changes command line arguments, or
+  * Fixes a bug that has received public attention, or
+  * Significantly improves performance, or
+  * Is authored by an external contributor.
+
+### Instructions
+
+* Update this log in the same pull request that implements the change. If the
+change is spread over several pull requests update this log in the one that
+makes the feature code complete.
+* Add notes to the [Unreleased] section in each branch that you merge to.
+  * Add a description of your change to the Changes section.
+  * Add Upgrade Notes if the change is likely to require:
+    * validator or rpc operators to update their configs, or
+    * dapp or client developers to make changes.
+* Link to any relevant feature gate issues or SIMDs.
+* If you add entries on multiple branches use the same wording if possible.
+This simplifies the process of diffing between versions of the log.

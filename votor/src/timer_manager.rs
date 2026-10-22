@@ -1,0 +1,209 @@
+//! Controls the queueing and firing of skip timer events for use
+//! in the event loop.
+
+mod stats;
+mod timers;
+
+use {
+    crate::{
+        common::{DELTA_TIMEOUT, blocking_send},
+        event::VotorEvent,
+        votor::ExitOnDrop,
+    },
+    agave_votor_messages::migration::MigrationStatus,
+    crossbeam_channel::Sender,
+    parking_lot::RwLock as PlRwLock,
+    solana_clock::Slot,
+    solana_gossip::cluster_info::ClusterInfo,
+    solana_validator_exit::Exit,
+    std::{
+        sync::{
+            Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread::{self, JoinHandle},
+        time::{Duration, Instant},
+    },
+    timers::Timers,
+};
+
+/// A manager of timer states.  Uses a background thread to trigger next ready
+/// timers and send events.
+pub(crate) struct TimerManager {
+    timers: Arc<PlRwLock<Timers>>,
+    handle: JoinHandle<()>,
+}
+
+impl TimerManager {
+    pub(crate) fn new(
+        cluster_info: Arc<ClusterInfo>,
+        event_sender: Sender<VotorEvent>,
+        exit: Arc<AtomicBool>,
+        validator_exit: Arc<RwLock<Exit>>,
+        migration_status: Arc<MigrationStatus>,
+    ) -> Self {
+        let timers = Arc::new(PlRwLock::new(Timers::new(DELTA_TIMEOUT)));
+        let handle = {
+            let timers = Arc::clone(&timers);
+            thread::spawn(move || {
+                // Dropped before `event_sender`, so the shutdown runs while the
+                // event channel is still open.
+                let _exit_on_drop = ExitOnDrop::new(validator_exit);
+                let _ = migration_status.wait_for_migration_or_exit(exit.as_ref());
+                while !exit.load(Ordering::Relaxed) {
+                    let (duration, events) = timers.write().progress(Instant::now());
+                    let my_pubkey = &cluster_info.id();
+                    for event in events {
+                        if let Err(channel_name) =
+                            blocking_send(my_pubkey, &event_sender, event, "votor_event_sender")
+                        {
+                            warn!("{my_pubkey}: {channel_name} disconnected. Exiting");
+                            return;
+                        }
+                    }
+                    let duration = match duration {
+                        None => {
+                            // No active timers, sleep for an arbitrary amount.
+                            // This should be smaller than the minimum amount
+                            // of time any newly added timers would take to expire.
+                            Duration::from_millis(100)
+                        }
+                        Some(next_fire) => next_fire.duration_since(Instant::now()),
+                    };
+                    thread::park_timeout(duration);
+                }
+            })
+        };
+
+        Self { timers, handle }
+    }
+
+    pub(crate) fn set_timeouts(
+        &self,
+        slot: Slot,
+        standstill_slot: Option<Slot>,
+        delta_first_fec_set: Duration,
+        delta_block: Duration,
+    ) -> bool {
+        let timeout_inserted = self.timers.write().set_timeouts(
+            slot,
+            Instant::now(),
+            standstill_slot,
+            delta_first_fec_set,
+            delta_block,
+        );
+        if timeout_inserted {
+            self.handle.thread().unpark();
+        }
+        timeout_inserted
+    }
+
+    pub(crate) fn join(self) {
+        self.handle.thread().unpark();
+        self.handle.join().unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_timeout_set(&self, slot: Slot) -> bool {
+        self.timers.read().is_timeout_set(slot)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{event::VotorEvent, tests::get_cluster_info},
+        crossbeam_channel::bounded,
+        solana_clock::DEFAULT_MS_PER_SLOT,
+        solana_keypair::Keypair,
+        std::{assert_matches, time::Duration},
+    };
+
+    #[test]
+    fn test_timer_manager() {
+        let cluster_info = get_cluster_info(Keypair::new());
+        let (event_sender, event_receiver) = bounded(1024);
+        let exit = Arc::new(AtomicBool::new(false));
+        let timer_manager = TimerManager::new(
+            cluster_info,
+            event_sender,
+            exit.clone(),
+            Arc::default(),
+            Arc::new(MigrationStatus::post_migration_status()),
+        );
+        let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
+        let delta_first_fec_set = delta_block;
+        let slot = 52;
+        let start = Instant::now();
+        assert!(timer_manager.set_timeouts(slot, None, delta_first_fec_set, delta_block));
+        assert!(!timer_manager.set_timeouts(slot, None, delta_first_fec_set, delta_block));
+        // Should see the first two timeout events at DELTA_TIMEOUT + delta_block.
+        let mut timeouts_received = 0;
+        while timeouts_received < 2 && Instant::now().duration_since(start) < Duration::from_secs(2)
+        {
+            let recv = event_receiver.recv_timeout(Duration::from_millis(200));
+            if let Ok(event) = recv {
+                match event {
+                    VotorEvent::Timeout(s) => {
+                        assert_eq!(s, slot);
+                        assert!(
+                            Instant::now().duration_since(start) >= DELTA_TIMEOUT + delta_block
+                        );
+                        timeouts_received += 1;
+                    }
+                    VotorEvent::TimeoutCrashedLeader(s) => {
+                        assert_eq!(s, slot);
+                        assert!(
+                            Instant::now().duration_since(start)
+                                >= DELTA_TIMEOUT + delta_first_fec_set
+                        );
+                        timeouts_received += 1;
+                    }
+                    _ => panic!("Unexpected event: {event:?}"),
+                }
+            }
+        }
+        assert!(
+            timeouts_received == 2,
+            "Did not receive all expected timeouts"
+        );
+        exit.store(true, Ordering::Relaxed);
+        timer_manager.join();
+    }
+
+    #[test]
+    fn test_new_earlier_timer_wakes_sleeping_worker() {
+        let cluster_info = get_cluster_info(Keypair::new());
+        let (event_sender, event_receiver) = bounded(1024);
+        let exit = Arc::new(AtomicBool::new(false));
+        let timer_manager = TimerManager::new(
+            cluster_info,
+            event_sender,
+            exit.clone(),
+            Arc::default(),
+            Arc::new(MigrationStatus::post_migration_status()),
+        );
+
+        let old_slot = 52;
+        let old_delta = Duration::from_secs(5);
+        assert!(timer_manager.set_timeouts(old_slot, None, old_delta, old_delta));
+        std::thread::sleep(Duration::from_millis(500));
+
+        let new_slot = 1_000;
+        assert!(timer_manager.set_timeouts(
+            new_slot,
+            None,
+            Duration::ZERO,
+            Duration::from_millis(1),
+        ));
+
+        let event = event_receiver
+            .recv_timeout(DELTA_TIMEOUT + Duration::from_millis(500))
+            .expect("new earlier timer should wake the sleeping timer worker");
+        assert_matches!(event, VotorEvent::TimeoutCrashedLeader(slot) if slot == new_slot);
+
+        exit.store(true, Ordering::Relaxed);
+        timer_manager.join();
+    }
+}

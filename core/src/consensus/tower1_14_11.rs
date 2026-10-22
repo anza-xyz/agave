@@ -1,0 +1,41 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
+use {
+    crate::consensus::{BlockhashStatus, SwitchForkDecision},
+    serde::{Deserialize, Serialize},
+    solana_clock::Slot,
+    solana_pubkey::Pubkey,
+    solana_vote::vote_transaction::VoteTransaction,
+    solana_vote_program::vote_state::{BlockTimestamp, vote_state_1_14_11::VoteState1_14_11},
+};
+
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(abi_digest = "DsTqqTxSXRHpGKM12HvSqKaYr18D4WGPGEbYV1cs2W3n")
+)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct Tower1_14_11 {
+    pub(crate) node_pubkey: Pubkey,
+    pub(crate) threshold_depth: usize,
+    pub(crate) threshold_size: f64,
+    pub(crate) vote_state: VoteState1_14_11,
+    pub(crate) last_vote: VoteTransaction,
+    #[serde(skip)]
+    // The blockhash used in the last vote transaction, may or may not equal the
+    // blockhash of the voted block itself, depending if the vote slot was refreshed.
+    // For instance, a vote for slot 5, may be refreshed/resubmitted for inclusion in
+    //  block 10, in  which case `last_vote_tx_blockhash` equals the blockhash of 10, not 5.
+    pub(crate) last_vote_tx_blockhash: BlockhashStatus,
+    pub(crate) last_timestamp: BlockTimestamp,
+    #[serde(skip)]
+    // Restored last voted slot which cannot be found in SlotHistory at replayed root
+    // (This is a special field for slashing-free validator restart with edge cases).
+    // This could be emptied after some time; but left intact indefinitely for easier
+    // implementation
+    // Further, stray slot can be stale or not. `Stale` here means whether given
+    // bank_forks (=~ ledger) lacks the slot or not.
+    pub(crate) stray_restored_slot: Option<Slot>,
+    #[serde(skip)]
+    pub(crate) last_switch_threshold_check: Option<(Slot, SwitchForkDecision)>,
+}

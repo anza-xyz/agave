@@ -1,0 +1,36 @@
+[package]
+name = "agave-scheduling-utils"
+description = "Common utilities for building Agave scheduler implementations"
+documentation = "https://docs.rs/agave-scheduling-utils"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = ["dep:wincode", "dep:solana-transaction"]
+
+[dependencies]
+agave-scheduler-bindings = { workspace = true }
+agave-transaction-view = { workspace = true }
+ahash = { workspace = true }
+rts-alloc = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-transaction = { workspace = true, optional = true, features = ["serde"] }
+solana-transaction-error = { workspace = true }
+wincode = { workspace = true, optional = true }
+
+[dev-dependencies]
+solana-pubkey = { workspace = true, features = ["rand"] }
+
+[lints]
+workspace = true

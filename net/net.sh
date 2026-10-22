@@ -1,0 +1,1173 @@
+#!/usr/bin/env bash
+set -e
+
+here=$(dirname "$0")
+SOLANA_ROOT="$(cd "$here"/..; pwd)"
+
+# shellcheck source=net/common.sh
+source "$here"/common.sh
+
+usage() {
+  exitcode=0
+  if [[ -n "$1" ]]; then
+    exitcode=1
+    echo "Error: $*"
+  fi
+  CLIENT_OPTIONS=$(cat << EOM
+-c clientType=numClients=extraArgs - Number of clientTypes to start.  This options can be specified
+                                     more than once.  Defaults to transaction-bench for all clients
+                                     if not specified.
+                                     Valid client types are:
+                                         idle
+                                         transaction-bench
+                                     User can optionally provide extraArgs that are transparently
+                                     supplied to the client program as command line parameters.
+                                     extraArgs use solana-transaction-bench argument names.
+                                     For example,
+                                         -c transaction-bench=2="--target-tps 5000 ws-leader-tracker"
+                                     This will start 2 solana-transaction-bench clients, and supply
+                                     "--target-tps 5000 ws-leader-tracker" to each of them.
+--use-unstaked-connection          - Use unstaked connection. By default, staked connection with
+                                     bootstrap node credentials is used.
+EOM
+)
+  cat <<EOF
+usage: $0 [start|stop|restart|sanity] [command-specific options]
+
+Operate a configured testnet
+
+ start        - Start the network
+ sanity       - Sanity check the network
+ stop         - Stop the network
+ restart      - Shortcut for stop then start
+ logs         - Fetch remote logs from each network node
+ startnode    - Start an individual node (previously stopped with stopNode)
+ stopnode     - Stop an individual node
+ startclients - Start client nodes only
+ prepare      - Prepare software deployment. (Build/download the software release)
+ upgrade      - Upgrade software on bootstrap validator. (Restart bootstrap validator manually to run it)
+
+ start-specific options:
+   -T [tarFilename]                   - Deploy the specified release tarball
+   -t edge|beta|stable|vX.Y.Z         - Deploy the latest tarball release for the
+                                        specified release channel (edge|beta|stable) or release tag
+                                        (vX.Y.Z)
+   -r / --skip-setup                  - Reuse existing node/ledger configuration from a
+                                        previous |start| (ie, don't run ./multinode-demo/setup.sh).
+   -d / --debug                       - Build/deploy the testnet with debug binaries
+   $CLIENT_OPTIONS
+   --client-delay-start
+                                      - Number of seconds to wait after validators have finished starting before starting client programs
+                                        (default: $clientDelayStart)
+   -n NUM_VALIDATORS                  - Number of validators to apply command to.
+   --gpu-mode GPU_MODE                - Deprecated, this argument is ignored
+   --hashes-per-tick NUM_HASHES|sleep|auto
+                                      - Override the default --hashes-per-tick for the cluster
+   --no-airdrop
+                                      - If set, disables the faucet keypair.  Nodes must be funded in genesis config
+   --faucet-lamports NUM_LAMPORTS_TO_MINT
+                                      - Override the default 500000000000000000 lamports minted in genesis
+   --extra-primordial-stakes NUM_EXTRA_PRIMORDIAL_STAKES
+                                      - Number of nodes to be initially staked in genesis.
+                                        Gives extra stake in genesis to NUM_EXTRA_PRIMORDIAL_STAKES many nodes.
+                                        Implies --wait-for-supermajority 1 --async-node-init and the supermajority
+                                        wait slot may be overridden with the corresponding flag
+   --internal-nodes-stake-lamports NUM_LAMPORTS_PER_NODE
+                                      - Amount to stake internal nodes.
+   --internal-nodes-lamports NUM_LAMPORTS_PER_NODE
+                                      - Amount to fund internal nodes in genesis config.
+   --external-accounts-file FILE_PATH
+                                      - A YML file with a list of account pubkeys and corresponding lamport balances
+                                        in genesis config for external nodes
+   --no-snapshot-fetch
+                                      - If set, disables booting validators from a snapshot
+   --copy-program URL_OR_MONIKER PUBKEY
+                                      - Copies a program PUBKEY from URL_OR_MONIKER.
+                                      For example, --copy-program t recr1L3PCGKLbckBqMNcJhuuyU1zgo8nBhfLVsJNwr5
+   --skip-poh-verify
+                                      - If set, validators will skip verifying
+                                        the ledger they already have saved to disk at
+                                        boot (results in a much faster boot)
+   --no-deploy
+                                      - Don't deploy new software, use the
+                                        existing deployment
+   --no-build
+                                      - Don't build new software, deploy the
+                                        existing binaries
+
+   --deploy-if-newer                  - Only deploy if newer software is
+                                        available (requires -t or -T)
+
+   --cluster-type development|devnet|testnet|mainnet-beta
+                                      - Specify whether or not to launch the cluster in "development" mode with all features enabled at epoch 0,
+                                        or various other live clusters' feature set (default: development)
+   --slots-per-epoch SLOTS
+                                      - Override the number of slots in an epoch
+   --warp-slot WARP_SLOT
+                                      - Boot from a snapshot that has warped ahead to WARP_SLOT rather than a slot 0 genesis.
+   --full-rpc
+                                      - Support full RPC services on all nodes
+
+   --tpu-disable-quic
+                                      - Disable quic for tpu packet forwarding
+
+   --tpu-enable-udp
+                                      - Enable UDP for tpu transactions
+
+ sanity/start-specific options:
+   -F                   - Discard validator nodes that didn't bootup successfully
+   -o rejectExtraNodes  - Require the exact number of nodes
+
+ stop-specific options:
+   none
+
+ logs-specific options:
+   none
+
+ startnode/stopnode-specific options:
+   -i [ip address]                    - IP Address of the node to start or stop
+
+ startclients-specific options:
+   $CLIENT_OPTIONS
+
+Note: if RUST_LOG is set in the environment it will be propagated into the
+      network nodes.
+EOF
+  exit $exitcode
+}
+
+initLogDir() { # Initializes the netLogDir global variable.  Idempotent
+  [[ -z $netLogDir ]] || return 0
+
+  netLogDir="$netDir"/log
+  declare netLogDateDir
+  netLogDateDir="$netDir"/log-$(date +"%Y-%m-%d_%H_%M_%S")
+  if [[ -d $netLogDir && ! -L $netLogDir ]]; then
+    echo "Warning: moving $netLogDir to make way for symlink."
+    mv "$netLogDir" "$netDir"/log.old
+  elif [[ -L $netLogDir ]]; then
+    rm "$netLogDir"
+  fi
+  mkdir -p "$netConfigDir" "$netLogDateDir"
+  ln -sf "$netLogDateDir" "$netLogDir"
+  echo "Log directory: $netLogDateDir"
+}
+
+annotate() {
+  [[ -z $BUILDKITE ]] || {
+    buildkite-agent annotate "$@"
+  }
+}
+
+annotateBlockexplorerUrl() {
+  declare blockstreamer=${blockstreamerIpList[0]}
+
+  if [[ -n $blockstreamer ]]; then
+    annotate --style info --context blockexplorer-url "Block explorer: http://$blockstreamer/"
+  fi
+}
+
+build() {
+  declare MAYBE_DOCKER=
+  if [[ $(uname) != Linux ]]; then
+    # shellcheck source=ci/docker/env.sh
+    source "$SOLANA_ROOT"/ci/docker/env.sh
+    MAYBE_DOCKER="ci/docker-run.sh ${CI_DOCKER_IMAGE:?}"
+  fi
+  SECONDS=0
+  (
+    cd "$SOLANA_ROOT"
+    echo "--- Build started at $(date)"
+
+    set -x
+    rm -rf farf
+
+    buildVariant=
+    if $debugBuild; then
+      buildVariant=--debug
+    fi
+
+    if $profileBuild; then
+      profilerFlags="RUSTFLAGS='-C force-frame-pointers=y -g ${RUSTFLAGS}'"
+    fi
+
+    $MAYBE_DOCKER bash -c "
+      set -ex
+      $profilerFlags scripts/cargo-install-all.sh farf $buildVariant --no-build-dev-bins --no-build-deprecated-bins --no-build-platform-tools --no-spl-token
+    "
+  )
+
+  (
+    set +e
+    COMMIT="$(git rev-parse HEAD)"
+    BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+    TAG="$(git describe --exact-match --tags HEAD 2>/dev/null)"
+    if [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+      NOTE=$TAG
+    else
+      NOTE=$BRANCH
+    fi
+    (
+      echo "channel: devbuild $NOTE"
+      echo "commit: $COMMIT"
+    ) > "$SOLANA_ROOT"/farf/version.yml
+  )
+  echo "Build took $SECONDS seconds"
+}
+
+remoteHomeDir() {
+  declare ipAddress=$1
+  declare remoteHome
+  remoteHome="$(ssh "${sshOptions[@]}" "$ipAddress" "echo \$HOME")"
+  echo "$remoteHome"
+}
+
+startCommon() {
+  declare ipAddress=$1
+  declare remoteHome
+  remoteHome=$(remoteHomeDir "$ipAddress")
+  local remoteSolanaHome="${remoteHome}/solana"
+  local remoteCargoBin="${remoteHome}/.cargo/bin"
+  test -d "$SOLANA_ROOT"
+  if $skipSetup; then
+    # shellcheck disable=SC2029
+    ssh "${sshOptions[@]}" "$ipAddress" "
+      set -x;
+      mkdir -p $remoteSolanaHome/config;
+      rm -rf ~/config;
+      mv $remoteSolanaHome/config ~;
+      rm -rf $remoteSolanaHome;
+      mkdir -p $remoteSolanaHome $remoteCargoBin;
+      mv ~/config $remoteSolanaHome/
+    "
+  else
+    # shellcheck disable=SC2029
+    ssh "${sshOptions[@]}" "$ipAddress" "
+      set -x;
+      rm -rf $remoteSolanaHome;
+      mkdir -p $remoteCargoBin
+    "
+  fi
+  [[ -z "$externalNodeSshKey" ]] || ssh-copy-id -f -i "$externalNodeSshKey" "${sshOptions[@]}" "solana@$ipAddress"
+  syncScripts "$ipAddress"
+}
+
+syncScripts() {
+  echo "rsyncing scripts... to $ipAddress"
+  declare ipAddress=$1
+  declare remoteHome
+  remoteHome=$(remoteHomeDir "$ipAddress")
+  local remoteSolanaHome="${remoteHome}/solana"
+  rsync -vPrc -e "ssh ${sshOptions[*]}" \
+    --exclude 'net/log*' \
+    "$SOLANA_ROOT"/{fetch-programs.sh,fetch-core-bpf.sh,fetch-spl.sh,scripts,net,multinode-demo} \
+    "$ipAddress":"$remoteSolanaHome"/ > /dev/null
+}
+
+# Deploy local binaries to bootstrap validator.  Other validators and clients later fetch the
+# binaries from it
+deployBootstrapValidator() {
+  declare ipAddress=$1
+
+  declare remoteHome
+  remoteHome=$(remoteHomeDir "$ipAddress")
+  local remoteCargoBin="${remoteHome}/.cargo/bin"
+
+  echo "Deploying software to bootstrap validator ($ipAddress)"
+  case $deployMethod in
+  tar)
+    rsync -vPrc -e "ssh ${sshOptions[*]}" "$SOLANA_ROOT"/solana-release/bin/* "$ipAddress:$remoteCargoBin/"
+    rsync -vPrc -e "ssh ${sshOptions[*]}" "$SOLANA_ROOT"/solana-release/version.yml "$ipAddress:~/"
+    ;;
+  local)
+    rsync -vPrc -e "ssh ${sshOptions[*]}" "$SOLANA_ROOT"/farf/bin/* "$ipAddress:$remoteCargoBin/"
+    rsync -vPrc -e "ssh ${sshOptions[*]}" "$SOLANA_ROOT"/farf/version.yml "$ipAddress:~/"
+    ;;
+  skip)
+    ;;
+  *)
+    usage "Internal error: invalid deployMethod: $deployMethod"
+    ;;
+  esac
+}
+
+startBootstrapLeader() {
+  declare ipAddress=$1
+  declare nodeIndex="$2"
+  declare logFile="$3"
+  echo "--- Starting bootstrap validator: $ipAddress"
+  echo "start log: $logFile"
+
+  (
+    set -x
+    startCommon "$ipAddress" || exit 1
+    [[ -z "$externalPrimordialAccountsFile" ]] || rsync -vPrc -e "ssh ${sshOptions[*]}" "$externalPrimordialAccountsFile" \
+      "$ipAddress:$remoteExternalPrimordialAccountsFile"
+
+    deployBootstrapValidator "$ipAddress"
+
+    ssh "${sshOptions[@]}" -n "$ipAddress" \
+      "./solana/net/remote/remote-node.sh \
+         $deployMethod \
+         bootstrap-validator \
+         $entrypointIp \
+         $((${#validatorIpList[@]} + ${#blockstreamerIpList[@]})) \
+         \"$RUST_LOG\" \
+         $skipSetup \
+         $failOnValidatorBootupFailure \
+         \"$remoteExternalPrimordialAccountsFile\" \
+         \"$maybeDisableAirdrops\" \
+         \"$internalNodesStakeLamports\" \
+         \"$internalNodesLamports\" \
+         $nodeIndex \
+         \"$genesisOptions\" \
+         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeLimitBlockstoreSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
+         \"$maybeWarpSlot\" \
+         \"$maybeFullRpc\" \
+         \"$waitForNodeInit\" \
+         \"$extraPrimordialStakes\" \
+         \"$TMPFS_ACCOUNTS\" \
+         \"$disableQuic\" \
+         \"$enableUdp\" \
+      "
+
+  ) >> "$logFile" 2>&1 || {
+    cat "$logFile"
+    echo "^^^ +++"
+    exit 1
+  }
+}
+
+startNode() {
+  declare ipAddress=$1
+  declare nodeType=$2
+  declare nodeIndex="$3"
+
+  initLogDir
+  declare logFile="$netLogDir/validator-$ipAddress.log"
+
+  if [[ -z $nodeType ]]; then
+    echo nodeType not specified
+    exit 1
+  fi
+
+  if [[ -z $nodeIndex ]]; then
+    echo nodeIndex not specified
+    exit 1
+  fi
+
+  echo "--- Starting $nodeType: $ipAddress"
+  echo "start log: $logFile"
+  (
+    set -x
+    startCommon "$ipAddress"
+
+    if [[ $nodeType = blockstreamer ]] && [[ -n $letsEncryptDomainName ]]; then
+      #
+      # Create/renew TLS certificate
+      #
+      declare localArchive=~/letsencrypt-"$letsEncryptDomainName".tgz
+      if [[ -r "$localArchive" ]]; then
+        timeout 30s scp "${sshOptions[@]}" "$localArchive" "$ipAddress:letsencrypt.tgz"
+      fi
+      ssh "${sshOptions[@]}" -n "$ipAddress" \
+        "sudo -H /certbot-restore.sh $letsEncryptDomainName maintainers@solanalabs.com"
+      rm -f letsencrypt.tgz
+      timeout 30s scp "${sshOptions[@]}" "$ipAddress:/letsencrypt.tgz" letsencrypt.tgz
+      test -s letsencrypt.tgz # Ensure non-empty before overwriting $localArchive
+      cp letsencrypt.tgz "$localArchive"
+    fi
+
+    ssh "${sshOptions[@]}" -n "$ipAddress" \
+      "./solana/net/remote/remote-node.sh \
+         $deployMethod \
+         $nodeType \
+         $entrypointIp \
+         $((${#validatorIpList[@]} + ${#blockstreamerIpList[@]})) \
+         \"$RUST_LOG\" \
+         $skipSetup \
+         $failOnValidatorBootupFailure \
+         \"$remoteExternalPrimordialAccountsFile\" \
+         \"$maybeDisableAirdrops\" \
+         \"$internalNodesStakeLamports\" \
+         \"$internalNodesLamports\" \
+         $nodeIndex \
+         \"$genesisOptions\" \
+         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeLimitBlockstoreSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
+         \"$maybeWarpSlot\" \
+         \"$maybeFullRpc\" \
+         \"$waitForNodeInit\" \
+         \"$extraPrimordialStakes\" \
+         \"$TMPFS_ACCOUNTS\" \
+         \"$disableQuic\" \
+         \"$enableUdp\" \
+      "
+  ) >> "$logFile" 2>&1 &
+  declare pid=$!
+  ln -sf "validator-$ipAddress.log" "$netLogDir/validator-$pid.log"
+  pids+=("$pid")
+}
+
+startClient() {
+  declare ipAddress=$1
+  declare clientToRun="$2"
+
+  # Forward the extra args that belong to the selected client program.
+  declare clientExtraArgs=$transactionBenchExtraArgs
+
+  initLogDir
+  declare logFile="$netLogDir/client-$clientToRun-$ipAddress.log"
+
+  echo "--- Starting client: $ipAddress - $clientToRun"
+  echo "start log: $logFile"
+  (
+    set -x
+    startCommon "$ipAddress"
+    ssh "${sshOptions[@]}" -f "$ipAddress" \
+      "./solana/net/remote/remote-client.sh $deployMethod $entrypointIp \
+      $clientToRun \"$RUST_LOG\" \"$clientExtraArgs\" \
+      $maybeUseUnstakedConnection"
+  ) >> "$logFile" 2>&1 || {
+    cat "$logFile"
+    echo "^^^ +++"
+    exit 1
+  }
+}
+
+startClients() {
+  for ((i=0; i < numClients && i < numClientsRequested; i++)) do
+    if [[ $i -lt $numTransactionBenchClients ]]; then
+      startClient "${clientIpList[$i]}" "solana-transaction-bench"
+    else
+      startClient "${clientIpList[$i]}" "idle"
+    fi
+  done
+}
+
+sanity() {
+  declare skipBlockstreamerSanity=$1
+
+  $metricsWriteDatapoint "testnet-deploy net-sanity-begin=1"
+
+  declare ok=true
+  declare bootstrapLeader=${validatorIpList[0]}
+  declare blockstreamer=${blockstreamerIpList[0]}
+
+  annotateBlockexplorerUrl
+
+  echo "--- Sanity: $bootstrapLeader"
+  (
+    set -x
+    # shellcheck disable=SC2029 # remote-client.sh args are expanded on client side intentionally
+    ssh "${sshOptions[@]}" "$bootstrapLeader" \
+      "./solana/net/remote/remote-sanity.sh $bootstrapLeader $sanityExtraArgs \"$RUST_LOG\""
+  ) || ok=false
+  $ok || exit 1
+
+  if [[ -z $skipBlockstreamerSanity && -n $blockstreamer ]]; then
+    # If there's a blockstreamer node run a reduced sanity check on it as well
+    echo "--- Sanity: $blockstreamer"
+    (
+      set -x
+      # shellcheck disable=SC2029 # remote-client.sh args are expanded on client side intentionally
+      ssh "${sshOptions[@]}" "$blockstreamer" \
+        "./solana/net/remote/remote-sanity.sh $blockstreamer $sanityExtraArgs \"$RUST_LOG\""
+    ) || ok=false
+    $ok || exit 1
+  fi
+
+  $metricsWriteDatapoint "testnet-deploy net-sanity-complete=1"
+}
+
+getNodeType() {
+  echo "getNodeType: $nodeAddress"
+  [[ -n $nodeAddress ]] || {
+    echo "Error: nodeAddress not set"
+    exit 1
+  }
+  nodeIndex=0 # <-- global
+  nodeType=validator # <-- global
+
+  for ipAddress in "${validatorIpList[@]}" b "${blockstreamerIpList[@]}"; do
+    if [[ $ipAddress = b ]]; then
+      nodeType=blockstreamer
+      continue
+    fi
+
+    if [[ $ipAddress = "$nodeAddress" ]]; then
+      echo "getNodeType: $nodeType ($nodeIndex)"
+      return
+    fi
+    ((nodeIndex = nodeIndex + 1))
+  done
+
+  echo "Error: Unknown node: $nodeAddress"
+  exit 1
+}
+
+# solana-transaction-bench lives in the external anza-xyz/tpu-tools repository
+# and is therefore not produced by the agave build. When transaction-bench
+# clients are requested, stage the binary into the deploy artifacts so it ships
+# to the nodes alongside the agave binaries (clients fetch ~/.cargo/bin/* from
+# the entrypoint).
+stageTransactionBenchBinary() {
+  [[ $numTransactionBenchClients -gt 0 ]] || return 0
+
+  declare destDir
+  case $deployMethod in
+  local) destDir="$SOLANA_ROOT"/farf/bin ;;
+  tar)   destDir="$SOLANA_ROOT"/solana-release/bin ;;
+  *)     return 0 ;;
+  esac
+  mkdir -p "$destDir"
+
+  if [[ -x "$destDir"/solana-transaction-bench ]]; then
+    echo "solana-transaction-bench already staged in $destDir"
+    return 0
+  fi
+
+  declare src="${SOLANA_TRANSACTION_BENCH:-}"
+  if [[ -z $src ]]; then
+    src="$(command -v solana-transaction-bench || true)"
+  fi
+  if [[ -n $src && -x $src ]]; then
+    echo "Staging solana-transaction-bench from $src"
+    cp -f "$src" "$destDir"/solana-transaction-bench
+    return 0
+  fi
+
+  echo "solana-transaction-bench not found locally, installing it from crates.io"
+  declare -a cargoArgs=(install --root "$SOLANA_ROOT"/farf --locked)
+  [[ -z ${SOLANA_TRANSACTION_BENCH_VERSION:-} ]] || cargoArgs+=(--version "$SOLANA_TRANSACTION_BENCH_VERSION")
+  cargoArgs+=(solana-transaction-bench)
+  if cargo "${cargoArgs[@]}"; then
+    if [[ $destDir != "$SOLANA_ROOT"/farf/bin ]]; then
+      cp -f "$SOLANA_ROOT"/farf/bin/solana-transaction-bench "$destDir"/solana-transaction-bench
+    fi
+  else
+    echo "Warning: failed to stage solana-transaction-bench."
+    echo "         Clients will try to install it themselves at start time."
+    echo "         Alternatively set SOLANA_TRANSACTION_BENCH to a prebuilt binary path before deploying."
+  fi
+}
+
+prepareDeploy() {
+  case $deployMethod in
+  tar)
+    if [[ -n $releaseChannel ]]; then
+      echo "Downloading release from channel: $releaseChannel"
+      rm -f "$SOLANA_ROOT"/solana-release.tar.bz2
+      declare updateDownloadUrl=https://release.anza.xyz/"$releaseChannel"/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+      (
+        set -x
+        curl -L -I "$updateDownloadUrl"
+        curl -L --retry 5 --retry-delay 2 --retry-connrefused \
+          -o "$SOLANA_ROOT"/solana-release.tar.bz2 "$updateDownloadUrl"
+      )
+      tarballFilename="$SOLANA_ROOT"/solana-release.tar.bz2
+    fi
+    (
+      set -x
+      rm -rf "$SOLANA_ROOT"/solana-release
+      cd "$SOLANA_ROOT"; tar jfxv "$tarballFilename"
+      cat "$SOLANA_ROOT"/solana-release/version.yml
+    )
+    ;;
+  local)
+    if $doBuild; then
+      build
+    else
+      echo "Build skipped due to --no-build"
+    fi
+    ;;
+  skip)
+    ;;
+  *)
+    usage "Internal error: invalid deployMethod: $deployMethod"
+    ;;
+  esac
+
+  stageTransactionBenchBinary
+
+  if [[ -n $deployIfNewer ]]; then
+    if [[ $deployMethod != tar ]]; then
+      echo "Error: --deploy-if-newer only supported for tar deployments"
+      exit 1
+    fi
+
+    echo "Fetching current software version"
+    (
+      set -x
+      rsync -vPrc -e "ssh ${sshOptions[*]}" "${validatorIpList[0]}":~/version.yml current-version.yml
+    )
+    cat current-version.yml
+    if ! diff -q current-version.yml "$SOLANA_ROOT"/solana-release/version.yml; then
+      echo "Cluster software version is old.  Update required"
+    else
+      echo "Cluster software version is current.  No update required"
+      exit 0
+    fi
+  fi
+}
+
+deploy() {
+  initLogDir
+
+  echo "Deployment started at $(date)"
+  $metricsWriteDatapoint "testnet-deploy net-start-begin=1"
+
+  if [[ -n "$copyProgramPubkey" ]]; then
+      echo "Copying program from ${copyProgramUrl}"
+      solana -u "${copyProgramUrl}" program dump "${copyProgramPubkey}" "${copyProgramPubkey}".so || exit 1
+
+      genesisOptions="${genesisOptions} --bpf-program ${copyProgramPubkey} BPFLoader2111111111111111111111111111111111 /home/solana/solana/net/${copyProgramPubkey}.so"
+  fi
+
+  declare bootstrapLeader=true
+  for nodeAddress in "${validatorIpList[@]}" "${blockstreamerIpList[@]}"; do
+    nodeType=
+    nodeIndex=
+    getNodeType
+    if $bootstrapLeader; then
+      SECONDS=0
+      declare bootstrapNodeDeployTime=
+      startBootstrapLeader "$nodeAddress" "$nodeIndex" "$netLogDir/bootstrap-validator-$ipAddress.log"
+      bootstrapNodeDeployTime=$SECONDS
+      $metricsWriteDatapoint "testnet-deploy net-bootnode-leader-started=1"
+
+      bootstrapLeader=false
+      SECONDS=0
+      pids=()
+    else
+      startNode "$ipAddress" "$nodeType" "$nodeIndex"
+
+      # Stagger additional node start time. If too many nodes start simultaneously
+      # the bootstrap node gets more rsync requests from the additional nodes than
+      # it can handle.
+      sleep 2
+    fi
+  done
+
+
+  for pid in "${pids[@]}"; do
+    declare ok=true
+    wait "$pid" || ok=false
+    if ! $ok; then
+      echo "+++ validator failed to start"
+      cat "$netLogDir/validator-$pid.log"
+      if $failOnValidatorBootupFailure; then
+        exit 1
+      else
+        echo "Failure is non-fatal"
+      fi
+    fi
+  done
+
+  if ! $waitForNodeInit; then
+    # Handle async init
+    declare startTime=$SECONDS
+    for ipAddress in "${validatorIpList[@]}" "${blockstreamerIpList[@]}"; do
+      declare timeWaited=$((SECONDS - startTime))
+      if [[ $timeWaited -gt 600 ]]; then
+        break
+      fi
+      ssh "${sshOptions[@]}" -n "$ipAddress" \
+        "./solana/net/remote/remote-node-wait-init.sh $((600 - timeWaited))"
+    done
+  fi
+
+  $metricsWriteDatapoint "testnet-deploy net-validators-started=1"
+  additionalNodeDeployTime=$SECONDS
+
+  annotateBlockexplorerUrl
+
+  sanity skipBlockstreamerSanity # skip sanity on blockstreamer node, it may not
+                                 # have caught up to the bootstrap validator yet
+
+  echo "--- Sleeping $clientDelayStart seconds after validators are started before starting clients"
+  sleep "$clientDelayStart"
+
+  SECONDS=0
+  startClients
+  clientDeployTime=$SECONDS
+
+  $metricsWriteDatapoint "testnet-deploy net-start-complete=1"
+
+  declare networkVersion=unknown
+  case $deployMethod in
+  tar)
+    networkVersion="$(
+      (
+        set -o pipefail
+        grep "^commit: " "$SOLANA_ROOT"/solana-release/version.yml | head -n1 | cut -d\  -f2
+      ) || echo "tar-unknown"
+    )"
+    ;;
+  local)
+    networkVersion="$(git rev-parse HEAD || echo local-unknown)"
+    ;;
+  skip)
+    ;;
+  *)
+    usage "Internal error: invalid deployMethod: $deployMethod"
+    ;;
+  esac
+  $metricsWriteDatapoint "testnet-deploy version=\"${networkVersion:0:9}\""
+
+  echo
+  echo "--- Deployment Successful"
+  echo "Bootstrap validator deployment took $bootstrapNodeDeployTime seconds"
+  echo "Additional validator deployment (${#validatorIpList[@]} validators, ${#blockstreamerIpList[@]} blockstreamer nodes) took $additionalNodeDeployTime seconds"
+  echo "Client deployment (${#clientIpList[@]} instances) took $clientDeployTime seconds"
+  echo "Network start logs in $netLogDir"
+}
+
+stopNode() {
+  local ipAddress=$1
+  local block=$2
+
+  initLogDir
+  declare logFile="$netLogDir/stop-validator-$ipAddress.log"
+
+  echo "--- Stopping node: $ipAddress"
+  echo "stop log: $logFile"
+  syncScripts "$ipAddress"
+  (
+    # Since cleanup.sh does a pkill, we cannot pass the command directly,
+    # otherwise the process which is doing the killing will be killed because
+    # the script itself will match the pkill pattern
+    set -x
+    # shellcheck disable=SC2029 # It's desired that PS4 be expanded on the client side
+    ssh "${sshOptions[@]}" "$ipAddress" "PS4=\"$PS4\" ./solana/net/remote/cleanup.sh"
+  ) >> "$logFile" 2>&1 &
+
+  declare pid=$!
+  ln -sf "stop-validator-$ipAddress.log" "$netLogDir/stop-validator-$pid.log"
+  if $block; then
+    wait $pid || true
+  else
+    pids+=("$pid")
+  fi
+}
+
+stop() {
+  SECONDS=0
+  $metricsWriteDatapoint "testnet-deploy net-stop-begin=1"
+
+  declare loopCount=0
+  pids=()
+  for ipAddress in "${validatorIpList[@]}" "${blockstreamerIpList[@]}" "${clientIpList[@]}"; do
+    stopNode "$ipAddress" false
+
+    # Stagger additional node stop time to avoid too many concurrent ssh
+    # sessions
+    ((loopCount++ % 4 == 0)) && sleep 2
+  done
+
+  echo --- Waiting for nodes to finish stopping
+  for pid in "${pids[@]}"; do
+    echo -n "$pid "
+    wait "$pid" || true
+  done
+  echo
+
+  $metricsWriteDatapoint "testnet-deploy net-stop-complete=1"
+  echo "Stopping nodes took $SECONDS seconds"
+}
+
+checkPremptibleInstances() {
+  # The validatorIpList nodes may be preemptible instances that can disappear at
+  # any time.  Try to detect when a validator has been preempted to help the user
+  # out.
+  #
+  # Of course this isn't airtight as an instance could always disappear
+  # immediately after its successfully pinged.
+  for ipAddress in "${validatorIpList[@]}"; do
+    (
+      timeout 5s ping -c 1 "$ipAddress" | tr - _ &>/dev/null
+    ) || {
+      cat <<EOF
+
+Warning: $ipAddress may have been preempted.
+
+Run |./gce.sh config| to restart it
+EOF
+      exit 1
+    }
+  done
+}
+
+releaseChannel=
+deployMethod=local
+deployIfNewer=
+sanityExtraArgs=
+skipSetup=false
+nodeAddress=
+numIdleClients=0
+numTransactionBenchClients=0
+transactionBenchExtraArgs=
+failOnValidatorBootupFailure=true
+genesisOptions=
+numValidatorsRequested=
+externalPrimordialAccountsFile=
+remoteExternalPrimordialAccountsFile=
+internalNodesStakeLamports=
+internalNodesLamports=
+copyProgramUrl=""
+copyProgramPubkey=""
+maybeNoSnapshot=""
+maybeLimitLedgerSize=""
+maybeLimitBlockstoreSize=""
+maybeSkipLedgerVerify=""
+maybeDisableAirdrops=""
+maybeWaitForSupermajority=""
+maybeAccountsDbSkipShrink=""
+maybeSkipRequireTower=""
+debugBuild=false
+profileBuild=false
+doBuild=true
+clientDelayStart=0
+netLogDir=
+maybeWarpSlot=
+maybeFullRpc=false
+waitForNodeInit=true
+extraPrimordialStakes=0
+disableQuic=false
+enableUdp=false
+maybeUseUnstakedConnection=""
+
+command=$1
+[[ -n $command ]] || usage
+shift
+
+shortArgs=()
+while [[ -n $1 ]]; do
+  if [[ ${1:0:2} = -- ]]; then
+    if [[ $1 = --hashes-per-tick ]]; then
+      genesisOptions="$genesisOptions $1 $2"
+      shift 2
+    elif [[ $1 = --slots-per-epoch ]]; then
+      genesisOptions="$genesisOptions $1 $2"
+      shift 2
+    elif [[ $1 = --target-lamports-per-signature ]]; then
+      genesisOptions="$genesisOptions $1 $2"
+      shift 2
+    elif [[ $1 = --faucet-lamports ]]; then
+      genesisOptions="$genesisOptions $1 $2"
+      shift 2
+    elif [[ $1 = --cluster-type ]]; then
+      case "$2" in
+        development|devnet|testnet|mainnet-beta)
+          ;;
+        *)
+          echo "Unexpected cluster type: \"$2\""
+          exit 1
+          ;;
+      esac
+      genesisOptions="$genesisOptions $1 $2"
+      shift 2
+    elif [[ $1 = --slots-per-epoch ]]; then
+      genesisOptions="$genesisOptions $1 $2"
+      shift 2
+    elif [[ $1 = --no-snapshot-fetch ]]; then
+      maybeNoSnapshot="$1"
+      shift 1
+    elif [[ $1 = --deploy-if-newer ]]; then
+      deployIfNewer=1
+      shift 1
+    elif [[ $1 = --no-deploy ]]; then
+      deployMethod=skip
+      shift 1
+    elif [[ $1 = --no-build ]]; then
+      doBuild=false
+      shift 1
+    elif [[ $1 = --limit-ledger-size ]]; then
+      maybeLimitLedgerSize="$1 $2"
+      shift 2
+    elif [[ $1 = --limit-blockstore-size ]]; then
+      maybeLimitBlockstoreSize="$1 $2"
+      shift 2
+    elif [[ $1 = --skip-poh-verify ]]; then
+      maybeSkipLedgerVerify="$1"
+      shift 1
+    elif [[ $1 = --skip-setup ]]; then
+      skipSetup=true
+      shift 1
+    elif [[ $1 = --internal-nodes-stake-lamports ]]; then
+      internalNodesStakeLamports="$2"
+      shift 2
+    elif [[ $1 = --internal-nodes-lamports ]]; then
+      internalNodesLamports="$2"
+      shift 2
+    elif [[ $1 = --copy-program ]]; then
+      copyProgramUrl="$2"
+      copyProgramPubkey="$3"
+      shift 3
+    elif [[ $1 = --external-accounts-file ]]; then
+      externalPrimordialAccountsFile="$2"
+      remoteExternalPrimordialAccountsFile=/tmp/external-primordial-accounts.yml
+      shift 2
+    elif [[ $1 = --no-airdrop ]]; then
+      maybeDisableAirdrops="$1"
+      shift 1
+    elif [[ $1 = --debug ]]; then
+      debugBuild=true
+      shift 1
+    elif [[ $1 = --profile ]]; then
+      profileBuild=true
+      shift 1
+    elif [[ $1 = --gpu-mode ]]; then
+      echo "'--gpu-mode' is deprecated, GPU support was removed from agave"
+      shift 2
+    elif [[ $1 == --client-delay-start ]]; then
+      clientDelayStart=$2
+      shift 2
+    elif [[ $1 == --wait-for-supermajority ]]; then
+      maybeWaitForSupermajority="$1 $2"
+      shift 2
+    elif [[ $1 == --warp-slot ]]; then
+      maybeWarpSlot="$1 $2"
+      shift 2
+    elif [[ $1 == --full-rpc ]]; then
+      maybeFullRpc=true
+      shift 1
+    elif [[ $1 == --tpu-disable-quic ]]; then
+      disableQuic=true
+      shift 1
+    elif [[ $1 == --tpu-enable-udp ]]; then
+      enableUdp=true
+      shift 1
+    elif [[ $1 == --async-node-init ]]; then
+      waitForNodeInit=false
+      shift 1
+    elif [[ $1 == --extra-primordial-stakes ]]; then
+      extraPrimordialStakes=$2
+      shift 2
+    elif [[ $1 = --allow-private-addr ]]; then
+      echo "--allow-private-addr is a default value"
+      shift 1
+    elif [[ $1 = --accounts-db-skip-shrink ]]; then
+      maybeAccountsDbSkipShrink="$1"
+      shift 1
+    elif [[ $1 = --skip-require-tower ]]; then
+      maybeSkipRequireTower="$1"
+      shift 1
+    elif [[ $1 = --use-unstaked-connection ]]; then
+      maybeUseUnstakedConnection="$1"
+      shift 1
+    else
+      usage "Unknown long option: $1"
+    fi
+  else
+    shortArgs+=("$1")
+    shift
+  fi
+done
+
+while getopts "h?T:t:o:f:rc:Fn:i:d" opt "${shortArgs[@]}"; do
+  case $opt in
+  h | \?)
+    usage
+    ;;
+  T)
+    tarballFilename=$OPTARG
+    [[ -r $tarballFilename ]] || usage "File not readable: $tarballFilename"
+    deployMethod=tar
+    ;;
+  t)
+    case $OPTARG in
+    edge|beta|stable|v*)
+      releaseChannel=$OPTARG
+      deployMethod=tar
+      ;;
+    *)
+      usage "Invalid release channel: $OPTARG"
+      ;;
+    esac
+    ;;
+  n)
+    numValidatorsRequested=$OPTARG
+    ;;
+  r)
+    skipSetup=true
+    ;;
+  o)
+    case $OPTARG in
+    rejectExtraNodes)
+      sanityExtraArgs="$sanityExtraArgs -o $OPTARG"
+      ;;
+    *)
+      usage "Unknown option: $OPTARG"
+      ;;
+    esac
+    ;;
+  c)
+    getClientTypeAndNum() {
+      if ! [[ $OPTARG == *'='* ]]; then
+        echo "Error: Expecting tuple \"clientType=numClientType=extraArgs\" but got \"$OPTARG\""
+        exit 1
+      fi
+      local keyValue
+      IFS='=' read -ra keyValue <<< "$OPTARG"
+      local clientType=${keyValue[0]}
+      local numClients=${keyValue[1]}
+      local extraArgs=${keyValue[2]}
+      re='^[0-9]+$'
+      if ! [[ $numClients =~ $re ]] ; then
+        echo "error: numClientType must be a number but got \"$numClients\""
+        exit 1
+      fi
+      case $clientType in
+        idle)
+          numIdleClients=$numClients
+          # $extraArgs ignored for 'idle'
+        ;;
+        transaction-bench)
+          numTransactionBenchClients=$numClients
+          transactionBenchExtraArgs=$extraArgs
+        ;;
+        *)
+          echo "Unknown client type: $clientType"
+          exit 1
+          ;;
+      esac
+    }
+    getClientTypeAndNum
+    ;;
+  F)
+    failOnValidatorBootupFailure=false
+    ;;
+  i)
+    nodeAddress=$OPTARG
+    ;;
+  d)
+    debugBuild=true
+    ;;
+  *)
+    usage "Error: unhandled option: $opt"
+    ;;
+  esac
+done
+
+loadConfigFile
+
+if [[ -n $numValidatorsRequested ]]; then
+  truncatedNodeList=( "${validatorIpList[@]:0:$numValidatorsRequested}" )
+  unset validatorIpList
+  validatorIpList=( "${truncatedNodeList[@]}" )
+fi
+
+numClients=${#clientIpList[@]}
+numClientsRequested=$((numTransactionBenchClients + numIdleClients))
+if [[ "$numClientsRequested" -eq 0 ]]; then
+  # Default to solana-transaction-bench on every available client node.
+  numTransactionBenchClients=$numClients
+  numClientsRequested=$numClients
+else
+  if [[ "$numClientsRequested" -gt "$numClients" ]]; then
+    echo "Error: More clients requested ($numClientsRequested) than available ($numClients)"
+    exit 1
+  fi
+fi
+
+if [[ -n "$maybeWaitForSupermajority" && -n "$maybeWarpSlot" ]]; then
+  read -r _ waitSlot <<<"$maybeWaitForSupermajority"
+  read -r _ warpSlot <<<"$maybeWarpSlot"
+  if [[ $waitSlot -ne $warpSlot ]]; then
+    echo "Error: When specifying both --wait-for-supermajority and --warp-slot,"
+    echo "they must use the same slot. ($waitSlot != $warpSlot)"
+    exit 1
+  fi
+fi
+
+echo "net.sh: Primordial stakes: $extraPrimordialStakes"
+if [[ $extraPrimordialStakes -gt 0 ]]; then
+  # Extra primoridial stakes require that all of the validators start at
+  # the same time. Force async init and wait for supermajority here.
+  waitForNodeInit=false
+  if [[ -z "$maybeWaitForSupermajority" ]]; then
+    waitSlot=
+    if [[ -n "$maybeWarpSlot" ]]; then
+      read -r _ waitSlot <<<"$maybeWarpSlot"
+    else
+      waitSlot=1
+    fi
+    maybeWaitForSupermajority="--wait-for-supermajority $waitSlot"
+  fi
+fi
+
+checkPremptibleInstances
+
+case $command in
+restart)
+  prepareDeploy
+  stop
+  deploy
+  ;;
+start)
+  prepareDeploy
+  deploy
+  ;;
+prepare)
+  prepareDeploy
+  ;;
+sanity)
+  sanity
+  ;;
+stop)
+  stop
+  ;;
+upgrade)
+  bootstrapValidatorIp="${validatorIpList[0]}"
+  prepareDeploy
+  deployBootstrapValidator "$bootstrapValidatorIp"
+  # (start|stop)Node need refactored to support restarting the bootstrap validator
+  ;;
+stopnode)
+  if [[ -z $nodeAddress ]]; then
+    usage "node address (-i) not specified"
+    exit 1
+  fi
+  stopNode "$nodeAddress" true
+  ;;
+startnode)
+  if [[ -z $nodeAddress ]]; then
+    usage "node address (-i) not specified"
+    exit 1
+  fi
+  nodeType=
+  nodeIndex=
+  getNodeType
+  startNode "$nodeAddress" "$nodeType" "$nodeIndex"
+  ;;
+startclients)
+  startClients
+  ;;
+logs)
+  initLogDir
+  fetchRemoteLog() {
+    declare ipAddress=$1
+    declare log=$2
+    echo "--- fetching $log from $ipAddress"
+    (
+      set -x
+      timeout 30s scp "${sshOptions[@]}" \
+        "$ipAddress":solana/"$log".log "$netLogDir"/remote-"$log"-"$ipAddress".log
+    ) || echo "failed to fetch log"
+  }
+  fetchRemoteLog "${validatorIpList[0]}" faucet
+  for ipAddress in "${validatorIpList[@]}"; do
+    fetchRemoteLog "$ipAddress" validator
+  done
+  for ipAddress in "${clientIpList[@]}"; do
+    fetchRemoteLog "$ipAddress" client
+  done
+  for ipAddress in "${blockstreamerIpList[@]}"; do
+    fetchRemoteLog "$ipAddress" validator
+  done
+  ;;
+*)
+  echo "Internal error: Unknown command: $command"
+  usage
+  exit 1
+esac

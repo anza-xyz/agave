@@ -1,0 +1,36 @@
+[package]
+name = "solana-builtins"
+description = "Solana builtin programs"
+documentation = "https://docs.rs/solana-builtins"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+
+[dependencies]
+agave-feature-set = { workspace = true }
+solana-bpf-loader-program = { workspace = true, features = ["metrics"] }
+solana-compute-budget-program = { workspace = true }
+solana-hash = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-system-program = { workspace = true }
+solana-vote-program = { workspace = true }
+solana-zk-elgamal-proof-program = { workspace = true }
+solana-zk-token-proof-program = { workspace = true }
+
+[lints]
+workspace = true

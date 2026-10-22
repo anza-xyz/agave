@@ -1,0 +1,48 @@
+[package]
+name = "agave-install"
+description = "The solana cluster software installer"
+documentation = "https://docs.rs/agave-install"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+agave-logger = { workspace = true }
+bzip2 = { workspace = true }
+clap = { workspace = true }
+console = { workspace = true }
+crossbeam-channel = { workspace = true }
+ctrlc = { workspace = true, features = ["termination"] }
+dirs-next = { workspace = true }
+indicatif = { workspace = true }
+nix = { workspace = true, features = ["signal"] }
+reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
+scopeguard = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+solana-hash = "=4.7.0"
+solana-sha256-hasher = { workspace = true }
+solana-version = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
+url = { workspace = true }
+
+[target."cfg(windows)".dependencies]
+winapi = { workspace = true, features = ["minwindef", "winuser"] }
+winreg = { workspace = true }
+
+[lints]
+workspace = true

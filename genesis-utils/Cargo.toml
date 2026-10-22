@@ -1,0 +1,35 @@
+[package]
+name = "solana-genesis-utils"
+description = "Solana Genesis Utils"
+documentation = "https://docs.rs/solana-download-utils"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_genesis_utils"
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+agave-snapshots = { workspace = true }
+log = { workspace = true }
+solana-download-utils = { workspace = true }
+solana-genesis-config = { workspace = true }
+solana-hash = { workspace = true }
+solana-rpc-client = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

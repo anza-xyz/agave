@@ -1,0 +1,52 @@
+[package]
+name = "solana-quic-client"
+description = "Solana Quic Client"
+documentation = "https://docs.rs/solana-quic-client"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+async-lock = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+log = { workspace = true }
+quinn = { workspace = true }
+solana-connection-cache = { workspace = true }
+solana-keypair = { workspace = true }
+solana-measure = { workspace = true }
+solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false }
+solana-rpc-client-api = { workspace = true }
+solana-signer = { workspace = true }
+solana-streamer = { workspace = true }
+solana-tls-utils = { workspace = true }
+solana-transaction-error = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+crossbeam-channel = { workspace = true }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-packet = { workspace = true }
+solana-perf = { path = "../perf", features = ["agave-unstable-api"] }
+solana-quic-client = { path = ".", features = ["agave-unstable-api"] }
+solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
+tokio-util = { workspace = true }
+
+[lints]
+workspace = true

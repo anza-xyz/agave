@@ -1,0 +1,92 @@
+[package]
+name = "solana-vote-program"
+description = "Solana Vote program"
+documentation = "https://docs.rs/solana-vote-program"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_vote_program"
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = ["dep:qualifier_attr"]
+stable-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-vote-interface/stable-abi",
+]
+
+[dependencies]
+bincode = { workspace = true }
+log = { workspace = true }
+qualifier_attr = { workspace = true, optional = true }
+solana-account = { workspace = true }
+solana-bincode = { workspace = true }
+solana-bls-signatures = { workspace = true }
+solana-clock = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
+solana-packet = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true, features = ["curve25519"] }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-slot-hashes = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["wincode"] }
+solana-vote-interface = { workspace = true, features = ["bincode", "wincode"] }
+wincode = { workspace = true }
+
+[dev-dependencies]
+agave-feature-set = { workspace = true }
+agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
+arbitrary = { workspace = true }
+assert_matches = { workspace = true }
+criterion = { workspace = true }
+rand = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
+solana-clock = { workspace = true, features = ["wincode"] }
+solana-epoch-schedule = { workspace = true, features = ["wincode"] }
+solana-fee-calculator = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }
+solana-instruction = { workspace = true }
+solana-program-runtime = { path = "../../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-rent = { workspace = true, features = ["wincode"] }
+solana-sdk-ids = { workspace = true }
+solana-sha256-hasher = { workspace = true }
+solana-slot-hashes = { workspace = true, features = ["wincode"] }
+solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
+solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
+solana-sysvar-id = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote-interface = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+test-case = { workspace = true }
+
+[[bench]]
+name = "vote_instructions"
+harness = false
+
+[[bench]]
+name = "process_vote"
+harness = false
+
+[lints]
+workspace = true
