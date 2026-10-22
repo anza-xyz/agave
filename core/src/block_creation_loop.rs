@@ -604,9 +604,6 @@ fn produce_first_slot(
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     let mut slot_metrics = SlotMetrics::new(slot, fast_leader_handover);
-    // Request the reward certs before waiting for the parent. That wait can use up most of the
-    // slot's budget, and the footer doesn't wait for the reply, so requesting afterwards can
-    // leave the rewards service no time to answer.
     let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
     let res = start_leader_wait_for_parent_replay(
         ctx,
@@ -638,6 +635,7 @@ fn produce_intra_window_slot(
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     let mut slot_metrics = SlotMetrics::new(slot, false);
+    let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
     let res = start_leader_wait_for_parent_replay(
         ctx,
         &mut slot_metrics,
@@ -648,7 +646,6 @@ fn produce_intra_window_slot(
         /* entry_bytes_consumed */ 0,
     )
     .and_then(|working_bank| {
-        let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
         produce_slot(
             ctx,
             &mut slot_metrics,
@@ -664,6 +661,10 @@ fn produce_intra_window_slot(
 }
 
 /// Asks the rewards service to build the reward certs for `slot`'s footer.
+///
+/// Call this before waiting for the parent. That wait can use up most of the slot's budget, and
+/// the footer doesn't wait for the reply, so requesting afterwards can leave the rewards service
+/// no time to answer.
 fn request_reward_certs(
     ctx: &mut LeaderContext,
     slot_metrics: &mut SlotMetrics,
@@ -1934,6 +1935,16 @@ mod tests {
         assert!(matches!(err, StartLeaderError::ReplayIsBehind(11, 12)));
 
         // The reward certs were already requested while we waited for the parent.
+        let request = reward_request_receiver.try_recv().unwrap();
+        assert_eq!(request.bank_slot, slot);
+
+        // Same for a slot later in the window.
+        let slot = 13;
+        let mut block_timer = Instant::now()
+            .checked_sub(block_timeout(&root_bank, slot) - Duration::from_millis(20))
+            .unwrap();
+        let err = produce_intra_window_slot(slot, &mut block_timer, &mut ctx).unwrap_err();
+        assert!(matches!(err, StartLeaderError::ReplayIsBehind(12, 13)));
         let request = reward_request_receiver.try_recv().unwrap();
         assert_eq!(request.bank_slot, slot);
     }
