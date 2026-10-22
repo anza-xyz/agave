@@ -5,7 +5,7 @@ use {
         shred::{
             DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, ShredFlags,
             max_ticks_per_n_shreds,
-            merkle::finish_erasure_batch_for_tests,
+            merkle::{finish_erasure_batch_for_tests, sign_with_invalid_parity_for_tests},
             merkle_tree::{
                 SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
                 verify_merkle_proof,
@@ -4842,6 +4842,316 @@ fn test_skip_alt_recovery() {
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn test_fec_set_check_on_rebuild_threshold() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
+    let genesis_config = create_genesis_config(2).genesis_config;
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let shred_version = 0;
+    let mut shred_recovery_context =
+        ShredRecoveryContext::new(dummy_retransmit_sender, root_bank, shred_version);
+    let is_repaired = false;
+    let is_trusted = false;
+    let mut insert = |shreds: Vec<Shred>, location| {
+        let mut metrics = BlockstoreInsertionMetrics::default();
+        let shreds = shreds
+            .into_iter()
+            .map(|shred| (Cow::Owned(shred), is_repaired, location));
+        blockstore
+            .do_insert_shreds(
+                shreds,
+                is_trusted,
+                Some(&mut shred_recovery_context),
+                &mut pinnable_slice,
+                &mut write_batch,
+                &mut metrics,
+            )
+            .unwrap();
+        metrics
+    };
+
+    let original = BlockLocation::Original;
+
+    let slot = 1;
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
+    let fec_set = |shreds: &[Shred], fec_set_index| -> Vec<Shred> {
+        shreds
+            .iter()
+            .filter(|shred| shred.fec_set_index() == fec_set_index)
+            .cloned()
+            .collect()
+    };
+
+    // Data shreds only: checked once all data shreds are received, nothing to
+    // recover.
+    let mut data = fec_set(&data_shreds, 0);
+    let code = fec_set(&coding_shreds, 0);
+    let last_data_shred = data.pop().unwrap();
+    let metrics = insert(data, original);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+    let metrics = insert(vec![last_data_shred.clone()], original);
+    assert_eq!(metrics.num_fec_set_checks_passed, 1);
+    assert_eq!(metrics.num_recovered, 0);
+    // Shreds which already exist and shreds inserted into the Alternate
+    // columns do not count as inserted, so they do not trigger another check.
+    let metrics = insert(vec![last_data_shred], original);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+    let alternate = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    let metrics = insert(fec_set(&data_shreds, 0), alternate);
+    assert_eq!(metrics.num_inserted, DATA_SHREDS_PER_FEC_BLOCK as u64);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+    // Shreds received after the threshold do not trigger another check.
+    let metrics = insert(code, original);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+    assert_eq!(metrics.num_fec_set_checks_failed, 0);
+    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 0);
+
+    verify_index_integrity(&blockstore, slot);
+
+    // Mixed data and coding shreds: checked and recovered from the same
+    // rebuilt erasure batch.
+    let slot = 2;
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 1, 100);
+    let data = fec_set(&data_shreds, 0);
+    let mut code = fec_set(&coding_shreds, 0);
+    code.truncate(DATA_SHREDS_PER_FEC_BLOCK - 1);
+    let metrics = insert(code, original);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+    let metrics = insert(vec![data[0].clone()], original);
+    assert_eq!(metrics.num_fec_set_checks_passed, 1);
+    assert_eq!(metrics.num_recovered, DATA_SHREDS_PER_FEC_BLOCK - 1);
+    assert_eq!(
+        metrics.num_recovered_inserted,
+        DATA_SHREDS_PER_FEC_BLOCK - 1
+    );
+    for shred in &data {
+        assert_eq!(
+            blockstore
+                .get_data_shred(slot, u64::from(shred.index()))
+                .unwrap()
+                .unwrap(),
+            shred.payload().as_ref(),
+        );
+    }
+    verify_index_integrity(&blockstore, slot);
+
+    // All shreds of the erasure set received in a single batch: checked once,
+    // nothing to recover.
+    let slot = 3;
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 2, 100);
+    let shreds = [fec_set(&data_shreds, 0), fec_set(&coding_shreds, 0)].concat();
+    let metrics = insert(shreds, original);
+    assert_eq!(metrics.num_fec_set_checks_passed, 1);
+    assert_eq!(metrics.num_recovered, 0);
+    verify_index_integrity(&blockstore, slot);
+}
+
+// Coding shred indices which do not start at fec_set_index violate SIMD-0504.
+// Depending on which shreds are present when the erasure set first can be
+// rebuilt, the erasure batch either fails to rebuild or fails the check.
+#[test]
+fn test_fec_set_check_failure_metrics() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
+    let genesis_config = create_genesis_config(2).genesis_config;
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let shred_version = 0;
+    let mut shred_recovery_context =
+        ShredRecoveryContext::new(dummy_retransmit_sender, root_bank, shred_version);
+    let is_repaired = false;
+    let is_trusted = false;
+    let mut insert = |shreds: Vec<Shred>| {
+        let mut metrics = BlockstoreInsertionMetrics::default();
+        let shreds = shreds
+            .into_iter()
+            .map(|shred| (Cow::Owned(shred), is_repaired, BlockLocation::Original));
+        blockstore
+            .do_insert_shreds(
+                shreds,
+                is_trusted,
+                Some(&mut shred_recovery_context),
+                &mut pinnable_slice,
+                &mut write_batch,
+                &mut metrics,
+            )
+            .unwrap();
+        metrics
+    };
+    let make_shreds = |slot: Slot| {
+        let next_shred_index = 0;
+        let next_code_index = 7;
+        let is_last_in_slot = true;
+        let (data_shreds, coding_shreds) = Shredder::new(slot, slot - 1, 0, shred_version)
+            .unwrap()
+            .entries_to_merkle_shreds_for_tests(
+                &Keypair::new(),
+                &make_slot_entries_with_transactions(100),
+                is_last_in_slot,
+                Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+                next_shred_index,
+                next_code_index,
+                &mut ProcessShredsStats::default(),
+            );
+        let fec_set = |shreds: Vec<Shred>| -> Vec<Shred> {
+            shreds
+                .into_iter()
+                .filter(|shred| shred.fec_set_index() == 0)
+                .collect()
+        };
+        (fec_set(data_shreds), fec_set(coding_shreds))
+    };
+
+    // Coding shreds re-encoded from the data shreds do not match the signed
+    // Merkle root.
+    let (data, _) = make_shreds(1);
+    let metrics = insert(data);
+    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 1);
+    assert_eq!(metrics.num_fec_set_checks_failed, 0);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+
+    // A received coding shred carries over the offset to the reconstructed
+    // ones, so the erasure batch rebuilds but fails the check.
+    let (mut data, code) = make_shreds(2);
+    data.pop();
+    data.push(code[0].clone());
+    let metrics = insert(data);
+    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 0);
+    assert_eq!(metrics.num_fec_set_checks_failed, 1);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+}
+
+/// A properly signed erasure set whose coding shreds do not match the data shreds fails
+/// to rebuild when it crosses the threshold. Its data shreds are still inserted once all
+/// of them are received, and the set is not checked for SIMD504 again.
+#[test]
+fn test_fec_set_rebuild_failure_invalid_parity() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let mut pinnable_slice = blockstore.new_pinnable_slice();
+    let mut write_batch = blockstore.get_write_batch();
+    let genesis_config = create_genesis_config(2).genesis_config;
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let shred_version = 0;
+    let mut shred_recovery_context =
+        ShredRecoveryContext::new(dummy_retransmit_sender, root_bank, shred_version);
+    let is_repaired = false;
+    let is_trusted = false;
+    let mut insert = |shreds: Vec<Shred>| {
+        let mut metrics = BlockstoreInsertionMetrics::default();
+        let shreds = shreds
+            .into_iter()
+            .map(|shred| (Cow::Owned(shred), is_repaired, BlockLocation::Original));
+        blockstore
+            .do_insert_shreds(
+                shreds,
+                is_trusted,
+                Some(&mut shred_recovery_context),
+                &mut pinnable_slice,
+                &mut write_batch,
+                &mut metrics,
+            )
+            .unwrap();
+        metrics
+    };
+
+    let slot = 1;
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
+    let mut batch: Vec<_> = data_shreds
+        .into_iter()
+        .chain(coding_shreds)
+        .filter(|shred| shred.fec_set_index() == 0)
+        .collect();
+    sign_with_invalid_parity_for_tests(&Keypair::new(), &mut batch);
+    let code = batch.split_off(DATA_SHREDS_PER_FEC_BLOCK);
+    let mut data = batch;
+    let last_data_shred = data.pop().unwrap();
+    let last_data_shred_index = u64::from(last_data_shred.index());
+
+    // The data shred recovered from the invalid parity does not match the
+    // signed Merkle root.
+    let metrics = insert([data.clone(), vec![code[0].clone()]].concat());
+    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 1);
+    assert_eq!(metrics.num_fec_set_checks_failed, 0);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+    assert_eq!(metrics.num_recovered, 0);
+    assert!(
+        blockstore
+            .get_data_shred(slot, last_data_shred_index)
+            .unwrap()
+            .is_none(),
+        "the missing data shred should not be recovered"
+    );
+
+    // Nothing is missing anymore, so nothing is recovered, and the set
+    // already crossed the threshold, so it is not checked again.
+    let metrics = insert(vec![last_data_shred.clone()]);
+    assert_eq!(metrics.num_inserted, 1);
+    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 0);
+    assert_eq!(metrics.num_fec_set_checks_failed, 0);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+    assert_eq!(metrics.num_recovered, 0);
+    for shred in data.iter().chain([&last_data_shred]) {
+        assert_eq!(
+            blockstore
+                .get_data_shred(slot, u64::from(shred.index()))
+                .unwrap()
+                .as_deref(),
+            Some(shred.payload().as_ref()),
+            "every data shred of the erasure set should be stored"
+        );
+    }
+    verify_index_integrity(&blockstore, slot);
+}
+
+#[test_case(31, 0, 31, true, false, false; "too few shreds")]
+#[test_case(32, 0, 1, false, false, true; "data only, crossing the threshold")]
+#[test_case(32, 0, 32, false, false, true; "data only, in a single batch")]
+#[test_case(31, 1, 1, true, true, true; "crossing the threshold")]
+#[test_case(0, 32, 32, true, true, true; "coding only, in a single batch")]
+#[test_case(31, 2, 1, true, true, false; "already over the threshold")]
+#[test_case(32, 32, 64, true, false, true; "all shreds in a single batch")]
+#[test_case(32, 32, 32, true, false, false; "all shreds, already over the threshold")]
+fn test_rebuild_reasons(
+    num_data: u32,
+    num_coding: u32,
+    num_inserted: usize,
+    has_erasure_meta: bool,
+    recover: bool,
+    check: bool,
+) {
+    let slot = 1;
+    let fec_set_index = 32;
+    let (_, coding_shreds) = setup_erasure_shreds_with_index(slot, 0, 100, fec_set_index);
+    let erasure_meta = ErasureMeta::from_coding_shred(&coding_shreds[0]).unwrap();
+    let erasure_set = ErasureSetId::new(slot, fec_set_index);
+    let mut index = Index::new(slot);
+    for i in erasure_set.data_shred_indices().take(num_data as usize) {
+        index.data_mut().insert(u64::from(i));
+    }
+    for i in erasure_meta
+        .coding_shreds_indices()
+        .take(num_coding as usize)
+    {
+        index.coding_mut().insert(i);
+    }
+    let erasure_meta = has_erasure_meta.then_some(&erasure_meta);
+    let RebuildReasons {
+        recover: actual_recover,
+        check: actual_check,
+    } = rebuild_reasons(&index, erasure_set, erasure_meta, num_inserted);
+    assert_eq!((actual_recover, actual_check), (recover, check));
 }
 
 #[test]

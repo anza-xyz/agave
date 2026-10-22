@@ -33,6 +33,12 @@ pub struct BlockstoreInsertionMetrics {
     pub num_recovered_inserted: usize,
     pub num_recovered_failed_invalid: usize,
     pub num_recovered_exists: usize,
+    /// Number of FEC sets for which all checks have passed.
+    pub num_fec_set_checks_passed: usize,
+    /// Number of FEC sets for which some validity checks failed.
+    pub num_fec_set_checks_failed: usize,
+    /// Number of FEC sets that could not be rebuilt despite available shreds.
+    pub num_fec_set_checks_rebuild_failed: usize,
     pub num_repaired_data_shreds_exists: usize,
     pub num_turbine_data_shreds_exists: usize,
     pub num_data_shreds_invalid: usize,
@@ -123,6 +129,21 @@ impl BlockstoreInsertionMetrics {
             (
                 "num_recovered_blockstore_error",
                 self.num_recovered_blockstore_error,
+                i64
+            ),
+            (
+                "num_fec_set_checks_passed",
+                self.num_fec_set_checks_passed,
+                i64
+            ),
+            (
+                "num_fec_set_checks_failed",
+                self.num_fec_set_checks_failed,
+                i64
+            ),
+            (
+                "num_fec_set_checks_rebuild_failed",
+                self.num_fec_set_checks_rebuild_failed,
                 i64
             ),
             (

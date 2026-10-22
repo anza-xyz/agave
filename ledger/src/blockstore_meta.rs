@@ -765,16 +765,6 @@ impl ErasureMeta {
         self.config
     }
 
-    pub(crate) fn fec_set_index(&self) -> u32 {
-        self.fec_set_index
-    }
-
-    pub(crate) fn data_shreds_indices(&self) -> Range<u64> {
-        let num_data = self.config.num_data as u64;
-        let fec_set_index = u64::from(self.fec_set_index);
-        fec_set_index..fec_set_index + num_data
-    }
-
     pub(crate) fn coding_shreds_indices(&self) -> Range<u64> {
         let num_coding = self.config.num_coding as u64;
         self.first_coding_index..self.first_coding_index + num_coding
@@ -782,22 +772,6 @@ impl ErasureMeta {
 
     pub(crate) fn first_received_coding_shred_index(&self) -> Option<u32> {
         u32::try_from(self.first_received_coding_index).ok()
-    }
-
-    // Returns true if some data shreds are missing, but there are enough data
-    // and coding shreds to recover the erasure batch.
-    // TODO: In order to retransmit all shreds from the erasure batch, we need
-    // to always recover the batch as soon as possible, even if no data shreds
-    // are missing. But because we currently do not store recovered coding
-    // shreds into the blockstore we cannot identify if the batch was already
-    // recovered (and retransmitted) or not.
-    pub(crate) fn should_recover_shreds(&self, index: &Index) -> bool {
-        let num_data = index.data().range(self.data_shreds_indices()).count();
-        if num_data >= self.config.num_data {
-            return false; // No data shreds is missing.
-        }
-        let num_coding = index.coding().range(self.coding_shreds_indices()).count();
-        self.config.num_data <= num_data + num_coding
     }
 
     #[cfg(test)]
@@ -956,11 +930,7 @@ impl DoubleMerkleMeta {
 
 #[cfg(test)]
 mod test {
-    use {
-        super::*,
-        proptest::prelude::*,
-        rand::{prelude::IndexedRandom as _, rng},
-    };
+    use {super::*, proptest::prelude::*};
 
     #[test]
     #[allow(clippy::reversed_empty_ranges)]
@@ -990,61 +960,6 @@ mod test {
         let meta = SlotMeta::new(0 /* slot */, None /* parent */);
         assert!(meta.is_parent_connected());
         assert!(!meta.is_connected());
-    }
-
-    #[test]
-    fn test_should_recover_shreds() {
-        let fec_set_index = 0;
-        let erasure_config = ErasureConfig {
-            num_data: 8,
-            num_coding: 16,
-        };
-        let e_meta = ErasureMeta {
-            fec_set_index,
-            first_coding_index: u64::from(fec_set_index),
-            config: erasure_config,
-            first_received_coding_index: 0,
-        };
-        let mut rng = rng();
-        let mut index = Index::new(0);
-
-        let data_indexes = 0..erasure_config.num_data as u64;
-        let coding_indexes = 0..erasure_config.num_coding as u64;
-
-        assert!(!e_meta.should_recover_shreds(&index));
-
-        for ix in data_indexes.clone() {
-            index.data_mut().insert(ix);
-        }
-
-        assert!(!e_meta.should_recover_shreds(&index));
-
-        for ix in coding_indexes.clone() {
-            index.coding_mut().insert(ix);
-        }
-
-        for &idx in data_indexes
-            .clone()
-            .collect::<Vec<_>>()
-            .choose_multiple(&mut rng, erasure_config.num_data)
-        {
-            index.data_mut().remove(idx);
-
-            assert!(e_meta.should_recover_shreds(&index));
-        }
-
-        for ix in data_indexes {
-            index.data_mut().insert(ix);
-        }
-
-        for &idx in coding_indexes
-            .collect::<Vec<_>>()
-            .choose_multiple(&mut rng, erasure_config.num_coding)
-        {
-            index.coding_mut().remove(idx);
-
-            assert!(!e_meta.should_recover_shreds(&index));
-        }
     }
 
     /// Generate a random Range<u64>.

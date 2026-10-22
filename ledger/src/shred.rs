@@ -541,6 +541,11 @@ impl ErasureSetId {
             .map(|fec_set_index| Self::new(self.0, fec_set_index))
     }
 
+    /// Indices of the data shreds in the erasure set.
+    pub(crate) fn data_shred_indices(&self) -> Range<u32> {
+        self.1..self.1.saturating_add(DATA_SHREDS_PER_FEC_BLOCK as u32)
+    }
+
     // Storage key for ErasureMeta and MerkleRootMeta in blockstore db.
     // Note: ErasureMeta column uses u64 so this will need to be typecast
     pub(crate) fn store_key(&self) -> (Slot, /*fec_set_index:*/ u32) {
