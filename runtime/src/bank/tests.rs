@@ -1866,18 +1866,14 @@ fn test_interleaving_locks() {
     );
 }
 
-#[test_case(false; "old_fee_only")]
-#[test_case(true; "simd186_fee_only")]
-fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_semantics: bool) {
+#[test]
+fn test_load_and_execute_commit_transactions_fees_only() {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
     genesis_config.rent = Rent::default();
     genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    if !define_ltds_fee_only_semantics {
-        bank.deactivate_feature(&agave_feature_set::define_ltds_fee_only_semantics::id());
-    }
+    let bank = Bank::new_for_tests(&genesis_config);
 
     let fee_payer = Pubkey::new_unique();
     let fee_payer_initial_balance = 10 * genesis_config.rent.minimum_balance(0);
@@ -1915,17 +1911,13 @@ fn test_load_and_execute_commit_transactions_fees_only(define_ltds_fee_only_sema
     ));
 
     let mut loaded_accounts_data_size = 0;
-    if define_ltds_fee_only_semantics {
-        for key in &transaction.message.account_keys {
-            if let Some(n) = bank
-                .get_account_shared_data(key)
-                .map(|account| account.data().len())
-            {
-                loaded_accounts_data_size += (n + TRANSACTION_ACCOUNT_BASE_SIZE) as u32
-            }
+    for key in &transaction.message.account_keys {
+        if let Some(n) = bank
+            .get_account_shared_data(key)
+            .map(|account| account.data().len())
+        {
+            loaded_accounts_data_size += (n + TRANSACTION_ACCOUNT_BASE_SIZE) as u32
         }
-    } else {
-        loaded_accounts_data_size = nonce_size as u32;
     }
 
     let batch = bank.prepare_batch_for_tests(vec![transaction]);
@@ -11556,7 +11548,7 @@ fn test_failed_simulation_load_error() {
             logs: vec![],
             post_simulation_accounts: vec![],
             units_consumed: 0,
-            loaded_accounts_data_size: 0,
+            loaded_accounts_data_size: TRANSACTION_ACCOUNT_BASE_SIZE as u32,
             return_data: None,
             inner_instructions: None,
             fee: Some(0),

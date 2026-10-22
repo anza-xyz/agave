@@ -3349,11 +3349,9 @@ fn program_cache_stats() {
     );
 }
 
-#[test_case(false; "old_fee_only")]
-#[test_case(true; "simd186_fee_only")]
-fn fee_only_loaded_transaction_data_size(define_ltds_fee_only_semantics: bool) {
+#[test]
+fn fee_only_loaded_transaction_data_size() {
     let mut common_test_entry = SvmTestEntry::default();
-    common_test_entry.feature_set.define_ltds_fee_only_semantics = define_ltds_fee_only_semantics;
 
     let program_name = "hello-solana";
     let program_id = program_address(program_name);
@@ -3468,30 +3466,15 @@ fn fee_only_loaded_transaction_data_size(define_ltds_fee_only_semantics: bool) {
             .unwrap()
             .loaded_accounts_data_size();
 
-        // blowing limit with define_ltds_fee_only_semantics sets the size to the limit
-        // otherwise it is the raw sum of rollback sizes which here is zero
-        assert_eq!(
-            if define_ltds_fee_only_semantics {
-                size_limit
-            } else {
-                0
-            },
-            fail_limit_loaded_size,
-        );
+        assert_eq!(size_limit, fail_limit_loaded_size);
 
         let fail_program_id_loaded_size = output.processing_results[2]
             .as_ref()
             .unwrap()
             .loaded_accounts_data_size();
 
-        // violating constraints *after* passing size with define_ltds_fee_only_semantics uses the size
-        // otherwise as above it is the raw sum of rollback sizes which here is zero
         assert_eq!(
-            if define_ltds_fee_only_semantics {
-                loaded_fee_payer_size + other_accounts_size
-            } else {
-                0
-            },
+            loaded_fee_payer_size + other_accounts_size,
             fail_program_id_loaded_size,
         );
     }

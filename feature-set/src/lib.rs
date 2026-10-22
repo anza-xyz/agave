@@ -75,7 +75,6 @@ pub struct FeatureSnapshot {
     pub upgrade_bpf_stake_program_to_v5: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
-    pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
@@ -173,7 +172,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             upgrade_bpf_stake_program_to_v5: is_active(&upgrade_bpf_stake_program_to_v5::ID),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
-            define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
             remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
             loader_v3_set_program_data_to_elf_length: is_active(
@@ -339,7 +337,6 @@ impl FeatureSet {
                 .direct_account_pointers_in_program_input,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
-            define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
             loader_v3_set_program_data_to_elf_length: snapshot
                 .loader_v3_set_program_data_to_elf_length,
