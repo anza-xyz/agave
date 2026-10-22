@@ -18,13 +18,14 @@ pub fn process_instruction(
 
     // Return the fields in `LeaderInfo` order so the test can check the layout.
     let mut data = [0u8; LeaderInfo::SIZE];
-    for (chunk, address) in data.chunks_exact_mut(32).zip([
+    let (chunks, _) = data.as_chunks_mut::<32>();
+    for (chunk, address) in chunks.iter_mut().zip([
         &leader_info.leader_identity,
         &leader_info.leader_vote,
         &leader_info.next_leader_identity,
         &leader_info.next_leader_vote,
     ]) {
-        chunk.copy_from_slice(address.as_ref());
+        *chunk = address.to_bytes();
     }
     set_return_data(&data);
     Ok(())

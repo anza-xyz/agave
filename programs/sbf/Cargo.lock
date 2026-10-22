@@ -9617,7 +9617,6 @@ dependencies = [
  "solana-sha512-hasher",
  "solana-stable-layout 4.0.0",
  "solana-stake-history",
- "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-type-overrides",

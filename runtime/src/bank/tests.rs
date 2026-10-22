@@ -5810,8 +5810,56 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "6NexZW334XPXzSeaB33XbY7uwR17LC4VW6durttvLL6a",
+        "5rRgupnAHPRvSZPScgGuaCYYYEJVAbwAfRSEVjLf8VL8",
     );
+}
+
+#[test]
+fn test_slot_leaders_from_epoch_stakes_epoch_boundary() {
+    // Two genesis configs, each with a single staked validator, so that every
+    // slot of an epoch is led by the validator staked in that epoch.
+    let leader_a = Pubkey::new_unique();
+    let leader_b = Pubkey::new_unique();
+    let mut genesis_config_a =
+        create_genesis_config_with_leader(500, &leader_a, bootstrap_validator_stake_lamports())
+            .genesis_config;
+    let mut genesis_config_b =
+        create_genesis_config_with_leader(500, &leader_b, bootstrap_validator_stake_lamports())
+            .genesis_config;
+    let epoch_schedule =
+        EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
+    genesis_config_a.epoch_schedule = epoch_schedule.clone();
+    genesis_config_b.epoch_schedule = epoch_schedule.clone();
+    let bank_a = Bank::new_for_tests(&genesis_config_a);
+    let bank_b = Bank::new_for_tests(&genesis_config_b);
+
+    // Epoch 0 is staked only by validator A, epoch 1 only by validator B.
+    let epoch_stakes = HashMap::from([
+        (0, bank_a.epoch_stakes(0).unwrap().clone()),
+        (1, bank_b.epoch_stakes(1).unwrap().clone()),
+    ]);
+
+    // Within an epoch, both leaders come from that epoch's schedule.
+    let leaders = Bank::slot_leaders_from_epoch_stakes(1, &epoch_schedule, &epoch_stakes).unwrap();
+    assert_eq!(leaders.leader.id, leader_a);
+    assert_eq!(leaders.next_leader.id, leader_a);
+
+    // At the last slot of epoch 0, the next leader comes from epoch 1's
+    // schedule.
+    let last_slot = epoch_schedule.get_last_slot_in_epoch(0);
+    let leaders =
+        Bank::slot_leaders_from_epoch_stakes(last_slot, &epoch_schedule, &epoch_stakes).unwrap();
+    assert_eq!(leaders.leader.id, leader_a);
+    assert_eq!(leaders.next_leader.id, leader_b);
+
+    // The first slot of epoch 1 is led entirely from epoch 1's schedule. Its
+    // next slot is still in epoch 1, so epoch 0's stakes are not consulted.
+    let epoch_stakes_1 = HashMap::from([(1, bank_b.epoch_stakes(1).unwrap().clone())]);
+    let leaders =
+        Bank::slot_leaders_from_epoch_stakes(last_slot + 1, &epoch_schedule, &epoch_stakes_1)
+            .unwrap();
+    assert_eq!(leaders.leader.id, leader_b);
+    assert_eq!(leaders.next_leader.id, leader_b);
 }
 
 #[ignore]
