@@ -396,6 +396,7 @@ impl Bank {
     ///     self.upgrade_loader_v2_program_with_loader_v3_program(
     ///        &bpf_loader_v2_program_address,
     ///        &source_buffer_address,
+    ///        verified_build_hash,
     ///        true,
     ///        "test_upgrade_loader_v2_program_with_loader_v3_program",
     ///     );
@@ -408,6 +409,7 @@ impl Bank {
         &self,
         loader_v2_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
+        verified_build_hash: Hash,
         allow_prefunded: bool,
         datapoint_name: &'static str,
     ) -> Result<(), CoreBpfMigrationError> {
@@ -415,7 +417,15 @@ impl Bank {
 
         let target =
             TargetBpfV2::new_checked(self, loader_v2_bpf_program_address, allow_prefunded)?;
-        let source = SourceBuffer::new_checked(self, source_buffer_address)?;
+        let source = if self.feature_set.snapshot().core_bpf_hash_validation {
+            SourceBuffer::new_checked_with_verified_build_hash(
+                self,
+                source_buffer_address,
+                verified_build_hash,
+            )?
+        } else {
+            SourceBuffer::new_checked(self, source_buffer_address)?
+        };
 
         // Attempt serialization first before modifying the bank.
         let new_target_program_account =
@@ -507,9 +517,7 @@ pub(crate) mod tests {
             bank::{
                 Bank, SlotLeader,
                 test_utils::goto_end_of_slot,
-                tests::{
-                    create_genesis_config, create_simple_test_arc_bank, create_simple_test_bank,
-                },
+                tests::{create_genesis_config, create_simple_test_bank},
             },
             bank_forks::BankForks,
         },
@@ -2067,7 +2075,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_loader_v2_program_with_loader_v3_program() {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -2117,6 +2125,7 @@ pub(crate) mod tests {
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            TEST_ELF_HASH,
             true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
@@ -2149,7 +2158,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_upgrade_loader_v2_program_with_loader_v3_program_fail_invalid_buffer() {
-        let (bank, _bank_forks) = create_simple_test_arc_bank(0);
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures::all_enabled());
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -2203,11 +2212,64 @@ pub(crate) mod tests {
             bank.upgrade_loader_v2_program_with_loader_v3_program(
                 &bpf_loader_v2_program_address,
                 &source_buffer_address,
+                TEST_ELF_HASH,
                 true,
                 "test_upgrade_loader_v2_program_with_loader_v3_program",
             )
             .unwrap_err(),
             CoreBpfMigrationError::InvalidBufferAccount(_)
         )
+    }
+
+    #[test_case(true; "hash_validation_active")]
+    #[test_case(false; "hash_validation_inactive")]
+    fn test_upgrade_loader_v2_program_with_loader_v3_program_verified_build_mismatch(
+        migration_hash_validation: bool,
+    ) {
+        let (bank, _bank_forks) = test_bank(CoreBpfFeatures {
+            migration_hash_validation,
+        });
+
+        let bpf_loader_v2_program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+
+        {
+            let elf = [4u8; 200]; // Mock ELF to start.
+            let space = elf.len();
+            let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+            let mut account = AccountSharedData::new(lamports, space, &bpf_loader::id());
+            account.set_executable(true);
+            account.data_as_mut_slice().copy_from_slice(&elf);
+            bank.store_account_and_update_capitalization(&bpf_loader_v2_program_address, &account);
+        }
+
+        let _test_context = TestContext::new(
+            &bank,
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            None,
+        );
+
+        let result = bank.upgrade_loader_v2_program_with_loader_v3_program(
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            Hash::default(),
+            true,
+            "test_upgrade_loader_v2_program_with_loader_v3_program",
+        );
+        if migration_hash_validation {
+            assert_matches!(
+                result.unwrap_err(),
+                CoreBpfMigrationError::BuildHashMismatch(_, _)
+            );
+            assert_eq!(
+                bank.get_account(&bpf_loader_v2_program_address)
+                    .unwrap()
+                    .owner(),
+                &bpf_loader::id()
+            );
+        } else {
+            assert!(result.is_ok());
+        }
     }
 }
