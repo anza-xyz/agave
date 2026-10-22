@@ -1,6 +1,7 @@
 use {
     lru::LruCache,
     solana_clock::Epoch,
+    solana_commitment_config::CommitmentLevel,
     solana_rpc_client_api::{
         config::RpcLargestAccountsFilter,
         response::{RpcAccountBalance, RpcRankMap, RpcRankMapEntry},
@@ -76,7 +77,7 @@ pub(crate) fn rank_map_response(epoch: Epoch, stakes: &VersionedEpochStakes) -> 
 #[derive(Debug, Clone)]
 pub struct LargestAccountsCache {
     duration: u64,
-    cache: HashMap<Option<RpcLargestAccountsFilter>, LargestAccountsCacheValue>,
+    cache: HashMap<(Option<RpcLargestAccountsFilter>, CommitmentLevel), LargestAccountsCacheValue>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,25 +98,29 @@ impl LargestAccountsCache {
     pub(crate) fn get_largest_accounts(
         &self,
         filter: &Option<RpcLargestAccountsFilter>,
+        commitment: CommitmentLevel,
     ) -> Option<(u64, Vec<RpcAccountBalance>)> {
-        self.cache.get(filter).and_then(|value| {
-            if let Ok(elapsed) = value.cached_time.elapsed()
-                && elapsed < Duration::from_secs(self.duration)
-            {
-                return Some((value.slot, value.accounts.clone()));
-            }
-            None
-        })
+        self.cache
+            .get(&(filter.clone(), commitment))
+            .and_then(|value| {
+                if let Ok(elapsed) = value.cached_time.elapsed()
+                    && elapsed < Duration::from_secs(self.duration)
+                {
+                    return Some((value.slot, value.accounts.clone()));
+                }
+                None
+            })
     }
 
     pub(crate) fn set_largest_accounts(
         &mut self,
         filter: &Option<RpcLargestAccountsFilter>,
+        commitment: CommitmentLevel,
         slot: u64,
         accounts: &[RpcAccountBalance],
     ) {
         self.cache.insert(
-            filter.clone(),
+            (filter.clone(), commitment),
             LargestAccountsCacheValue {
                 accounts: accounts.to_owned(),
                 slot,
@@ -180,8 +185,11 @@ pub mod test {
 
         let accounts: Vec<RpcAccountBalance> = Vec::new();
 
-        cache.set_largest_accounts(&filter, 1000, &accounts);
+        cache.set_largest_accounts(&filter, CommitmentLevel::Finalized, 1000, &accounts);
         std::thread::sleep(Duration::from_secs(1));
-        assert_eq!(cache.get_largest_accounts(&filter), None);
+        assert_eq!(
+            cache.get_largest_accounts(&filter, CommitmentLevel::Finalized),
+            None
+        );
     }
 }

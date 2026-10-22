@@ -1107,19 +1107,21 @@ impl JsonRpcRequestProcessor {
     fn get_cached_largest_accounts(
         &self,
         filter: &Option<RpcLargestAccountsFilter>,
+        commitment: CommitmentLevel,
     ) -> Option<(u64, Vec<RpcAccountBalance>)> {
         let largest_accounts_cache = self.largest_accounts_cache.read().unwrap();
-        largest_accounts_cache.get_largest_accounts(filter)
+        largest_accounts_cache.get_largest_accounts(filter, commitment)
     }
 
     fn set_cached_largest_accounts(
         &self,
         filter: &Option<RpcLargestAccountsFilter>,
+        commitment: CommitmentLevel,
         slot: u64,
         accounts: &[RpcAccountBalance],
     ) {
         let mut largest_accounts_cache = self.largest_accounts_cache.write().unwrap();
-        largest_accounts_cache.set_largest_accounts(filter, slot, accounts)
+        largest_accounts_cache.set_largest_accounts(filter, commitment, slot, accounts)
     }
 
     #[allow(clippy::result_large_err)]
@@ -1129,8 +1131,10 @@ impl JsonRpcRequestProcessor {
     ) -> RpcCustomResult<RpcResponse<Vec<RpcAccountBalance>>> {
         let config = config.unwrap_or_default();
         let bank = self.bank(config.commitment);
+        let commitment = config.commitment.unwrap_or_default().commitment;
 
-        if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter) {
+        if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter, commitment)
+        {
             Ok(RpcResponse {
                 context: RpcResponseContext::new(slot),
                 value: accounts,
@@ -1172,7 +1176,7 @@ impl JsonRpcRequestProcessor {
                 })
                 .collect::<Vec<RpcAccountBalance>>();
 
-            self.set_cached_largest_accounts(&config.filter, bank.slot(), &accounts);
+            self.set_cached_largest_accounts(&config.filter, commitment, bank.slot(), &accounts);
             Ok(new_response(&bank, accounts))
         }
     }
@@ -5900,6 +5904,52 @@ pub mod tests {
             address: non_circulating_key.to_string(),
             lamports: non_circulating_balance_result.value,
         }));
+    }
+
+    #[test]
+    fn test_get_largest_accounts_cache_respects_commitment() {
+        let rpc = RpcHandler::start();
+
+        // Processed is at slot 1, finalized stays at slot 0
+        let bank = rpc.advance_bank_to_confirmed_slot(1);
+        rpc.block_commitment_cache
+            .write()
+            .unwrap()
+            .set_highest_super_majority_root(0);
+
+        // Make a new account one of the largest accounts, only in the processed bank
+        let new_key = solana_pubkey::new_rand();
+        bank.process_transaction(&system_transaction::transfer(
+            &rpc.mint_keypair,
+            &new_key,
+            TEST_MINT_LAMPORTS / 2,
+            bank.confirmed_last_blockhash(),
+        ))
+        .expect("process transaction");
+        let new_account_balance = RpcAccountBalance {
+            address: new_key.to_string(),
+            lamports: TEST_MINT_LAMPORTS / 2,
+        };
+
+        // Put the processed state in the cache
+        let request = create_test_request(
+            "getLargestAccounts",
+            Some(json!([{"commitment": "processed"}])),
+        );
+        let result: RpcResponse<Vec<RpcAccountBalance>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result.context.slot, 1);
+        assert!(result.value.contains(&new_account_balance));
+
+        // A finalized request must not return the processed entry
+        let request = create_test_request(
+            "getLargestAccounts",
+            Some(json!([{"commitment": "finalized"}])),
+        );
+        let result: RpcResponse<Vec<RpcAccountBalance>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result.context.slot, 0);
+        assert!(!result.value.contains(&new_account_balance));
     }
 
     #[test]
