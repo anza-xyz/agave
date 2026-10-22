@@ -11,7 +11,10 @@ use {
         feature::get_feature_is_active,
         memo::WithMemo,
         nonce::check_nonce_account,
-        spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
+        spend_utils::{
+            SpendAmount, resolve_spend_tx_and_check_account_balances,
+            resolve_spend_tx_and_check_account_balances_with_reserve,
+        },
         stake::check_current_authority,
     },
     agave_feature_set::{
@@ -60,6 +63,9 @@ use {
 pub trait VoteSubCommands {
     fn vote_subcommands(self) -> Self;
 }
+
+// All public clusters use 200ms slots.
+const VAT_TO_BURN_PER_EPOCH: u64 = 800_000_000;
 
 impl VoteSubCommands for App<'_, '_> {
     fn vote_subcommands(self) -> Self {
@@ -563,8 +569,22 @@ impl VoteSubCommands for App<'_, '_> {
                         .validator(is_amount_or_all)
                         .help(
                             "The amount to withdraw, in SOL; accepts keyword ALL, which for this \
-                             command means account balance minus rent-exempt minimum and any \
-                             rewards pending distribution to delegators",
+                             command leaves the rent-exempt minimum, any rewards pending \
+                             distribution to delegators, and 0.8 SOL for the next Validator \
+                             Admission Ticket (VAT) burn when Alpenglow is active, unless \
+                             --allow-vat-withdrawal is set",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("allow_vat_withdrawal")
+                        .long("allow-vat-withdrawal")
+                        .takes_value(false)
+                        .help(
+                            "Bypass the CLI's Validator Admission Ticket (VAT) reserve check, \
+                             allowing the requested amount to include the VAT reserve. This may \
+                             make the vote account ineligible for validator admission, or an \
+                             exact full-balance withdrawal may close it. This flag is required \
+                             with --sign-only because the balance cannot be checked offline",
                         ),
                 )
                 .arg(
@@ -1015,14 +1035,24 @@ pub fn parse_withdraw_from_vote_account(
     default_signer: &DefaultSigner,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<CliCommandInfo, CliError> {
+    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
+    let allow_vat_withdrawal = matches.is_present("allow_vat_withdrawal");
+    if sign_only && !allow_vat_withdrawal {
+        return Err(CliError::BadParameter(
+            "--allow-vat-withdrawal is required with --sign-only because the vote account balance \
+             and VAT reserve cannot be checked offline"
+                .to_string(),
+        ));
+    }
+
     let vote_account_pubkey =
         pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
     let destination_account_pubkey =
         pubkey_of_signer(matches, "destination_account_pubkey", wallet_manager)?.unwrap();
     let mut withdraw_amount = SpendAmount::new_from_matches(matches, "amount")?;
-    // As a safeguard for vote accounts for running validators, `ALL` withdraws only the amount in
-    // excess of the rent-exempt minimum. In order to close the account with this subcommand, a
-    // validator must specify the withdrawal amount precisely.
+    // As a safeguard for running validators, `ALL` retains rent and pending delegator rewards.
+    // The VAT reserve is added while resolving the amount unless the VAT withdrawal override is
+    // present.
     if withdraw_amount == SpendAmount::All {
         withdraw_amount = SpendAmount::RentExempt;
     }
@@ -1030,7 +1060,6 @@ pub fn parse_withdraw_from_vote_account(
     let (withdraw_authority, withdraw_authority_pubkey) =
         signer_of(matches, "authorized_withdrawer", wallet_manager)?;
 
-    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
     let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
     let blockhash_query = BlockhashQuery::new_from_matches(matches);
     let nonce_account = pubkey_of(matches, NONCE_ARG.name);
@@ -1053,6 +1082,7 @@ pub fn parse_withdraw_from_vote_account(
             destination_account_pubkey,
             withdraw_authority: signer_info.index_of(withdraw_authority_pubkey).unwrap(),
             withdraw_amount,
+            allow_vat_withdrawal,
             sign_only,
             dump_transaction_message,
             blockhash_query,
@@ -2102,6 +2132,7 @@ pub async fn process_withdraw_from_vote_account(
     vote_account_pubkey: &Pubkey,
     withdraw_authority: SignerIndex,
     withdraw_amount: SpendAmount,
+    allow_vat_withdrawal: bool,
     destination_account_pubkey: &Pubkey,
     sign_only: bool,
     dump_transaction_message: bool,
@@ -2112,6 +2143,15 @@ pub async fn process_withdraw_from_vote_account(
     fee_payer: SignerIndex,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
+    if sign_only && !allow_vat_withdrawal {
+        return Err(CliError::BadParameter(
+            "--allow-vat-withdrawal is required with --sign-only because the vote account balance \
+             and VAT reserve cannot be checked offline"
+                .to_string(),
+        )
+        .into());
+    }
+
     let withdraw_authority = config.signers[withdraw_authority];
     let recent_blockhash = blockhash_query
         .get_blockhash(rpc_client, config.commitment)
@@ -2123,6 +2163,26 @@ pub async fn process_withdraw_from_vote_account(
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
+    };
+    let vat_to_reserve = if allow_vat_withdrawal {
+        0
+    } else if get_feature_is_active(rpc_client, &alpenglow::id()).await? {
+        VAT_TO_BURN_PER_EPOCH
+    } else {
+        0
+    };
+    // VAT eligibility uses the rent-exempt minimum of the current vote-state layout, even for a
+    // legacy vote account whose serialized data is smaller.
+    let minimum_rent_exempt_balance_to_reserve = if vat_to_reserve > 0 {
+        rpc_client
+            .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())
+            .await?
+    } else {
+        0
+    };
+    let withdraw_amount = match withdraw_amount {
+        SpendAmount::All | SpendAmount::RentExempt => SpendAmount::RentExempt,
+        withdraw_amount => withdraw_amount,
     };
     let build_message = |lamports| {
         let ixs = vec![withdraw(
@@ -2149,30 +2209,36 @@ pub async fn process_withdraw_from_vote_account(
         }
     };
 
-    let (message, _) = resolve_spend_tx_and_check_account_balances(
-        rpc_client,
-        sign_only,
-        withdraw_amount,
-        &recent_blockhash,
-        vote_account_pubkey,
-        &fee_payer.pubkey(),
-        compute_unit_limit,
-        build_message,
-        config.commitment,
-    )
-    .await?;
+    let (message, resolved_withdraw_amount) =
+        resolve_spend_tx_and_check_account_balances_with_reserve(
+            rpc_client,
+            sign_only,
+            withdraw_amount,
+            minimum_rent_exempt_balance_to_reserve,
+            vat_to_reserve,
+            &recent_blockhash,
+            vote_account_pubkey,
+            &fee_payer.pubkey(),
+            compute_unit_limit,
+            build_message,
+            config.commitment,
+        )
+        .await?;
 
-    if !sign_only && let SpendAmount::Some(withdraw_amount) = withdraw_amount {
+    if !sign_only {
         let (vote_account, vote_state) =
             get_vote_account(rpc_client, vote_account_pubkey, config.commitment).await?;
-        let rent_exempt_minimum = rpc_client
+        let account_rent_exempt_minimum = rpc_client
             .get_minimum_balance_for_rent_exemption(vote_account.data.len())
             .await?;
+        let rent_exempt_minimum =
+            account_rent_exempt_minimum.max(minimum_rent_exempt_balance_to_reserve);
         check_remaining_balance(
             vote_account.lamports,
-            withdraw_amount,
+            resolved_withdraw_amount,
             rent_exempt_minimum,
             vote_state.pending_delegator_rewards,
+            vat_to_reserve,
         )?;
     }
 
@@ -2300,15 +2366,14 @@ fn deserialize_vote_state(
     })
 }
 
-/// Mirrors the balance constraints enforced by the vote program's `Withdraw`
-/// instruction: the balance left in the vote account must either be zero with no
-/// rewards pending distribution to delegators, or cover both the rent-exempt
-/// minimum and those pending rewards.
+/// Applies the vote program's rent and pending-reward constraints, plus the
+/// CLI's VAT reserve unless the user explicitly bypassed it.
 fn check_remaining_balance(
     current_balance: u64,
     withdraw_amount: u64,
     rent_exempt_minimum: u64,
     pending_delegator_rewards: u64,
+    vat_to_reserve: u64,
 ) -> Result<(), CliError> {
     let balance_remaining = current_balance.saturating_sub(withdraw_amount);
     if balance_remaining == 0 {
@@ -2319,26 +2384,40 @@ fn check_remaining_balance(
                 build_balance_message(pending_delegator_rewards, false, false)
             )));
         }
-        return Ok(());
+        if vat_to_reserve == 0 {
+            return Ok(());
+        }
     }
 
-    let minimum_balance = rent_exempt_minimum.saturating_add(pending_delegator_rewards);
+    let minimum_balance = rent_exempt_minimum
+        .saturating_add(pending_delegator_rewards)
+        .saturating_add(vat_to_reserve);
     if balance_remaining < minimum_balance {
-        let requirement = if pending_delegator_rewards > 0 {
-            format!(
-                "{} SOL to remain rent exempt, plus {} SOL of rewards pending distribution to \
-                 delegators",
-                build_balance_message(rent_exempt_minimum, false, false),
+        let mut requirements = vec![format!(
+            "{} SOL to remain rent exempt",
+            build_balance_message(rent_exempt_minimum, false, false)
+        )];
+        if vat_to_reserve > 0 {
+            requirements.push(format!(
+                "{} SOL for the Validator Admission Ticket (VAT)",
+                build_balance_message(vat_to_reserve, false, false)
+            ));
+        }
+        if pending_delegator_rewards > 0 {
+            requirements.push(format!(
+                "{} SOL of rewards pending distribution to delegators",
                 build_balance_message(pending_delegator_rewards, false, false)
-            )
+            ));
+        }
+        let requirement = requirements.join(", plus ");
+        let vat_override_hint = if vat_to_reserve > 0 {
+            "; use --allow-vat-withdrawal to bypass the VAT reserve check"
         } else {
-            format!(
-                "{} SOL to remain rent exempt",
-                build_balance_message(rent_exempt_minimum, false, false)
-            )
+            ""
         };
         return Err(CliError::BadParameter(format!(
-            "Withdraw amount too large. The vote account balance must be at least {requirement}"
+            "Withdraw amount too large. The vote account balance must retain at least \
+             {requirement}{vat_override_hint}"
         )));
     }
 
@@ -3307,6 +3386,7 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 0,
                     withdraw_amount: SpendAmount::Some(42_000_000_000),
+                    allow_vat_withdrawal: false,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -3336,6 +3416,38 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 0,
                     withdraw_amount: SpendAmount::RentExempt,
+                    allow_vat_withdrawal: false,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
+                signers: vec![Box::new(read_keypair_file(&default_keypair_file).unwrap())],
+            }
+        );
+
+        // Test WithdrawFromVoteAccount subcommand with the VAT withdrawal override
+        let test_withdraw_from_vote_account = test_commands.clone().get_matches_from(vec![
+            "test",
+            "withdraw-from-vote-account",
+            &keypair_file,
+            &pubkey_string,
+            "ALL",
+            "--allow-vat-withdrawal",
+        ]);
+        assert_eq!(
+            parse_command(&test_withdraw_from_vote_account, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::WithdrawFromVoteAccount {
+                    vote_account_pubkey: read_keypair_file(&keypair_file).unwrap().pubkey(),
+                    destination_account_pubkey: pubkey,
+                    withdraw_authority: 0,
+                    withdraw_amount: SpendAmount::RentExempt,
+                    allow_vat_withdrawal: true,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -3370,6 +3482,7 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 1,
                     withdraw_amount: SpendAmount::Some(42_000_000_000),
+                    allow_vat_withdrawal: false,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -3386,7 +3499,8 @@ mod tests {
             }
         );
 
-        // Test WithdrawFromVoteAccount subcommand with offline authority
+        // Offline withdrawal signing requires an explicit acknowledgement that
+        // the vote account balance and VAT reserve cannot be checked.
         let test_withdraw_from_vote_account = test_commands.clone().get_matches_from(vec![
             "test",
             "withdraw-from-vote-account",
@@ -3401,6 +3515,27 @@ mod tests {
             "--fee-payer",
             &withdraw_authority_file,
         ]);
+        assert!(
+            parse_command(&test_withdraw_from_vote_account, &default_signer, &mut None).is_err()
+        );
+
+        // Test WithdrawFromVoteAccount subcommand with offline authority and
+        // the VAT withdrawal acknowledgement.
+        let test_withdraw_from_vote_account = test_commands.clone().get_matches_from(vec![
+            "test",
+            "withdraw-from-vote-account",
+            &keypair.pubkey().to_string(),
+            &pubkey_string,
+            "42",
+            "--authorized-withdrawer",
+            &withdraw_authority_file,
+            "--blockhash",
+            &blockhash_string,
+            "--sign-only",
+            "--fee-payer",
+            &withdraw_authority_file,
+            "--allow-vat-withdrawal",
+        ]);
         assert_eq!(
             parse_command(&test_withdraw_from_vote_account, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
@@ -3409,6 +3544,7 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 0,
                     withdraw_amount: SpendAmount::Some(42_000_000_000),
+                    allow_vat_withdrawal: true,
                     sign_only: true,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Static(blockhash),
@@ -3449,6 +3585,7 @@ mod tests {
                     destination_account_pubkey: pubkey,
                     withdraw_authority: 0,
                     withdraw_amount: SpendAmount::Some(42_000_000_000),
+                    allow_vat_withdrawal: false,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Validated(Source::Cluster, blockhash),
@@ -3554,39 +3691,65 @@ mod tests {
     fn test_check_remaining_balance() {
         const RENT_EXEMPT_MINIMUM: u64 = 27_000_000;
         const PENDING_DELEGATOR_REWARDS: u64 = 5_000_000;
+        const VAT_TO_RESERVE: u64 = 500_000;
         const BALANCE: u64 = 33_000_000;
-        // Largest withdrawal leaving the rent-exempt minimum behind, and the
-        // largest also leaving the pending delegator rewards behind.
+        // Largest withdrawals leaving each applicable reserve behind.
         const MAX_WITHDRAWAL: u64 = BALANCE - RENT_EXEMPT_MINIMUM;
-        const MAX_WITHDRAWAL_WITH_PENDING_REWARDS: u64 = MAX_WITHDRAWAL - PENDING_DELEGATOR_REWARDS;
+        const MAX_WITHDRAWAL_WITH_VAT: u64 = MAX_WITHDRAWAL - VAT_TO_RESERVE;
+        const MAX_WITHDRAWAL_WITH_ALL_RESERVES: u64 =
+            MAX_WITHDRAWAL_WITH_VAT - PENDING_DELEGATOR_REWARDS;
 
         // Without pending rewards, only the rent-exempt minimum must remain.
-        check_remaining_balance(BALANCE, MAX_WITHDRAWAL, RENT_EXEMPT_MINIMUM, 0).unwrap();
-        check_remaining_balance(BALANCE, MAX_WITHDRAWAL + 1, RENT_EXEMPT_MINIMUM, 0).unwrap_err();
+        check_remaining_balance(BALANCE, MAX_WITHDRAWAL, RENT_EXEMPT_MINIMUM, 0, 0).unwrap();
+        check_remaining_balance(BALANCE, MAX_WITHDRAWAL + 1, RENT_EXEMPT_MINIMUM, 0, 0)
+            .unwrap_err();
 
-        // Pending rewards must remain in the account too.
+        // The VAT reserve is protected by default.
         check_remaining_balance(
             BALANCE,
-            MAX_WITHDRAWAL_WITH_PENDING_REWARDS,
+            MAX_WITHDRAWAL_WITH_VAT,
             RENT_EXEMPT_MINIMUM,
-            PENDING_DELEGATOR_REWARDS,
+            0,
+            VAT_TO_RESERVE,
         )
         .unwrap();
         check_remaining_balance(
             BALANCE,
-            MAX_WITHDRAWAL_WITH_PENDING_REWARDS + 1,
+            MAX_WITHDRAWAL_WITH_VAT + 1,
             RENT_EXEMPT_MINIMUM,
-            PENDING_DELEGATOR_REWARDS,
+            0,
+            VAT_TO_RESERVE,
         )
         .unwrap_err();
 
-        // The account may only be closed once no rewards are pending.
-        check_remaining_balance(BALANCE, BALANCE, RENT_EXEMPT_MINIMUM, 0).unwrap();
+        // Pending rewards must remain in the account alongside the VAT reserve.
+        check_remaining_balance(
+            BALANCE,
+            MAX_WITHDRAWAL_WITH_ALL_RESERVES,
+            RENT_EXEMPT_MINIMUM,
+            PENDING_DELEGATOR_REWARDS,
+            VAT_TO_RESERVE,
+        )
+        .unwrap();
+        check_remaining_balance(
+            BALANCE,
+            MAX_WITHDRAWAL_WITH_ALL_RESERVES + 1,
+            RENT_EXEMPT_MINIMUM,
+            PENDING_DELEGATOR_REWARDS,
+            VAT_TO_RESERVE,
+        )
+        .unwrap_err();
+
+        // Closing requires the VAT withdrawal override and no pending rewards.
+        check_remaining_balance(BALANCE, BALANCE, RENT_EXEMPT_MINIMUM, 0, VAT_TO_RESERVE)
+            .unwrap_err();
+        check_remaining_balance(BALANCE, BALANCE, RENT_EXEMPT_MINIMUM, 0, 0).unwrap();
         check_remaining_balance(
             BALANCE,
             BALANCE,
             RENT_EXEMPT_MINIMUM,
             PENDING_DELEGATOR_REWARDS,
+            0,
         )
         .unwrap_err();
     }
