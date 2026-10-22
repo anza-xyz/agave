@@ -1020,8 +1020,7 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
             return 0;
         }
 
-        // Compute each key's oldest last_update once, then remove the oldest
-        // keys. The previous loop rescanned every key per eviction.
+        // Compute each key's oldest last_update once, then remove the oldest keys.
         let mut keys: Vec<(Option<u64>, usize, ConnectionTableKey)> = self
             .table
             .iter()
@@ -2572,5 +2571,4 @@ pub mod test {
             assert!(idx >= 300, "oldest key {idx} was not pruned");
         }
     }
-
 }
