@@ -18,6 +18,33 @@ while [[ -n $1 ]]; do
 done
 
 default_cargo_audit_extra_args=(
+  # Crate:     rustls-webpki
+  # Version:   0.103.13
+  # Title:     Certificate verification may accept distrusted intermediates
+  # Date:      2026-10-20
+  # ID:        RUSTSEC-2026-0382
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0382
+  # Solution:  Upgrade to >=0.103.16, <0.104.0-alpha.1 OR >=0.104.0-alpha.8
+  --ignore RUSTSEC-2026-0382
+
+  # Crate:     webpki-root-certs
+  # Version:   1.0.2
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0383
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0383
+  # Solution:  Upgrade to >=1.0.10
+  --ignore RUSTSEC-2026-0383
+
+  # Crate:     webpki-roots
+  # Version:   0.26.8, 1.0.0
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0381
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0381
+  # Solution:  Upgrade to >=1.0.10
+  --ignore RUSTSEC-2026-0381
+
   # Crate:     ed25519-dalek
   # Version:   1.0.1
   # Title:     Double Public Key Signing Function Oracle Attack on `ed25519-dalek`
@@ -94,6 +121,24 @@ default_cargo_audit_extra_args=(
 )
 
 xtask_cargo_audit_extra_args=(
+  # Crate:     rustls-webpki
+  # Version:   0.103.13
+  # Title:     Certificate verification may accept distrusted intermediates
+  # Date:      2026-10-20
+  # ID:        RUSTSEC-2026-0382
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0382
+  # Solution:  Upgrade to >=0.103.16, <0.104.0-alpha.1 OR >=0.104.0-alpha.8
+  --ignore RUSTSEC-2026-0382
+
+  # Crate:     webpki-roots
+  # Version:   1.0.7
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0381
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0381
+  # Solution:  Upgrade to >=1.0.10
+  --ignore RUSTSEC-2026-0381
+
   # The rustls advisories documented above also affect xtask.
   --ignore RUSTSEC-2026-0346
   --ignore RUSTSEC-2026-0347
