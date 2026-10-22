@@ -5416,9 +5416,7 @@ pub mod tests {
                     transaction_hash_verify_thread_pool(),
                     |unsanitized: UnsanitizedTransactionView<Bytes>| {
                         let sanitized = unsanitized
-                            .sanitize(
-                                &solana_runtime_transaction::sanitize_config::sanitize_config(),
-                            )
+                            .sanitize()
                             .map_err(|_| TransactionError::SanitizeFailure)?;
                         let statically_loaded = RuntimeTransaction::<
                             SanitizedTransactionView<Bytes>,

@@ -1514,9 +1514,7 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::{AddressLookupTableAccount, Message, VersionedMessage, v0},
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signature::Signature,
         solana_svm_transaction::{
             svm_message::SVMStaticMessage, svm_transaction::SVMStaticTransaction,
@@ -1618,8 +1616,7 @@ mod tests {
             message: VersionedMessage::V0(message),
         };
         let data: Bytes = Bytes::from(wincode::serialize(&versioned_transaction).unwrap());
-        let sanitized_view =
-            SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()).unwrap();
+        let sanitized_view = SanitizedTransactionView::try_new_sanitized(data).unwrap();
         let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             sanitized_view,
             MessageHash::Compute,

@@ -39,7 +39,6 @@ use {
         bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
     },
-    solana_runtime_transaction::sanitize_config::sanitize_config,
     solana_sdk_ids::sysvar,
     solana_streamer::evicting_sender::EvictingSender,
     solana_svm::conformance::fd_hash::fd_hash_or_zero,
@@ -225,7 +224,6 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         }
         // Mirror FD's fd_sched_parse_txn: reject non-sanitizable, duplicate-account, or over-MTU txns.
         // The MTU depends on the transaction version, as in `Bank::verify_transaction`.
-        let sanitize_config = sanitize_config();
         for tx in entries.iter().flat_map(|entry| &entry.transactions) {
             let max_transaction_size = match tx.version() {
                 TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
@@ -237,7 +235,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
                 MAX_TX_ACCOUNT_LOCKS,
             )
             .is_err();
-            if (*tx).clone().sanitize(&sanitize_config).is_err() || bad_locks || oversized {
+            if (*tx).clone().sanitize().is_err() || bad_locks || oversized {
                 effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
             }
         }
