@@ -134,6 +134,26 @@ default_cargo_audit_extra_args=(
   # Agave Ok:  rustls uses ring's classical key exchanges; post-quantum groups are not enabled.
   --ignore RUSTSEC-2026-0349
 
+  # Crate:     webpki-roots
+  # Version:   <1.0.10
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0381
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0381
+  # Solution:  Upgrade to >=1.0.10
+  # Agave Ok:  roots are only used by rustls, whose rustls-webpki >=0.103.16 rejects these paths
+  --ignore RUSTSEC-2026-0381
+
+  # Crate:     webpki-root-certs
+  # Version:   <1.0.10
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0383
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0383
+  # Solution:  Upgrade to >=1.0.10
+  # Agave Ok:  only a wasm32 dependency of rustls-platform-verifier; not built for Agave
+  --ignore RUSTSEC-2026-0383
+
   # Crate:     tonic
   # Version:   0.9.2
   # Title:     Remotely exploitable Denial of Service in Tonic
@@ -259,6 +279,16 @@ xtask_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=0.23.46
   # Agave Ok:  rustls uses ring's classical key exchanges; post-quantum groups are not enabled.
   --ignore RUSTSEC-2026-0349
+
+  # Crate:     webpki-roots
+  # Version:   <1.0.10
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0381
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0381
+  # Solution:  Upgrade to >=1.0.10
+  # Agave Ok:  roots are only used by rustls, whose rustls-webpki >=0.103.16 rejects these paths
+  --ignore RUSTSEC-2026-0381
 )
 
 lock_files="$(git ls-files ':**Cargo.lock')"
