@@ -245,10 +245,8 @@ impl SwQos {
         stats: Arc<StreamerStats>,
     ) {
         if unstaked_connection_table.total_size >= max_unstaked_connections {
-            // Prune the connection table down to 90% capacity
-            const PRUNE_TABLE_RATIO: f64 = 0.90;
-            let max_connections = (PRUNE_TABLE_RATIO * (max_unstaked_connections as f64)) as usize;
-            let num_pruned = unstaked_connection_table.prune_oldest(max_connections);
+            // Evict one random entry per admission; capacity increases are separate.
+            let num_pruned = unstaked_connection_table.prune_random_one();
             stats
                 .num_evictions_unstaked
                 .fetch_add(num_pruned, Ordering::Relaxed);
