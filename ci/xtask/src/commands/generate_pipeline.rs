@@ -409,7 +409,7 @@ fn default_sanity_step() -> buildkite::Step {
 fn default_shellcheck_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("shellcheck"),
-        command: String::from("ci/shellcheck.sh"),
+        command: String::from("ci/docker-run-default-image.sh ci/shellcheck.sh"),
         agents: Some(queue_agents()),
         timeout_in_minutes: Some(5),
         ..Default::default()
