@@ -17,7 +17,6 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
-    solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{
             Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, handle_duplicate_shred,
@@ -110,7 +109,6 @@ impl WindowServiceMetrics {
 }
 
 fn run_check_duplicate(
-    cluster_info: &ClusterInfo,
     blockstore: &Blockstore,
     shred_receiver: &Receiver<PossibleDuplicateShred>,
     duplicate_slots_sender: &DuplicateSlotSender,
@@ -145,16 +143,8 @@ fn run_check_duplicate(
             blockstore.set_dead_slot_if_duplicate_and_not_full(shred_slot)?;
         }
 
-        let Some((shred1, shred2)) = duplicate else {
+        if duplicate.is_none() {
             return Ok(());
-        };
-
-        if migration_status.should_respond_to_ancestor_hashes_requests(shred_slot) {
-            // In alpenglow we store the duplicate block proofs in blockstore for the purposes of slashing,
-            // however we do not need to propagate the duplicate proof through gossip.
-            // We still propagate during the mixed migration epoch, to account for other nodes that are stuck
-            // and require a duplicate proof to proceed
-            cluster_info.push_duplicate_shred(&shred1, &shred2)?;
         }
 
         if !migration_status.is_alpenglow_enabled() {
@@ -278,7 +268,6 @@ impl WindowService {
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         repair_xdp_sender: Option<PinnedXdpSender>,
     ) -> WindowService {
-        let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
 
         let WindowServiceChannels {
@@ -314,7 +303,6 @@ impl WindowService {
         let (duplicate_sender, duplicate_receiver) = unbounded();
 
         let t_check_duplicate = Self::start_check_duplicate_thread(
-            cluster_info,
             exit.clone(),
             blockstore.clone(),
             duplicate_receiver,
@@ -343,7 +331,6 @@ impl WindowService {
     }
 
     fn start_check_duplicate_thread(
-        cluster_info: Arc<ClusterInfo>,
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         duplicate_receiver: Receiver<PossibleDuplicateShred>,
@@ -355,7 +342,6 @@ impl WindowService {
             .spawn(move || {
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(e) = run_check_duplicate(
-                        &cluster_info,
                         &blockstore,
                         &duplicate_receiver,
                         &duplicate_slots_sender,
@@ -475,7 +461,6 @@ mod test {
         crossbeam_channel::bounded,
         rand::Rng,
         solana_entry::entry::{Entry, create_ticks},
-        solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -483,7 +468,6 @@ mod test {
             get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, Shredder},
         },
-        solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -491,8 +475,6 @@ mod test {
                 bootstrap_validator_stake_lamports, create_genesis_config_with_tower_leader,
             },
         },
-        solana_signer::Signer,
-        solana_time_utils::timestamp,
     };
 
     fn local_entries_to_shred(
@@ -557,21 +539,7 @@ mod test {
             .send(PossibleDuplicateShred::Exists(duplicate_shred.clone()))
             .unwrap();
         assert!(!blockstore.has_duplicate_shreds_in_slot(duplicate_shred_slot));
-        let keypair = Keypair::new();
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
-        let cluster_info = ClusterInfo::new(
-            contact_info,
-            Arc::new(keypair),
-            SocketAddrSpace::Unspecified,
-        );
-        run_check_duplicate(
-            &cluster_info,
-            &blockstore,
-            &receiver,
-            &duplicate_slot_sender,
-            &bank_forks,
-        )
-        .unwrap();
+        run_check_duplicate(&blockstore, &receiver, &duplicate_slot_sender, &bank_forks).unwrap();
 
         // Make sure the correct duplicate proof was stored
         let duplicate_proof = blockstore.get_duplicate_slot(duplicate_shred_slot).unwrap();
@@ -592,13 +560,6 @@ mod test {
         let (duplicate_shred_sender, duplicate_shred_receiver) = bounded(1024);
         let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
-        let keypair = Keypair::new();
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
-        let cluster_info = Arc::new(ClusterInfo::new(
-            contact_info,
-            Arc::new(keypair),
-            SocketAddrSpace::Unspecified,
-        ));
         let genesis_config = create_genesis_config_with_tower_leader(
             10_000,
             &Pubkey::new_unique(),
@@ -609,7 +570,6 @@ mod test {
 
         // Start duplicate thread receiving and inserting duplicates
         let t_check_duplicate = WindowService::start_check_duplicate_thread(
-            cluster_info,
             exit.clone(),
             blockstore.clone(),
             duplicate_shred_receiver,

@@ -24,7 +24,6 @@ stable-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-bloom/stable-abi",
     "solana-hash/stable-abi",
-    "solana-ledger/stable-abi",
     "solana-perf/stable-abi",
     "solana-pubkey/stable-abi",
     "solana-signature/stable-abi",
@@ -64,13 +63,11 @@ rand_chacha = { workspace = true }
 rayon = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clock = { workspace = true }
-solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
@@ -102,12 +99,10 @@ criterion = { workspace = true }
 num_cpus = { workspace = true }
 serial_test = { workspace = true }
 solana-gossip = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
-solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true }

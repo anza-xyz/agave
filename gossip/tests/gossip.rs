@@ -309,12 +309,8 @@ pub fn cluster_info_scale() {
     let bank0 = Bank::new_for_tests(&genesis_config_info.genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
     let root_bank = bank_forks.read().unwrap().root_bank();
-    let slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
     let epoch_specs: Box<dyn EpochSpecs> = Box::new(TestEpochSpecs {
-        slots_in_epoch,
         staked_nodes: root_bank.current_epoch_staked_nodes(),
-        enforce_correct_proof_size: true,
-        root_slot: root_bank.slot(),
     });
 
     let nodes: Vec<_> = vote_keypairs

@@ -1,9 +1,7 @@
 use {
-    agave_feature_set as feature_set,
-    solana_clock::{Epoch, Slot},
+    solana_clock::Epoch,
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::epoch_specs::EpochSpecs as EpochSpecsTrait,
-    solana_ledger::shred::filter::check_feature_activation_from_bank,
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     std::{
@@ -17,7 +15,6 @@ struct EpochSpecsCache {
     epoch: Epoch,
     epoch_schedule: EpochSchedule,
     current_epoch_staked_nodes: Arc<HashMap<Pubkey, u64>>,
-    slots_in_epoch: u64,
 }
 
 #[derive(Clone)]
@@ -32,27 +29,8 @@ impl EpochSpecsTrait for EpochSpecs {
         Arc::clone(&cache.current_epoch_staked_nodes)
     }
 
-    fn epoch_slots(&mut self) -> u64 {
-        let cache = &mut self.cache;
-        Self::maybe_refresh_cache(cache, &self.sharable_banks);
-        cache.slots_in_epoch
-    }
-
-    fn should_enforce_correct_proof_size(&self, shred_slot: Slot) -> bool {
-        // This can not be cached, as answer depends on shred's slot.
-        check_feature_activation_from_bank(
-            &feature_set::enforce_correct_proof_size::id(),
-            shred_slot,
-            &self.sharable_banks.root(),
-        )
-    }
-
     fn clone_box(&self) -> Box<dyn EpochSpecsTrait> {
         Box::new(self.clone())
-    }
-
-    fn root_slot(&self) -> Slot {
-        self.sharable_banks.root().slot()
     }
 }
 
@@ -69,7 +47,6 @@ impl EpochSpecs {
         cache.epoch = root_bank.epoch();
         cache.epoch_schedule = root_bank.epoch_schedule().clone();
         cache.current_epoch_staked_nodes = root_bank.current_epoch_staked_nodes();
-        cache.slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
     }
 }
 impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
@@ -86,7 +63,6 @@ impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
                 epoch: root_bank.epoch(),
                 epoch_schedule: root_bank.epoch_schedule().clone(),
                 current_epoch_staked_nodes: root_bank.current_epoch_staked_nodes(),
-                slots_in_epoch: root_bank.get_slots_in_epoch(root_bank.epoch()),
             },
         }
     }
@@ -112,10 +88,6 @@ mod tests {
         let cache = &epoch_specs.cache;
         assert_eq!(cache.epoch, root_bank.epoch());
         assert_eq!(cache.epoch_schedule, *root_bank.epoch_schedule());
-        assert_eq!(
-            cache.slots_in_epoch,
-            root_bank.get_slots_in_epoch(root_bank.epoch())
-        );
     }
 
     #[test]
