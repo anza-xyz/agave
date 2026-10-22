@@ -7,6 +7,7 @@ use {
         netlink::{netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes},
         route::RouteTable,
     },
+    common::NudState,
     libc::{AF_INET, NUD_PERMANENT},
     std::net::{IpAddr, Ipv4Addr},
 };
@@ -18,7 +19,12 @@ fn netlink_snapshot_reads_the_prepared_namespace() {
     let links = common::setup_veth_pair_with_tx_queue_count(1);
 
     let routed_prefix = "203.0.113.0/24";
-    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
     common::add_route(routed_prefix, links.right_ip, common::LEFT_IFACE);
 
     let interfaces = netlink_get_interfaces(AF_INET as u8).expect("read interfaces from netlink");
