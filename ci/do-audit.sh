@@ -91,14 +91,35 @@ default_cargo_audit_extra_args=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0349
   # Solution:  Upgrade to >=0.23.46
   --ignore RUSTSEC-2026-0349
+
+  # Crate:     webpki-roots
+  # Version:   <1.0.10
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0381
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0381
+  # Solution:  Upgrade to >=1.0.10
+  # Agave Ok:  roots are only used by rustls, whose rustls-webpki >=0.103.16 rejects these paths
+  --ignore RUSTSEC-2026-0381
+
+  # Crate:     webpki-root-certs
+  # Version:   <1.0.10
+  # Title:     Bundled root certificates allow trust in distrusted emSign intermediates
+  # Date:      2026-10-19
+  # ID:        RUSTSEC-2026-0383
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0383
+  # Solution:  Upgrade to >=1.0.10
+  # Agave Ok:  only a wasm32 dependency of rustls-platform-verifier; not built for Agave
+  --ignore RUSTSEC-2026-0383
 )
 
 xtask_cargo_audit_extra_args=(
-  # The rustls advisories documented above also affect xtask.
+  # The rustls and webpki-roots advisories documented above also affect xtask.
   --ignore RUSTSEC-2026-0346
   --ignore RUSTSEC-2026-0347
   --ignore RUSTSEC-2026-0348
   --ignore RUSTSEC-2026-0349
+  --ignore RUSTSEC-2026-0381
 
   # Crate:     rsa
   # Version:   0.9.10
