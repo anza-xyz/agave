@@ -2133,7 +2133,12 @@ impl Bank {
         let effective_epoch_of_deployments = self
             .epoch_schedule()
             .get_epoch(self.slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET));
-        if self.epoch() != effective_epoch_of_deployments {
+        if self.epoch() != effective_epoch_of_deployments
+            && !self
+                .feature_set
+                .snapshot()
+                .single_program_runtime_environment
+        {
             self.set_deployment_env_override(&upcoming_feature_set, effective_epoch_of_deployments);
         }
 

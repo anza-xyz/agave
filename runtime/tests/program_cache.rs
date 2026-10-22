@@ -14,6 +14,7 @@ use {
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, test_utils::goto_end_of_slot},
+        genesis_utils::activate_feature,
         loader_utils::{create_buffer_with_elf, create_program_with_elf},
         program_cache_utils::{EntryType, ExpectedEntry, assert_cache_contents, current_env},
     },
@@ -22,6 +23,7 @@ use {
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{fs::File, io::Read, sync::Arc},
+    test_case::test_case,
 };
 
 #[test]
@@ -219,8 +221,11 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
     );
 }
 
-#[test]
-fn test_feature_activation_loaded_programs_epoch_transition() {
+#[test_case(false; "legacy")]
+#[test_case(true; "SIMD-0688")]
+fn test_feature_activation_loaded_programs_epoch_transition(
+    single_program_runtime_environment: bool,
+) {
     agave_logger::setup();
 
     // Bank Setup
@@ -232,6 +237,12 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
     genesis_config
         .accounts
         .remove(&feature_set::reenable_sbpf_v0_execution::id());
+    if single_program_runtime_environment {
+        activate_feature(
+            &mut genesis_config,
+            feature_set::single_program_runtime_environment::id(),
+        );
+    }
     let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // Program Setup
@@ -258,7 +269,7 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
         bank_forks.as_ref(),
         root_bank.clone(),
         SlotLeader::default(),
-        root_bank.slot() + 1,
+        root_bank.slot().saturating_add(1),
     );
 
     // Load the program with the old environment.
@@ -294,14 +305,18 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
     assert!(*upcoming_env == *ebpp_env);
     assert_eq!(upcoming_env, ebpp_env); // `Arc::ptr_eq`
 
-    // Here we see our guard kick in, for the final slot only.
-    let guard_env = bank
+    let deployment_env_override = bank
         .get_transaction_processor()
         .deployment_env_override()
-        .unwrap()
-        .clone();
-    assert!(*guard_env == *ebpp_env);
-    assert_eq!(guard_env, ebpp_env);
+        .cloned();
+    if single_program_runtime_environment {
+        assert!(deployment_env_override.is_none());
+    } else {
+        // Here we see our guard kick in, for the final slot only.
+        let guard_env = deployment_env_override.unwrap();
+        assert!(*guard_env == *ebpp_env);
+        assert_eq!(guard_env, ebpp_env);
+    }
 
     // Advance the bank to cross the epoch boundary and activate the feature.
     goto_end_of_slot(bank.clone());
@@ -323,7 +338,7 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
             .deployment_env_override()
             .is_none()
     );
-    assert!(*bank.get_transaction_processor().program_runtime_environment == *guard_env);
+    assert!(*bank.get_transaction_processor().program_runtime_environment == *upcoming_env);
 
     // Load the program with the new environment.
     let transaction = Transaction::new(&signers, message.clone(), bank.last_blockhash());
@@ -359,7 +374,7 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
         bank_forks.as_ref(),
         bank.clone(),
         SlotLeader::default(),
-        bank.slot() + 1,
+        bank.slot().saturating_add(1),
     );
     let transaction = Transaction::new(&signers, message, bank.last_blockhash());
     assert!(bank.process_transaction(&transaction).is_ok());
@@ -753,17 +768,14 @@ fn test_feature_activation_loaded_programs_fork_without_activation() {
     }
 }
 
-#[test]
-fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
-    // TODO: This test is only required while we continue to maintain two
-    // program runtime environments at the end of a feature activation window.
-    // Once these are consolidated, programs in the final slot of the epoch
-    // will be verified against the *current* slot's environment, and we'll
-    // have no need for this test anymore.
-    //
-    // This test asserts that in the final slot of an epoch where a program
-    // runtime feature was activated, deployments are verified against the
-    // *upcoming* feature set.
+#[test_case(false; "legacy")]
+#[test_case(true; "SIMD-0688")]
+fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation(
+    single_program_runtime_environment: bool,
+) {
+    // In the final slot of an epoch where a program runtime feature was
+    // activated, deployments are verified against the *upcoming* feature set,
+    // or against the *current* one under SIMD-0688.
     let (mut genesis_config, mint_keypair) =
         solana_genesis_config::create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     for feature_id in [
@@ -772,6 +784,12 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
         feature_set::disable_sbpf_v0_v1_v2_deployment::id(),
     ] {
         genesis_config.accounts.remove(&feature_id);
+    }
+    if single_program_runtime_environment {
+        activate_feature(
+            &mut genesis_config,
+            feature_set::single_program_runtime_environment::id(),
+        );
     }
     let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
@@ -794,11 +812,11 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
         bank_forks.as_ref(),
         root_bank.clone(),
         SlotLeader::default(),
-        root_bank.slot() + 1,
+        root_bank.slot().saturating_add(1),
     );
     let instruction = Instruction::new_with_bytes(program_id, &[], Vec::new());
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let transaction = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
     assert_eq!(bank.process_transaction(&transaction), Ok(()));
 
     let upgrade_with_sbpf_v0_elf = |bank: &Arc<Bank>| {
@@ -871,25 +889,32 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
         last_slot_in_epoch,
     );
 
-    // Here we see our guard kick in, for the final slot only.
-    let deployment_env = bank
+    let deployment_env_override = bank
         .get_transaction_processor()
         .deployment_env_override()
-        .unwrap()
-        .clone();
-    assert!(*deployment_env != *current_env);
-    assert!(*deployment_env == *ebpp_env);
-    assert_eq!(deployment_env, ebpp_env);
+        .cloned();
+    if single_program_runtime_environment {
+        // No guard. Deployments in the final slot are verified against the
+        // current environment, which still permits SBPFv0.
+        assert!(deployment_env_override.is_none());
+        assert_eq!(upgrade_with_sbpf_v0_elf(&bank), Ok(()));
+    } else {
+        // Here we see our guard kick in, for the final slot only.
+        let deployment_env = deployment_env_override.unwrap();
+        assert!(*deployment_env != *current_env);
+        assert!(*deployment_env == *ebpp_env);
+        assert_eq!(deployment_env, ebpp_env);
 
-    // New deployments in the final slot are always verified against the
-    // upcoming environment. Therefore, deployment of SBPFv0 should be blocked.
-    assert_eq!(
-        upgrade_with_sbpf_v0_elf(&bank),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::InvalidAccountData
-        ))
-    );
+        // New deployments in the final slot are verified against the upcoming
+        // environment. Therefore, deployment of SBPFv0 should be blocked.
+        assert_eq!(
+            upgrade_with_sbpf_v0_elf(&bank),
+            Err(TransactionError::InstructionError(
+                0,
+                InstructionError::InvalidAccountData
+            ))
+        );
+    }
 
     // Cross the epoch boundary; same deal.
     goto_end_of_slot(bank.clone());
@@ -897,9 +922,20 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
         bank_forks.as_ref(),
         bank.clone(),
         SlotLeader::default(),
-        bank.slot() + 1,
+        bank.slot().saturating_add(1),
     );
     assert_eq!(bank.epoch(), 1);
+
+    // Regardless of which environment verified the final slot's deployment,
+    // the program can't execute under the new environment.
+    let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    assert_eq!(
+        bank.process_transaction(&transaction),
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::UnsupportedProgramId
+        ))
+    );
 
     // The guard is lifted now that the epoch has rolled over.
     assert!(
@@ -907,7 +943,7 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation() {
             .deployment_env_override()
             .is_none()
     );
-    assert!(*bank.get_transaction_processor().program_runtime_environment == *deployment_env);
+    assert!(*bank.get_transaction_processor().program_runtime_environment == *ebpp_env);
 
     assert_eq!(
         upgrade_with_sbpf_v0_elf(&bank),

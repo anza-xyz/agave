@@ -79,6 +79,7 @@ pub struct FeatureSnapshot {
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
+    pub single_program_runtime_environment: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -179,6 +180,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &early_instruction_trace_overflow_detection::ID,
             ),
             unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
+            single_program_runtime_environment: is_active(&single_program_runtime_environment::ID),
         }
     }
 }
@@ -1545,6 +1547,10 @@ pub mod unbound_loader_v3_instruction_data {
     solana_pubkey::declare_id!("UPbPFtaUVoKZuMEJsDxLfvCNuKavoVapghnzepr1e26");
 }
 
+pub mod single_program_runtime_environment {
+    solana_pubkey::declare_id!("Hh4mTuC2AVFALH78RjiL8Rih1CcLxXpm4ehXCJNsUei1");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2646,6 +2652,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             unbound_loader_v3_instruction_data::id(),
             "SIMD-0648: Unbound LoaderV3 Instruction Data",
+        ),
+        (
+            single_program_runtime_environment::id(),
+            "SIMD-0688: Single Program Runtime Environment",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
