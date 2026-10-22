@@ -581,10 +581,12 @@ fn default_localnet_step() -> buildkite::Step {
 }
 
 fn default_xdp_test_step() -> buildkite::Step {
+    let mut agents = queue_agents();
+    agents.insert(String::from("kernel"), String::from("host"));
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("xdp-test"),
         command: String::from("ci/docker-run-default-image.sh ci/test-xdp.sh"),
-        agents: Some(queue_agents()),
+        agents: Some(agents),
         timeout_in_minutes: Some(25),
         env: Some(HashMap::from([
             (
