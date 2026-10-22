@@ -663,7 +663,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .global(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]. Used for cloning feature sets",
                 ),
         )
