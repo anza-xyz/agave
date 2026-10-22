@@ -100,15 +100,6 @@ pub(crate) fn args(default_args: &DefaultArgs) -> Vec<Arg<'_, '_>> {
             .validator(is_parsable::<u32>)
             .hidden(hidden_unless_forced())
             .help("Controls the rate of the clients connections per IpAddr per minute."),
-        Arg::with_name("tpu_max_connections_per_peer")
-            .long("tpu-max-connections-per-peer")
-            .takes_value(true)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help(
-                "Controls the max concurrent connections per IpAddr or staked identity.Overrides \
-                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
-            ),
         Arg::with_name("tpu_max_connections_per_unstaked_peer")
             .long("tpu-max-connections-per-unstaked-peer")
             .takes_value(true)

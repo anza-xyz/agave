@@ -581,7 +581,7 @@ tarpc = "0.38.0"
 tempfile = "3.27.0"
 test-case = "3.4.0"
 thiserror = "2.0.21"
-tokio = "1.53.2"
+tokio = "1.53.3"
 tokio-serde = "0.9.0"
 tokio-stream = "0.1.19"
 tokio-tungstenite = "0.28.0"
@@ -593,7 +593,7 @@ tracing = "0.1"
 trees = "0.4.2"
 trezor-client = { version = "0.1.6", default-features = false, features = ["solana"] }
 tungstenite = "0.28.0"
-ur-parse-lib = { version = "1.0.8", default-features = false, features = ["std"] }
+ur-parse-lib = { version = "1.0.9", default-features = false, features = ["std"] }
 ur-registry = { version = "1.0.8", default-features = false, features = ["std"] }
 uriparse = "0.6.4"
 url = "2.5.8"
