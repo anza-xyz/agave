@@ -241,6 +241,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
                         --tpu-max-connections-per-staked-peer, but will be removed in a future \
                         release. Set both of those instead.",
     );
+    add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("tpu_vote_transaction_receive_threads")
+            .long("tpu-vote-transaction-receive-threads")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .help("No-op; the TPU vote QUIC server has been removed"),
+        usage_warning: "Votes are no longer received over QUIC on the TPU vote port.",
+    );
     res
 }
 
