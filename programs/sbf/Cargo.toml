@@ -201,7 +201,7 @@ solana-instruction = { workspace = true }
 solana-instruction-error = "3.1.0"
 solana-keypair = "4.0.0"
 solana-loader-v3-interface = { version = "9.0.0", features = ["wincode"] }
-solana-message = "5.1.0"
+solana-message = "6.0.0"
 solana-program-binaries = { workspace = true, features = ["agave-unstable-api"] }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = "4.2.0"

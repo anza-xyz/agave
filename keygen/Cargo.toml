@@ -42,7 +42,7 @@ solana-cli-config = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-instruction = { version = "=4.0.0", features = ["bincode"] }
 solana-keypair = "=4.0.0"
-solana-message = { version = "=5.1.0", features = ["wincode"] }
+solana-message = { version = "=6.0.0", features = ["wincode"] }
 solana-pubkey = { version = "=4.4.0", default-features = false }
 solana-remote-wallet = { workspace = true, features = ["keystone"] }
 solana-seed-derivable = { workspace = true }
