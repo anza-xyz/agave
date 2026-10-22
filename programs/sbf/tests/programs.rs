@@ -36,6 +36,7 @@ use {
     },
     solana_message::SanitizedMessage,
     solana_runtime::{
+        bank::SlotLeader,
         bank_forks::BankForks,
         genesis_utils::{
             bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
@@ -69,7 +70,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        bank::{Bank, SlotLeader, SlotLeaders},
+        bank::{Bank, SlotLeaders},
         bank_client::BankClient,
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         loader_utils::create_program,
