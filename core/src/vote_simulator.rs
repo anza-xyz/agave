@@ -2,7 +2,6 @@
 use {
     crate::{
         cluster_info_vote_listener::VoteTracker,
-        cluster_slots_service::cluster_slots::ClusterSlots,
         consensus::{
             Tower,
             fork_choice::{SelectVoteAndResetForkResult, select_vote_and_reset_forks},
@@ -203,7 +202,6 @@ impl VoteSimulator {
             tower,
             &mut self.progress,
             &VoteTracker::default(),
-            &ClusterSlots::default_for_tests(),
             &self.bank_forks,
             &mut self.tbft_structs.heaviest_subtree_fork_choice,
             &mut self.latest_validator_votes_for_frozen_banks,

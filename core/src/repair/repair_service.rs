@@ -2,19 +2,16 @@
 //! regularly finds missing shreds in the ledger and sends repair requests for those shreds
 use {
     super::standard_repair_handler::StandardRepairHandler,
-    crate::{
-        cluster_slots_service::cluster_slots::ClusterSlots,
-        repair::{
-            ancestor_hashes_service::{
-                AncestorHashesChannels, AncestorHashesReplayUpdateReceiver, AncestorHashesService,
-            },
-            duplicate_repair_status::AncestorDuplicateSlotToRepair,
-            outstanding_requests::OutstandingRequests,
-            repair_weight::RepairWeight,
-            serve_repair::{
-                REPAIR_PEERS_CACHE_CAPACITY, RepairPeers, RepairProtocol, RepairRequestHeader,
-                ServeRepair, ShredRepairType,
-            },
+    crate::repair::{
+        ancestor_hashes_service::{
+            AncestorHashesChannels, AncestorHashesReplayUpdateReceiver, AncestorHashesService,
+        },
+        duplicate_repair_status::AncestorDuplicateSlotToRepair,
+        outstanding_requests::OutstandingRequests,
+        repair_weight::RepairWeight,
+        serve_repair::{
+            REPAIR_PEERS_CACHE_CAPACITY, RepairPeers, RepairProtocol, RepairRequestHeader,
+            ServeRepair, ShredRepairType,
         },
     },
     agave_bls_sigverify::pubkeys::{VerifiedVotorSlotsMessage, VoteAccountPubkeys},
@@ -541,7 +538,6 @@ pub const MAX_CLOSEST_COMPLETION_REPAIRS: usize = 100;
 pub struct RepairInfo {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub cluster_info: Arc<ClusterInfo>,
-    pub cluster_slots: Arc<ClusterSlots>,
     pub epoch_schedule: EpochSchedule,
     pub ancestor_duplicate_slots_sender: AncestorDuplicateSlotsSender,
     // Validators from which repairs are requested
@@ -1313,7 +1309,6 @@ impl RepairService {
     #[cfg(test)]
     fn generate_and_send_duplicate_repairs(
         duplicate_slot_repair_statuses: &mut HashMap<Slot, DuplicateSlotRepairStatus>,
-        cluster_slots: &ClusterSlots,
         blockstore: &Blockstore,
         serve_repair: &ServeRepair,
         repair_stats: &mut RepairStats,
@@ -1326,7 +1321,6 @@ impl RepairService {
             Self::update_duplicate_slot_repair_addr(
                 *slot,
                 status,
-                cluster_slots,
                 serve_repair,
                 repair_validators,
                 &identity_keypair.pubkey(),
@@ -1380,7 +1374,6 @@ impl RepairService {
     fn update_duplicate_slot_repair_addr(
         slot: Slot,
         status: &mut DuplicateSlotRepairStatus,
-        cluster_slots: &ClusterSlots,
         serve_repair: &ServeRepair,
         repair_validators: &Option<HashSet<Pubkey>>,
         my_pubkey: &Pubkey,
@@ -1390,12 +1383,7 @@ impl RepairService {
             || now.saturating_sub(status.start_ts) >= MAX_DUPLICATE_WAIT_MS as u64
         {
             status.repair_pubkey_and_addr = serve_repair
-                .repair_request_duplicate_compute_best_peer(
-                    slot,
-                    cluster_slots,
-                    repair_validators,
-                    my_pubkey,
-                );
+                .repair_request_duplicate_compute_best_peer(slot, repair_validators, my_pubkey);
             status.start_ts = timestamp();
         }
     }
@@ -1405,7 +1393,6 @@ impl RepairService {
     fn initiate_repair_for_duplicate_slot(
         slot: Slot,
         duplicate_slot_repair_statuses: &mut HashMap<Slot, DuplicateSlotRepairStatus>,
-        cluster_slots: &ClusterSlots,
         serve_repair: &ServeRepair,
         repair_validators: &Option<HashSet<Pubkey>>,
         my_pubkey: &Pubkey,
@@ -1418,7 +1405,6 @@ impl RepairService {
         // validator to avoid corruption
         let repair_pubkey_and_addr = serve_repair.repair_request_duplicate_compute_best_peer(
             slot,
-            cluster_slots,
             repair_validators,
             my_pubkey,
         );
@@ -1450,7 +1436,7 @@ mod test {
     use {
         super::*,
         crate::repair::serve_repair,
-        solana_gossip::{contact_info::ContactInfo, node::Node},
+        solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{
@@ -2135,7 +2121,6 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let cluster_slots = ClusterSlots::default_for_tests();
         let cluster_info = Arc::new(new_test_cluster_info());
         let identity_keypair = cluster_info.keypair();
         let serve_repair = {
@@ -2170,7 +2155,6 @@ mod test {
         // `u64::MAX` has not expired
         RepairService::generate_and_send_duplicate_repairs(
             &mut duplicate_slot_repair_statuses,
-            &cluster_slots,
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
@@ -2198,7 +2182,6 @@ mod test {
         // Slot is not yet full, should not get filtered from `duplicate_slot_repair_statuses`
         RepairService::generate_and_send_duplicate_repairs(
             &mut duplicate_slot_repair_statuses,
-            &cluster_slots,
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
@@ -2217,7 +2200,6 @@ mod test {
             .unwrap();
         RepairService::generate_and_send_duplicate_repairs(
             &mut duplicate_slot_repair_statuses,
-            &cluster_slots,
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
@@ -2231,7 +2213,11 @@ mod test {
 
     #[test]
     pub fn test_update_duplicate_slot_repair_addr() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let GenesisConfigInfo {
+            genesis_config,
+            validator_pubkey,
+            ..
+        } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let dummy_addr = Some((
@@ -2254,15 +2240,11 @@ mod test {
                 bank_forks_r.migration_status(),
             )
         };
-        let valid_repair_peer = Node::new_localhost().info;
+        let valid_repair_peer = ContactInfo::new_localhost(&validator_pubkey, timestamp());
         let my_pubkey = cluster_info.id();
 
-        // Signal that this peer has confirmed the dead slot, and is thus
-        // a valid target for repair
+        // Add a staked peer as a repair target.
         let dead_slot = 9;
-        let cluster_slots = ClusterSlots::default_for_tests();
-        cluster_slots.fake_epoch_info_for_tests(HashMap::from([(*valid_repair_peer.pubkey(), 42)]));
-        cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey());
         cluster_info.insert_info(valid_repair_peer);
 
         // Not enough time has passed, should not update the
@@ -2275,7 +2257,6 @@ mod test {
         RepairService::update_duplicate_slot_repair_addr(
             dead_slot,
             &mut duplicate_status,
-            &cluster_slots,
             &serve_repair,
             &None,
             &my_pubkey,
@@ -2291,7 +2272,6 @@ mod test {
         RepairService::update_duplicate_slot_repair_addr(
             dead_slot,
             &mut duplicate_status,
-            &cluster_slots,
             &serve_repair,
             &None,
             &my_pubkey,
@@ -2307,7 +2287,6 @@ mod test {
         RepairService::update_duplicate_slot_repair_addr(
             dead_slot,
             &mut duplicate_status,
-            &cluster_slots,
             &serve_repair,
             &None,
             &my_pubkey,

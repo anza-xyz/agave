@@ -314,12 +314,30 @@ fn test_conformance_push_message_multiple() {
 // CrdsData edge case tests
 
 #[test]
+fn test_conformance_deprecated_epoch_slots_rejected() {
+    let pk = [0x66; 32];
+    let payload = make_epoch_slots_crds_data(0, &pk, 1_000_000);
+    let value = make_crds_value_bytes(&[0u8; 64], &payload);
+    check(&make_push_message_bytes(&pk, &[value.clone()]), false);
+    check(&make_pull_response_bytes(&pk, &[value]), false);
+}
+
+#[test]
 fn test_conformance_epoch_slots_index_at_max() {
     let pk = [0x66; 32];
     let es_data = make_epoch_slots_crds_data(255, &pk, 1_000_000);
     let crds_val = make_crds_value_bytes(&[0u8; 64], &es_data);
     let data = make_push_message_bytes(&pk, &[crds_val]);
     check(&data, false);
+}
+
+#[test]
+fn test_conformance_deprecated_lowest_slot_rejected() {
+    let pk = [0x77; 32];
+    let payload = make_lowest_slot_crds_data(0, &pk, 42, 1_000_000);
+    let value = make_crds_value_bytes(&[0u8; 64], &payload);
+    check(&make_push_message_bytes(&pk, &[value.clone()]), false);
+    check(&make_pull_response_bytes(&pk, &[value]), false);
 }
 
 #[test]

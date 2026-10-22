@@ -3826,7 +3826,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     //       node will repair that correct version
     //    b) A descendant `D` of some version of `S` gets > DUPLICATE_THRESHOLD votes in gossip,
     //       but no version of `S` does. Then the node will not know to repair the right version
-    //       by just looking at gossip, but will instead have to use EpochSlots repair after
+    //       by just looking at gossip, but will instead have to use ancestor-hashes repair after
     //       detecting that a descendant does not chain to its version of `S`, and marks that descendant
     //       dead.
     //   Scenarios a) or b) are triggered by our node in 2) who's voting behavior we control.
@@ -3945,10 +3945,6 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
             let mut duplicate_slots = vec![];
             move |latest_vote_slot, leader_vote_tx, parsed_vote, cluster_info| {
                 info!("received vote for {latest_vote_slot}");
-                // Add to EpochSlots. Mark all slots frozen between slot..=max_vote_slot.
-                let new_epoch_slots: Vec<Slot> = (0..latest_vote_slot + 1).collect();
-                info!("Simulating epoch slots from our node: {new_epoch_slots:?}");
-                cluster_info.push_epoch_slots(&new_epoch_slots);
 
                 for slot in duplicate_slot_receiver.try_iter() {
                     duplicate_slots.push(slot);

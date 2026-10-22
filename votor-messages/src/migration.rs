@@ -41,7 +41,7 @@
 //!
 //! - When in `AlpenglowEnabled` various TowerBFT threads stop processsing alpenglow slots while still processing
 //!   TowerBFT slots pre alpenglow genesis in order to help other cluster participants catchup.
-//! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads (AncestorHashesService and ClusterSlotsService)
+//! - When in `FullAlpenglowEpoch` we completely shutdown the TowerBFT AncestorHashesService
 #[cfg(feature = "dev-context-only-utils")]
 use {
     crate::{certificate::CertSignature, consensus_message::BlockId},
@@ -241,19 +241,6 @@ impl MigrationPhase {
         }
     }
 
-    /// Should we publish epoch slots for this slot?
-    /// We publish epoch slots for all slots until we enable alpenglow.
-    /// Once alpenglow is enabled in the mixed migration epoch we should still be publishing for TowerBFT slots
-    fn should_publish_epoch_slots(&self, slot: Slot) -> bool {
-        match self {
-            MigrationPhase::PreFeatureActivation
-            | MigrationPhase::Migration { .. }
-            | MigrationPhase::ReadyToEnable { .. } => true,
-            MigrationPhase::AlpenglowEnabled { genesis_cert } => slot <= genesis_cert.block.slot,
-            MigrationPhase::FullAlpenglowEpoch { .. } => false,
-        }
-    }
-
     /// Should we send `VotorEvent`s for this slot?
     /// Only send events for alpenglow blocks
     fn should_send_votor_event(&self, slot: Slot) -> bool {
@@ -279,8 +266,13 @@ impl MigrationPhase {
 
     /// Should we respond to ancestor hashes repair requests  for this slot?
     fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool {
-        // Same as epoch slots, while in the mixed migration epoch respond for tower bft slots
-        self.should_publish_epoch_slots(slot)
+        match self {
+            MigrationPhase::PreFeatureActivation
+            | MigrationPhase::Migration { .. }
+            | MigrationPhase::ReadyToEnable { .. } => true,
+            MigrationPhase::AlpenglowEnabled { genesis_cert } => slot <= genesis_cert.block.slot,
+            MigrationPhase::FullAlpenglowEpoch { .. } => false,
+        }
     }
 
     /// Should this block only have an alpentick (1 tick at the end of the block)?
@@ -461,7 +453,6 @@ impl MigrationStatus {
     dispatch!(pub fn should_bank_be_vote_only(&self, bank_slot: Slot) -> bool);
     dispatch!(pub fn should_report_commitment_or_root(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_root_during_startup(&self, slot: Slot) -> bool);
-    dispatch!(pub fn should_publish_epoch_slots(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_send_votor_event(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_send_first_shred(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool);

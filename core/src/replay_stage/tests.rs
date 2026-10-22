@@ -153,7 +153,6 @@ impl ProcessActiveBanksContext {
         blockstore: Arc<Blockstore>,
         replay_vote_sender: ReplayVoteSender,
     ) -> Self {
-        let (cluster_slots_update_sender, _) = bounded(1024);
         let (cost_update_sender, _) = bounded(1024);
         let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
         let (votor_event_sender, _) = bounded(1024);
@@ -168,7 +167,6 @@ impl ProcessActiveBanksContext {
             bank_notification_sender: None,
             rpc_subscriptions: None,
             slot_status_notifier: None,
-            cluster_slots_update_sender,
             cost_update_sender,
             ancestor_hashes_replay_update_sender,
             block_metadata_notifier: None,
@@ -1955,7 +1953,6 @@ fn test_compute_bank_stats_confirmed() {
         &mut tower,
         &mut progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         &bank_forks,
         &mut heaviest_subtree_fork_choice,
         &mut latest_validator_votes_for_frozen_banks,
@@ -2011,7 +2008,6 @@ fn test_compute_bank_stats_confirmed() {
         &mut tower,
         &mut progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         &bank_forks,
         &mut heaviest_subtree_fork_choice,
         &mut latest_validator_votes_for_frozen_banks,
@@ -2048,7 +2044,6 @@ fn test_compute_bank_stats_confirmed() {
         &mut tower,
         &mut progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         &bank_forks,
         &mut heaviest_subtree_fork_choice,
         &mut latest_validator_votes_for_frozen_banks,
@@ -2089,7 +2084,6 @@ fn test_same_weight_select_lower_slot() {
         &mut tower,
         &mut vote_simulator.progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         &vote_simulator.bank_forks,
         heaviest_subtree_fork_choice,
         &mut latest_validator_votes_for_frozen_banks,
@@ -2162,7 +2156,6 @@ fn test_child_bank_heavier() {
         &mut tower,
         &mut vote_simulator.progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         &vote_simulator.bank_forks,
         &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
         &mut vote_simulator.latest_validator_votes_for_frozen_banks,
@@ -2447,13 +2440,7 @@ fn test_update_propagation_status() {
 
     let vote_tracker = VoteTracker::default();
     vote_tracker.insert_vote(10, vote_pubkey);
-    ReplayStage::update_propagation_status(
-        &mut progress_map,
-        10,
-        &bank_forks_arc,
-        &vote_tracker,
-        &ClusterSlots::default_for_tests(),
-    );
+    ReplayStage::update_propagation_status(&mut progress_map, 10, &bank_forks_arc, &vote_tracker);
 
     let propagated_stats = &progress_map.get(&10).unwrap().propagated_stats;
 
@@ -2548,13 +2535,7 @@ fn test_chain_update_propagation_status() {
 
     // The last bank should reach propagation threshold, and propagate it all
     // the way back through earlier leader banks
-    ReplayStage::update_propagation_status(
-        &mut progress_map,
-        10,
-        &bank_forks_arc,
-        &vote_tracker,
-        &ClusterSlots::default_for_tests(),
-    );
+    ReplayStage::update_propagation_status(&mut progress_map, 10, &bank_forks_arc, &vote_tracker);
 
     for i in 1..=10 {
         let propagated_stats = &progress_map.get(&i).unwrap().propagated_stats;
@@ -2635,13 +2616,7 @@ fn test_chain_update_propagation_status2() {
 
     // The last bank should reach propagation threshold, and propagate it all
     // the way back through earlier leader banks
-    ReplayStage::update_propagation_status(
-        &mut progress_map,
-        10,
-        &bank_forks_arc,
-        &vote_tracker,
-        &ClusterSlots::default_for_tests(),
-    );
+    ReplayStage::update_propagation_status(&mut progress_map, 10, &bank_forks_arc, &vote_tracker);
 
     // Only the first 5 banks should have reached the threshold
     for i in 1..=10 {
@@ -4372,7 +4347,6 @@ fn test_leader_snapshot_restart_propagation() {
         &mut tower,
         &mut progress,
         &vote_tracker,
-        &ClusterSlots::default_for_tests(),
         &bank_forks,
         &mut HeaviestSubtreeForkChoice::new_from_bank_forks(bank_forks.clone()),
         &mut LatestValidatorVotesForFrozenBanks::default(),
@@ -5007,7 +4981,6 @@ fn run_test_duplicate_rollback_then_vote(first_vote: Slot) -> SelectVoteAndReset
         &mut tower,
         &mut progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         &bank_forks,
         &mut tbft_structs.heaviest_subtree_fork_choice,
         &mut latest_validator_votes_for_frozen_banks,
@@ -5134,7 +5107,6 @@ fn run_test_duplicate_rollback_then_vote_on_other_duplicate(
         &mut tower,
         &mut progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         &bank_forks,
         &mut tbft_structs.heaviest_subtree_fork_choice,
         &mut latest_validator_votes_for_frozen_banks,
@@ -5927,7 +5899,6 @@ fn test_replay_stage_last_vote_outside_slot_hashes() {
         &mut tower,
         &mut progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         &bank_forks,
         &mut tbft_structs.heaviest_subtree_fork_choice,
         &mut latest_validator_votes_for_frozen_banks,
@@ -6459,7 +6430,6 @@ fn run_compute_and_select_forks(
         tower,
         progress,
         &VoteTracker::default(),
-        &ClusterSlots::default_for_tests(),
         bank_forks,
         heaviest_subtree_fork_choice,
         latest_validator_votes_for_frozen_banks,

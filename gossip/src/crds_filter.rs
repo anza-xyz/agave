@@ -45,31 +45,18 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::SnapshotHashes(_) => true,
         // Disabled once Alpenglow is active.
         CrdsData::DuplicateShred(_, _) => !is_full_alpenglow_epoch && retain_if_staked(),
-        // Consensus related messages only allowed for staked nodes
-        CrdsData::LowestSlot(0, _) => retain_if_staked(),
-        CrdsData::EpochSlots(_, _) if is_full_alpenglow_epoch => false,
-        // Unstaked nodes can technically send EpochSlots, but we do not want them
-        // eating gossip bandwidth.
-        CrdsData::EpochSlots(_, _) => {
-            match direction {
-                // always store if we have received them
-                // to avoid getting them again in PullResponses
-                Ingress => true,
-                // only forward if the origin is staked
-                EgressPush | EgressPullResponse => retain_if_staked(),
-            }
-        }
         CrdsData::Vote(_, _) if is_full_alpenglow_epoch => false,
         CrdsData::Vote(_, _) => match direction {
             Ingress | EgressPush => true,
             EgressPullResponse => retain_if_staked(),
         },
         // Fully deprecated messages
+        CrdsData::EpochSlots(_) => false,
         CrdsData::AccountsHashes(_) => false,
         CrdsData::LegacyContactInfo(_) => false,
         CrdsData::LegacySnapshotHashes(_) => false,
         CrdsData::LegacyVersion(_) => false,
-        CrdsData::LowestSlot(1.., _) => false,
+        CrdsData::LowestSlot(_) => false,
         CrdsData::NodeInstance(_) => false,
         CrdsData::RestartHeaviestFork(_) | CrdsData::RestartLastVotedForkSlots(_) => {
             match direction {

@@ -96,7 +96,7 @@ impl Sanitize for RestartLastVotedForkSlots {
 }
 
 impl RestartLastVotedForkSlots {
-    // This number is MAX_CRDS_OBJECT_SIZE - empty serialized RestartLastVotedForkSlots.
+    // This number is 928 - empty serialized RestartLastVotedForkSlots.
     const MAX_BYTES: usize = 824;
 
     pub fn new(
