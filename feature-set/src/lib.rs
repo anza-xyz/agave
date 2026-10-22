@@ -19,7 +19,6 @@ use {
 pub struct FeatureSnapshot {
     pub blake3_syscall_enabled: bool,
     pub disable_fees_sysvar: bool,
-    pub curve25519_syscall_enabled: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
     pub increase_tx_account_lock_limit: bool,
@@ -64,7 +63,6 @@ pub struct FeatureSnapshot {
     pub enable_alt_bn128_g2_syscalls: bool,
     pub commission_rate_in_basis_points: bool,
     pub custom_commission_collector: bool,
-    pub enable_bls12_381_syscall: bool,
     pub set_lamports_per_byte_to_6333: bool,
     pub set_lamports_per_byte_to_5080: bool,
     pub set_lamports_per_byte_to_2575: bool,
@@ -89,7 +87,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
         Self {
             blake3_syscall_enabled: is_active(&blake3_syscall_enabled::ID),
             disable_fees_sysvar: is_active(&disable_fees_sysvar::ID),
-            curve25519_syscall_enabled: is_active(&curve25519_syscall_enabled::ID),
             stake_raise_minimum_delegation_to_1_sol: is_active(
                 &stake_raise_minimum_delegation_to_1_sol::ID,
             ),
@@ -160,7 +157,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_alt_bn128_g2_syscalls: is_active(&enable_alt_bn128_g2_syscalls::ID),
             commission_rate_in_basis_points: is_active(&commission_rate_in_basis_points::ID),
             custom_commission_collector: is_active(&custom_commission_collector::ID),
-            enable_bls12_381_syscall: is_active(&enable_bls12_381_syscall::ID),
             set_lamports_per_byte_to_6333: is_active(&set_lamports_per_byte_to_6333::ID),
             set_lamports_per_byte_to_5080: is_active(&set_lamports_per_byte_to_5080::ID),
             set_lamports_per_byte_to_2575: is_active(&set_lamports_per_byte_to_2575::ID),
@@ -297,7 +293,6 @@ impl FeatureSet {
             deplete_cu_meter_on_vm_failure: snapshot.deplete_cu_meter_on_vm_failure,
             abort_on_invalid_curve: snapshot.abort_on_invalid_curve,
             blake3_syscall_enabled: snapshot.blake3_syscall_enabled,
-            curve25519_syscall_enabled: snapshot.curve25519_syscall_enabled,
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
             enable_alt_bn128_syscall: snapshot.enable_alt_bn128_syscall,
@@ -332,7 +327,6 @@ impl FeatureSet {
             enable_alt_bn128_g2_syscalls: snapshot.enable_alt_bn128_g2_syscalls,
             commission_rate_in_basis_points: snapshot.commission_rate_in_basis_points,
             custom_commission_collector: snapshot.custom_commission_collector,
-            enable_bls12_381_syscall: snapshot.enable_bls12_381_syscall,
             block_revenue_sharing: snapshot.block_revenue_sharing,
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot

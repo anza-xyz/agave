@@ -2829,7 +2829,7 @@ mod tests {
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext},
             memory_context::MemoryContext,
-            with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
+            with_mock_invoke_context,
         },
         solana_sbpf::{
             aligned_memory::AlignedMemory,
@@ -2892,33 +2892,6 @@ mod tests {
                 ($program_key, AccountSharedData::new(0, 0, &$loader_key)),
             ];
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
-            $invoke_context
-                .transaction_context
-                .configure_top_level_instruction_for_tests(1, vec![], vec![])
-                .unwrap();
-            $invoke_context.push().unwrap();
-        };
-    }
-
-    macro_rules! prepare_mock_with_feature_set {
-        ($invoke_context:ident,
-         $program_key:ident,
-         $loader_key:expr,
-         $feature_set:ident $(,)?) => {
-            let $program_key = Pubkey::new_unique();
-            let transaction_accounts = vec![
-                (
-                    $loader_key,
-                    AccountSharedData::new(0, 0, &native_loader::id()),
-                ),
-                ($program_key, AccountSharedData::new(0, 0, &$loader_key)),
-            ];
-            with_mock_invoke_context_with_feature_set!(
-                $invoke_context,
-                transaction_context,
-                $feature_set,
-                transaction_accounts
-            );
             $invoke_context
                 .transaction_context
                 .configure_top_level_instruction_for_tests(1, vec![], vec![])
@@ -6711,12 +6684,7 @@ mod tests {
         };
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let p1_bytes_be: [u8; 96] = [
             9, 86, 169, 212, 236, 245, 17, 101, 127, 183, 56, 13, 99, 100, 183, 133, 57, 107, 96,
@@ -6829,12 +6797,7 @@ mod tests {
         };
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let sub_p1_be: [u8; 96] = [
             6, 126, 67, 177, 221, 168, 219, 147, 17, 32, 109, 112, 204, 95, 207, 179, 227, 202, 32,
@@ -6950,12 +6913,7 @@ mod tests {
         };
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let mul_point_be: [u8; 96] = [
             20, 18, 233, 201, 110, 206, 56, 32, 8, 44, 140, 121, 37, 196, 157, 56, 180, 134, 164,
@@ -7064,13 +7022,7 @@ mod tests {
         };
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let p1_bytes_be: [u8; 192] = [
             11, 83, 21, 62, 4, 174, 123, 131, 163, 19, 62, 216, 192, 48, 25, 184, 57, 207, 80, 70,
@@ -7214,12 +7166,7 @@ mod tests {
         };
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let sub_p1_be: [u8; 192] = [
             1, 111, 113, 42, 165, 128, 194, 26, 130, 142, 58, 198, 61, 244, 113, 64, 25, 96, 196,
@@ -7367,12 +7314,7 @@ mod tests {
         };
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let mul_point_be: [u8; 192] = [
             1, 95, 16, 90, 117, 185, 253, 76, 25, 68, 54, 111, 154, 161, 125, 203, 121, 4, 154, 67,
@@ -7499,13 +7441,7 @@ mod tests {
         use solana_define_syscall::curve_constants::BLS12_381_BE;
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let g1_bytes: [u8; 96] = [
             3, 161, 104, 54, 242, 116, 16, 50, 15, 113, 42, 38, 108, 11, 127, 64, 43, 249, 50, 133,
@@ -7604,13 +7540,7 @@ mod tests {
         use solana_define_syscall::curve_constants::BLS12_381_LE;
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let g1_bytes: [u8; 96] = [
             35, 204, 210, 14, 243, 251, 68, 127, 25, 203, 200, 133, 109, 90, 249, 87, 65, 75, 36,
@@ -7709,13 +7639,7 @@ mod tests {
         use solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE};
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let compressed_be: [u8; 48] = [
             175, 159, 245, 68, 142, 96, 188, 154, 113, 143, 70, 58, 193, 2, 189, 111, 135, 114,
@@ -7803,13 +7727,7 @@ mod tests {
         use solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE};
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let compressed_be: [u8; 96] = [
             143, 106, 18, 220, 40, 152, 4, 228, 139, 35, 104, 146, 179, 74, 205, 172, 146, 137, 11,
@@ -7913,13 +7831,7 @@ mod tests {
         use solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE};
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let point_bytes_be: [u8; 96] = [
             22, 163, 250, 67, 197, 168, 103, 201, 128, 33, 170, 96, 74, 40, 45, 90, 105, 181, 244,
@@ -7988,13 +7900,7 @@ mod tests {
         use solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE};
 
         let config = Config::default();
-        let feature_set = SVMFeatureSet {
-            enable_bls12_381_syscall: true,
-            ..Default::default()
-        };
-        let feature_set = &feature_set;
-
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
 
         let point_bytes_be: [u8; 192] = [
             0, 79, 207, 115, 91, 72, 0, 80, 49, 59, 203, 189, 178, 240, 18, 141, 223, 147, 62, 79,
