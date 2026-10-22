@@ -7820,9 +7820,9 @@ dependencies = [
 
 [[package]]
 name = "solana-client-traits"
-version = "5.0.0"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0398e621a2d56c8641a583739411077916c044762e77528e218dd426ee29d74"
+checksum = "9f4b2b20eb5df9058f61ecc0f227cafb840cf59873d4bafc9b726f8583fe027f"
 dependencies = [
  "solana-account",
  "solana-commitment-config",
@@ -7830,12 +7830,12 @@ dependencies = [
  "solana-hash",
  "solana-instruction 4.0.0",
  "solana-keypair",
- "solana-message 5.1.0",
+ "solana-message 6.0.0",
  "solana-pubkey 4.4.0",
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
- "solana-transaction 5.1.0",
+ "solana-transaction 6.0.0",
  "solana-transaction-error",
 ]
 
@@ -9273,9 +9273,7 @@ dependencies = [
  "solana-instruction 4.0.0",
  "solana-sanitize",
  "solana-sdk-ids",
- "solana-short-vec",
  "solana-transaction-error",
- "wincode",
 ]
 
 [[package]]
@@ -11382,11 +11380,8 @@ dependencies = [
  "solana-message 5.1.0",
  "solana-sanitize",
  "solana-sdk-ids",
- "solana-short-vec",
  "solana-signature",
- "solana-signer",
  "solana-transaction-error",
- "wincode",
 ]
 
 [[package]]
