@@ -1560,6 +1560,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         self.handler_threads = (0..handler_context.thread_count)
             .map({
                 |thx| {
+<<<<<<< HEAD
+=======
+                    let assigned_arena = handler_thread_arenas.map(|arenas| {
+                        let first_handler_arena = usize::from(arenas.len() > 1);
+                        #[allow(clippy::arithmetic_side_effects)]
+                        let arena_index =
+                            first_handler_arena + thx % (arenas.len() - first_handler_arena);
+                        arenas[arena_index]
+                    });
+>>>>>>> 2478b5b (replay: give solReplayStage its own arena (#16008))
                     thread::Builder::new()
                         .name(format!("solScHandle{mode_char}{thx:02}"))
                         .spawn_tracked(handler_main_loop())
@@ -1899,6 +1909,7 @@ mod tests {
             sync::{Arc, RwLock},
             thread::JoinHandle,
         },
+        test_case::test_case,
     };
 
     impl<S, TH> SchedulerPool<S, TH>
@@ -1981,6 +1992,143 @@ mod tests {
     }
 
     #[test]
+<<<<<<< HEAD
+=======
+    fn test_handler_thread_tcache_drop_guard_avoids_purge_on_thread_exit() {
+        let arenas = ArenaGroup::new(1, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        let arena = arenas[0];
+
+        let stats_before_thread_exit = std::thread::spawn(move || {
+            arena.bind_current_thread_permanently().unwrap();
+            let _disable_tcache_on_exit = DisableHandlerThreadTcacheOnDrop {
+                arena,
+                thread_index: 0,
+            };
+
+            const DIRTY_BYTES: usize = 8 * 1024 * 1024;
+            let allocation = vec![0u8; DIRTY_BYTES];
+            assert_eq!(allocation.len(), DIRTY_BYTES);
+            drop(allocation);
+
+            Jemalloc::advance_epoch().unwrap();
+            let stats = arena.stats().unwrap();
+            assert_eq!(stats.dirty_decay, Decay::Never);
+            assert_eq!(stats.muzzy_decay, Decay::Never);
+            assert!(
+                stats.dirty_pages > 0,
+                "test requires dirty pages before handler thread exit"
+            );
+
+            stats
+        })
+        .join()
+        .unwrap();
+
+        Jemalloc::advance_epoch().unwrap();
+        let stats_after_thread_exit = arena.stats().unwrap();
+
+        assert_eq!(
+            stats_after_thread_exit.dirty_purges,
+            stats_before_thread_exit.dirty_purges
+        );
+        assert_eq!(
+            stats_after_thread_exit.muzzy_purges,
+            stats_before_thread_exit.muzzy_purges
+        );
+    }
+
+    #[test_case(1, [0, 0]; "single_arena_shared")]
+    #[test_case(2, [1, 1]; "two_arenas")]
+    #[test_case(3, [1, 2]; "three_arenas")]
+    fn test_handler_threads_use_assigned_arenas(arena_count: usize, handler_arenas: [usize; 2]) {
+        const SECOND_ARENA_SHIFT: u32 = 32;
+        const TASK_SEQUENCE_SHIFT: u32 = 64;
+
+        #[derive(Debug)]
+        enum ArenaCheckPoint {
+            Started,
+            Released,
+        }
+
+        #[derive(Debug)]
+        struct ArenaCheckingHandler;
+
+        impl TaskHandler for ArenaCheckingHandler {
+            fn handle(
+                _timings: &mut ExecuteTimings,
+                _scheduling_context: &SchedulingContext,
+                task: &Task,
+                _handler_context: &HandlerContext,
+            ) -> Result<TrackedCost> {
+                let task_id = task.task_id();
+                sleepless_testing::at((ArenaCheckPoint::Started, task_id));
+                sleepless_testing::at((ArenaCheckPoint::Released, task_id));
+
+                let current_thread = thread::current();
+                let expected_arena_id = match current_thread.name() {
+                    Some("solScHandleV00") => task_id & u128::from(u32::MAX),
+                    Some("solScHandleV01") => {
+                        (task_id >> SECOND_ARENA_SHIFT) & u128::from(u32::MAX)
+                    }
+                    name => panic!("unexpected handler thread name: {name:?}"),
+                };
+                assert_eq!(
+                    u128::from(Jemalloc::current_thread_arena().unwrap().as_raw()),
+                    expected_arena_id
+                );
+                Ok(TrackedCost::default())
+            }
+        }
+
+        let arenas = ArenaGroup::new(arena_count, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        // Encode both arena IDs so either handler can verify its assigned arena from any task.
+        let encoded_arena_ids = u128::from(arenas[handler_arenas[0]].id().as_raw())
+            | (u128::from(arenas[handler_arenas[1]].id().as_raw()) << SECOND_ARENA_SHIFT);
+        let task_ids = [
+            encoded_arena_ids,
+            encoded_arena_ids | (1 << TASK_SEQUENCE_SHIFT),
+        ];
+        // Hold the first task until the second starts, forcing both handler threads to run.
+        let _progress = sleepless_testing::setup(&[
+            &(ArenaCheckPoint::Started, task_ids[0]),
+            &(ArenaCheckPoint::Started, task_ids[1]),
+            &(ArenaCheckPoint::Released, task_ids[0]),
+            &(ArenaCheckPoint::Released, task_ids[1]),
+        ]);
+        let pool = SchedulerPool::<PooledScheduler<ArenaCheckingHandler>, _>::new(
+            Some(2),
+            None,
+            None,
+            None,
+            None,
+            Some(arenas),
+        );
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let scheduler = pool
+            .take_scheduler(SchedulingContext::new(bank.clone()))
+            .unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        let transactions = task_ids.map(|task_id| {
+            (
+                ReplayTransaction::from(system_transaction::transfer(
+                    &Keypair::new(),
+                    &Pubkey::new_unique(),
+                    1,
+                    genesis_config.hash(),
+                )),
+                task_id,
+            )
+        });
+
+        bank.schedule_transaction_executions(transactions.into_iter())
+            .unwrap();
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+    }
+
+    #[test]
+>>>>>>> 2478b5b (replay: give solReplayStage its own arena (#16008))
     fn test_scheduler_spawn() {
         agave_logger::setup();
 
