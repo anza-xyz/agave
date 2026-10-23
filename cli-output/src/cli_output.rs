@@ -2234,7 +2234,7 @@ impl fmt::Display for CliInflation {
             writeln!(
                 f,
                 "Foundation percentage:   {:>5.2}%",
-                self.governor.foundation
+                self.governor.foundation * 100.
             )?;
             writeln!(
                 f,
@@ -3911,5 +3911,39 @@ mod tests {
             format!("{expected_output_common}{expected_epoch_rewards_output}")
         );
         println!("{s}");
+    }
+
+    #[test]
+    fn test_format_inflation() {
+        let inflation = CliInflation {
+            governor: RpcInflationGovernor {
+                initial: 0.08,
+                terminal: 0.015,
+                taper: 0.15,
+                foundation: 0.05,
+                foundation_term: 7.0,
+            },
+            current_rate: RpcInflationRate {
+                total: 0.08,
+                validator: 0.076,
+                foundation: 0.004,
+                epoch: 0,
+            },
+        };
+        #[rustfmt::skip]
+        let expected_output =
+            "Inflation Governor:\n\
+             Initial rate:             8.00%\n\
+             Terminal rate:            1.50%\n\
+             Rate reduction per year: 15.00%\n\
+             * Rate reduction is derived using the target slot time in genesis config\n\
+             Foundation percentage:    5.00%\n\
+             Foundation term:         7.0 years\n\
+             \n\
+             Inflation for Epoch 0:\n\
+             Total rate:               8.00%\n\
+             Staking rate:             7.60%\n\
+             Foundation rate:          0.40%\n";
+        assert_eq!(format!("{inflation}"), expected_output);
     }
 }
