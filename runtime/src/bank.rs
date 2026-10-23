@@ -7372,7 +7372,7 @@ impl Drop for Bank {
             self.rc
                 .accounts
                 .accounts_db
-                .purge_slot(self.slot(), self.bank_id(), false);
+                .purge_slot(self.bank_id(), false);
         }
     }
 }
