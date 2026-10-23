@@ -177,6 +177,13 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    // Must happen before the XDP setup below: attaching a zero-copy XDP
+    // program makes some drivers (e.g. igb, ixgbe) reset the NIC, and while
+    // the link is down this query fails against every entrypoint.
+    let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
+        .ok()
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
+
     #[cfg(target_os = "linux")]
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
@@ -433,13 +440,6 @@ pub fn execute(
     let use_direct_io = !matches.is_present("no_accounts_db_snapshots_direct_io");
     let accounts_db_config =
         args::accounts_db_config::new_config(matches, &ledger_path, &num_threads, use_direct_io)?;
-    // TODO: Once entrypoints are updated to return shred-version, this should
-    // abort if it fails to obtain a shred-version, so that nodes always join
-    // gossip with a valid shred-version. The code to adopt entrypoint shred
-    // version can then be deleted from gossip and get_rpc_node above.
-    let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
-        .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
 
     let tower_path = value_t!(matches, "tower", PathBuf)
         .ok()
