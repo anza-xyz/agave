@@ -39,6 +39,8 @@ members = [
     "rust/invoke_and_error",
     "rust/invoke_and_ok",
     "rust/invoke_and_return",
+    "rust/invoke_v2_and_fail",
+    "rust/invoke_v2_and_ok",
     "rust/invoked",
     "rust/iter",
     "rust/log_data",
