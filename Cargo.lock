@@ -354,14 +354,12 @@ dependencies = [
 [[package]]
 name = "agave-scheduler-bindings"
 version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dadd1abed9cc620c70f5ff2f517317426a57f77c405e9de8bf09a2b29e629ad6"
+source = "git+https://github.com/anza-xyz/agave-sdk.git?rev=b8f2401dfcc97ab2e63b5150b8342e077ed43085#b8f2401dfcc97ab2e63b5150b8342e077ed43085"
 
 [[package]]
 name = "agave-scheduler-handshake"
 version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b640c5101d1a772dd3367c9147dc585216ed78b0002efd8005557628e33a9a9"
+source = "git+https://github.com/anza-xyz/agave-sdk.git?rev=b8f2401dfcc97ab2e63b5150b8342e077ed43085#b8f2401dfcc97ab2e63b5150b8342e077ed43085"
 dependencies = [
  "agave-scheduler-bindings",
  "libc",
