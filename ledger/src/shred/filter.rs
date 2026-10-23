@@ -590,8 +590,8 @@ mod tests {
     use {
         super::{
             super::{
-                OFFSET_OF_SHRED_VARIANT, PROOF_ENTRIES_FOR_32_32_BATCH, Shred,
-                make_merkle_shreds_for_tests, override_proof_size,
+                PROOF_ENTRIES_FOR_32_32_BATCH, Shred, make_merkle_shreds_for_tests,
+                override_proof_size,
             },
             *,
         },
