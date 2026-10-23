@@ -784,7 +784,6 @@ fn record_and_complete_block(
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
     let mut accumulated_txs = vec![];
-    let mut records_shutdown = false;
     let window_has_moved_on = loop {
         if ctx.exit.load(Ordering::Relaxed) {
             return Err(PohRecorderError::ChannelDisconnected);
@@ -806,14 +805,11 @@ fn record_and_complete_block(
 
             // FLH still needs to wait for ParentReady... stop recording so we
             // don't build a giant block or OOM.
-            if !records_shutdown {
-                shutdown_and_drain_record_receiver(
-                    &ctx.poh_recorder,
-                    &mut ctx.record_receiver,
-                    Some(&mut accumulated_txs),
-                )?;
-                records_shutdown = true;
-            }
+            shutdown_and_drain_record_receiver(
+                &ctx.poh_recorder,
+                &mut ctx.record_receiver,
+                Some(&mut accumulated_txs),
+            )?;
 
             // Poll periodically while waiting for ParentReady so shutdown can
             // be observed without a zero-duration spin.
@@ -833,7 +829,6 @@ fn record_and_complete_block(
                     &mut optimistic_parent,
                     &mut accumulated_txs,
                     block_timer,
-                    &mut records_shutdown,
                 )? {
                     break true;
                 }
@@ -860,19 +855,15 @@ fn record_and_complete_block(
         // The cluster has selected a later parent, so this bank will never get a
         // footer. Do not record more transactions into it or wait for reward
         // certs that are only needed for block completion.
-        if !records_shutdown {
-            ctx.record_receiver.shutdown();
-            for _ in ctx.record_receiver.drain_after_shutdown() {}
-        }
+        ctx.record_receiver.shutdown();
+        for _ in ctx.record_receiver.drain_after_shutdown() {}
         abort_working_bank(ctx, bank_slot)
             .map_err(|_| PohRecorderError::ResetBankError(bank_slot, bank_slot))?;
         return Err(PohRecorderError::WindowMovedOn(bank_slot));
     }
 
     // Shutdown and clear any inflight records
-    if !records_shutdown {
-        shutdown_and_drain_record_receiver(&ctx.poh_recorder, &mut ctx.record_receiver, None)?;
-    }
+    shutdown_and_drain_record_receiver(&ctx.poh_recorder, &mut ctx.record_receiver, None)?;
 
     // By now, we should have received ParentReady and called handle_parent_ready(), unless
     // we're behind and the window has moved on.
@@ -956,7 +947,6 @@ fn process_parent_ready(
     optimistic_parent: &mut Option<Block>,
     accumulated_txs: &mut Vec<VersionedTransaction>,
     block_timer: &mut Instant,
-    records_shutdown: &mut bool,
 ) -> Result<bool, PohRecorderError> {
     if info.start_slot > bank_slot {
         // Window has moved on; we're behind.
@@ -965,18 +955,15 @@ fn process_parent_ready(
     }
 
     if info.start_slot == bank_slot {
-        if let Some(optimistic_parent_block) = optimistic_parent.take()
-            && handle_parent_ready(
+        if let Some(optimistic_parent_block) = optimistic_parent.take() {
+            handle_parent_ready(
                 ctx,
                 slot_metrics,
                 info,
                 optimistic_parent_block,
                 std::mem::take(accumulated_txs),
                 block_timer,
-            )?
-            .is_some()
-        {
-            *records_shutdown = false;
+            )?;
         }
         return Ok(false);
     }
