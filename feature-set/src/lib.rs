@@ -78,6 +78,7 @@ pub struct FeatureSnapshot {
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
     pub pass_input_metadata_in_vm_r3_r5: bool,
+    pub disallow_nonce_as_program_id: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -177,6 +178,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
             pass_input_metadata_in_vm_r3_r5: is_active(&pass_input_metadata_in_vm_r3_r5::ID),
+            disallow_nonce_as_program_id: is_active(&disallow_nonce_as_program_id::ID),
         }
     }
 }
@@ -1543,6 +1545,10 @@ pub mod pass_input_metadata_in_vm_r3_r5 {
     solana_pubkey::declare_id!("r3r5hXFhEZLB2VCDXmUysuDZj4oMbtW8JRVUqvQSgqE");
 }
 
+pub mod disallow_nonce_as_program_id {
+    solana_pubkey::declare_id!("BadNcMPPh9X6ikRHp8Wcz352YRhdSjawVj2bVHNNjDqQ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2648,6 +2654,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             pass_input_metadata_in_vm_r3_r5::id(),
             "SIMD-0683: Pass ABIv1 input metadata via registers r3-r5",
+        ),
+        (
+            disallow_nonce_as_program_id::id(),
+            "SIMD-0602: Disallow Nonce Account as Program ID",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
