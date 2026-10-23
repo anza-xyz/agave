@@ -3585,6 +3585,7 @@ impl RpcClient {
     /// # Examples
     ///
     /// ```
+    /// # use solana_commitment_config::CommitmentConfig;
     /// # use solana_rpc_client_api::{
     /// #     client_error::Error,
     /// #     config::RpcEpochConfig,
@@ -3602,7 +3603,7 @@ impl RpcClient {
     /// let config = RpcEpochConfig {
     ///     epoch: Some(epoch),
     ///     commitment: Some(CommitmentConfig::processed()),
-    ///     ..RpcLeaderScheduleConfig::default()
+    ///     ..Default::default()
     /// };
     /// let inflation_reward = rpc_client.get_inflation_reward_with_config(
     ///     &addresses,
