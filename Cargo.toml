@@ -225,8 +225,8 @@ agave-math-utils = { path = "math-utils", version = "=4.5.0-alpha.3", features =
 agave-precompiles = { path = "precompiles", version = "=4.5.0-alpha.3", features = ["agave-unstable-api"] }
 agave-random = { path = "random", version = "=4.5.0-alpha.3", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.5.0-alpha.3", features = ["agave-unstable-api"] }
-agave-scheduler-bindings = { git = "https://github.com/anza-xyz/agave-sdk.git", rev = "58ca4bc5def425e643d12d97b4556cb8641bd9d0" }
-agave-scheduler-handshake = { git = "https://github.com/anza-xyz/agave-sdk.git", rev = "58ca4bc5def425e643d12d97b4556cb8641bd9d0" }
+agave-scheduler-bindings = { git = "https://github.com/anza-xyz/agave-sdk.git", rev = "5b177f927340313cf6eed4cb817ad73aa88c2464" }
+agave-scheduler-handshake = { git = "https://github.com/anza-xyz/agave-sdk.git", rev = "5b177f927340313cf6eed4cb817ad73aa88c2464" }
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.5.0-alpha.3", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.5.0-alpha.3", features = ["agave-unstable-api"] }
 agave-transaction-view = "9.0.0"
