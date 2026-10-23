@@ -17,14 +17,21 @@ type PubkeyHasherBuilder = RandomState;
 pub(crate) type IndexMap =
     HashMap</*node:*/ Pubkey, /*index*/ usize, PubkeyHasherBuilder>;
 
-/// Amount of stake that needs to lock the slot for us to stop updating it.
+/// Fraction of stake that needs to lock the slot for us to stop updating it,
+/// expressed as `FREEZE_THRESHOLD_NUMERATOR / FREEZE_THRESHOLD_DENOMINATOR` (90%).
 /// This must be above `DUPLICATE_THRESHOLD` but also high enough to not starve
-/// repair (as it will prefer nodes that have confirmed a slot)
-const FREEZE_THRESHOLD: f64 = 0.9;
+/// repair (as it will prefer nodes that have confirmed a slot).
+/// Kept as an integer ratio so that `is_frozen` compares stakes exactly instead
+/// of going through `f64`, which cannot represent lamport totals above 2^53.
+const FREEZE_THRESHOLD_NUMERATOR: u64 = 9;
+const FREEZE_THRESHOLD_DENOMINATOR: u64 = 10;
 
 // whatever freeze threshold we should be above DUPLICATE_THRESHOLD in order to not break consensus.
 // 1.1 margin is due to us not properly tracking epoch boundaries
-static_assertions::const_assert!(FREEZE_THRESHOLD > DUPLICATE_THRESHOLD * 1.1);
+static_assertions::const_assert!(
+    (FREEZE_THRESHOLD_NUMERATOR as f64 / FREEZE_THRESHOLD_DENOMINATOR as f64)
+        > DUPLICATE_THRESHOLD * 1.1
+);
 
 /// Pubkey-stake map for nodes that have confirmed this slot.
 /// Internally, this uses an index array that is shared for all instances
@@ -66,11 +73,12 @@ impl SlotSupporters {
     }
     #[inline]
     pub(crate) fn is_frozen(&self) -> bool {
-        let slot_weight_f64 = self.total_support() as f64;
-
-        // once slot is confirmed beyond `FREEZE_THRESHOLD` we should not need
-        // to update the stakes for it anymore
-        slot_weight_f64 / self.total_stake as f64 > FREEZE_THRESHOLD
+        // once slot is confirmed beyond the freeze threshold we should not need
+        // to update the stakes for it anymore:
+        //   total_support / total_stake > NUMERATOR / DENOMINATOR
+        // cross-multiplied in u128 so the comparison is exact and cannot overflow
+        u128::from(self.total_support()) * u128::from(FREEZE_THRESHOLD_DENOMINATOR)
+            > u128::from(self.total_stake) * u128::from(FREEZE_THRESHOLD_NUMERATOR)
     }
 
     #[inline]
@@ -162,5 +170,48 @@ impl SlotSupporters {
                 None
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn supporters_with(total_stake: Stake, support: Stake) -> SlotSupporters {
+        let pubkey = Pubkey::new_unique();
+        let index_map = Arc::new(IndexMap::from_iter([(pubkey, 0)]));
+        let supporters = SlotSupporters::new(total_stake, index_map);
+        supporters.set_support_by_pubkey(&pubkey, support).unwrap();
+        supporters
+    }
+
+    #[test]
+    fn test_is_frozen_threshold_boundary() {
+        // strictly above 90% is frozen, exactly 90% is not
+        assert!(!supporters_with(100, 89).is_frozen());
+        assert!(!supporters_with(100, 90).is_frozen());
+        assert!(supporters_with(100, 91).is_frozen());
+        assert!(supporters_with(100, 100).is_frozen());
+    }
+
+    #[test]
+    fn test_is_frozen_zero_total_stake() {
+        // same results as the previous f64 division (NaN > 0.9 and inf > 0.9)
+        assert!(!supporters_with(0, 0).is_frozen());
+        assert!(supporters_with(0, 1).is_frozen());
+    }
+
+    #[test]
+    fn test_is_frozen_exact_for_large_stakes() {
+        // Above 2^53 lamports f64 rounds these values; the integer comparison
+        // must still put the boundary exactly at 90%.
+        let total: Stake = 4_000_000_000_000_000_000; // ~4e18 lamports
+        let at_threshold = total / 10 * 9;
+        assert!(!supporters_with(total, at_threshold).is_frozen());
+        assert!(supporters_with(total, at_threshold + 1).is_frozen());
+
+        // Saturated values must not overflow.
+        assert!(supporters_with(u64::MAX, u64::MAX).is_frozen());
+        assert!(!supporters_with(u64::MAX, u64::MAX / 10 * 9).is_frozen());
     }
 }
