@@ -599,40 +599,22 @@ fn process_loader_upgradeable_instruction(
                     .get_data()
                     .get(buffer_data_offset..)
                     .ok_or(InstructionError::AccountDataTooSmall)?;
-                // When growing, append the part of the ELF past the current
-                // data rather than zero-filling it only to overwrite it.
-                let (elf_head, elf_tail) = elf
-                    .split_at_checked(
-                        programdata
-                            .get_data()
-                            .len()
-                            .saturating_sub(programdata_data_offset)
-                            .min(buffer_data_len),
-                    )
-                    .ok_or(InstructionError::AccountDataTooSmall)?;
-                if programdata_len > programdata.get_data().len() {
-                    programdata.extend_from_slice(elf_tail)?;
-                } else {
-                    programdata.set_data_length(programdata_len)?;
-                }
-                programdata.set_state(&UpgradeableLoaderState::ProgramData {
-                    slot: clock.slot,
-                    upgrade_authority_address: authority_key,
-                })?;
-                programdata
-                    .get_data_mut()?
-                    .get_mut(
-                        programdata_data_offset
-                            ..programdata_data_offset.saturating_add(elf_head.len()),
-                    )
-                    .ok_or(InstructionError::AccountDataTooSmall)?
-                    .copy_from_slice(elf_head);
+                // `set_data_from_slice` here truncates the data to a zeroed header,
+                // replacing a shared payload rather than cloning it.
+                programdata.set_data_from_slice(
+                    &[0; UpgradeableLoaderState::size_of_programdata_metadata()],
+                )?;
+                // Append the ELF after the zeroed header.
+                programdata.extend_from_slice(elf)?;
             }
-            programdata
-                .get_data_mut()?
-                .get_mut(programdata_data_offset.saturating_add(buffer_data_len)..)
-                .ok_or(InstructionError::AccountDataTooSmall)?
-                .fill(0);
+            // Restore the full length, zero-filling any slack after the ELF.
+            // This is only pre-SIMD-0433. After SIMD-0433 this is a no-op.
+            programdata.set_data_length(programdata_len)?;
+            // Now write the real header back in.
+            programdata.set_state(&UpgradeableLoaderState::ProgramData {
+                slot: clock.slot,
+                upgrade_authority_address: authority_key,
+            })?;
 
             // Fund ProgramData to rent-exemption, spill the rest
             let mut buffer = instruction_context.try_borrow_instruction_account(2)?;
