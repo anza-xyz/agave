@@ -117,6 +117,21 @@ impl From<generated::Rewards> for StoredExtendedRewards {
     }
 }
 
+impl From<RewardType> for generated::RewardType {
+    fn from(reward_type: RewardType) -> Self {
+        match reward_type {
+            RewardType::Fee => generated::RewardType::Fee,
+            RewardType::Rent => generated::RewardType::Rent,
+            RewardType::Staking => generated::RewardType::Staking,
+            RewardType::Voting => generated::RewardType::Voting,
+            RewardType::DeactivatedStake => generated::RewardType::DeactivatedStake,
+            RewardType::VATDebit => generated::RewardType::VatDebit,
+            RewardType::BlockRevenueSharing => generated::RewardType::BlockRevenueSharing,
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl From<Reward> for generated::Reward {
     fn from(reward: Reward) -> Self {
         Self {
@@ -125,12 +140,7 @@ impl From<Reward> for generated::Reward {
             post_balance: reward.post_balance,
             reward_type: match reward.reward_type {
                 None => generated::RewardType::Unspecified,
-                Some(RewardType::Fee) => generated::RewardType::Fee,
-                Some(RewardType::Rent) => generated::RewardType::Rent,
-                Some(RewardType::Staking) => generated::RewardType::Staking,
-                Some(RewardType::Voting) => generated::RewardType::Voting,
-                Some(RewardType::DeactivatedStake) => generated::RewardType::DeactivatedStake,
-                Some(RewardType::VATDebit) => generated::RewardType::VatDebit,
+                Some(reward_type) => reward_type.into(),
             } as i32,
             commission: reward.commission.map(|c| c.to_string()).unwrap_or_default(),
             commission_bps: reward
@@ -155,6 +165,7 @@ impl From<generated::Reward> for Reward {
                 4 => Some(RewardType::Voting),
                 5 => Some(RewardType::DeactivatedStake),
                 6 => Some(RewardType::VATDebit),
+                7 => Some(RewardType::BlockRevenueSharing),
                 _ => None,
             },
             commission: reward.commission.parse::<u8>().ok(),
@@ -1441,6 +1452,17 @@ mod test {
         reward.reward_type = Some(RewardType::VATDebit);
         let gen_reward: generated::Reward = reward.clone().into();
         assert_eq!(reward, gen_reward.into());
+
+        reward.reward_type = Some(RewardType::BlockRevenueSharing);
+        let gen_reward: generated::Reward = reward.clone().into();
+        assert_eq!(reward, gen_reward.into());
+    }
+
+    #[test]
+    fn test_reward_type_conversion_exhaustive() {
+        for reward_type in RewardType::VARIANTS {
+            let _: generated::RewardType = (*reward_type).into();
+        }
     }
 
     #[test]
