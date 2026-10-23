@@ -212,7 +212,7 @@ agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", vers
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-bls-sigverify = { path = "bls-sigverify", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-cpu-utils = { path = "cpu-utils", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-agave-event-system = "0.3.0"
+agave-event-system = "0.3.1"
 agave-event-system-derive = "0.3.0"
 agave-feature-set = { path = "feature-set", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
