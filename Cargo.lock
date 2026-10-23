@@ -225,7 +225,7 @@ dependencies = [
  "solana-hash",
  "solana-message",
  "solana-pubkey 4.4.0",
- "solana-reward-info 9.0.0",
+ "solana-reward-info",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
@@ -7150,7 +7150,7 @@ dependencies = [
  "solana-nonce",
  "solana-pubkey 4.4.0",
  "solana-rent",
- "solana-reward-info 7.0.0",
+ "solana-reward-info",
  "solana-sdk-ids",
  "solana-sha256-hasher",
  "solana-signature",
@@ -8685,7 +8685,7 @@ dependencies = [
  "solana-message",
  "solana-net-utils",
  "solana-pubkey 4.4.0",
- "solana-reward-info 7.0.0",
+ "solana-reward-info",
  "solana-rpc",
  "solana-runtime",
  "solana-signature",
@@ -9922,20 +9922,14 @@ dependencies = [
 
 [[package]]
 name = "solana-reward-info"
-version = "7.0.0"
+version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d20f0760fe5f41208593d5111a13dff725a0b1af9986924c4a4ce5461520d0d"
+checksum = "dc178a59eee32d1c8bd364c370dca91bca07713dc0203e964b912261dc74ea06"
 dependencies = [
  "serde",
  "serde_derive",
  "wincode",
 ]
-
-[[package]]
-name = "solana-reward-info"
-version = "9.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc178a59eee32d1c8bd364c370dca91bca07713dc0203e964b912261dc74ea06"
 
 [[package]]
 name = "solana-rpc"
@@ -10163,7 +10157,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-inflation",
  "solana-pubkey 4.4.0",
- "solana-reward-info 7.0.0",
+ "solana-reward-info",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
@@ -10301,7 +10295,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey 4.4.0",
  "solana-rent",
- "solana-reward-info 7.0.0",
+ "solana-reward-info",
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-sdk-ids",
@@ -11447,7 +11441,7 @@ dependencies = [
  "solana-message",
  "solana-program-option",
  "solana-pubkey 4.4.0",
- "solana-reward-info 7.0.0",
+ "solana-reward-info",
  "solana-sdk-ids",
  "solana-signature",
  "solana-stake-interface",
@@ -11482,7 +11476,7 @@ dependencies = [
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
  "solana-message",
- "solana-reward-info 7.0.0",
+ "solana-reward-info",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-context",
