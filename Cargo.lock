@@ -676,6 +676,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-worker-pool"
+version = "4.5.0-alpha.4"
+dependencies = [
+ "agave-wake-channel",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "agave-xdp"
 version = "4.5.0-alpha.4"
 dependencies = [
