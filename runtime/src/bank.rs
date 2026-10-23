@@ -696,7 +696,6 @@ impl PartialEq for Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides,
             accounts_lt_hash,
-            is_alpenglow,
             // TODO: Confirm if all these fields are intentionally ignored!
             rewards: _,
             cluster_type: _,
@@ -767,7 +766,6 @@ impl PartialEq for Bank {
                 *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
             && *accounts_lt_hash.lock().unwrap() == *other.accounts_lt_hash.lock().unwrap()
             && *block_id.read().unwrap() == *other.block_id.read().unwrap()
-            && is_alpenglow.load(Relaxed) == other.is_alpenglow()
     }
 }
 
@@ -1089,9 +1087,6 @@ pub struct Bank {
     /// read from this once replay is complete.
     pub block_component_processor: RwLock<BlockComponentProcessor>,
 
-    /// Cached Alpenglow migration state, derived from the genesis certificate account.
-    is_alpenglow: AtomicBool,
-
     /// Coordinates transaction execution with retirement of an unfrozen Bank. Padding keeps the
     /// frequently mutated lock state from sharing a cache line with unrelated Bank fields.
     transaction_execution_gate: CachePadded<TransactionExecutionGate>,
@@ -1354,7 +1349,6 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
-            is_alpenglow: AtomicBool::new(false),
             transaction_execution_gate: CachePadded::new(TransactionExecutionGate::default()),
         };
 
@@ -1433,9 +1427,6 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            bank.set_is_alpenglow();
-        }
         bank
     }
 
@@ -1622,7 +1613,6 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
-            is_alpenglow: AtomicBool::new(parent.is_alpenglow()),
             transaction_execution_gate: CachePadded::new(TransactionExecutionGate::default()),
         };
 
@@ -2142,16 +2132,9 @@ impl Bank {
             self.update_slot_hashes();
             self.update_stake_history(Some(parent_epoch));
 
-            if self.is_alpenglow() {
-                // Alpenglow banks have the timestamp populated via the footer
-                // We only populate the slot here
-                self.update_clock_slot_for_alpenglow();
-            } else {
-                // PoH banks have the timestamp and slot populated at the beginning
-                // Note: The first alpenglow bank will have the timestamp populated
-                // here at the beginning as well as at the end via the footer - this is intentional.
-                self.update_clock(Some(parent_epoch));
-            }
+            // Alpenglow banks have the timestamp populated via the footer
+            // We only populate the slot here
+            self.update_clock_slot_for_alpenglow();
             self.update_last_restart_slot()
         });
 
@@ -2331,13 +2314,8 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             expected_bank_hash: RwLock::new(None),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
-            is_alpenglow: AtomicBool::new(false),
             transaction_execution_gate: CachePadded::new(TransactionExecutionGate::default()),
         };
-
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            bank.set_is_alpenglow();
-        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -3605,14 +3583,6 @@ impl Bank {
         })
     }
 
-    pub fn is_alpenglow(&self) -> bool {
-        self.is_alpenglow.load(Relaxed)
-    }
-
-    fn set_is_alpenglow(&self) {
-        self.is_alpenglow.store(true, Relaxed);
-    }
-
     /// For use in the first Alpenglow block, set the genesis certificate.
     pub fn set_alpenglow_genesis_certificate(&self, cert: &GenesisCert) {
         let cert = WireBlockCertMessage {
@@ -3627,7 +3597,6 @@ impl Bank {
         let cert_acct = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
 
         self.store_account_and_update_capitalization(&GENESIS_CERTIFICATE_ACCOUNT, &cert_acct);
-        self.set_is_alpenglow();
     }
 
     /// Update the clock sysvar from a block footer's nanosecond timestamp.
@@ -4292,7 +4261,7 @@ impl Bank {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
-            alpenglow_migration_succeeded: self.is_alpenglow(),
+            alpenglow_migration_succeeded: true,
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
             program_runtime_environments: ProgramRuntimeEnvironments::new(
@@ -7044,10 +7013,6 @@ impl Bank {
             accounts_data_size_initial,
         );
 
-        if bank.get_alpenglow_genesis_certificate().is_some() {
-            bank.set_is_alpenglow();
-        }
-
         bank.apply_activated_features();
         if bank.feature_set.snapshot().remove_inactive_stakes {
             bank.stakes_cache.remove_inert_stake_delegations(
@@ -7078,7 +7043,7 @@ impl Bank {
         // The Alpenglow clock update detects an epoch boundary through the
         // parent bank, which this bank does not have: apply the boundary
         // rule (the epoch starts at the parent's footer timestamp) here.
-        if bank.is_alpenglow() && parent_epoch != bank.epoch() {
+        if parent_epoch != bank.epoch() {
             let clock = bank.clock();
             let clock = sysvar::clock::Clock {
                 epoch_start_timestamp: clock.unix_timestamp,

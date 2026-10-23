@@ -13,9 +13,9 @@ use {
         genesis_utils::{
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
-            create_genesis_config_with_leader, create_genesis_config_with_tower_leader,
-            create_genesis_config_with_vote_accounts, create_lockup_stake_account,
-            genesis_sysvar_and_builtin_program_lamports, minimum_vote_account_balance_for_vat,
+            create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
+            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
+            minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
@@ -63,7 +63,7 @@ use {
     solana_client_traits::SyncClient,
     solana_clock::{
         DEFAULT_NS_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH,
-        MAX_RECENT_BLOCKHASHES, Slot, UnixTimestamp,
+        MAX_RECENT_BLOCKHASHES, Slot,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::{
@@ -5497,14 +5497,14 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "2cZPDxSwRoohpRQ9v6U6jkLVsdq4pGAvhrrGmwkLgETe",
+                "GerMndDk8uEYYaqAYZmEoEtYPtZM1qqDMkp2iPDqoVRA",
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "EwSi5Y5VX6w3WZph6aVdwELkiDHGLmBymLmKrhGj9yYt",
+                "EJhb8GRfwe2zAZYSeaKd91ik9iQAKmD1J18tkZo19Qqp",
             );
             break;
         }
@@ -6803,54 +6803,6 @@ fn test_reduce_slot_time_range_duration() {
 }
 
 #[test]
-fn test_update_clock_slot_range_duration() {
-    const SLOTS_PER_EPOCH: Slot = 32;
-
-    let leader_pubkey = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        voting_keypair,
-        ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
-    genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
-    activate_feature(
-        &mut genesis_config,
-        feature_set::reduce_slot_time_to_200ms::id(),
-    );
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let vote_timestamp_slot = 4;
-    let vote_timestamp = bank.unix_timestamp_from_genesis();
-    update_vote_account_timestamp(
-        BlockTimestamp {
-            slot: vote_timestamp_slot,
-            timestamp: vote_timestamp,
-        },
-        &bank,
-        &voting_keypair.pubkey(),
-    );
-
-    let current_slot = SLOTS_PER_EPOCH + 3;
-    let bank = Bank::new_from_parent_with_bank_forks(
-        &bank_forks,
-        bank,
-        SlotLeader::default(),
-        current_slot,
-    );
-    let expected_elapsed = Duration::from_nanos_u128(
-        bank.slot_range_duration_nanos(vote_timestamp_slot + 1, current_slot),
-    );
-    let scalar_elapsed =
-        Duration::from_nanos(bank.ns_per_slot as u64) * (current_slot - vote_timestamp_slot) as u32;
-
-    assert_ne!(expected_elapsed.as_secs(), scalar_elapsed.as_secs());
-    assert_eq!(
-        bank.clock().unix_timestamp,
-        vote_timestamp + expected_elapsed.as_secs() as i64
-    );
-}
-
-#[test]
 fn test_rent_feature_gates_epoch_transition() {
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
     genesis_config.rent.lamports_per_byte = 0;
@@ -7291,17 +7243,6 @@ fn test_update_clock_timestamp() {
     assert_eq!(bank.clock().unix_timestamp, parent_timestamp);
 }
 
-fn poh_estimate_offset(bank: &Bank) -> Duration {
-    let mut epoch_start_slot = bank.epoch_schedule.get_first_slot_in_epoch(bank.epoch());
-    if epoch_start_slot == bank.slot() {
-        epoch_start_slot = bank
-            .epoch_schedule
-            .get_first_slot_in_epoch(bank.epoch() - 1);
-    }
-    bank.slot().saturating_sub(epoch_start_slot) as u32
-        * Duration::from_nanos(bank.ns_per_slot as u64)
-}
-
 #[test]
 fn test_ns_per_slot() {
     let (genesis_config, _) = create_genesis_config(1);
@@ -7397,94 +7338,6 @@ fn test_slot_params_use_genesis_baseline_without_features() {
         bank.max_entry_bytes_per_slot(),
         DEFAULT_MAX_ENTRY_BYTES_PER_SLOT
     );
-}
-
-#[test]
-fn test_timestamp_slow() {
-    fn max_allowable_delta_since_epoch(bank: &Bank, max_allowable_drift: u32) -> i64 {
-        let poh_estimate_offset = poh_estimate_offset(bank);
-        (poh_estimate_offset.as_secs()
-            + (poh_estimate_offset * max_allowable_drift / 100).as_secs()) as i64
-    }
-
-    let leader_pubkey = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        voting_keypair,
-        ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
-    let slots_in_epoch = 32;
-    genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
-    let (mut bank, _bank_forks) =
-        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-    let slot_duration = Duration::from_nanos(bank.ns_per_slot as u64);
-
-    let recent_timestamp: UnixTimestamp = bank.unix_timestamp_from_genesis();
-    let additional_secs =
-        ((slot_duration * MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2 * 32) / 100).as_secs() as i64 + 1; // Greater than max_allowable_drift_slow_v2 for full epoch
-    update_vote_account_timestamp(
-        BlockTimestamp {
-            slot: bank.slot(),
-            timestamp: recent_timestamp + additional_secs,
-        },
-        &bank,
-        &voting_keypair.pubkey(),
-    );
-
-    // additional_secs greater than MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2 for an epoch
-    // timestamp bounded to 150% deviation
-    for _ in 0..31 {
-        bank = Arc::new(new_from_parent(bank));
-        assert_eq!(
-            bank.clock().unix_timestamp,
-            bank.clock().epoch_start_timestamp
-                + max_allowable_delta_since_epoch(&bank, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2),
-        );
-        assert_eq!(bank.clock().epoch_start_timestamp, recent_timestamp);
-    }
-}
-
-#[test]
-fn test_timestamp_fast() {
-    fn max_allowable_delta_since_epoch(bank: &Bank, max_allowable_drift: u32) -> i64 {
-        let poh_estimate_offset = poh_estimate_offset(bank);
-        (poh_estimate_offset.as_secs()
-            - (poh_estimate_offset * max_allowable_drift / 100).as_secs()) as i64
-    }
-
-    let leader_pubkey = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        voting_keypair,
-        ..
-    } = create_genesis_config_with_tower_leader(5, &leader_pubkey, 3);
-    let slots_in_epoch = 32;
-    genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
-    let (mut bank, _bank_forks) =
-        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-
-    let recent_timestamp: UnixTimestamp = bank.unix_timestamp_from_genesis();
-    let additional_secs = 5; // Greater than MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST for full epoch
-    update_vote_account_timestamp(
-        BlockTimestamp {
-            slot: bank.slot(),
-            timestamp: recent_timestamp - additional_secs,
-        },
-        &bank,
-        &voting_keypair.pubkey(),
-    );
-
-    // additional_secs greater than MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST for an epoch
-    // timestamp bounded to 25% deviation
-    for _ in 0..31 {
-        bank = Arc::new(new_from_parent(bank));
-        assert_eq!(
-            bank.clock().unix_timestamp,
-            bank.clock().epoch_start_timestamp
-                + max_allowable_delta_since_epoch(&bank, MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST),
-        );
-        assert_eq!(bank.clock().epoch_start_timestamp, recent_timestamp);
-    }
 }
 
 #[test]

@@ -1855,7 +1855,6 @@ pub mod test {
                 fork_choice::ForkChoice, heaviest_subtree_fork_choice::SlotHashKey,
                 tower_storage::FileTowerStorage,
             },
-            replay_stage::HeaviestForkFailures,
             vote_simulator::VoteSimulator,
         },
         itertools::Itertools,
@@ -1963,40 +1962,6 @@ pub mod test {
                 Hash::default()
             ))
         );
-    }
-
-    #[test]
-    fn test_simple_votes() {
-        // Init state
-        let mut vote_simulator = VoteSimulator::new(1);
-        let node_pubkey = vote_simulator.node_pubkeys[0];
-        let mut tower = Tower::default();
-
-        // Create the tree of banks
-        let forks = tr(0) / (tr(1) / (tr(2) / (tr(3) / (tr(4) / tr(5)))));
-
-        // Set the voting behavior
-        let mut cluster_votes = HashMap::new();
-        let votes = vec![1, 2, 3, 4, 5];
-        cluster_votes.insert(node_pubkey, votes.clone());
-        vote_simulator.fill_bank_forks(forks, &cluster_votes, true);
-
-        // Simulate the votes
-        for vote in votes {
-            assert!(
-                vote_simulator
-                    .simulate_vote(vote, &node_pubkey, &mut tower,)
-                    .is_empty()
-            );
-        }
-
-        for i in 1..5 {
-            assert_eq!(tower.vote_state.votes[i - 1].slot() as usize, i);
-            assert_eq!(
-                tower.vote_state.votes[i - 1].confirmation_count() as usize,
-                6 - i
-            );
-        }
     }
 
     #[test]
@@ -2410,145 +2375,6 @@ pub mod test {
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
-    }
-
-    #[test]
-    fn test_switch_threshold_votes() {
-        // Init state
-        let mut vote_simulator = VoteSimulator::new(4);
-        let node_pubkey = vote_simulator.node_pubkeys[0];
-        let mut tower = Tower::default();
-        let forks = tr(0)
-            / (tr(1)
-                / (tr(2)
-                    // Minor fork 1
-                    / (tr(10) / (tr(11) / (tr(12) / (tr(13) / (tr(14))))))
-                    / (tr(43)
-                        / (tr(44)
-                            // Minor fork 2
-                            / (tr(45) / (tr(46))))
-                        / (tr(110)))));
-
-        // Have two validators, each representing 20% of the stake vote on
-        // minor fork 2 at slots 46 + 47
-        let mut cluster_votes: HashMap<Pubkey, Vec<Slot>> = HashMap::new();
-        cluster_votes.insert(vote_simulator.node_pubkeys[1], vec![46]);
-        cluster_votes.insert(vote_simulator.node_pubkeys[2], vec![47]);
-        vote_simulator.fill_bank_forks(forks, &cluster_votes, true);
-
-        // Vote on the first minor fork at slot 14, should succeed
-        assert!(
-            vote_simulator
-                .simulate_vote(14, &node_pubkey, &mut tower,)
-                .is_empty()
-        );
-
-        // The other two validators voted at slots 46, 47, which
-        // will only both show up in slot 48, at which point
-        // 2/5 > SWITCH_FORK_THRESHOLD of the stake has voted
-        // on another fork, so switching should succeed
-        let votes_to_simulate = (46..=48).collect();
-        let results = vote_simulator.create_and_vote_new_branch(
-            45,
-            48,
-            &cluster_votes,
-            &votes_to_simulate,
-            &node_pubkey,
-            &mut tower,
-        );
-        assert_eq!(
-            *results.get(&46).unwrap(),
-            vec![HeaviestForkFailures::FailedSwitchThreshold(46, 0, 40000)]
-        );
-        assert_eq!(
-            *results.get(&47).unwrap(),
-            vec![HeaviestForkFailures::FailedSwitchThreshold(
-                47, 10000, 40000
-            )]
-        );
-        assert!(results.get(&48).unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_double_partition() {
-        // Init state
-        let mut vote_simulator = VoteSimulator::new(2);
-        let node_pubkey = vote_simulator.node_pubkeys[0];
-        let vote_pubkey = vote_simulator.vote_pubkeys[0];
-        let mut tower = Tower::default();
-
-        let num_slots_to_try = 200;
-        // Create the tree of banks
-        let forks = tr(0)
-            / (tr(1)
-                / (tr(2)
-                    / (tr(3)
-                        / (tr(4)
-                            / (tr(5)
-                                / (tr(6)
-                                    / (tr(7)
-                                        / (tr(8)
-                                            / (tr(9)
-                                                // Minor fork 1
-                                                / (tr(10) / (tr(11) / (tr(12) / (tr(13) / (tr(14))))))
-                                                / (tr(43)
-                                                    / (tr(44)
-                                                        // Minor fork 2
-                                                        / (tr(45) / (tr(46) / (tr(47) / (tr(48) / (tr(49) / (tr(50)))))))
-                                                        / (tr(110) / (tr(110 + 2 * num_slots_to_try))))))))))))));
-
-        // Set the successful voting behavior
-        let mut cluster_votes = HashMap::new();
-        let mut my_votes: Vec<Slot> = vec![];
-        let next_unlocked_slot = 110;
-        // Vote on the first minor fork
-        my_votes.extend(1..=14);
-        // Come back to the main fork
-        my_votes.extend(43..=44);
-        // Vote on the second minor fork
-        my_votes.extend(45..=50);
-        // Vote to come back to main fork
-        my_votes.push(next_unlocked_slot);
-        cluster_votes.insert(node_pubkey, my_votes.clone());
-        // Make the other validator vote fork to pass the threshold checks
-        let other_votes = my_votes.clone();
-        cluster_votes.insert(vote_simulator.node_pubkeys[1], other_votes);
-        vote_simulator.fill_bank_forks(forks, &cluster_votes, true);
-
-        // Simulate the votes.
-        for vote in &my_votes {
-            // All these votes should be ok
-            assert!(
-                vote_simulator
-                    .simulate_vote(*vote, &node_pubkey, &mut tower,)
-                    .is_empty()
-            );
-        }
-
-        info!("local tower: {:#?}", tower.vote_state.votes);
-        let observed = vote_simulator
-            .bank_forks
-            .read()
-            .unwrap()
-            .get(next_unlocked_slot)
-            .unwrap()
-            .get_vote_account(&vote_pubkey)
-            .unwrap();
-        let state = observed.vote_state_view();
-        info!("observed tower: {:#?}", state.votes_iter().collect_vec());
-
-        let num_slots_to_try = 200;
-        cluster_votes
-            .get_mut(&vote_simulator.node_pubkeys[1])
-            .unwrap()
-            .extend(next_unlocked_slot + 1..next_unlocked_slot + num_slots_to_try);
-        assert!(vote_simulator.can_progress_on_fork(
-            &node_pubkey,
-            &mut tower,
-            next_unlocked_slot,
-            num_slots_to_try,
-            &mut cluster_votes,
-        ));
     }
 
     #[test]
