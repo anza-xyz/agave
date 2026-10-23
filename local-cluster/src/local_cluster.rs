@@ -14,7 +14,7 @@ use {
         Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
     },
     solana_accounts_db::utils::create_accounts_run_dir,
-    solana_clock::{DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, Slot},
+    solana_clock::{DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
@@ -30,13 +30,10 @@ use {
         node::Node,
     },
     solana_keypair::Keypair,
-    solana_ledger::{
-        create_new_tmp_ledger,
-        shred::{Shred, filter::TurbineMode},
-    },
+    solana_ledger::{create_new_tmp_ledger, shred::filter::TurbineMode},
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_net_utils::SocketAddrSpace,
     solana_poh_config::PohConfig,
     solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
@@ -56,7 +53,6 @@ use {
         state::{Authorized, Lockup, StakeStateV2},
     },
     solana_system_transaction as system_transaction,
-    solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     solana_vote_program::{
@@ -105,7 +101,6 @@ pub struct ClusterConfig {
     pub cluster_type: ClusterType,
     pub poh_config: PohConfig,
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
-    pub vote_use_quic: bool,
 }
 
 impl ClusterConfig {
@@ -142,7 +137,6 @@ impl Default for ClusterConfig {
             poh_config: PohConfig::default(),
             skip_warmup_slots: false,
             additional_accounts: vec![],
-            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
         }
     }
 }
@@ -488,10 +482,6 @@ impl LocalCluster {
 
     pub fn shred_version(&self) -> u16 {
         self.shred_version
-    }
-
-    pub fn set_shred_version(&mut self, shred_version: u16) {
-        self.shred_version = shred_version;
     }
 
     pub fn exit(&mut self) {
@@ -843,18 +833,6 @@ impl LocalCluster {
         alive_node_contact_infos
     }
 
-    pub fn check_min_slot_is_rooted(
-        &self,
-        min_root: Slot,
-        test_name: &str,
-        socket_addr_space: SocketAddrSpace,
-    ) {
-        let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
-        info!("{test_name} looking minimum root {min_root} on all nodes");
-        cluster_tests::check_min_slot_is_rooted(min_root, &alive_node_contact_infos, test_name);
-        info!("{test_name} done waiting for roots");
-    }
-
     pub fn check_for_new_roots(
         &self,
         num_new_roots: usize,
@@ -916,32 +894,6 @@ impl LocalCluster {
                     .map(|validator| Arc::clone(&validator.bank_forks))
             })
             .expect("cluster must contain a running validator")
-    }
-
-    pub fn check_no_new_roots(
-        &self,
-        num_slots_to_wait: usize,
-        test_name: &str,
-        socket_addr_space: SocketAddrSpace,
-    ) {
-        let alive_node_contact_infos: Vec<_> = self
-            .validators
-            .values()
-            .map(|node| &node.info.contact_info)
-            .collect();
-        assert!(!alive_node_contact_infos.is_empty());
-        info!("{test_name} discovering nodes");
-        let cluster_nodes = discover_validators(
-            &alive_node_contact_infos[0].gossip().unwrap(),
-            alive_node_contact_infos.len(),
-            self.shred_version(),
-            socket_addr_space,
-        )
-        .unwrap();
-        info!("{} discovered {} nodes", test_name, cluster_nodes.len());
-        info!("{test_name} making sure no new roots on any nodes");
-        cluster_tests::check_no_new_roots(num_slots_to_wait, &alive_node_contact_infos, test_name);
-        info!("{test_name} done waiting for roots");
     }
 
     /// Poll RPC to see if transaction was processed. Return an error if unable
@@ -1261,10 +1213,6 @@ impl Cluster for LocalCluster {
         (node, entry_point_infos)
     }
 
-    fn set_entry_point(&mut self, entry_point_info: ContactInfo) {
-        self.entry_point_info = entry_point_info;
-    }
-
     fn restart_node(
         &mut self,
         pubkey: &Pubkey,
@@ -1328,20 +1276,6 @@ impl Cluster for LocalCluster {
 
     fn get_contact_info(&self, pubkey: &Pubkey) -> Option<&ContactInfo> {
         self.validators.get(pubkey).map(|v| &v.info.contact_info)
-    }
-
-    fn send_shreds_to_validator(&self, dup_shreds: Vec<&Shred>, validator_key: &Pubkey) {
-        let send_socket = bind_to_localhost_unique().expect("should bind");
-        let validator_tvu = self
-            .get_contact_info(validator_key)
-            .unwrap()
-            .tvu(Protocol::UDP)
-            .unwrap();
-        for shred in dup_shreds {
-            send_socket
-                .send_to(shred.payload().as_ref(), validator_tvu)
-                .unwrap();
-        }
     }
 }
 
