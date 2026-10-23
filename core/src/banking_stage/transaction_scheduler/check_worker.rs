@@ -880,6 +880,7 @@ pub(crate) mod external {
             let logon = ClientLogon {
                 worker_count: 1,
                 check_worker_count: 1,
+                simulate_worker_count: 0,
                 allocator_size: 64 * 1024 * 1024,
                 allocator_handles: 1,
                 tpu_to_pack_capacity: 16,
@@ -888,6 +889,8 @@ pub(crate) mod external {
                 worker_to_pack_capacity: 16,
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
+                pack_to_simulate_worker_capacity: 0,
+                simulate_worker_to_pack_capacity: 0,
             };
             let (_agave_session, client_session) = setup_local_session(logon).unwrap();
             let allocator = client_session.allocator;
