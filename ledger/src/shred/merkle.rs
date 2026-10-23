@@ -634,23 +634,30 @@ fn get_merkle_node(shred: &[u8], offsets: Range<usize>) -> Result<Hash, Error> {
 /// Recovers the missing shreds of an erasure batch. If only data shreds are
 /// provided, this will run Reed-Solomon encoder and produce missing coding shreds.
 /// On success, returns the reconstructed shreds (the ones not given as input).
+#[cfg(test)]
 pub(super) fn recover(
     shreds: Vec<Shred>,
 ) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<>, Error> {
-    let ErasureBatch { shreds, received } = rebuild_erasure_batch(shreds)?;
-    Ok(shreds
-        .into_iter()
-        .zip(received)
-        .filter(|(_, received)| !received)
-        .map(|(shred, _)| Ok(shred)))
+    let batch = rebuild_erasure_batch(shreds)?;
+    Ok(batch.into_recovered().map(Ok))
 }
 
 /// All shreds of an erasure batch, ordered by their erasure shard index.
-pub(super) struct ErasureBatch {
+pub(crate) struct ErasureBatch {
     shreds: Box<[Shred; SHREDS_PER_FEC_BLOCK]>,
     /// Whether the shred at the same position was given as input, as opposed
     /// to being reconstructed.
     received: [bool; SHREDS_PER_FEC_BLOCK],
+}
+
+impl ErasureBatch {
+    /// Returns the shreds which were reconstructed, i.e. not given as input.
+    pub(crate) fn into_recovered(self) -> impl Iterator<Item = Shred> {
+        self.shreds
+            .into_iter()
+            .zip(self.received)
+            .filter_map(|(shred, received)| (!received).then_some(shred))
+    }
 }
 
 // Common header of the coding shred at position 0 of an erasure batch, along
@@ -1242,6 +1249,45 @@ pub(crate) fn finish_erasure_batch_for_tests(
     finish_erasure_batch(keypair, shreds, chained_merkle_root)
 }
 
+// Builds the Merkle tree over the shreds of the erasure batch as they are,
+// and signs it.
+#[cfg(test)]
+fn sign_erasure_batch(keypair: &Keypair, batch: &mut [Shred]) {
+    let tree = MerkleTree::try_new(batch.iter().map(Shred::merkle_node)).unwrap();
+    let signature = keypair.sign_message(tree.root().as_ref());
+    for (index, shred) in batch.iter_mut().enumerate() {
+        let proof = tree.make_merkle_proof(index, SHREDS_PER_FEC_BLOCK);
+        shred.set_merkle_proof(proof).unwrap();
+        shred.set_signature(signature);
+        assert!(
+            shred.verify(&keypair.pubkey()),
+            "every shred should pass sigverify"
+        );
+    }
+}
+
+// As a byzantine leader could: fills the coding shreds of the erasure batch,
+// ordered by erasure shard index, with garbage instead of the Reed-Solomon
+// parity of the data shreds, but builds and signs the Merkle tree over them
+// as usual.
+#[cfg(test)]
+pub(crate) fn sign_with_invalid_parity_for_tests(keypair: &Keypair, batch: &mut [Shred]) {
+    assert_eq!(
+        batch.len(),
+        SHREDS_PER_FEC_BLOCK,
+        "expected a full erasure batch"
+    );
+    for shred in &mut batch[DATA_SHREDS_PER_FEC_BLOCK..] {
+        assert_matches::assert_matches!(shred, Shred::ShredCode(_), "expected a coding shred");
+        shred
+            .erasure_shard_mut()
+            .unwrap()
+            .iter_mut()
+            .for_each(|byte| *byte ^= 0xFF);
+    }
+    sign_erasure_batch(keypair, batch);
+}
+
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 pub(crate) mod resigned_for_tests;
 
@@ -1631,23 +1677,7 @@ mod test {
         let mut rng = rand::rng();
         let keypair = Keypair::new();
         let mut batch = make_erasure_batches_for_tests(&mut rng, false, 0, 0).swap_remove(0);
-        // The byzantine leader fills coding shreds with garbage instead of the
-        // Reed-Solomon parity of the data shreds, but builds and signs the
-        // Merkle tree over them as usual.
-        for shred in &mut batch[DATA_SHREDS_PER_FEC_BLOCK..] {
-            rng.fill(&mut shred.erasure_shard_mut().unwrap()[..]);
-        }
-        let tree = MerkleTree::try_new(batch.iter().map(Shred::merkle_node)).unwrap();
-        let signature = keypair.sign_message(tree.root().as_ref());
-        for (index, shred) in batch.iter_mut().enumerate() {
-            let proof = tree.make_merkle_proof(index, SHREDS_PER_FEC_BLOCK);
-            shred.set_merkle_proof(proof).unwrap();
-            shred.set_signature(signature);
-            assert!(
-                shred.verify(&keypair.pubkey()),
-                "every shred should pass sigverify"
-            );
-        }
+        sign_with_invalid_parity_for_tests(&keypair, &mut batch);
         // Coding shreds re-encoded from the data shreds do not match the
         // signed Merkle leaves.
         let data_shreds = batch[..DATA_SHREDS_PER_FEC_BLOCK].to_vec();
