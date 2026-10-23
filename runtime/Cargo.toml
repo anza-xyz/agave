@@ -56,6 +56,7 @@ shuttle-test = ["dep:shuttle"]
 agave-bls-cert-verify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
+agave-math-utils = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }

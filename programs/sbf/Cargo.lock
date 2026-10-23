@@ -8137,6 +8137,7 @@ dependencies = [
  "agave-bls-cert-verify",
  "agave-feature-set",
  "agave-fs",
+ "agave-math-utils",
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-snapshots",
