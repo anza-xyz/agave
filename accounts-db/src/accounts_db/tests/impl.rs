@@ -728,7 +728,7 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
     let owner = Pubkey::new_unique();
     let pubkey = Pubkey::new_unique();
     let slot = 1;
-    let bank_id = BankId::new(0);
+    let bank_id = BankId::new(slot);
     let account = AccountSharedData::new(1, 0, &owner);
 
     // Write only to the cache at an unrooted slot: this populates the secondary index keyed by
@@ -2043,7 +2043,7 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
         "clean purged the secondary index entry for a live cached account",
     );
 
-    accounts.purge_slots_from_cache(iter::once(&cache_slot), &PurgeStats::default());
+    accounts.purge_slots_from_cache(iter::once(BankId::new(cache_slot)), &PurgeStats::default());
 
     // The pubkey has been removed from both the index and the write cache. The purge only
     // deferred it, so the following clean must remove it from the secondary index as well.
@@ -4195,7 +4195,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
 
     // Simulate dropping the bank, which finally removes the slot from the cache
     let bank_id = BankId::new(1);
-    db.purge_slot(1, bank_id, false);
+    db.purge_slot(bank_id, false);
     assert!(db.get_account_at_slot(&account_key, 1).is_none());
 }
 
@@ -5578,7 +5578,7 @@ fn test_purge_alive_unrooted_slots_after_clean() {
     assert_eq!(accounts.accounts_index.slot_list_len(&shared_key), 0);
 
     // Simulate purge_slot() all from AccountsBackgroundService
-    accounts.purge_slot(slot1, BankId::new(0), true);
+    accounts.purge_slot(BankId::new(slot1), true);
 
     // Now the key and slot are purged from the database
     assert!(!accounts.contains(&shared_key));
