@@ -56,6 +56,17 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
 
+  # Crate:     ctutils
+  # Version:   0.4.0
+  # Title:     Non-constant-time mask generation and `u128` comparisons
+  # Date:      2026-10-23
+  # ID:        RUSTSEC-2026-0385
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0385
+  # Solution:  Upgrade to >=0.4.4
+  # Agave's transitive consumers only use byte/tag equality, which does not
+  # call the affected mask generation or `u128` comparison APIs.
+  --ignore RUSTSEC-2026-0385
+
   # Crate:     rustls
   # Version:   0.23.45
   # Title:     `Debug` impls for client session values expose TLS secrets
