@@ -60,6 +60,7 @@ use {
     solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
     solana_turbine::broadcast_stage::BroadcastStageType,
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -120,6 +121,21 @@ pub fn execute(
         tvu_sigverify_threads,
         tvu_bls_sigverify_threads,
     } = num_threads;
+
+    let unified_scheduler_handler_threads =
+        value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
+    let replay_arenas = value_t!(matches, "replay_arenas", usize).ok();
+    if let Some(arena_count) = replay_arenas {
+        let max_replay_arenas = unified_scheduler_handler_threads
+            .unwrap_or_else(DefaultSchedulerPool::default_handler_count)
+            .saturating_add(1);
+        if arena_count > max_replay_arenas {
+            Err(format!(
+                "--experimental-replay-arenas must be at most {max_replay_arenas} (the unified \
+                 scheduler handler thread count plus one)"
+            ))?;
+        }
+    }
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
 
@@ -571,13 +587,8 @@ pub fn execute(
             "block_verification_method",
             BlockVerificationMethod
         ),
-        unified_scheduler_handler_threads: value_t!(
-            matches,
-            "unified_scheduler_handler_threads",
-            usize
-        )
-        .ok(),
-        replay_arenas: value_t!(matches, "replay_arenas", usize).ok(),
+        unified_scheduler_handler_threads,
+        replay_arenas,
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",

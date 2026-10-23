@@ -845,7 +845,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(|s| is_within_range(s, 1..))
             .help(
                 "Number of jemalloc arenas for replay. solReplayStage uses arena 0 and unified \
-                 scheduler handler threads use the arenas in round-robin order",
+                 scheduler handler threads use the arenas in round-robin order. Must be at most \
+                 the unified scheduler handler thread count plus one",
             ),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
