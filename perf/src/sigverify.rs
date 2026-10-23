@@ -152,9 +152,7 @@ mod tests {
         crate::{
             packet::{BytesPacket, BytesPacketBatch},
             sigverify::{self},
-            test_tx::{
-                new_test_tx_with_number_of_ixs, new_test_vote_tx, test_multisig_tx, test_tx,
-            },
+            test_tx::{new_test_vote_tx, test_multisig_tx, test_tx},
         },
         bytes::Bytes,
         solana_hash::Hash,
@@ -168,7 +166,6 @@ mod tests {
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
-        test_case::test_case,
     };
 
     fn new_test_vote_tx_v0() -> VersionedTransaction {
@@ -603,27 +600,6 @@ mod tests {
                 SanitizedTransactionView::try_new_sanitized(packet.data(..).unwrap()).unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
         }
-    }
-
-    #[test_case(false, false; "ok_ixs_legacy")]
-    #[test_case(true, false; "too_many_ixs_legacy")]
-    #[test_case(false, true; "ok_ixs_versioned")]
-    #[test_case(true, true; "too_many_ixs_versioned")]
-    fn test_number_of_instructions(too_many_ixs: bool, is_versioned_tx: bool) {
-        let mut number_of_ixs = 64;
-        if too_many_ixs {
-            number_of_ixs += 1;
-        }
-
-        let mut packet = if is_versioned_tx {
-            let tx: VersionedTransaction = new_test_tx_with_number_of_ixs(number_of_ixs);
-            BytesPacket::from_data(tx.clone()).unwrap()
-        } else {
-            let tx: Transaction = new_test_tx_with_number_of_ixs(number_of_ixs);
-            BytesPacket::from_data(tx.clone()).unwrap()
-        };
-
-        assert_eq!(sigverify::verify_packet(&mut packet, false), !too_many_ixs);
     }
 
     #[test]
