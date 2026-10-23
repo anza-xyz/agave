@@ -187,8 +187,8 @@ impl SwQos {
     }
 
     /// Returns true if the peer can open another connection in `connection_table`.
-    /// Checked before pruning, so that a peer at its limit cannot evict others only
-    /// to be rejected itself.
+    /// Should be checked before pruning, so that a peer at its limit cannot evict
+    /// others only to be rejected itself.
     fn has_connection_capacity(
         &self,
         connection_table: &ConnectionTable<ConnectionStreamCounter>,
