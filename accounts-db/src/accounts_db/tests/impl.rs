@@ -5135,47 +5135,52 @@ fn test_load_during_batched_flush_returns_latest() {
 fn test_load_account_and_shrink_race() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let epoch_schedule = EpochSchedule::default();
-    let db = Arc::new(db);
-    let pubkey = Arc::new(Pubkey::new_unique());
-    let exit = Arc::new(AtomicBool::new(false));
+    let pubkey = Pubkey::new_unique();
+    let dead_pubkey = Pubkey::new_unique();
     let slot = 1;
+    let ancestors = Ancestors::default();
 
-    // Store an account
-    let lamports = 42;
-    let mut account = AccountSharedData::new(1, 0, &Pubkey::default());
-    account.set_lamports(lamports);
-    db.store_for_tests((slot, [(pubkey.as_ref(), &account)].as_slice()));
+    // Leave a dead account in storage so shrinking actually rewrites the live account.
+    let account = AccountSharedData::new(42, 64, &Pubkey::default());
+    let mut dead_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    db.store_for_tests((
+        slot,
+        [(&pubkey, &account), (&dead_pubkey, &dead_account)].as_slice(),
+    ));
+    db.add_root_and_flush_write_cache(slot);
+    dead_account.set_lamports(2);
+    db.store_for_tests((slot + 1, [(&dead_pubkey, &dead_account)].as_slice()));
+    db.add_root_and_flush_write_cache(slot + 1);
 
-    // Set the slot as a root so account loads will see the contents of this slot
-    db.add_root(slot);
+    // Build the accessor under the index entry's lock, just as do_load does.
+    let (loaded_slot, storage_location, mut accessor) = db
+        .accounts_index
+        .get_with_and_then(&pubkey, &ancestors, true, |(slot, account_info)| {
+            let storage_location = account_info.storage_location();
+            let accessor = db.get_account_accessor(slot, &storage_location);
+            (slot, storage_location, accessor)
+        })
+        .unwrap();
+    assert_eq!(loaded_slot, slot);
 
-    let t_shrink_accounts = {
-        let db = db.clone();
-        let exit = exit.clone();
+    // Shrink after building the accessor but before fetching the account, without
+    // relying on thread scheduling to hit the race window.
+    db.shrink_candidate_slots.lock().unwrap().insert(slot);
+    assert_eq!(db.shrink_candidate_slots(&epoch_schedule), 1);
+    let StorageLocation::AccountsFile(store_id, _) = storage_location;
+    assert_ne!(db.get_and_assert_single_storage(slot).id(), store_id);
+    assert!(matches!(
+        db.get_account_accessor(slot, &storage_location),
+        LoadedAccountAccessor::Stored(None)
+    ));
 
-        std::thread::Builder::new()
-            .name("account-shrink".to_string())
-            .spawn(move || {
-                loop {
-                    if exit.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    // Simulate adding shrink candidates from clean_accounts()
-                    db.shrink_candidate_slots.lock().unwrap().insert(slot);
-                    db.shrink_candidate_slots(&epoch_schedule);
-                }
-            })
-            .unwrap()
-    };
-
-    let t_do_load = start_load_thread(Ancestors::default(), db, exit.clone(), pubkey, move |_| {
-        lamports
-    });
-
-    sleep(Duration::from_secs(RACE_TIME));
-    exit.store(true, Ordering::Relaxed);
-    t_shrink_accounts.join().unwrap();
-    t_do_load.join().map_err(std::panic::resume_unwind).unwrap()
+    // The original accessor must keep the old storage alive and readable.
+    assert_eq!(
+        accessor
+            .check_and_get_loaded_account_shared_data(NO_LOAD_FILTER)
+            .unwrap(),
+        account
+    );
 }
 
 #[test]
