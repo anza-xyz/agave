@@ -15,6 +15,7 @@ use {
     bip39::{Language, Mnemonic},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
+    rand::RngCore,
     solana_account::state_traits::StateMutWincode as _,
     solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
@@ -3416,7 +3417,9 @@ async fn send_deploy_messages(
 fn create_ephemeral_keypair()
 -> Result<(usize, bip39::Mnemonic, Keypair), Box<dyn std::error::Error>> {
     const WORDS: usize = 12;
-    let mnemonic = Mnemonic::generate_in(Language::English, WORDS)?;
+    let mut entropy = [0u8; WORDS / 3 * 4];
+    rand::rng().fill_bytes(&mut entropy);
+    let mnemonic = Mnemonic::from_entropy_in(Language::English, &entropy)?;
     let seed = mnemonic.to_seed("");
     let new_keypair = keypair_from_seed(&seed)?;
 
