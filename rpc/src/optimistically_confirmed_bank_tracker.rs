@@ -106,7 +106,7 @@ impl OptimisticallyConfirmedBankTracker {
         exit: Arc<AtomicBool>,
         bank_forks: Arc<RwLock<BankForks>>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
-        subscriptions: Arc<RpcSubscriptions>,
+        subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_notification_subscribers: Option<Arc<RwLock<Vec<SlotNotificationSender>>>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         dependency_tracker: Option<Arc<DependencyTracker>>,
@@ -127,7 +127,7 @@ impl OptimisticallyConfirmedBankTracker {
                         &receiver,
                         &bank_forks,
                         &optimistically_confirmed_bank,
-                        &subscriptions,
+                        subscriptions.as_deref(),
                         &mut pending_optimistically_confirmed_banks,
                         &mut last_notified_confirmed_slot,
                         &mut highest_confirmed_slot,
@@ -149,7 +149,7 @@ impl OptimisticallyConfirmedBankTracker {
         receiver: &Receiver<BankNotificationWithDependencyWork>,
         bank_forks: &RwLock<BankForks>,
         optimistically_confirmed_bank: &RwLock<OptimisticallyConfirmedBank>,
-        subscriptions: &RpcSubscriptions,
+        subscriptions: Option<&RpcSubscriptions>,
         pending_optimistically_confirmed_banks: &mut PendingOptimisticallyConfirmedBanks,
         last_notified_confirmed_slot: &mut Slot,
         highest_confirmed_slot: &mut Slot,
@@ -192,7 +192,7 @@ impl OptimisticallyConfirmedBankTracker {
     }
 
     fn notify_or_defer(
-        subscriptions: &RpcSubscriptions,
+        subscriptions: Option<&RpcSubscriptions>,
         bank_forks: &RwLock<BankForks>,
         bank: &Bank,
         pending_confirmation: Option<(Slot, Hash)>,
@@ -207,7 +207,9 @@ impl OptimisticallyConfirmedBankTracker {
                     "notify_or_defer notifying via notify_gossip_subscribers for slot {:?}",
                     bank.slot()
                 );
-                subscriptions.notify_gossip_subscribers(bank.slot());
+                if let Some(subscriptions) = subscriptions {
+                    subscriptions.notify_gossip_subscribers(bank.slot());
+                }
                 *last_notified_confirmed_slot = bank.slot();
                 // This bank may have parked while unfrozen. Now that the walk
                 // has delivered it, unpark it so its later Frozen notification
@@ -233,7 +235,7 @@ impl OptimisticallyConfirmedBankTracker {
     }
 
     fn notify_or_defer_confirmed_banks(
-        subscriptions: &RpcSubscriptions,
+        subscriptions: Option<&RpcSubscriptions>,
         bank_forks: &RwLock<BankForks>,
         bank: Arc<Bank>,
         slot_threshold: Slot,
@@ -293,7 +295,7 @@ impl OptimisticallyConfirmedBankTracker {
         (notification, dependency_work): BankNotificationWithDependencyWork,
         bank_forks: &RwLock<BankForks>,
         optimistically_confirmed_bank: &RwLock<OptimisticallyConfirmedBank>,
-        subscriptions: &RpcSubscriptions,
+        subscriptions: Option<&RpcSubscriptions>,
         pending_optimistically_confirmed_banks: &mut PendingOptimisticallyConfirmedBanks,
         last_notified_confirmed_slot: &mut Slot,
         highest_confirmed_slot: &mut Slot,
@@ -365,10 +367,12 @@ impl OptimisticallyConfirmedBankTracker {
                 }
 
                 // Send slot notification regardless of whether the bank is replayed
-                subscriptions.notify_slot_update(SlotUpdate::OptimisticConfirmation {
-                    slot,
-                    timestamp: timestamp(),
-                });
+                if let Some(subscriptions) = subscriptions {
+                    subscriptions.notify_slot_update(SlotUpdate::OptimisticConfirmation {
+                        slot,
+                        timestamp: timestamp(),
+                    });
+                }
                 // NOTE: replay of `slot` may or may not be complete. Therefore, most new
                 // functionality to be triggered on optimistic confirmation should go in
                 // `notify_or_defer()` under the `bank.is_frozen()` case instead of here.
@@ -376,19 +380,21 @@ impl OptimisticallyConfirmedBankTracker {
             BankNotification::Frozen(bank) => {
                 let frozen_slot = bank.slot();
                 if let Some(parent) = bank.parent() {
-                    let num_successful_transactions = bank
-                        .transaction_count()
-                        .saturating_sub(parent.transaction_count());
-                    subscriptions.notify_slot_update(SlotUpdate::Frozen {
-                        slot: frozen_slot,
-                        timestamp: timestamp(),
-                        stats: SlotTransactionStats {
-                            num_transaction_entries: bank.transaction_entries_count(),
-                            num_successful_transactions,
-                            num_failed_transactions: bank.transaction_error_count(),
-                            max_transactions_per_entry: bank.transactions_per_entry_max(),
-                        },
-                    });
+                    if let Some(subscriptions) = subscriptions {
+                        let num_successful_transactions = bank
+                            .transaction_count()
+                            .saturating_sub(parent.transaction_count());
+                        subscriptions.notify_slot_update(SlotUpdate::Frozen {
+                            slot: frozen_slot,
+                            timestamp: timestamp(),
+                            stats: SlotTransactionStats {
+                                num_transaction_entries: bank.transaction_entries_count(),
+                                num_successful_transactions,
+                                num_failed_transactions: bank.transaction_error_count(),
+                                max_transactions_per_entry: bank.transactions_per_entry_max(),
+                            },
+                        });
+                    }
 
                     Self::notify_slot_status(
                         slot_notification_subscribers,
@@ -422,7 +428,9 @@ impl OptimisticallyConfirmedBankTracker {
                         // without ever being announced confirmed (on both the
                         // geyser slot-status stream and the gossip-subscriber
                         // path), and finalize_priority_fee is skipped for it.
-                        subscriptions.notify_gossip_subscribers(frozen_slot);
+                        if let Some(subscriptions) = subscriptions {
+                            subscriptions.notify_gossip_subscribers(frozen_slot);
+                        }
                         Self::notify_slot_status(
                             slot_notification_subscribers,
                             SlotNotification::OptimisticallyConfirmed(frozen_slot, bank.bank_id()),
@@ -483,6 +491,7 @@ mod tests {
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_runtime::{bank::SlotLeader, commitment::BlockCommitmentCache, dependency_tracker},
         std::sync::atomic::AtomicU64,
+        test_case::test_case,
     };
 
     /// Receive the Root notifications from the channel, if no item received within 100 ms, break and return all
@@ -511,8 +520,9 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_process_notification() {
+    #[test_case(true; "with_rpc")]
+    #[test_case(false; "without_rpc")]
+    fn test_process_notification(rpc_enabled: bool) {
         let exit = Arc::new(AtomicBool::new(false));
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
@@ -536,13 +546,15 @@ mod tests {
 
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-            exit,
-            max_complete_transaction_status_slot,
-            bank_forks.clone(),
-            block_commitment_cache,
-            optimistically_confirmed_bank.clone(),
-        ));
+        let subscriptions = rpc_enabled.then(|| {
+            Arc::new(RpcSubscriptions::new_for_tests(
+                exit,
+                max_complete_transaction_status_slot,
+                bank_forks.clone(),
+                block_commitment_cache,
+                optimistically_confirmed_bank.clone(),
+            ))
+        });
         let mut pending_optimistically_confirmed_banks = PendingOptimisticallyConfirmedBanks::new();
 
         assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 0);
@@ -558,7 +570,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -578,7 +590,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -598,7 +610,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -625,7 +637,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -650,7 +662,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -683,7 +695,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -706,7 +718,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -738,7 +750,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -763,7 +775,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -785,7 +797,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -802,8 +814,9 @@ mod tests {
         assert_eq!(notifications.len(), 1);
     }
 
-    #[test]
-    fn test_event_synchronization() {
+    #[test_case(true; "with_rpc")]
+    #[test_case(false; "without_rpc")]
+    fn test_event_synchronization(rpc_enabled: bool) {
         let exit = Arc::new(AtomicBool::new(false));
         let dependency_tracker: Arc<DependencyTracker> =
             Arc::new(dependency_tracker::DependencyTracker::default());
@@ -835,13 +848,15 @@ mod tests {
             let optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>> =
                 OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
 
-            let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-                exit,
-                max_complete_transaction_status_slot,
-                bank_forks.clone(),
-                block_commitment_cache,
-                optimistically_confirmed_bank.clone(),
-            ));
+            let subscriptions = rpc_enabled.then(|| {
+                Arc::new(RpcSubscriptions::new_for_tests(
+                    exit,
+                    max_complete_transaction_status_slot,
+                    bank_forks.clone(),
+                    block_commitment_cache,
+                    optimistically_confirmed_bank.clone(),
+                ))
+            });
 
             // confirmed without fronzen received
             OptimisticallyConfirmedBankTracker::process_notification(
@@ -851,7 +866,7 @@ mod tests {
                 ),
                 &bank_forks,
                 &optimistically_confirmed_bank,
-                &subscriptions,
+                subscriptions.as_deref(),
                 &mut pending_optimistically_confirmed_banks,
                 &mut last_notified_confirmed_slot,
                 &mut highest_confirmed_slot,
@@ -878,7 +893,7 @@ mod tests {
                 ),
                 &bank_forks,
                 &optimistically_confirmed_bank,
-                &subscriptions,
+                subscriptions.as_deref(),
                 &mut pending_optimistically_confirmed_banks,
                 &mut last_notified_confirmed_slot,
                 &mut highest_confirmed_slot,
@@ -899,8 +914,9 @@ mod tests {
         handle.join().unwrap();
     }
 
-    #[test]
-    fn test_deferred_confirmed_notification_survives_overtake() {
+    #[test_case(true; "with_rpc")]
+    #[test_case(false; "without_rpc")]
+    fn test_deferred_confirmed_notification_survives_overtake(rpc_enabled: bool) {
         let exit = Arc::new(AtomicBool::new(false));
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
@@ -923,13 +939,15 @@ mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-            exit,
-            max_complete_transaction_status_slot,
-            bank_forks.clone(),
-            block_commitment_cache,
-            optimistically_confirmed_bank.clone(),
-        ));
+        let subscriptions = rpc_enabled.then(|| {
+            Arc::new(RpcSubscriptions::new_for_tests(
+                exit,
+                max_complete_transaction_status_slot,
+                bank_forks.clone(),
+                block_commitment_cache,
+                optimistically_confirmed_bank.clone(),
+            ))
+        });
 
         let (sender, receiver) = bounded(16);
         let slot_notification_subscribers = Some(Arc::new(RwLock::new(vec![sender])));
@@ -946,7 +964,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -968,7 +986,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -993,7 +1011,7 @@ mod tests {
             (BankNotification::Frozen(bank1), None),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -1017,8 +1035,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_walk_delivery_unparks_deferred_confirmation() {
+    #[test_case(true; "with_rpc")]
+    #[test_case(false; "without_rpc")]
+    fn test_walk_delivery_unparks_deferred_confirmation(rpc_enabled: bool) {
         let exit = Arc::new(AtomicBool::new(false));
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
@@ -1032,13 +1051,15 @@ mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-            exit,
-            max_complete_transaction_status_slot,
-            bank_forks.clone(),
-            block_commitment_cache,
-            optimistically_confirmed_bank.clone(),
-        ));
+        let subscriptions = rpc_enabled.then(|| {
+            Arc::new(RpcSubscriptions::new_for_tests(
+                exit,
+                max_complete_transaction_status_slot,
+                bank_forks.clone(),
+                block_commitment_cache,
+                optimistically_confirmed_bank.clone(),
+            ))
+        });
 
         let (sender, receiver) = bounded(16);
         let slot_notification_subscribers = Some(Arc::new(RwLock::new(vec![sender])));
@@ -1055,7 +1076,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -1086,7 +1107,7 @@ mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -1108,7 +1129,7 @@ mod tests {
             (BankNotification::Frozen(bank1), None),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
+            subscriptions.as_deref(),
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
