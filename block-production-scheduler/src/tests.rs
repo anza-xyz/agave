@@ -12,7 +12,7 @@ use {
     solana_message::{Message, MessageHeader, VersionedMessage},
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
-    std::{io::ErrorKind, path::Path, sync::Arc, thread},
+    std::{os::unix::net::UnixListener, path::Path, sync::Arc, thread},
 };
 
 mod scheduling_flows;
@@ -239,21 +239,12 @@ fn initializes_pacing_once_per_slot() {
 }
 
 #[test]
-fn connection_failure_is_returned() {
-    let directory = tempfile::tempdir().unwrap();
-    let config = config(&directory.path().join("missing.ipc"));
-    let error = run(config, &AtomicBool::new(false)).unwrap_err();
-    assert!(
-        matches!(error, ClientHandshakeError::Io(error) if error.kind() == ErrorKind::NotFound)
-    );
-}
-
-#[test]
 fn handshake_then_run_until_exit() {
     let directory = tempfile::tempdir().unwrap();
     let config = config(&directory.path().join("scheduler.ipc"));
     let worker_count = config.session.worker_count;
     let check_worker_count = config.session.check_worker_count;
+    assert!(try_connect(&config).unwrap().is_none());
     let mut server = Server::new(&config.ipc_path).unwrap();
     let exit = Arc::new(AtomicBool::new(false));
     let scheduler_exit = exit.clone();
@@ -267,4 +258,13 @@ fn handshake_then_run_until_exit() {
     assert_eq!(session.workers.len(), worker_count);
     assert_eq!(session.check_workers.len(), check_worker_count);
     assert!(session.simulate_workers.is_empty());
+}
+
+#[test]
+fn stale_socket_is_retryable() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("scheduler.ipc");
+    drop(UnixListener::bind(&path).unwrap());
+    let config = config(&path);
+    assert!(try_connect(&config).unwrap().is_none());
 }

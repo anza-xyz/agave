@@ -24,8 +24,10 @@ use {
     rts_alloc::Allocator,
     solana_clock::Slot,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
-    std::{collections::HashSet, time::Instant},
+    std::{collections::HashSet, io::ErrorKind, thread, time::Instant},
 };
+
+const CONNECTION_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 mod check_response;
 mod config;
@@ -178,22 +180,20 @@ impl Scheduler {
 
 /// Connects to Agave and runs the scheduler loop on the calling thread until exit is set.
 ///
-/// If exit is already set, returns without connecting. Otherwise, attempts the handshake once
-/// and returns any error to the caller. Shared resources remain alive until the loop exits.
+/// Missing or refused connections are retried until Agave is available or exit is set.
+/// Other errors are returned to the caller. Shared resources remain alive until the loop exits.
 /// The loop receives leader progress, checks and schedules transactions, and handles completion.
 ///
 /// The exit flag cannot interrupt an in-progress handshake. The timeout has the syscall-level
 /// semantics of [`client::connect`], rather than imposing a deadline on the entire handshake.
 pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError> {
-    if exit.load(Ordering::Relaxed) {
-        return Ok(());
+    while !exit.load(Ordering::Relaxed) {
+        if let Some(session) = try_connect(&config)? {
+            return run_session(session, config.scheduler, exit);
+        }
+        thread::sleep(CONNECTION_RETRY_INTERVAL);
     }
-
-    let logon = config.session.client_logon();
-    // Resolve the ledger symlink to the short socket path before connecting.
-    let ipc_path = config.ipc_path.canonicalize()?;
-    let session = client::connect(ipc_path, logon, config.session.handshake_timeout)?;
-    run_session(session, config.scheduler, exit)
+    Ok(())
 }
 
 /// Runs the scheduler on the calling thread using an established local or external session.
@@ -215,4 +215,32 @@ pub fn run_session(
         scheduler.run_iteration();
     }
     Ok(())
+}
+
+/// Returns `None` when Agave is not yet listening.
+fn try_connect(config: &Config) -> Result<Option<ClientSession>, ClientHandshakeError> {
+    // Resolve on every attempt: Agave replaces the ledger symlink when it starts.
+    let session = config
+        .ipc_path
+        .canonicalize()
+        .map_err(ClientHandshakeError::from)
+        .and_then(|path| {
+            client::connect(
+                path,
+                config.session.client_logon(),
+                config.session.handshake_timeout,
+            )
+        });
+    match session {
+        Ok(session) => Ok(Some(session)),
+        Err(ClientHandshakeError::Io(error))
+            if matches!(
+                error.kind(),
+                ErrorKind::NotFound | ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
