@@ -225,7 +225,7 @@ agave-math-utils = { path = "math-utils", version = "=4.5.0-alpha.2", features =
 agave-precompiles = { path = "precompiles", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-random = { path = "random", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-agave-scheduler-bindings = "6.0.0"
+agave-scheduler-bindings = "7.0.0"
 agave-scheduler-handshake = "8.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
