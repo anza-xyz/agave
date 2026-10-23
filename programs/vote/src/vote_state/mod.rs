@@ -1458,20 +1458,20 @@ mod tests {
             data,
             solana_account::WINCODE_CONFIG,
         )
-        .ok()
-        .map(boxed);
+        .map(boxed)
+        .map_err(|err| err.to_string());
         assert_eq!(
             inline,
             wincode::config::deserialize::<VoteStateVersions, _>(
                 data,
                 solana_account::WINCODE_CONFIG,
             )
-            .ok(),
+            .map_err(|err| err.to_string()),
             "data: {data:?}",
         );
         assert_eq!(
-            VoteStateVersionsInline::deserialize(data).ok().map(boxed),
-            VoteStateVersions::deserialize(data).ok(),
+            VoteStateVersionsInline::deserialize(data).map(boxed),
+            VoteStateVersions::deserialize(data),
             "data: {data:?}",
         );
     }
