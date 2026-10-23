@@ -6,6 +6,7 @@ use {
             ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
         },
+        append_vec::MAXIMUM_APPEND_VEC_FILE_SIZE,
     },
     itertools::Itertools as _,
     rand::{prelude::SliceRandom as _, rng},
@@ -6889,4 +6890,24 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
 
     // slot 3 was rooted after the scan guard's max_root (= 2) was established.
     assert!(!found_pubkeys.contains(&pubkey_new));
+}
+
+#[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE, false; "at_append_vec_limit")]
+#[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE - 1, false; "below_append_vec_limit")]
+#[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE + 1, true; "above_append_vec_limit")]
+fn test_create_store_size_limit(size: u64, expect_split: bool) {
+    let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let slot = 3; // value doesn't matter
+    let storage = accounts_db.create_store(slot, size);
+
+    let expected_accounts_file_provider = if expect_split {
+        AccountsFileProvider::Split
+    } else {
+        accounts_db.accounts_file_provider
+    };
+
+    assert_eq!(
+        matches!(storage.accounts, accounts_file::AccountsFile::Split(_)),
+        expected_accounts_file_provider == AccountsFileProvider::Split,
+    );
 }

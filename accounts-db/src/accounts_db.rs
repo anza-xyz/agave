@@ -2827,12 +2827,17 @@ impl AccountsDb {
             .fetch_add(1, Ordering::Relaxed);
         let paths = &self.paths;
         let path_index = rng().random_range(0..paths.len());
+        let accounts_file_provider = if size <= append_vec::MAXIMUM_APPEND_VEC_FILE_SIZE {
+            self.accounts_file_provider
+        } else {
+            AccountsFileProvider::Split
+        };
         AccountStorageEntry::new(
             Path::new(&paths[path_index]),
             slot,
             self.next_id(),
             size,
-            self.accounts_file_provider,
+            accounts_file_provider,
         )
     }
 
