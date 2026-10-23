@@ -8,7 +8,6 @@ use {
         transaction_view::SanitizedTransactionView,
     },
     rayon::prelude::*,
-    solana_runtime_transaction::sanitize_config::sanitize_config,
 };
 
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
@@ -28,7 +27,7 @@ fn verify_packet(packet: &mut BytesPacket, reject_non_vote: bool) -> bool {
     };
 
     let (is_simple_vote_tx, verified) = {
-        let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()) else {
+        let Ok(view) = SanitizedTransactionView::try_new_sanitized(data) else {
             return false;
         };
 
@@ -546,11 +545,8 @@ mod tests {
             let mut tx = test_tx();
             tx.message.instructions[0].data = vec![1, 2, 3];
             let packet = BytesPacket::from_data(tx).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(
-                packet.data(..).unwrap(),
-                &sanitize_config(),
-            )
-            .unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(packet.data(..).unwrap()).unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
         }
 
@@ -559,11 +555,8 @@ mod tests {
             let mut tx = new_test_vote_tx(&mut rng);
             tx.message.instructions[0].data = vec![1, 2, 3];
             let packet = BytesPacket::from_data(tx).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(
-                packet.data(..).unwrap(),
-                &sanitize_config(),
-            )
-            .unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(packet.data(..).unwrap()).unwrap();
             assert!(is_simple_vote_transaction_view(&view));
         }
 
@@ -572,11 +565,8 @@ mod tests {
             let tx = new_test_vote_tx_v0();
             let packet = BytesPacket::from_data(tx).unwrap();
 
-            let view = SanitizedTransactionView::try_new_sanitized(
-                packet.data(..).unwrap(),
-                &sanitize_config(),
-            )
-            .unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(packet.data(..).unwrap()).unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
             assert!(!packet.meta().is_simple_vote_tx());
         }
@@ -597,11 +587,8 @@ mod tests {
                 ],
             );
             let packet = BytesPacket::from_data(tx).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(
-                packet.data(..).unwrap(),
-                &sanitize_config(),
-            )
-            .unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(packet.data(..).unwrap()).unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
         }
 
@@ -612,11 +599,8 @@ mod tests {
             tx.message.header.num_required_signatures = 3;
             tx.message.instructions[0].data = vec![1, 2, 3];
             let packet = BytesPacket::from_data(tx).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(
-                packet.data(..).unwrap(),
-                &sanitize_config(),
-            )
-            .unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(packet.data(..).unwrap()).unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
         }
     }

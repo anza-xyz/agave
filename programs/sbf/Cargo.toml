@@ -157,7 +157,7 @@ solana-stake-history = { version = "2.1.0", features = ["serde", "sysvar", "winc
 solana-svm = { path = "../../svm", version = "=4.5.0-alpha.2" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.5.0-alpha.2" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.5.0-alpha.2" }
-solana-svm-transaction = "7.0.0"
+solana-svm-transaction = "8.0.0"
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.5.0-alpha.2" }
 solana-system-interface = { version = "=3.3.0", features = ["bincode"] }
 solana-sysvar = "=5.0.0"
@@ -187,7 +187,7 @@ agave-validator = { workspace = true }
 borsh = { workspace = true }
 solana-account = { version = "5.1.1", features = ["wincode"] }
 solana-account-info = "3.1.0"
-solana-client-traits = "5.0.0"
+solana-client-traits = "6.0.0"
 solana-clock = { workspace = true }
 solana-cluster-type = "3.0.0"
 solana-compute-budget = { workspace = true }
@@ -201,7 +201,7 @@ solana-instruction = { workspace = true }
 solana-instruction-error = "3.1.0"
 solana-keypair = "4.0.0"
 solana-loader-v3-interface = { version = "9.0.0", features = ["wincode"] }
-solana-message = "5.1.0"
+solana-message = "6.0.0"
 solana-program-binaries = { workspace = true, features = ["agave-unstable-api"] }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = "4.2.0"
@@ -222,7 +222,7 @@ solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = "5.0.0"
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-transaction = "5.1.0"
+solana-transaction = "6.0.0"
 solana-transaction-error = "4.1.0"
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }

@@ -42,7 +42,7 @@ agave-logger = { path = "../logger", version = "=4.5.0-alpha.2", features = ["ag
 agave-precompiles = { path = "../precompiles", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "../snapshots", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-agave-transaction-view = "8.0.0"
+agave-transaction-view = "9.0.0"
 agave-votor-messages = { path = "../votor-messages", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 ahash = "0.8.11"
 assert_cmd = "2.2.2"
@@ -98,7 +98,7 @@ solana-leader-schedule = { path = "../leader-schedule", version = "=4.5.0-alpha.
 solana-ledger = { path = "../ledger", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "9.0.0"
 solana-measure = { path = "../measure", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-message = "5.1.0"
+solana-message = "6.0.0"
 solana-native-token = "3.0.0"
 solana-packet = "4.2.0"
 solana-program-runtime = { path = "../program-runtime", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
@@ -125,14 +125,14 @@ solana-svm-callback = { path = "../svm-callback", version = "=4.5.0-alpha.2", fe
 solana-svm-feature-set = { path = "../svm-feature-set", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-svm-log-collector = { path = "../svm-log-collector", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-svm-timings = { path = "../svm-timings", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-svm-transaction = "7.0.0"
+solana-svm-transaction = "8.0.0"
 solana-syscalls = { path = "../syscalls", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-system-interface = "3.2"
 solana-system-program = { path = "../programs/system", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-system-transaction = "5.0.0"
+solana-system-transaction = "6.0.0"
 solana-sysvar = "5.0.0"
 solana-sysvar-id = "3.1.0"
-solana-transaction = "5.1.0"
+solana-transaction = "6.0.0"
 solana-transaction-context = { path = "../transaction-context", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-transaction-error = "4.1.0"
 solana-transaction-status = { path = "../transaction-status", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
