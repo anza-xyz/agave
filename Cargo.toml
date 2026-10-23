@@ -217,7 +217,7 @@ agave-event-system-derive = "0.3.0"
 agave-feature-set = { path = "feature-set", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-geyser-plugin-host = { path = "geyser-plugin-host", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-agave-geyser-plugin-interface = "=5.0.0"
+agave-geyser-plugin-interface = "=6.0.0"
 agave-io-uring = { path = "io-uring", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-jemalloc = { path = "jemalloc", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
