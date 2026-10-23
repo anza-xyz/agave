@@ -80,8 +80,6 @@ pub struct Crds {
     votes: BTreeMap<u64 /*insert order*/, usize /*index*/>,
     // Indices of EpochSlots keyed by insert order.
     epoch_slots: BTreeMap<u64 /*insert order*/, usize /*index*/>,
-    // Indices of DuplicateShred keyed by insert order.
-    duplicate_shreds: BTreeMap<u64 /*insert order*/, usize /*index*/>,
     // Indices of all crds values associated with a node.
     records: HashMap<Pubkey, IndexSet<usize>>,
     // Indices of all entries keyed by insert order.
@@ -263,7 +261,6 @@ impl Default for Crds {
             num_nodes_removed: 0,
             votes: BTreeMap::default(),
             epoch_slots: BTreeMap::default(),
-            duplicate_shreds: BTreeMap::default(),
             records: HashMap::default(),
             entries: BTreeMap::default(),
             purged: VecDeque::default(),
@@ -370,9 +367,6 @@ impl Crds {
                     CrdsData::EpochSlots(_, _) => {
                         self.epoch_slots.insert(value.ordinal, entry_index);
                     }
-                    CrdsData::DuplicateShred(_, _) => {
-                        self.duplicate_shreds.insert(value.ordinal, entry_index);
-                    }
                     _ => (),
                 };
                 self.entries.insert(value.ordinal, entry_index);
@@ -403,10 +397,6 @@ impl Crds {
                     CrdsData::EpochSlots(_, _) => {
                         self.epoch_slots.remove(&entry.get().ordinal);
                         self.epoch_slots.insert(value.ordinal, entry_index);
-                    }
-                    CrdsData::DuplicateShred(_, _) => {
-                        self.duplicate_shreds.remove(&entry.get().ordinal);
-                        self.duplicate_shreds.insert(value.ordinal, entry_index);
                     }
                     _ => (),
                 }
@@ -500,21 +490,6 @@ impl Crds {
         })
     }
 
-    /// Returns duplicate-shreds inserted since the given cursor.
-    /// Updates the cursor as the values are consumed.
-    pub(crate) fn get_duplicate_shreds<'a>(
-        &'a self,
-        cursor: &'a mut Cursor,
-    ) -> impl Iterator<Item = &'a VersionedCrdsValue> {
-        let range = (Bound::Included(cursor.ordinal()), Bound::Unbounded);
-        self.duplicate_shreds
-            .range(range)
-            .map(move |(ordinal, index)| {
-                cursor.consume(*ordinal);
-                self.table.index(*index)
-            })
-    }
-
     /// Returns all entries inserted since the given cursor.
     pub(crate) fn get_entries<'a>(
         &'a self,
@@ -530,18 +505,6 @@ impl Crds {
     /// Returns true if the table has any values from the pubkey.
     pub(crate) fn has_records(&self, pubkey: &Pubkey) -> bool {
         self.records.contains_key(pubkey)
-    }
-
-    /// Returns all records associated with a pubkey.
-    pub(crate) fn get_records(
-        &self,
-        pubkey: &Pubkey,
-    ) -> impl Iterator<Item = &VersionedCrdsValue> + use<'_> {
-        self.records
-            .get(pubkey)
-            .into_iter()
-            .flat_map(|records| records.into_iter())
-            .map(move |i| self.table.index(*i))
     }
 
     /// Returns number of known contact-infos (network size).
@@ -714,9 +677,6 @@ impl Crds {
             CrdsData::EpochSlots(_, _) => {
                 self.epoch_slots.remove(&value.ordinal);
             }
-            CrdsData::DuplicateShred(_, _) => {
-                self.duplicate_shreds.remove(&value.ordinal);
-            }
             _ => (),
         }
         self.entries.remove(&value.ordinal);
@@ -755,9 +715,6 @@ impl Crds {
                 }
                 CrdsData::EpochSlots(_, _) => {
                     self.epoch_slots.insert(value.ordinal, index);
-                }
-                CrdsData::DuplicateShred(_, _) => {
-                    self.duplicate_shreds.insert(value.ordinal, index);
                 }
                 _ => (),
             };
@@ -916,7 +873,7 @@ impl CrdsDataStats {
             CrdsData::LegacyVersion(_) => 6,
             CrdsData::Version(_) => 7,
             CrdsData::NodeInstance(_) => 8,
-            CrdsData::DuplicateShred(_, _) => 9,
+            CrdsData::DuplicateShred(_) => 9,
             CrdsData::SnapshotHashes(_) => 10,
             CrdsData::ContactInfo(_) => 11,
             CrdsData::RestartLastVotedForkSlots(_) => 12,
@@ -1766,7 +1723,10 @@ mod tests {
         assert_eq!(crds.get_shred_version(&pubkey), None);
         // Remove the remaining entry with the same pubkey.
         crds.remove(&CrdsValueLabel::SnapshotHashes(pubkey), timestamp());
-        assert_eq!(crds.get_records(&pubkey).count(), 0);
+        assert!(
+            !crds.has_records(&pubkey),
+            "no records may remain after removing every value of the pubkey"
+        );
     }
 
     #[test]
@@ -1971,6 +1931,7 @@ mod tests {
             CrdsData::LegacyVersion(Deprecated {}),
             CrdsData::Version(Deprecated {}),
             CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::DuplicateShred(Deprecated {}),
             CrdsData::LowestSlot(
                 1,
                 LowestSlot::new(solana_pubkey::new_rand(), 0, timestamp()),

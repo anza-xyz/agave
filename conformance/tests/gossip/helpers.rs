@@ -27,7 +27,7 @@
 //   6 = LegacyVersion        (deprecated)
 //   7 = Version              (deprecated)
 //   8 = NodeInstance          (deprecated)
-//   9 = DuplicateShred(u16, DuplicateShred)
+//   9 = DuplicateShred       (deprecated)
 //  10 = SnapshotHashes
 //  11 = ContactInfo
 
@@ -214,31 +214,23 @@ pub(crate) fn make_vote_crds_data(index: u8, from: &[u8; 32], wallclock: u64) ->
     wincode::serialize(&CrdsData::Vote(index, crds_vote)).unwrap()
 }
 
-/// Build a DuplicateShred CrdsData (variant 9).
-/// Allows setting the deprecated `shred_index` and `shred_type` wire fields
-/// to test that the harness zeroes them out.
+/// Build a legacy DuplicateShred payload (deprecated variant 9) for rejection tests.
 pub(crate) fn make_duplicate_shred_crds_data(
     index: u16,
     from: &[u8; 32],
     wallclock: u64,
-    slot: u64,
-    shred_index: u32,
-    shred_type: u8,
-    num_chunks: u8,
-    chunk_index: u8,
-    chunk: &[u8],
 ) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&9u32.to_le_bytes()); // CrdsData::DuplicateShred discriminant
-    buf.extend_from_slice(&index.to_le_bytes()); // u16 index
-    buf.extend_from_slice(from); // from: Pubkey
-    buf.extend_from_slice(&wallclock.to_le_bytes());
-    buf.extend_from_slice(&slot.to_le_bytes());
-    buf.extend_from_slice(&shred_index.to_le_bytes()); // _unused (formerly shred_index)
-    buf.push(shred_type); // _unused_shred_type
-    buf.push(num_chunks);
-    buf.push(chunk_index);
-    buf.extend_from_slice(&(chunk.len() as u64).to_le_bytes());
-    buf.extend_from_slice(chunk);
-    buf
+    wincode::serialize(&(
+        9u32,
+        index,
+        *from,
+        wallclock,
+        42u64,
+        0u32,
+        0u8,
+        1u8,
+        0u8,
+        vec![0xDEu8; 32],
+    ))
+    .unwrap()
 }

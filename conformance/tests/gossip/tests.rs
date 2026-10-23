@@ -444,42 +444,15 @@ fn test_conformance_vote_index_at_max() {
 // DuplicateShred tests
 
 #[test]
-fn test_conformance_duplicate_shred_nonzero_deprecated_fields() {
+fn test_conformance_deprecated_duplicate_shred_rejected() {
     let pk = [0xDD; 32];
-    let ds_data = make_duplicate_shred_crds_data(
-        0,          // index
-        &pk,        // from
-        1_000_000,  // wallclock
-        42,         // slot
-        0xDEAD,     // shred_index (non-zero, deprecated)
-        0xFF,       // shred_type (non-zero, deprecated)
-        1,          // num_chunks
-        0,          // chunk_index
-        &[1, 2, 3], // chunk
+    let payload = make_duplicate_shred_crds_data(0, &pk, 1_000_000);
+    let value = make_crds_value_bytes(&[0u8; 64], &payload);
+    check(
+        &make_push_message_bytes(&pk, std::slice::from_ref(&value)),
+        false,
     );
-    let crds_val = make_crds_value_bytes(&[0u8; 64], &ds_data);
-    let data = make_push_message_bytes(&pk, &[crds_val]);
-    check(&data, true);
-
-    let effects = get_effects(&data);
-    let msg = unwrap_msg(&effects);
-    match msg {
-        gossip_msg::Msg::PushMessage(pm) => {
-            match pm.values[0].data.as_ref().unwrap().data.as_ref().unwrap() {
-                gossip_crds_data::Data::DuplicateShred(ds) => {
-                    assert_eq!(ds.shred_index, 0, "deprecated shred_index must be zeroed");
-                    assert_eq!(ds.shred_type, 0, "deprecated shred_type must be zeroed");
-                    assert_eq!(ds.slot, 42);
-                    assert_eq!(ds.from, pk);
-                    assert_eq!(ds.num_chunks, 1);
-                    assert_eq!(ds.chunk_index, 0);
-                    assert_eq!(ds.chunk, vec![1, 2, 3]);
-                }
-                other => panic!("expected DuplicateShred, got {other:?}"),
-            }
-        }
-        other => panic!("expected PushMessage, got {other:?}"),
-    }
+    check(&make_pull_response_bytes(&pk, &[value]), false);
 }
 
 // Deserialization edge cases

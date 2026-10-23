@@ -6,7 +6,6 @@ use {
     crate::{
         contact_info::ContactInfo,
         crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
-        duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
         sigverify_cache::SigVerifyCache,
     },
@@ -30,7 +29,7 @@ use {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "4ABukH5bS69APB3bu1hbMiGyeKPw21nzXAVzCRMtKPih",
+        abi_digest = "4Kh5Ss4sL546rxXH12ByMEsR3im4UsQ1L6mrgLUgv1AP",
         abi_serializer = ["wincode"],
         // `hash` is recomputed from [signature, data] on deserialize, so it can't
         // match an independently-sampled value; verify the wire round-trip only.
@@ -89,7 +88,6 @@ pub enum CrdsValueLabel {
     Vote(VoteIndex, Pubkey),
     LowestSlot(Pubkey),
     EpochSlots(EpochSlotsIndex, Pubkey),
-    DuplicateShred(DuplicateShredIndex, Pubkey),
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
     RestartLastVotedForkSlots(Pubkey),
@@ -102,7 +100,6 @@ impl CrdsValueLabel {
             CrdsValueLabel::Vote(_, p) => *p,
             CrdsValueLabel::LowestSlot(p) => *p,
             CrdsValueLabel::EpochSlots(_, p) => *p,
-            CrdsValueLabel::DuplicateShred(_, p) => *p,
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
             CrdsValueLabel::RestartLastVotedForkSlots(p) => *p,
@@ -214,7 +211,6 @@ impl CrdsValue {
             CrdsData::Vote(ix, _) => CrdsValueLabel::Vote(ix, pubkey),
             CrdsData::LowestSlot(_, _) => CrdsValueLabel::LowestSlot(pubkey),
             CrdsData::EpochSlots(ix, _) => CrdsValueLabel::EpochSlots(ix, pubkey),
-            CrdsData::DuplicateShred(ix, _) => CrdsValueLabel::DuplicateShred(ix, pubkey),
             CrdsData::SnapshotHashes(_) => CrdsValueLabel::SnapshotHashes(pubkey),
             CrdsData::ContactInfo(_) => CrdsValueLabel::ContactInfo(pubkey),
             CrdsData::RestartLastVotedForkSlots(_) => {
@@ -222,7 +218,8 @@ impl CrdsValue {
             }
             CrdsData::RestartHeaviestFork(_) => CrdsValueLabel::RestartHeaviestFork(pubkey),
             // Deprecated: sanitize() rejects these before any caller reaches here.
-            CrdsData::LegacyContactInfo(_)
+            CrdsData::DuplicateShred(_)
+            | CrdsData::LegacyContactInfo(_)
             | CrdsData::LegacySnapshotHashes(_)
             | CrdsData::AccountsHashes(_)
             | CrdsData::LegacyVersion(_)

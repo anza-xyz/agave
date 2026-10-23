@@ -15,7 +15,6 @@ use {
         consensus::{Tower, tower_storage::TowerStorage},
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
-        epoch_specs::EpochSpecs,
         repair::{
             block_id_repair_service::BlockIdRepairChannels,
             repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
@@ -50,10 +49,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
-    solana_gossip::{
-        cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
-        duplicate_shred_listener::DuplicateShredListener,
-    },
+    solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{
@@ -130,7 +126,6 @@ pub struct Tvu {
     peer_list_service: PeerListService,
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
-    duplicate_shred_listener: DuplicateShredListener,
     bls_sigverifier: JoinHandle<()>,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
@@ -436,8 +431,7 @@ impl Tvu {
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
-        // This channel is used by both gossip and window service. Gossip will not fill this
-        // beyond 50%, while window_service will perform a blocking send.
+        // Only window_service sends here, before Alpenglow is enabled, and it blocks when full.
         let (duplicate_slots_sender, duplicate_slots_receiver) = bounded(2048);
         let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =
             unbounded();
@@ -485,7 +479,7 @@ impl Tvu {
                 verified_receiver,
                 retransmit_sender,
                 completed_data_sets_sender,
-                duplicate_slots_sender.clone(),
+                duplicate_slots_sender,
                 repair_service_channels,
                 block_id_repair_channels,
             );
@@ -650,28 +644,8 @@ impl Tvu {
 
         let replay_stage = ReplayStage::new(replay_stage_config, replay_senders, replay_receivers)?;
 
-        let blockstore_cleanup_service = BlockstoreCleanupService::new(
-            blockstore.clone(),
-            tvu_config.blockstore_cleanup_strategy,
-            exit.clone(),
-        );
-
-        let migration_status = bank_forks.read().unwrap().migration_status();
-        let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
-            Box::new(EpochSpecs::from(bank_forks));
-
-        let duplicate_shred_listener = DuplicateShredListener::new(
-            exit,
-            cluster_info.clone(),
-            DuplicateShredHandler::new(
-                blockstore,
-                leader_schedule_cache.clone(),
-                epoch_specs,
-                duplicate_slots_sender,
-                tvu_config.shred_version,
-                migration_status,
-            ),
-        );
+        let blockstore_cleanup_service =
+            BlockstoreCleanupService::new(blockstore, tvu_config.blockstore_cleanup_strategy, exit);
 
         Ok(Tvu {
             fetch_stage,
@@ -687,7 +661,6 @@ impl Tvu {
             peer_list_service,
             warm_quic_cache_service,
             drop_bank_service,
-            duplicate_shred_listener,
             bls_sigverifier,
             votor,
             commitment_service,
@@ -713,7 +686,6 @@ impl Tvu {
             warmup_service.join()?;
         }
         self.drop_bank_service.join()?;
-        self.duplicate_shred_listener.join()?;
         if let Some(rt) = self.votor_transport_runtime.take() {
             rt.block_on(self.votor_transport_endpoint.join());
             rt.shutdown_background();

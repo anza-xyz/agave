@@ -9,11 +9,11 @@ use {
     prost::Message,
     protosol::protos::{
         GossipBloom, GossipCompressedSlots, GossipContactInfo, GossipCrdsData, GossipCrdsFilter,
-        GossipCrdsValue, GossipDuplicateShred, GossipEffects, GossipEpochSlots,
-        GossipIncrementalHash, GossipIpAddr, GossipIpv6Addr, GossipLowestSlot, GossipMsg,
-        GossipPing, GossipPong, GossipPruneData, GossipPruneMessage, GossipPullRequest,
-        GossipPullResponse, GossipPushMessage, GossipSnapshotHashes, GossipSocketEntry, GossipVote,
-        gossip_compressed_slots, gossip_crds_data, gossip_ip_addr, gossip_msg,
+        GossipCrdsValue, GossipEffects, GossipEpochSlots, GossipIncrementalHash, GossipIpAddr,
+        GossipIpv6Addr, GossipLowestSlot, GossipMsg, GossipPing, GossipPong, GossipPruneData,
+        GossipPruneMessage, GossipPullRequest, GossipPullResponse, GossipPushMessage,
+        GossipSnapshotHashes, GossipSocketEntry, GossipVote, gossip_compressed_slots,
+        gossip_crds_data, gossip_ip_addr, gossip_msg,
     },
     solana_gossip::{
         Ping, Protocol, PruneData, crds_data::CrdsData,
@@ -177,20 +177,8 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> GossipEffects {
                     wallclock: sh.wallclock,
                 },
             )),
-            CrdsData::DuplicateShred(idx, ds) => Some(gossip_crds_data::Data::DuplicateShred(
-                GossipDuplicateShred {
-                    index: *idx as u32,
-                    from: ds.from().to_bytes().to_vec(),
-                    wallclock: ds.wallclock(),
-                    slot: ds.slot(),
-                    shred_index: 0,
-                    shred_type: 0,
-                    num_chunks: ds.num_chunks() as u32,
-                    chunk_index: ds.chunk_index() as u32,
-                    chunk: ds.chunk().to_vec(),
-                },
-            )),
-            CrdsData::LegacyContactInfo(..)
+            CrdsData::DuplicateShred(..)
+            | CrdsData::LegacyContactInfo(..)
             | CrdsData::LegacySnapshotHashes(..)
             | CrdsData::AccountsHashes(..)
             | CrdsData::LegacyVersion(..)

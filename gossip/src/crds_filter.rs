@@ -43,8 +43,6 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::ContactInfo(_) => true,
         // Unstaked nodes can still serve snapshots.
         CrdsData::SnapshotHashes(_) => true,
-        // Disabled once Alpenglow is active.
-        CrdsData::DuplicateShred(_, _) => !is_full_alpenglow_epoch && retain_if_staked(),
         // Consensus related messages only allowed for staked nodes
         CrdsData::LowestSlot(0, _) => retain_if_staked(),
         CrdsData::EpochSlots(_, _) if is_full_alpenglow_epoch => false,
@@ -66,6 +64,7 @@ pub(crate) fn should_retain_crds_value(
         },
         // Fully deprecated messages
         CrdsData::AccountsHashes(_) => false,
+        CrdsData::DuplicateShred(_) => false,
         CrdsData::LegacyContactInfo(_) => false,
         CrdsData::LegacySnapshotHashes(_) => false,
         CrdsData::LegacyVersion(_) => false,

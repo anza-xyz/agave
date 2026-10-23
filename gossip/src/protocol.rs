@@ -33,7 +33,6 @@ pub(crate) const PUSH_MESSAGE_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 44;
 /// is equal to PACKET_DATA_SIZE minus serialized size of an empty pull
 /// message: Protocol::PullResponse(Pubkey::default(), Vec::default())
 pub(crate) const PULL_RESPONSE_MAX_PAYLOAD_SIZE: usize = PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
-pub(crate) const DUPLICATE_SHRED_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 115;
 /// Maximum number of incremental hashes in SnapshotHashes a node publishes
 /// such that the serialized size of the push/pull message stays below
 /// PACKET_DATA_SIZE.
@@ -63,7 +62,7 @@ pub(crate) type GossipProtocolWincodeConfig =
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
+        abi_digest = "HySHhEvcHhtDFvXb3YskrzHTcxksxNqkJT7Jg4P7noKv",
         abi_serializer = ["wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
@@ -326,10 +325,6 @@ pub(crate) mod tests {
         crate::{
             contact_info::ContactInfo,
             crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
-            duplicate_shred::{
-                self, MAX_DUPLICATE_SHREDS,
-                tests::{new_rand_fec_set_index, new_rand_shred},
-            },
             epoch_slots::EpochSlots,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
@@ -337,7 +332,6 @@ pub(crate) mod tests {
         solana_clock::Slot,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::shred::Shredder,
         solana_perf::test_tx::new_test_vote_tx,
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -488,48 +482,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_duplicate_shred_max_payload_size() {
-        let mut rng = rand::rng();
-        let leader = Arc::new(Keypair::new());
-        let keypair = Keypair::new();
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = new_rand_fec_set_index(&mut rng);
-        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let other_payload = {
-            let other_shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-            other_shred.into_payload()
-        };
-        let leader_schedule = |s| {
-            if s == slot {
-                Some(leader.pubkey())
-            } else {
-                None
-            }
-        };
-        let chunks: Vec<_> = duplicate_shred::from_shred(
-            shred,
-            keypair.pubkey(),
-            other_payload,
-            Some(leader_schedule),
-            timestamp(),
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            version,
-        )
-        .unwrap()
-        .collect();
-        assert!(chunks.len() > 1);
-        for chunk in chunks {
-            let data = CrdsData::DuplicateShred(MAX_DUPLICATE_SHREDS - 1, chunk);
-            let value = CrdsValue::new(data, &keypair);
-            let pull_response = Protocol::PullResponse(keypair.pubkey(), vec![value.clone()]);
-            assert!(pull_response.serialized_size() < PACKET_DATA_SIZE);
-            let push_message = Protocol::PushMessage(keypair.pubkey(), vec![value.clone()]);
-            assert!(push_message.serialized_size() < PACKET_DATA_SIZE);
-        }
-    }
-
-    #[test]
     fn test_pull_response_min_serialized_size() {
         let mut rng = rand::rng();
         for _ in 0..100 {
@@ -548,30 +500,6 @@ pub(crate) mod tests {
         let mut rng = rand::rng();
         let keypair = Keypair::new();
 
-        // Build a DuplicateShred for the corresponding variant.
-        let leader = Arc::new(Keypair::new());
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = new_rand_fec_set_index(&mut rng);
-        let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let other_payload = {
-            let other = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-            other.into_payload()
-        };
-        let leader_schedule = |s| (s == slot).then_some(leader.pubkey());
-        let dup_shred = duplicate_shred::from_shred(
-            shred,
-            keypair.pubkey(),
-            other_payload,
-            Some(leader_schedule),
-            timestamp(),
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            version,
-        )
-        .unwrap()
-        .next()
-        .unwrap();
-
         let vote =
             CrdsVote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
 
@@ -589,7 +517,7 @@ pub(crate) mod tests {
             CrdsData::LegacyVersion(Deprecated {}),
             CrdsData::Version(Deprecated {}),
             CrdsData::NodeInstance(Deprecated {}),
-            CrdsData::DuplicateShred(0, dup_shred),
+            CrdsData::DuplicateShred(Deprecated {}),
             CrdsData::SnapshotHashes(SnapshotHashes {
                 from: Pubkey::new_unique(),
                 full: (0, Hash::default()),
