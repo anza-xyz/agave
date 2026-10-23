@@ -48,6 +48,8 @@ Release channels have their own copy of this changelog:
 * The default full snapshot interval is now 200,000 slots.
 * XDP interface, address, and transmitter setup failures now report startup errors instead of
   panicking.
+* Added the `slotInfo` admin RPC and `agave-validator slot-info`, returning the processed,
+  confirmed, finalized and root slots over the admin socket, with or without JSON RPC enabled.
 
 #### Deprecations
 

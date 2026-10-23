@@ -112,6 +112,9 @@ pub fn main() {
         ("set-log-filter", Some(subcommand_matches)) => {
             commands::set_log_filter::execute(subcommand_matches, &ledger_path)
         }
+        ("slot-info", Some(subcommand_matches)) => {
+            commands::slot_info::execute(subcommand_matches, &ledger_path)
+        }
         ("wait-for-restart-window", Some(subcommand_matches)) => {
             commands::wait_for_restart_window::execute(subcommand_matches, &ledger_path)
         }

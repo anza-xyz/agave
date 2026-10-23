@@ -5,7 +5,10 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
     solana_ledger::blockstore::Blockstore,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank_forks::BankForks, snapshot_controller::SnapshotController},
+    solana_runtime::{
+        bank_forks::BankForks, commitment::BlockCommitmentCache,
+        snapshot_controller::SnapshotController,
+    },
     solana_tls_utils::NotifyKeyUpdate,
     std::{
         collections::{HashMap, HashSet},
@@ -78,6 +81,7 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub event_system: EventSystem,
     pub cluster_info: Arc<ClusterInfo>,
     pub bank_forks: Arc<RwLock<BankForks>>,
+    pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     pub vote_account: Pubkey,
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     pub notifies: Arc<RwLock<KeyUpdaters>>,
