@@ -289,9 +289,6 @@ pub fn load_and_process_ledger(
     };
 
     let exit = Arc::new(AtomicBool::new(false));
-    // Separate TSS exit flag as it needs to get set at a later point than
-    // the common exit flag. This is coupled to draining TSS receiver queue first.
-    let tss_exit = Arc::new(AtomicBool::new(false));
 
     let enable_rpc_transaction_history = arg_matches.is_present("enable_rpc_transaction_history");
 
@@ -319,7 +316,7 @@ pub fn load_and_process_ledger(
                 write_blockstore.clone(),
                 arg_matches.is_present("enable_extended_tx_metadata_storage"),
                 None,
-                tss_exit.clone(),
+                exit.clone(),
             );
 
             (
@@ -479,7 +476,7 @@ pub fn load_and_process_ledger(
 
     exit.store(true, Ordering::Relaxed);
     if let Some(service) = transaction_status_service {
-        service.quiesce_and_join_for_tests(tss_exit);
+        service.join().unwrap();
     }
 
     result
