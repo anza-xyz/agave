@@ -1,0 +1,71 @@
+# Built-in validator policy and reference for the config file format.
+#
+# The user config file overrides these built-in defaults. Unknown fields are errors.
+#
+# User config inherits fields it does not specify. Exceptions:
+# - `device` and `workers` are replaced as complete units.
+# - Defining `interfaces` replaces the built-in interface labels. Matching labels
+#   inherit unspecified fields; new labels must fully define `device`,
+#   `xdp.zero_copy`, and `xdp.workers`.
+
+# Required in user config files; must be 1.
+schema_version = 1
+
+[xdp]
+# Enable the XDP policy for every component.
+enabled = true
+
+# `primary` is a logical name referenced by each component's tx.interface.
+# Version 1 supports one interface when XDP is enabled. Every component must name
+# that declared label.
+[interfaces.primary]
+# Specify exactly one device selector. Bind the NIC carrying the default route:
+device.route = "default"
+# To bind a device by name, replace device.route with:
+# device.name = "ens1f0"
+
+[interfaces.primary.xdp]
+# Request AF_XDP zero-copy.
+zero_copy = false
+
+# Each worker owns one hardware queue and runs on one CPU. All declared workers
+# must avoid the PoH core, including workers whose queues are unreferenced.
+# Active workers and the PoH core must leave at least one process CPU for other
+# work. Only auto-selected CPUs have to be in the process CPU affinity.
+# Define the pool with exactly one mode, 1 to 512 workers.
+# Select the N highest eligible CPUs, excluding PoH; assign queues 0..N-1 to them
+# in ascending CPU order.
+workers.auto.count = 1
+# Alternative modes replace workers.auto.count:
+# Queue 0 uses CPU 8; queue 1 uses CPU 9.
+# workers.cpus = [8, 9]
+# Map queues to CPUs explicitly, for a NIC whose queue ids are not 0..n-1.
+# List order is sender order. Requires device.name.
+# workers.bindings = [
+#   { queue = 0, cpu = 8 },
+#   { queue = 3, cpu = 9 },
+# ]
+
+# These settings apply to each component below.
+# tx.interface names a declared interface.
+# tx.queues is "all", or hardware queue ids in sender order, e.g. [0, 3].
+# Ids must exist in that interface's worker pool. Components may share a queue.
+[tpu.xdp]
+tx.interface = "primary"
+tx.queues = "all"
+
+[turbine.xdp]
+tx.interface = "primary"
+tx.queues = "all"
+
+[repair.xdp]
+tx.interface = "primary"
+tx.queues = "all"
+
+[gossip.xdp]
+tx.interface = "primary"
+tx.queues = "all"
+
+[votor.xdp]
+tx.interface = "primary"
+tx.queues = "all"
