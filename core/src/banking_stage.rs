@@ -679,7 +679,6 @@ mod external {
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
-                flags: _,
                 tpu_to_pack,
                 progress_tracker,
                 check_workers,

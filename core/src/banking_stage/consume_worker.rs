@@ -917,7 +917,6 @@ pub(crate) mod external {
                 progress_tracker_capacity: 16,
                 pack_to_worker_capacity: 16,
                 worker_to_pack_capacity: 16,
-                flags: 0,
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
             };
