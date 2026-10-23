@@ -812,17 +812,20 @@ impl JsonRpcRequestProcessor {
                 if reward.reward_type.is_some_and(|reward_type| {
                     reward_type == RewardType::Voting
                         || (!epoch_has_partitioned_rewards && Self::is_stake_reward(reward_type))
-                }) && let Some(index) = address_strings
-                    .iter()
-                    .position(|address| *address == reward.pubkey)
-                {
-                    Self::update_reward_response(
-                        &mut rewards_response[index],
-                        epoch,
-                        first_confirmed_block_in_epoch,
-                        reward,
-                        separate_block_reward,
-                    );
+                }) {
+                    for index in address_strings
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, address)| (*address == reward.pubkey).then_some(index))
+                    {
+                        Self::update_reward_response(
+                            &mut rewards_response[index],
+                            epoch,
+                            first_confirmed_block_in_epoch,
+                            reward,
+                            separate_block_reward,
+                        );
+                    }
                 }
             });
         }
@@ -899,18 +902,19 @@ impl JsonRpcRequestProcessor {
 
                 if let Some(rewards) = &block.rewards {
                     rewards.iter().for_each(|reward| {
-                        if reward.reward_type.is_some_and(Self::is_stake_reward)
-                            && let Some(index) = address_indices
+                        if reward.reward_type.is_some_and(Self::is_stake_reward) {
+                            for index in address_indices
                                 .iter()
-                                .find(|&index| address_strings[*index] == reward.pubkey)
-                        {
-                            Self::update_reward_response(
-                                &mut rewards_response[*index],
-                                epoch,
-                                slot,
-                                reward,
-                                separate_block_reward,
-                            );
+                                .filter(|&index| address_strings[*index] == reward.pubkey)
+                            {
+                                Self::update_reward_response(
+                                    &mut rewards_response[*index],
+                                    epoch,
+                                    slot,
+                                    reward,
+                                    separate_block_reward,
+                                );
+                            }
                         }
                     });
                 }
@@ -6247,6 +6251,7 @@ pub mod tests {
             block_only_address.to_string(),
             stake_and_block_receiver_address.to_string(),
             not_found_address.to_string(),
+            stake_and_block_receiver_address.to_string(), // test repeated address
         ];
 
         // Normal request
@@ -6289,6 +6294,7 @@ pub mod tests {
                 block_reward_amount: None,
             })
         );
+        assert_eq!(result[2], result[4]);
         assert_eq!(result[3], None);
 
         // Split out block rewards
@@ -6336,6 +6342,7 @@ pub mod tests {
                 commission_bps: None,
             })
         );
+        assert_eq!(result[2], result[4]);
         assert_eq!(result[3], None);
     }
 
