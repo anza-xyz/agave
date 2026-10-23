@@ -1674,9 +1674,11 @@ pub mod test {
     async fn test_quic_server_unstaked_peer_at_limit_does_not_evict() {
         agave_logger::setup();
         // All unstaked test clients share the localhost IP, and so a single table key.
-        // The victim is therefore a staked peer that overflows into the unstaked table,
-        // where it is keyed by pubkey: the higher-staked filler takes the whole staked
-        // table and cannot be pruned by it.
+        // To get a second key into the unstaked table, the victim is a staked peer that
+        // overflows into it, where it is keyed by pubkey: the filler takes the whole
+        // staked table, and the victim cannot evict it there because the filler has a
+        // higher stake. The test then checks that the unstaked peer (`None`), already
+        // at its limit, cannot evict the victim.
         let filler = Keypair::new();
         let victim = Keypair::new();
         let stakes = HashMap::from([(filler.pubkey(), 1_000_000), (victim.pubkey(), 100_000)]);
