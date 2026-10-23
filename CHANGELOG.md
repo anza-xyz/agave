@@ -63,6 +63,9 @@ Release channels have their own copy of this changelog:
 
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
+* `solana program deploy` no longer generates an ephemeral program ID when neither `--program-id`
+  nor the default program keypair is available. Use `--generate-ephemeral-program-id` to opt in to
+  the previous behavior.
 
 #### Changes
 
