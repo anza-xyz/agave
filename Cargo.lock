@@ -354,12 +354,12 @@ dependencies = [
 [[package]]
 name = "agave-scheduler-bindings"
 version = "6.0.0"
-source = "git+https://github.com/anza-xyz/agave-sdk.git?rev=5b177f927340313cf6eed4cb817ad73aa88c2464#5b177f927340313cf6eed4cb817ad73aa88c2464"
+source = "git+https://github.com/anza-xyz/agave-sdk.git?rev=de20dcc8f2f5638cec589a4d9741c1e72d82c197#de20dcc8f2f5638cec589a4d9741c1e72d82c197"
 
 [[package]]
 name = "agave-scheduler-handshake"
 version = "8.0.0"
-source = "git+https://github.com/anza-xyz/agave-sdk.git?rev=5b177f927340313cf6eed4cb817ad73aa88c2464#5b177f927340313cf6eed4cb817ad73aa88c2464"
+source = "git+https://github.com/anza-xyz/agave-sdk.git?rev=de20dcc8f2f5638cec589a4d9741c1e72d82c197#de20dcc8f2f5638cec589a4d9741c1e72d82c197"
 dependencies = [
  "agave-scheduler-bindings",
  "libc",
