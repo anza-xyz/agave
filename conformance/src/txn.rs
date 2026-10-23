@@ -108,6 +108,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         (parent_slot, &accounts[..]),
         bank_id,
         None,
+        None,
         &Ancestors::default(),
     );
     bank_rc.accounts.accounts_db.add_root(parent_slot);

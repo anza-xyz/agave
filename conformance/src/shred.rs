@@ -348,6 +348,7 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
         (parent_slot, &[(sysvar::rent::id(), rent_account)][..]),
         bank_id,
         None,
+        None,
         &Ancestors::default(),
     );
     bank_rc.accounts.accounts_db.add_root(parent_slot);
