@@ -525,10 +525,7 @@ mod tests {
             &mint_keypair,
             &vote_account,
             &validator_identity,
-            bootstrap_validator_stake_lamports()
-                + stake_utils::get_minimum_delegation(
-                    bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
-                ),
+            bootstrap_validator_stake_lamports() + stake_utils::get_minimum_delegation(),
         );
         let node_pubkey = validator_identity.pubkey();
 

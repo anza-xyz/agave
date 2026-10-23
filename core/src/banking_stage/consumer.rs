@@ -15,13 +15,13 @@ use {
         bank::{
             Bank, LoadAndExecuteTransactionsOutput, entry_bytes_budget::EntryBytesReserveError,
         },
-        transaction_batch::TransactionBatch,
+        transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     solana_runtime_transaction::transaction_with_meta::{
         StaticMessageWithMeta, TransactionWithMeta,
     },
     solana_svm::{
-        account_loader::{TransactionCheckResult, validate_fee_payer},
+        account_loader::{TransactionCheckResult, fee_payer_load_filter, validate_fee_payer},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
@@ -40,6 +40,9 @@ const SERIALIZED_ENTRIES_OVERHEAD: u64 = ENTRY_OVERHEAD_BYTES + 8; // Vec<Entry>
 
 #[derive(Debug)]
 pub struct ExecutionFlags {
+    /// Execute against the current bank without reserving costs, locking accounts,
+    /// recording entries, or committing results.
+    pub simulate: bool,
     /// Should failing transactions within the batch be dropped (no fee charged
     /// & not committed).
     pub drop_on_failure: bool,
@@ -157,6 +160,7 @@ impl Consumer {
             txs,
             check_results,
             &ExecutionFlags {
+                simulate: false,
                 drop_on_failure: false,
                 all_or_nothing: false,
             },
@@ -197,6 +201,20 @@ impl Consumer {
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
         flags: &ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
+        if flags.simulate {
+            let batch =
+                TransactionBatch::new(pre_results.collect(), bank, OwnedOrBorrowed::Borrowed(txs));
+            // The batch did not acquire account locks.
+            let mut batch = batch;
+            batch.set_needs_unlock(false);
+            return ProcessTransactionBatchOutput {
+                cost_model_throttled_transactions_count: 0,
+                cost_model_us: 0,
+                execute_and_commit_transactions_output: self
+                    .execute_and_commit_transactions_locked(bank, &batch, flags),
+            };
+        }
+
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
             cost_model_us,
@@ -263,7 +281,8 @@ impl Consumer {
         batch: &TransactionBatch<impl TransactionWithMeta>,
         flags: &ExecutionFlags,
     ) -> ExecuteAndCommitTransactionsOutput {
-        let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
+        let transaction_status_sender_enabled =
+            !flags.simulate && self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
 
         let mut error_counters = TransactionErrorMetrics::default();
@@ -384,6 +403,18 @@ impl Consumer {
                 .processed_with_successful_result_count,
             attempted_processing_count: processing_results.len() as u64,
         };
+
+        if flags.simulate {
+            let commit_results = Bank::create_commit_results(processing_results);
+            let commit_transaction_statuses = Committer::transaction_details(&commit_results);
+            return ExecuteAndCommitTransactionsOutput {
+                transaction_counts,
+                retryable_transaction_indexes,
+                commit_transactions_result: Ok(commit_transaction_statuses),
+                execute_and_commit_timings,
+                error_counters,
+            };
+        }
 
         let mut entry_bytes = SERIALIZED_ENTRIES_OVERHEAD;
         let (processed_transactions, processing_results_to_transactions_us) = measure_us!({
@@ -536,8 +567,8 @@ impl Consumer {
             bank.fee_features(),
         );
         let mut fee_payer_account = bank
-            .get_account_with_fixed_root(fee_payer)
-            .ok_or(TransactionError::AccountNotFound)?;
+            .get_account_if(fee_payer, fee_payer_load_filter)
+            .ok_or(TransactionError::InvalidAccountForFee)?;
 
         validate_fee_payer(
             &mut fee_payer_account,
@@ -669,6 +700,53 @@ mod tests {
             },
             addresses: Cow::Owned(addresses),
         }
+    }
+
+    #[test]
+    fn test_simulate_executes_without_shared_resource_changes() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            mut record_receiver,
+            consumer,
+            ..
+        } = setup_test(None);
+        let recipient = Pubkey::new_unique();
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &recipient,
+            1,
+            bank.last_blockhash(),
+        )]);
+        bank.write_cost_tracker().unwrap().set_limits(
+            solana_cost_model::cost_tracker::CostTrackerLimits::new(0, 0, 0),
+        );
+        let payer_balance = bank.get_balance(&mint_keypair.pubkey());
+        let block_cost = bank.read_cost_tracker().unwrap().block_cost();
+
+        let output = consumer.process_and_record_transactions_with_pre_results(
+            &bank,
+            &transactions,
+            std::iter::once(Ok(())),
+            &ExecutionFlags {
+                simulate: true,
+                drop_on_failure: false,
+                all_or_nothing: false,
+            },
+        );
+        let details = output
+            .execute_and_commit_transactions_output
+            .commit_transactions_result
+            .unwrap();
+        assert!(matches!(
+            details.as_slice(),
+            [CommitTransactionDetails::Committed { result: Ok(()), .. }]
+        ));
+        assert_eq!(bank.get_balance(&mint_keypair.pubkey()), payer_balance);
+        assert_eq!(bank.get_balance(&recipient), 0);
+        assert_eq!(bank.read_cost_tracker().unwrap().block_cost(), block_cost);
+        record_receiver.shutdown();
+        assert!(record_receiver.drain().next().is_none());
     }
 
     fn store_nonce_account(
@@ -862,14 +940,12 @@ mod tests {
             consumer,
         } = setup_test(None);
 
-        let pubkey = solana_pubkey::new_rand();
-        let transactions = {
-            let mut tx =
-                system_transaction::transfer(&mint_keypair, &pubkey, 1, bank.last_blockhash());
-            // Add duplicate account key
-            tx.message.account_keys.push(pubkey);
-            sanitize_transactions(vec![tx])
-        };
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            1,
+            Hash::new_unique(), // Blockhash is not in the bank's recent blockhash queue.
+        )]);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -894,7 +970,7 @@ mod tests {
             commit_transactions_result.ok(),
             Some(vec![
                 CommitTransactionDetails::NotCommitted(
-                    TransactionError::AccountLoadedTwice
+                    TransactionError::BlockhashNotFound
                 );
                 1
             ])
@@ -1067,7 +1143,7 @@ mod tests {
         assert_eq!(
             commit_transactions_result.ok(),
             Some(vec![CommitTransactionDetails::NotCommitted(
-                TransactionError::AccountNotFound
+                TransactionError::InvalidAccountForFee
             )])
         );
 

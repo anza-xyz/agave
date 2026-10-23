@@ -29,6 +29,9 @@ Release channels have their own copy of this changelog:
   for the epoch containing a requested slot, with an optional identity filter. Always queries
   finalized state; there is no commitment parameter.
 * Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
+  instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
+  preserves the existing parsed output.
 
 ### Validator
 
@@ -49,6 +52,10 @@ Release channels have their own copy of this changelog:
 #### Deprecations
 
 * `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+* `--tpu-max-connections-per-peer` is deprecated and will be removed in a future release. Until then,
+  it still overrides `--tpu-max-connections-per-staked-peer` and `--tpu-max-connections-per-unstaked-peer`.
+  Replace `--tpu-max-connections-per-peer N` with
+  `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
 
 ### CLI
 

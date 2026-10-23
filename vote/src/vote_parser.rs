@@ -1,7 +1,7 @@
 use {
     crate::vote_transaction::VoteTransaction,
     solana_hash::Hash,
-    solana_packet::PACKET_DATA_SIZE,
+    solana_packet::PACKET_DATA_WINCODE_CONFIG,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_svm_transaction::{svm_message::SVMStaticMessage, svm_transaction::SVMTransaction},
@@ -13,12 +13,7 @@ pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
 
 /// Decodes vote instruction data from at most `PACKET_DATA_SIZE` bytes, ignoring trailing bytes.
 pub fn deserialize_vote_instruction(data: &[u8]) -> Option<VoteInstruction> {
-    wincode::config::deserialize(
-        data,
-        wincode::config::Configuration::default()
-            .with_deserialization_size_limit::<PACKET_DATA_SIZE>(),
-    )
-    .ok()
+    wincode::config::deserialize(data, PACKET_DATA_WINCODE_CONFIG).ok()
 }
 
 /// Check if a transaction is a valid vote-only transaction.
@@ -119,6 +114,7 @@ mod test {
         super::*,
         solana_clock::Slot,
         solana_keypair::Keypair,
+        solana_packet::PACKET_DATA_SIZE,
         solana_sha256_hasher::hash,
         solana_signer::Signer,
         solana_system_transaction,
@@ -146,30 +142,52 @@ mod test {
         ]
     }
 
-    /// Checks the compact variants, whose hand-written bincode and wincode decoders sit on top of
-    /// the shared varint and short_vec primitives, on corrupted copies of valid encodings.
+    /// Pins which truncated, extended and byte-mutated copies of valid encodings decode, since the
+    /// compact variants sit on hand-written varint and short_vec readers.
     #[test]
-    fn test_deserialize_compact_vote_instruction_matches_bincode_on_corrupted_input() {
-        let assert_decoders_agree = |data: &[u8]| {
-            assert_eq!(
-                deserialize_vote_instruction(data),
-                solana_bincode::limited_deserialize(data, PACKET_DATA_SIZE as u64).ok(),
-                "data: {data:?}",
-            );
+    fn test_deserialize_compact_vote_instruction_corrupted_input() {
+        // Every compact encoding starts with a u32 tag, a u64 root, the lockout count and varints
+        // at 12..19, a hash and the timestamp option tag at 51.
+        let is_rejected = |encoded_len: usize, index: usize, byte: u8| match (index, byte) {
+            // Tag 0 is InitializeAccount, which needs 97 bytes after the tag.
+            (0, 0x00) => encoded_len < 4 + 97,
+            (0, 0x7f | 0x80 | 0xff) => true,
+            (1..=3, byte) => byte != 0,
+            // Lockout counts from 127 up run past the end of the data.
+            (12, 0x7f | 0x80 | 0xff) => true,
+            // A continuation bit merges the varint with the next byte and shifts the rest.
+            (13 | 15 | 17, 0x80 | 0xff) => true,
+            (51, byte) => byte > 1,
+            _ => false,
         };
         for instruction in compact_vote_instructions() {
             let encoded = wincode::serialize(&instruction).unwrap();
+            for len in 0..encoded.len() {
+                assert_eq!(
+                    deserialize_vote_instruction(encoded.get(..len).unwrap()),
+                    None,
+                    "len: {len}",
+                );
+            }
             let mut trailing = encoded.clone();
             trailing.extend_from_slice(&[0xff; 16]);
-            assert_decoders_agree(&trailing);
-            for len in 0..encoded.len() {
-                assert_decoders_agree(encoded.get(..len).unwrap());
-            }
+            assert_eq!(deserialize_vote_instruction(&trailing), Some(instruction));
             for index in 0..encoded.len() {
                 for byte in [0x00, 0x01, 0x02, 0x7f, 0x80, 0xff] {
                     let mut mutated = encoded.clone();
                     *mutated.get_mut(index).unwrap() = byte;
-                    assert_decoders_agree(&mutated);
+                    let decoded = deserialize_vote_instruction(&mutated);
+                    assert_eq!(
+                        decoded.is_none(),
+                        is_rejected(encoded.len(), index, byte),
+                        "index: {index}, byte: {byte:#04x}, data: {mutated:?}",
+                    );
+                    if let Some(decoded) = decoded {
+                        assert!(
+                            mutated.starts_with(&wincode::serialize(&decoded).unwrap()),
+                            "index: {index}, byte: {byte:#04x}, decoded: {decoded:?}",
+                        );
+                    }
                 }
             }
         }

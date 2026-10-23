@@ -1,9 +1,9 @@
 //! Defines aggregates used for vote rewards.
 
 use {
+    crate::consensus_message::BlockId,
     solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_short_vec::ShortU16,
     solana_signer_store::EncodeError,
     thiserror::Error,
@@ -89,7 +89,7 @@ pub struct NotarRewardCertificate {
     /// The slot the certificate is for.
     pub slot: Slot,
     /// The block id the certificate is for.
-    pub block_id: Hash,
+    pub block_id: BlockId,
     /// The signature.
     #[wincode(with = "PodBLSSignatureCompressed")]
     pub signature: BLSSignatureCompressed,
@@ -102,7 +102,7 @@ impl NotarRewardCertificate {
     /// Returns a new instance of [`NotarRewardCertificate`].
     pub fn try_new(
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         signature: BLSSignatureCompressed,
         bitmap: Vec<u8>,
     ) -> Result<Self, RewardCertError> {
@@ -126,7 +126,7 @@ impl NotarRewardCertificate {
     /// silently ignore new fields (e.g. the geyser boundary conversion)
     /// bind this tuple exhaustively, so growing it breaks them at compile
     /// time.
-    pub fn as_parts(&self) -> (Slot, &Hash, &BLSSignatureCompressed, &[u8]) {
+    pub fn as_parts(&self) -> (Slot, &BlockId, &BLSSignatureCompressed, &[u8]) {
         let Self {
             slot,
             block_id,

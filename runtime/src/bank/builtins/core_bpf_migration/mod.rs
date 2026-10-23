@@ -315,7 +315,7 @@ impl Bank {
     ///     );
     /// }
     /// ```
-    // #[expect(dead_code)] // Only used when an upgrade is configured.
+    #[cfg_attr(not(test), expect(dead_code))] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_core_bpf_program(
         &self,
         core_bpf_program_address: &Pubkey,

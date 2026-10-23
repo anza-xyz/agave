@@ -129,13 +129,13 @@ impl TestSetup {
 
     fn memo_ix(&self) -> (Instruction, u32) {
         // construct a memo instruction that would consume more CU than DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-        let memo = "The quick brown fox jumped over the lazy dog. ".repeat(22) + "!";
+        let memo = "The quick brown fox jumped over the lazy dog. ".repeat(20) + "!";
         let memo_ix = spl_memo_interface::instruction::build_memo(
             &spl_memo_interface::v3::id(),
             memo.as_bytes(),
             &[],
         );
-        let memo_ix_cost = 356_963;
+        let memo_ix_cost = 324_683;
 
         (memo_ix, memo_ix_cost)
     }
@@ -268,7 +268,7 @@ fn test_builtin_ix_cost_adjustment_with_memo_no_cu_limit() {
     test_setup.install_memo_program_account();
     let (memo_ix, _memo_ix_cost) = test_setup.memo_ix();
 
-    // A simple transfer ix, and a bpf ix (memo_ix) that needs 356_963 CUs
+    // A simple transfer ix, and a bpf ix (memo_ix) that needs 324_683 CUs
     // Cost model & Compute budget: reserve/allocate CU for 1 builtin and 1 non-builtin
     //   (3_000 + 200_000) = 203_000 CUs (note: less than memo_ix needs)
     // VM Execution: consume all allocated CUs, then fail
@@ -296,7 +296,7 @@ fn test_builtin_ix_cost_adjustment_with_memo_and_cu_limit() {
         + solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as u32
         + solana_compute_budget_program::DEFAULT_COMPUTE_UNITS as u32;
 
-    // A simple transfer ix, and a bpf ix (memo_ix) that needs 356_963 CUs,
+    // A simple transfer ix, and a bpf ix (memo_ix) that needs 324_683 CUs,
     // and a compute-budget instruction that requests exact amount CUs.
     // Cost model & Compute budget: reserve/allocate requested CUs
     // VM Execution: consume all allocated CUs, then succeed

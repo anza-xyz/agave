@@ -1,5 +1,8 @@
 pub mod args;
+#[cfg(target_os = "linux")]
+mod capabilities;
 pub mod execute;
+mod storage;
 #[cfg(target_os = "linux")]
 mod xdp;
 

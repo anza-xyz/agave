@@ -567,23 +567,18 @@ fn test_vote_account_trailing_bytes_ignored() {
     // With trailing zeros.
     let mut data_zero = base_data.clone();
     data_zero.extend_from_slice(&[0x00; 42]);
-    let mut acct_zero = AccountSharedData::new(
-        base_account.lamports(),
-        data_zero.len(),
-        base_account.owner(),
-    );
-    acct_zero.set_data_from_slice(&data_zero);
+    let acct_zero =
+        AccountSharedData::new_with_data(base_account.lamports(), data_zero, base_account.owner());
     let va_zero = VoteAccount::try_from(acct_zero).unwrap();
 
     // With trailing garbage.
     let mut data_garbage = base_data.clone();
     data_garbage.extend_from_slice(&[0xFF; 42]);
-    let mut acct_garbage = AccountSharedData::new(
+    let acct_garbage = AccountSharedData::new_with_data(
         base_account.lamports(),
-        data_garbage.len(),
+        data_garbage,
         base_account.owner(),
     );
-    acct_garbage.set_data_from_slice(&data_garbage);
     let va_garbage = VoteAccount::try_from(acct_garbage).unwrap();
 
     // Both should return identical accessor values.
@@ -611,12 +606,11 @@ fn test_vote_account_v3_vs_v4_accessor_parity() {
     );
     let v3_versioned = VoteStateVersions::V3(Box::new(v3_state));
     let v3_bytes = wincode::serialize(&v3_versioned).unwrap();
-    let mut v3_account = AccountSharedData::new(
+    let v3_account = AccountSharedData::new_with_data(
         10_000_000,
-        v3_bytes.len(),
+        v3_bytes,
         &solana_vote_interface::program::id(),
     );
-    v3_account.set_data_from_slice(&v3_bytes);
     let va_v3 = VoteAccount::try_from(v3_account).unwrap();
 
     // V4 (equivalent state via migration defaults).
@@ -629,12 +623,11 @@ fn test_vote_account_v3_vs_v4_accessor_parity() {
     };
     let v4_versioned = VoteStateVersions::new_v4(v4_state);
     let v4_bytes = wincode::serialize(&v4_versioned).unwrap();
-    let mut v4_account = AccountSharedData::new(
+    let v4_account = AccountSharedData::new_with_data(
         10_000_000,
-        v4_bytes.len(),
+        v4_bytes,
         &solana_vote_interface::program::id(),
     );
-    v4_account.set_data_from_slice(&v4_bytes);
     let va_v4 = VoteAccount::try_from(v4_account).unwrap();
 
     // Accessors should return equivalent values.

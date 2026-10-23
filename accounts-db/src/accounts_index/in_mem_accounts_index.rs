@@ -248,11 +248,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         let stats = self.stats();
         let (count, time) = if found {
-            (&stats.gets_from_mem, &stats.get_mem_us)
+            (&stats.gets_from_mem, &stats.get_mem_ns)
         } else {
-            (&stats.gets_missing, &stats.get_missing_us)
+            (&stats.gets_missing, &stats.get_missing_ns)
         };
-        Self::update_stat(time, m.as_us());
+        Self::update_stat(time, m.as_ns());
         Self::update_stat(count, 1);
 
         result
@@ -697,11 +697,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     fn update_entry_stats(&self, stopped_measure: Measure, found: bool) {
         let stats = self.stats();
         let (count, time) = if found {
-            (&stats.entries_from_mem, &stats.entry_mem_us)
+            (&stats.entries_from_mem, &stats.entry_mem_ns)
         } else {
-            (&stats.entries_missing, &stats.entry_missing_us)
+            (&stats.entries_missing, &stats.entry_missing_ns)
         };
-        Self::update_stat(time, stopped_measure.as_us());
+        Self::update_stat(time, stopped_measure.as_ns());
         Self::update_stat(count, 1);
     }
 
@@ -826,7 +826,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             .fetch_add(m.end_as_us(), Ordering::Relaxed);
     }
 
-    pub fn startup_update_duplicates_from_in_memory_only(&self, items: Vec<(Slot, Pubkey)>) {
+    pub fn startup_update_duplicates_from_in_memory_only(
+        &self,
+        items: impl IntoIterator<Item = (Slot, Pubkey)>,
+    ) {
         assert!(self.storage.get_startup());
         assert!(self.bucket.is_none());
 
@@ -854,6 +857,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 let (slot, account_info) = new_entry.into();
 
                 let slot_list = occupied.get().slot_list_read_lock();
+                debug_assert!(
+                    slot_list
+                        .iter()
+                        .all(|(existing_slot, _)| *existing_slot != slot),
+                    "Accounts may only be stored once per slot: slot {slot}, pubkey {pubkey}"
+                );
 
                 // If there is only one entry in the slot list, it means that
                 // the previous entry inserted was a duplicate, which should be

@@ -641,7 +641,7 @@ mod tests {
             vec![2_000_000_000; expected_num_delegations],
             stake_account_stores_per_block,
             advance_num_slots,
-            false,
+            true,
         )
     }
 
@@ -728,7 +728,7 @@ mod tests {
         vote_address: &Pubkey,
         modify_fn: &dyn Fn(&mut VoteStateV4),
     ) {
-        let mut vote_account = bank.get_account_with_fixed_root(vote_address).unwrap();
+        let mut vote_account = bank.get_account(vote_address).unwrap();
         let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
         let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
             panic!("unexpected version");
@@ -1350,8 +1350,6 @@ mod tests {
 
         // simulate block progress
         for slot in starting_slot..=SLOTS_PER_EPOCH.saturating_mul(2) {
-            let pre_cap = previous_bank.capitalization();
-
             let pre_sysvar_account = previous_bank
                 .get_account(&solana_sysvar::epoch_rewards::id())
                 .unwrap_or_default();
@@ -1364,6 +1362,7 @@ mod tests {
                 SlotLeader::default(),
                 slot,
             );
+            let pre_cap = previous_bank.capitalization();
             let post_cap = curr_bank.capitalization();
 
             if slot < SLOTS_PER_EPOCH {
@@ -1563,8 +1562,12 @@ mod tests {
         let starting_slot = SLOTS_PER_EPOCH - 1;
         let num_rewards = 100;
         let stake_account_stores_per_block = 50;
-        let (RewardBank { bank, .. }, bank_forks) =
-            create_reward_bank(num_rewards, stake_account_stores_per_block, starting_slot);
+        let (RewardBank { bank, .. }, bank_forks) = create_reward_bank_with_specific_stakes(
+            vec![2_000_000_000; num_rewards],
+            stake_account_stores_per_block,
+            starting_slot,
+            true,
+        );
 
         // Slot before the epoch boundary contains empty rewards (since fees are
         // off), and no partitions because not at the epoch boundary
@@ -1582,15 +1585,33 @@ mod tests {
             SlotLeader::default(),
             SLOTS_PER_EPOCH,
         );
-        // Slot at the epoch boundary contains voting rewards only, as well as partition data
         let KeyedRewardsAndNumPartitions {
             keyed_rewards,
             num_partitions,
         } = epoch_boundary_bank.get_rewards_and_num_partitions();
-        for (_pubkey, reward) in keyed_rewards.iter() {
+
+        let (vat_rewards, voting_rewards): (Vec<_>, Vec<_>) = keyed_rewards
+            .into_iter()
+            .partition(|(_, reward)| reward.reward_type == RewardType::VATDebit);
+        assert_eq!(vat_rewards.len(), num_rewards);
+        for (pubkey, reward) in vat_rewards {
+            assert_eq!(reward.reward_type, RewardType::VATDebit);
+            assert_eq!(
+                reward.lamports,
+                -(epoch_boundary_bank
+                    .current_slot_params()
+                    .vat_to_burn_per_epoch() as i64)
+            );
+            assert_eq!(
+                reward.post_balance,
+                epoch_boundary_bank.get_balance(&pubkey)
+            );
+            assert_eq!(reward.commission_bps, None);
+        }
+        assert_eq!(voting_rewards.len(), num_rewards);
+        for (_, reward) in voting_rewards {
             assert_eq!(reward.reward_type, RewardType::Voting);
         }
-        assert_eq!(keyed_rewards.len(), num_rewards);
         let expected_num_partitions = (num_rewards as u64)
             .div_ceil(epoch_boundary_bank.partitioned_rewards_stake_account_stores_per_block())
             .clamp(1, (SLOTS_PER_EPOCH / 10).max(1));
@@ -1619,8 +1640,8 @@ mod tests {
             previous_bank = partition_bank;
         }
 
-        // All rewards are recorded
-        assert_eq!(total_staking_rewards, num_rewards);
+        // Zero-lamport stake rewards in the first Alpenglow epoch are not recorded.
+        assert_eq!(total_staking_rewards, 0);
         let bank = Bank::new_from_parent(
             previous_bank,
             SlotLeader::default(),
@@ -1747,6 +1768,8 @@ mod tests {
         let mut simulated_bank =
             Bank::new_from_parent(bank.clone(), SlotLeader::default(), bank.slot() + 1);
         simulated_bank.slot = bank.slot() + slots_per_epoch;
+        // A bank stores at one slot, so moving the slot makes it a different bank
+        simulated_bank.bank_id = simulated_bank.rc.bank_id_generator.next();
         simulated_bank.epoch += 1;
 
         // Simulate the steps in `compute_new_epoch_caches_and_rewards`
@@ -1981,7 +2004,7 @@ mod tests {
 
                 // All vote accounts had field reset
                 for vote_address in voters.iter() {
-                    let vote_account = curr_bank.get_account_with_fixed_root(vote_address).unwrap();
+                    let vote_account = curr_bank.get_account(vote_address).unwrap();
                     let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
                     let VoteStateVersions::V4(vote_state) = vote_state_versions else {
                         panic!("unexpected version");
@@ -2038,9 +2061,7 @@ mod tests {
                 );
 
                 for stake_address in stakers.iter() {
-                    let stake_account = curr_bank
-                        .get_account_with_fixed_root(stake_address)
-                        .unwrap();
+                    let stake_account = curr_bank.get_account(stake_address).unwrap();
                     let stake_state: StakeStateV2 = stake_account.state().unwrap();
                     let delegation = stake_state.delegation().unwrap();
                     // Check that stake accounts expected to receive a distribution, do.

@@ -1,6 +1,5 @@
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
-    bincode::serialize,
     criterion::{Criterion, criterion_group, criterion_main},
     solana_account::{Account, AccountSharedData, state_traits::StateMutWincode as _},
     solana_clock::{Clock, Slot},
@@ -30,6 +29,7 @@ use {
             handler::VoteStateHandler,
         },
     },
+    wincode::serialize,
 };
 
 fn create_sysvar_account<T>(value: &T) -> AccountSharedData

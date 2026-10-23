@@ -106,6 +106,9 @@ pub fn main() {
         ("set-identity", Some(subcommand_matches)) => {
             commands::set_identity::execute(subcommand_matches, &ledger_path)
         }
+        ("set-event-filter", Some(subcommand_matches)) => {
+            commands::set_event_filter::execute(subcommand_matches, &ledger_path)
+        }
         ("set-log-filter", Some(subcommand_matches)) => {
             commands::set_log_filter::execute(subcommand_matches, &ledger_path)
         }

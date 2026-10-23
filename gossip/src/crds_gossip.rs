@@ -230,15 +230,15 @@ impl CrdsGossip {
         )
     }
 
-    pub fn generate_pull_responses(
+    pub fn generate_pull_responses<'a>(
         &self,
-        requests: &[PullRequest],
+        requests: impl IntoIterator<Item = &'a PullRequest>,
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
         try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
         stats: &GossipStats,
-    ) -> Vec<Vec<CrdsValue>> {
+    ) -> Vec<(SocketAddr, Vec<CrdsValue>)> {
         CrdsGossipPull::generate_pull_responses(
             &self.crds,
             requests,

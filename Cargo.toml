@@ -146,7 +146,7 @@ repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
 edition = "2024"
-rust-version = "1.99.0"
+rust-version = "1.99.1"
 
 # Agave binary and package names, grouped by intended audience.
 # Read by scripts/agave-build-lists.sh, which build/install scripts source.
@@ -212,6 +212,8 @@ agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", vers
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-bls-sigverify = { path = "bls-sigverify", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-cpu-utils = { path = "cpu-utils", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
+agave-event-system = "0.3.0"
+agave-event-system-derive = "0.3.0"
 agave-feature-set = { path = "feature-set", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-geyser-plugin-host = { path = "geyser-plugin-host", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
@@ -236,7 +238,7 @@ agave-xdp = { path = "xdp", version = "=4.5.0-alpha.2", features = ["agave-unsta
 agave-xdp-ebpf = { path = "xdp-ebpf", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 ahash = "0.8.12"
 anyhow = "1.0.104"
-arbitrary = "1.4.2"
+arbitrary = "1.5.0"
 arc-swap = "1.9.2"
 arrayref = "0.3.9"
 arrayvec = "0.7.8"
@@ -363,15 +365,14 @@ semver = "1.0.28"
 seqlock = "0.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_bytes = "0.11.19"
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
 shaq = { version = "5.0.0" }
 shuttle = "0.9.3"
 signal-hook = "0.4.4"
 slab = "0.4.12"
-slotmap = "1.0.7"
-smallvec = { version = "1.16.2", default-features = false, features = ["union"] }
+smallvec = { version = "1.16.3", default-features = false, features = ["union"] }
 smpl_jwt = "0.9.0"
 socket2 = "0.6.5"
 soketto = "0.8"
@@ -433,8 +434,7 @@ solana-fee-structure = "4.1.0"
 solana-file-download = "3.1.4"
 solana-frozen-abi = { version = "3.9.0", default-features = false }
 solana-frozen-abi-macro = { version = "3.7.0", default-features = false }
-solana-genesis = { path = "genesis", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-genesis-config = "5.0.0"
+solana-genesis-config = "5.0.1"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
@@ -454,7 +454,6 @@ solana-ledger = { path = "ledger", version = "=4.5.0-alpha.2", features = ["agav
 solana-loader-v2-interface = "3.1.0"
 solana-loader-v3-interface = "9.0.0"
 solana-loader-v4-interface = "3.1.0"
-solana-local-cluster = { path = "local-cluster", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-measure = { path = "measure", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-message = "5.1.0"
@@ -467,10 +466,10 @@ solana-nonce = "3.4.0"
 solana-nonce-account = { version = "5.0.0", default-features = false }
 solana-notifier = { path = "notifier", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-offchain-message = "4.0.0"
-solana-packet = "4.4.0"
+solana-packet = "4.4.1"
 solana-perf = { path = "perf", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-poh-config = "3.1.0"
+solana-poh-config = "3.1.1"
 solana-poseidon = "5.0.1"
 solana-precompile-error = "3.0.0"
 solana-presigner = "4.0.0"
@@ -506,7 +505,6 @@ solana-seed-derivable = "3.0.0"
 solana-seed-phrase = "3.0.0"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-serde = "3.0.0"
-solana-serde-varint = "3.0.1"
 solana-serialize-utils = "4.0.0"
 solana-sha256-hasher = "3.1.0"
 solana-sha512-hasher = "1.0.1"
@@ -554,7 +552,7 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=4
 solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 solana-vote = { path = "vote", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
-solana-vote-interface = "7.2.0"
+solana-vote-interface = "7.3.0"
 solana-vote-program = { path = "programs/vote", version = "=4.5.0-alpha.2", default-features = false, features = ["agave-unstable-api"] }
 solana-wincode-varint = "1.1.0"
 solana-zk-elgamal-proof-interface = "1.0.0"
@@ -582,7 +580,7 @@ tarpc = "0.38.0"
 tempfile = "3.27.0"
 test-case = "3.4.0"
 thiserror = "2.0.21"
-tokio = "1.53.2"
+tokio = "1.53.3"
 tokio-serde = "0.9.0"
 tokio-stream = "0.1.19"
 tokio-tungstenite = "0.28.0"
@@ -594,7 +592,7 @@ tracing = "0.1"
 trees = "0.4.2"
 trezor-client = { version = "0.1.6", default-features = false, features = ["solana"] }
 tungstenite = "0.28.0"
-ur-parse-lib = { version = "1.0.8", default-features = false, features = ["std"] }
+ur-parse-lib = { version = "1.0.9", default-features = false, features = ["std"] }
 ur-registry = { version = "1.0.8", default-features = false, features = ["std"] }
 uriparse = "0.6.4"
 url = "2.5.8"

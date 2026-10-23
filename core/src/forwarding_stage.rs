@@ -14,7 +14,7 @@ use {
     solana_keypair::Keypair,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
-    solana_packet as packet,
+    solana_perf::packet,
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     solana_runtime::{

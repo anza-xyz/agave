@@ -529,18 +529,6 @@ impl ErasureSetId {
         self.1
     }
 
-    pub(crate) fn previous_fec_set(&self) -> Option<Self> {
-        self.1
-            .checked_sub(DATA_SHREDS_PER_FEC_BLOCK as u32)
-            .map(|fec_set_index| Self::new(self.0, fec_set_index))
-    }
-
-    pub(crate) fn next_fec_set(&self) -> Option<Self> {
-        self.1
-            .checked_add(DATA_SHREDS_PER_FEC_BLOCK as u32)
-            .map(|fec_set_index| Self::new(self.0, fec_set_index))
-    }
-
     // Storage key for ErasureMeta and MerkleRootMeta in blockstore db.
     // Note: ErasureMeta column uses u64 so this will need to be typecast
     pub(crate) fn store_key(&self) -> (Slot, /*fec_set_index:*/ u32) {
@@ -599,6 +587,7 @@ impl Shred {
 
     dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    #[cfg(test)]
     dispatch!(fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
 
     dispatch!(pub fn payload(&self) -> &Payload);

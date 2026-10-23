@@ -17,6 +17,7 @@ impl Debug for Ancestors {
 }
 
 /// Pairs each slot with a bank id equal to it
+#[cfg(feature = "dev-context-only-utils")]
 impl From<Vec<Slot>> for Ancestors {
     fn from(source: Vec<Slot>) -> Ancestors {
         Ancestors::from(
@@ -41,11 +42,15 @@ impl From<Vec<(Slot, BankId)>> for Ancestors {
 
 impl Ancestors {
     pub fn keys(&self) -> Vec<Slot> {
-        self.iter().collect()
+        self.iter_slots().collect()
     }
 
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = Slot> + '_ {
+    pub fn iter_slots(&self) -> impl DoubleEndedIterator<Item = Slot> + '_ {
         self.ancestors.iter().map(|(slot, _bank_id)| *slot)
+    }
+
+    pub fn iter_bank_ids(&self) -> impl DoubleEndedIterator<Item = BankId> + '_ {
+        self.ancestors.iter().map(|(_slot, bank_id)| *bank_id)
     }
 
     /// Removes the entry with the highest slot, returning that slot
@@ -221,7 +226,7 @@ mod tests {
         let ancestors = Ancestors::from(vec![3, 42, 128_007, 128_017, 128_107]);
 
         let mut keys = ancestors.keys();
-        let mut iter_keys = ancestors.iter().collect::<Vec<_>>();
+        let mut iter_keys = ancestors.iter_slots().collect::<Vec<_>>();
         keys.sort_unstable();
         iter_keys.sort_unstable();
 

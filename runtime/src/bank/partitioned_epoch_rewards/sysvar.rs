@@ -58,7 +58,7 @@ impl Bank {
         // Now add the lamports separately without updating capitalization,
         // since block reward lamports already existed
         let mut account = self
-            .get_account_with_fixed_root(&sysvar::epoch_rewards::id())
+            .get_account(&sysvar::epoch_rewards::id())
             .expect("created sysvar account exists");
 
         // SAFETY: block rewards come from existing lamports, which cannot
@@ -92,7 +92,7 @@ impl Bank {
         // Debit the lamports separately without updating capitalization,
         // since block reward lamports already existed
         let mut account = self
-            .get_account_with_fixed_root(&sysvar::epoch_rewards::id())
+            .get_account(&sysvar::epoch_rewards::id())
             .expect("created sysvar account exists");
 
         // SAFETY: programmer error if we debit too many block rewards

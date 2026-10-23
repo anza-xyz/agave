@@ -305,7 +305,7 @@ mod test {
     macro_rules! set_invoke_context_blockhash {
         ($invoke_context:expr, $seed:expr) => {
             $invoke_context.environment_config.blockhash =
-                hash(&bincode::serialize(&$seed).unwrap());
+                hash(&wincode::serialize(&$seed).unwrap());
             $invoke_context
                 .environment_config
                 .blockhash_lamports_per_signature = ($seed as u64).saturating_mul(100);

@@ -223,7 +223,12 @@ impl PohRecorderMetrics {
 pub struct PohRecorder {
     pub(crate) poh: Arc<Mutex<Poh>>,
     clear_bank_signal: Option<Sender<bool>>,
-    start_bank: Arc<Bank>, // parent slot
+    // Cached from the bank PoH was last reset to (the parent slot). PoH does not hold the bank, so
+    // it never keeps a bank alive after `BankForks` prunes it.
+    start_slot: Slot,
+    start_bank_id: BankId,
+    start_bank_ns_per_slot: u128,
+    start_bank_leader_id: Pubkey,
     start_bank_active_descendants: Vec<Slot>,
     start_tick_height: u64, // first tick_height this recorder will observe
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
@@ -311,7 +316,10 @@ impl PohRecorder {
                 ),
                 working_bank_sender,
                 clear_bank_signal,
-                start_bank,
+                start_slot: start_bank.slot(),
+                start_bank_id: start_bank.bank_id(),
+                start_bank_ns_per_slot: start_bank.ns_per_slot,
+                start_bank_leader_id: *start_bank.leader_id(),
                 start_bank_active_descendants: vec![],
                 start_tick_height: tick_height + 1,
                 leader_last_tick_height,
@@ -599,7 +607,7 @@ impl PohRecorder {
 
         self.tick_cache = vec![];
         if reset_start_bank {
-            self.start_bank = reset_bank;
+            self.set_start_bank(&reset_bank);
             self.start_bank_active_descendants = vec![];
         }
 
@@ -607,6 +615,13 @@ impl PohRecorder {
         self.start_tick_height = tick_height + 1;
 
         tick_height
+    }
+
+    fn set_start_bank(&mut self, bank: &Bank) {
+        self.start_slot = bank.slot();
+        self.start_bank_id = bank.bank_id();
+        self.start_bank_ns_per_slot = bank.ns_per_slot;
+        self.start_bank_leader_id = *bank.leader_id();
     }
 
     /// Waits for the bank to freeze and sends the block footer with the bank hash.
@@ -731,7 +746,7 @@ impl PohRecorder {
                     working_bank.max_tick_height,
                     working_bank.bank.slot()
                 );
-                self.start_bank = working_bank.bank.clone();
+                self.set_start_bank(&working_bank.bank.clone());
                 let working_slot = self.start_slot();
                 self.start_tick_height = working_slot * self.ticks_per_slot + 1;
                 self.clear_bank(true);
@@ -827,19 +842,19 @@ impl PohRecorder {
             .working_bank
             .as_ref()
             .map(|working_bank| working_bank.bank.ns_per_slot)
-            .unwrap_or(self.start_bank.ns_per_slot);
+            .unwrap_or(self.start_bank_ns_per_slot);
         let ticks_per_slot = u128::from(self.ticks_per_slot.max(1));
         let target_tick_ns = ns_per_slot.saturating_div(ticks_per_slot);
         u64::try_from(target_tick_ns).unwrap_or(u64::MAX)
     }
 
     pub fn start_slot(&self) -> Slot {
-        self.start_bank.slot()
+        self.start_slot
     }
 
     /// Returns the unique identity of the bank on which the current PoH state is based.
     pub fn start_bank_id(&self) -> BankId {
-        self.start_bank.bank_id()
+        self.start_bank_id
     }
 
     /// Returns if the leader slot has been reached along with the current poh
@@ -978,7 +993,7 @@ impl PohRecorder {
     }
 
     fn start_slot_was_mine(&self, my_pubkey: &Pubkey) -> bool {
-        self.start_bank.leader_id() == my_pubkey
+        self.start_bank_leader_id == *my_pubkey
     }
 
     // Active descendants of the last reset bank that are smaller than the
@@ -2155,6 +2170,72 @@ mod tests {
         // the `start_slot` is still the slot of the last working bank set by
         // the earlier call to `poh_recorder.set_bank()`
         assert_eq!(poh_recorder.start_slot(), bank.slot());
+    }
+
+    #[test]
+    fn test_poh_recorder_does_not_keep_start_bank_alive() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(2);
+        genesis_config.ticks_per_slot = 5;
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            0,
+            bank0.last_blockhash(),
+            bank0.clone(),
+            Some((4, 4)),
+            bank0.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank0)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+
+        let new_bank = |slot| {
+            Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                bank0.clone(),
+                SlotLeader::default(),
+                slot,
+            )
+        };
+        // Once a start bank is pruned and its other holders are gone, it is freed. PoH still
+        // reports its slot and id.
+        let assert_freed_after_prune = |bank: Arc<Bank>| {
+            let (slot, bank_id) = (bank.slot(), bank.bank_id());
+            let weak_bank = Arc::downgrade(&bank);
+            drop(bank);
+            // The ticks sent to broadcast hold the working bank.
+            entry_receiver.try_iter().for_each(drop);
+            bank_forks.write().unwrap().remove(slot);
+            assert!(weak_bank.upgrade().is_none());
+            (slot, bank_id)
+        };
+
+        // A completed working bank becomes the start bank.
+        let bank1 = new_bank(1);
+        poh_recorder.set_bank_for_test(bank1.clone());
+        let max_tick_height = poh_recorder.working_bank.as_ref().unwrap().max_tick_height;
+        for _ in 0..3 * max_tick_height {
+            poh_recorder.tick();
+        }
+        assert!(poh_recorder.working_bank.is_none());
+        assert_eq!(
+            assert_freed_after_prune(bank1),
+            (poh_recorder.start_slot(), poh_recorder.start_bank_id())
+        );
+
+        // So does a bank PoH is reset to.
+        let bank2 = new_bank(2);
+        poh_recorder.reset(bank2.clone(), None);
+        assert_eq!(
+            assert_freed_after_prune(bank2),
+            (poh_recorder.start_slot(), poh_recorder.start_bank_id())
+        );
     }
 
     #[test]

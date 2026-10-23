@@ -25,7 +25,7 @@ bs58 = { workspace = true }
 bv = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
 solana-address-lookup-table-interface = { workspace = true, features = ["bytemuck", "wincode"] }
 solana-clock = { workspace = true }
@@ -59,7 +59,6 @@ zstd = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-account = { workspace = true, features = ["wincode"] }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 

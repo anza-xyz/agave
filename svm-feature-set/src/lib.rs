@@ -8,7 +8,6 @@ pub struct SVMFeatureSet {
     pub deplete_cu_meter_on_vm_failure: bool,
     pub abort_on_invalid_curve: bool,
     pub blake3_syscall_enabled: bool,
-    pub curve25519_syscall_enabled: bool,
     pub disable_fees_sysvar: bool,
     pub disable_sbpf_v0_execution: bool,
     pub disable_sbpf_v0_v1_v2_deployment: bool,
@@ -41,17 +40,16 @@ pub struct SVMFeatureSet {
     pub enable_alt_bn128_g2_syscalls: bool,
     pub commission_rate_in_basis_points: bool,
     pub custom_commission_collector: bool,
-    pub enable_bls12_381_syscall: bool,
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
-    pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
+    pub pass_input_metadata_in_vm_r3_r5: bool,
 }
 
 impl SVMFeatureSet {
@@ -64,7 +62,6 @@ impl SVMFeatureSet {
             deplete_cu_meter_on_vm_failure: true,
             abort_on_invalid_curve: true,
             blake3_syscall_enabled: true,
-            curve25519_syscall_enabled: true,
             disable_fees_sysvar: true,
             disable_sbpf_v0_execution: true,
             disable_sbpf_v0_v1_v2_deployment: true,
@@ -97,17 +94,16 @@ impl SVMFeatureSet {
             enable_alt_bn128_g2_syscalls: true,
             commission_rate_in_basis_points: true,
             custom_commission_collector: true,
-            enable_bls12_381_syscall: true,
             block_revenue_sharing: true,
             vote_account_initialize_v2: true,
             direct_account_pointers_in_program_input: true,
             enable_sha512_syscall: true,
             relax_post_exec_min_balance_check: true,
-            define_ltds_fee_only_semantics: true,
             relax_fee_payer_constraint: true,
             loader_v3_set_program_data_to_elf_length: true,
             early_instruction_trace_overflow_detection: true,
             unbound_loader_v3_instruction_data: true,
+            pass_input_metadata_in_vm_r3_r5: true,
         }
     }
 }

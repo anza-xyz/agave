@@ -29,12 +29,9 @@ stable-abi = [
 ]
 
 [dependencies]
-agave-feature-set = { workspace = true }
-bincode = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 solana-account = { workspace = true }
-solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -43,7 +40,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stab
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
-solana-packet = { workspace = true }
+solana-packet = { workspace = true, features = ["wincode"] }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["curve25519"] }
 solana-rent = { workspace = true }
@@ -51,10 +48,11 @@ solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["wincode"] }
-solana-vote-interface = { workspace = true, features = ["bincode", "wincode"] }
+solana-vote-interface = { workspace = true, features = ["wincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-feature-set = { workspace = true }
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 arbitrary = { workspace = true }
 assert_matches = { workspace = true }

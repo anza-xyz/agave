@@ -8,14 +8,14 @@ use {
     log::*,
     std::{
         collections::{BTreeMap, HashMap, HashSet},
-        net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket},
+        io::ErrorKind,
+        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
         sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpSocket,
-        sync::oneshot,
         task::JoinSet,
     },
 };
@@ -140,9 +140,13 @@ fn parse_response(
 
 pub(crate) const DEFAULT_RETRY_COUNT: usize = 5;
 
+/// How often listeners are polled for the echo server's connect-back.
+const TCP_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
 /// Checks if all of the provided TCP ports are reachable by the machine at
 /// `ip_echo_server_addr`. Tests must complete within timeout provided.
 /// Tests will run concurrently to avoid head-of-line blocking. Will return false on any error.
+/// Listeners are switched to non-blocking mode.
 /// This function may panic.
 /// All listening sockets should be bound to the same IP.
 pub(crate) async fn verify_all_reachable_tcp(
@@ -171,7 +175,6 @@ pub(crate) async fn verify_all_reachable_tcp(
         );
     }
     let mut checkers = Vec::new();
-    let mut ok = true;
 
     // Chunk the port range into slices small enough to fit into one packet
     for chunk in &listeners.into_iter().chunks(MAX_PORT_COUNT_PER_MESSAGE) {
@@ -183,63 +186,53 @@ pub(crate) async fn verify_all_reachable_tcp(
         info!("Checking that tcp ports {ports:?} are reachable from {ip_echo_server_addr:?}");
 
         // make request to the echo server
-        let _ = ip_echo_server_request_with_binding(
+        if let Err(err) = ip_echo_server_request_with_binding(
             ip_echo_server_addr,
             IpEchoServerMessage::new(&ports, &[]),
             bind_address,
         )
         .await
-        .map_err(|err| warn!("ip_echo_server request failed: {err}"));
+        {
+            error!("ip_echo_server request failed: {err}");
+            return false;
+        }
 
         // spawn checker to wait for reply
-        // since we do not know if tcp_listeners are nonblocking, we have to run them in native threads.
+        let start = Instant::now();
         for (port, tcp_listener) in ports.into_iter().zip(listeners) {
-            let listening_addr = tcp_listener.local_addr().unwrap();
-            let (sender, receiver) = oneshot::channel();
-
-            // Use blocking API since we have no idea if sockets given to us are nonblocking or not
+            if let Err(err) = tcp_listener.set_nonblocking(true) {
+                error!("Unable to set tcp/{port} non-blocking: {err}");
+                return false;
+            }
             let thread_handle = tokio::task::spawn_blocking(move || {
                 debug!("Waiting for incoming connection on tcp/{port}");
-                match tcp_listener.incoming().next() {
-                    Some(_) => {
-                        // ignore errors here since this can only happen if a timeout was detected.
-                        // timeout drops the receiver part of the channel resulting in failure to send.
-                        let _ = sender.send(());
+                loop {
+                    match tcp_listener.accept() {
+                        Ok(_) => return true,
+                        Err(err) if err.kind() != ErrorKind::WouldBlock => {
+                            error!("Accept failed on tcp/{port}: {err}");
+                        }
+                        Err(_) => {}
                     }
-                    None => warn!("tcp incoming failed"),
+                    if start.elapsed() >= timeout {
+                        return false;
+                    }
+                    std::thread::sleep(TCP_ACCEPT_POLL_INTERVAL);
                 }
             });
-
-            // Set the timeout on the receiver
-            let receiver = tokio::time::timeout(timeout, receiver);
-            checkers.push((listening_addr, thread_handle, receiver));
+            checkers.push((port, thread_handle));
         }
     }
 
-    // now wait for notifications from all the tasks we have spawned.
-    for (listening_addr, thread_handle, receiver) in checkers.drain(..) {
-        match receiver.await {
-            Ok(Ok(_)) => {
-                info!("tcp/{} is reachable", listening_addr.port());
-            }
-            Ok(Err(_v)) => {
-                unreachable!("The receive on oneshot channel should never fail");
-            }
-            Err(_t) => {
-                error!(
-                    "Received no response at tcp/{}, check your port configuration",
-                    listening_addr.port()
-                );
-                // Ugh, std rustc doesn't provide accepting with timeout or restoring original
-                // nonblocking-status of sockets because of lack of getter, only the setter...
-                // So, to close the thread cleanly, just connect from here.
-                // ref: https://github.com/rust-lang/rust/issues/31615
-                TcpStream::connect_timeout(&listening_addr, timeout).unwrap();
-                // Mark that we have found error, but do  not exit yet, as we will have stuck ports otherwise.
-                ok = false;
-            }
+    // now wait for results from all the tasks we have spawned.
+    let mut ok = true;
+    for (port, thread_handle) in checkers {
+        if thread_handle.await.expect("Thread should exit cleanly") {
+            info!("tcp/{port} is reachable");
+        } else {
+            error!("Received no response at tcp/{port}, check your port configuration");
+            ok = false;
         }
-        thread_handle.await.expect("Thread should exit cleanly");
     }
 
     ok
@@ -248,8 +241,8 @@ pub(crate) async fn verify_all_reachable_tcp(
 /// Checks if all of the provided UDP ports on all of the provided IPs are
 /// reachable by the machine at `ip_echo_server_addr`.
 /// This function will test a few ports at a time, retrying if necessary.
-/// Tests must complete within timeout provided, so a longer timeout may be
-/// necessary if checking many ports.
+/// Each attempt waits up to `timeout` for UDP responses. Failed echo requests
+/// are retried no sooner than `timeout` after the request started.
 /// A given amount of retries will be made to accommodate packet loss.
 /// This function may panic.
 ///
@@ -281,8 +274,8 @@ pub(crate) async fn verify_all_reachable_udp(
         'outer: for chunk_to_check in ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
             let ports_to_check = chunk_to_check.to_vec();
 
-            for attempt in 0..retry_count {
-                if attempt > 0 {
+            for attempt in 1..=retry_count {
+                if attempt > 1 {
                     error!("There are some udp ports with no response!! Retrying...");
                 }
                 // clone off the sockets that use ports within our chunk
@@ -292,13 +285,21 @@ pub(crate) async fn verify_all_reachable_udp(
                     .map(|&s| s.try_clone().expect("Unable to clone UDP socket"))
                     .collect();
 
-                let _ = ip_echo_server_request_with_binding(
+                let request_start = Instant::now();
+                if let Err(err) = ip_echo_server_request_with_binding(
                     ip_echo_server_addr,
                     IpEchoServerMessage::new(&[], &ports_to_check),
                     bind_ip,
                 )
                 .await
-                .map_err(|err| warn!("ip_echo_server request failed: {err}"));
+                {
+                    warn!("ip_echo_server request failed: {err}");
+                    // Pace retries so the network can recover after XDP setup.
+                    if attempt < retry_count {
+                        tokio::time::sleep(timeout.saturating_sub(request_start.elapsed())).await;
+                    }
+                    continue;
+                }
 
                 let reachable_ports = Arc::new(RwLock::new(HashSet::new()));
                 // Spawn threads for each socket to check

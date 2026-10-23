@@ -15,7 +15,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::elf_parser::consts::ELFMAG,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
-    solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_callback::AccountLoadCallback,
     solana_svm_timings::ExecuteTimings,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_error::{TransactionError, TransactionResult},
@@ -31,7 +31,7 @@ pub(crate) enum ProgramAccountLoadResult {
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
 
-pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
+pub(crate) fn load_program_accounts<CB: AccountLoadCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> Option<ProgramAccountLoadResult> {
@@ -96,7 +96,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
 /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
 /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
-pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
+pub fn load_program_with_pubkey<CB: AccountLoadCallback>(
     callbacks: &CB,
     program_runtime_environment: &ProgramRuntimeEnvironment,
     pubkey: &Pubkey,
@@ -187,7 +187,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     Some(Arc::new(loaded_program))
 }
 
-fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
+fn get_program_deployment_slot<CB: AccountLoadCallback>(
     callbacks: &CB,
     program: &AccountSharedData,
     loader: ProgramCacheEntryOwner,
@@ -257,7 +257,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
 // to reload, and insert a closed tombstone, BUT it will not remove the program
 // from the search list, resulting in reload loop.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
+pub(crate) fn filter_executable_program_accounts<'a, CB: AccountLoadCallback>(
     callbacks: &CB,
     program_cache_for_tx_batch: &ProgramCacheForTxBatch,
     keys: impl Iterator<Item = &'a Pubkey>,
@@ -410,7 +410,7 @@ mod tests {
         pub(crate) account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
     }
 
-    impl TransactionProcessingCallback for MockBankCallback {
+    impl AccountLoadCallback for MockBankCallback {
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
             self.account_shared_data.borrow().get(pubkey).cloned()
         }

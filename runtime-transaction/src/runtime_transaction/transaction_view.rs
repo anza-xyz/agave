@@ -73,6 +73,12 @@ fn from_sanitized_transaction_view<D>(
 where
     D: TransactionData,
 {
+    crate::transaction_limits::validate_transaction_limits(
+        transaction,
+        transaction.data().len() as u64,
+    )?;
+    crate::transaction_limits::validate_transaction_config_view(transaction)?;
+
     let message_hash = match message_hash {
         MessageHash::Precomputed(hash) => hash,
         MessageHash::Compute => VersionedMessage::hash_raw_message(transaction.message_data()),
@@ -93,8 +99,7 @@ where
     );
     let versioned_transaction_config =
         if let Some(transaction_config_view) = transaction.transaction_config() {
-            // NOTE: only txv1 has `transaction_config_view`, which must have been validated for
-            // SanitizedTransactionView.
+            // Only txv1 has inline configuration; its limits were validated above.
             VersionedTransactionConfiguration::V1(TransactionConfiguration {
                 priority_fee_lamports: transaction_config_view.priority_fee_lamports().unwrap_or(0),
                 compute_unit_limit: transaction_config_view.compute_unit_limit().unwrap_or(0),
@@ -137,6 +142,7 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         let transaction =
             ResolvedTransactionView::try_new(transaction, loaded_addresses, reserved_account_keys)
                 .map_err(|_| TransactionError::SanitizeFailure)?;
+        crate::transaction_limits::validate_unique_account_keys(transaction.account_keys().iter())?;
         let tx = Self { transaction, meta };
         Ok(tx)
     }
