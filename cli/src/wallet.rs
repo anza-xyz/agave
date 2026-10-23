@@ -1152,7 +1152,7 @@ mod tests {
             expected("testnet")
         );
         assert_eq!(
-            web_faucet_url("https://api.mainnet-beta.solana.com", &pubkey),
+            web_faucet_url("https://api.mainnet.solana.com", &pubkey),
             None
         );
         assert_eq!(web_faucet_url("http://localhost:8899", &pubkey), None);
