@@ -6575,7 +6575,6 @@ dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
  "log",
- "solana-bincode",
  "solana-compute-budget",
  "solana-packet",
  "solana-pubkey 4.4.0",
@@ -6585,6 +6584,7 @@ dependencies = [
  "solana-system-interface",
  "solana-transaction-error",
  "solana-vote-program",
+ "wincode",
 ]
 
 [[package]]

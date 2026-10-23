@@ -8147,7 +8147,6 @@ dependencies = [
  "agave-reserved-account-keys",
  "ahash 0.8.12",
  "log",
- "solana-bincode",
  "solana-compute-budget",
  "solana-compute-budget-interface",
  "solana-cost-model",
@@ -8167,6 +8166,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-vote",
  "solana-vote-program",
+ "wincode",
 ]
 
 [[package]]
