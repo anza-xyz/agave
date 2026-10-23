@@ -50,6 +50,7 @@ pub struct SVMFeatureSet {
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
     pub pass_input_metadata_in_vm_r3_r5: bool,
+    pub secp256r1_syscall_enabled: bool,
 }
 
 impl SVMFeatureSet {
@@ -104,6 +105,7 @@ impl SVMFeatureSet {
             early_instruction_trace_overflow_detection: true,
             unbound_loader_v3_instruction_data: true,
             pass_input_metadata_in_vm_r3_r5: true,
+            secp256r1_syscall_enabled: true,
         }
     }
 }
