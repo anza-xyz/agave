@@ -9,7 +9,7 @@ use {
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*,
-        rpc_cache::{LargestAccountsCache, RankMapCache, rank_map_response},
+        rpc_cache::{LargestAccountsCache, RankMapCache},
         rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
@@ -33,7 +33,7 @@ use {
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey},
         accounts_scan::ScanResult,
     },
-    solana_clock::{Slot, UnixTimestamp},
+    solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_entry::entry::Entry,
     solana_epoch_info::EpochInfo,
@@ -69,9 +69,10 @@ use {
         response::{Response as RpcResponse, *},
     },
     solana_runtime::{
-        bank::{Bank, TransactionSimulationResult},
+        bank::{Bank, MAX_LEADER_SCHEDULE_STAKES, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
+        epoch_stakes::{BLSPubkeyStakeEntry, VersionedEpochStakes},
         non_circulating_supply::{NonCirculatingSupply, calculate_non_circulating_supply},
         prioritization_fee_cache::PrioritizationFeeCache,
         stake_utils,
@@ -113,6 +114,7 @@ use {
         collections::{BinaryHeap, HashMap, HashSet},
         convert::TryFrom,
         net::SocketAddr,
+        num::NonZeroUsize,
         str::FromStr,
         sync::{
             Arc, RwLock,
@@ -145,12 +147,42 @@ type RpcCustomResult<T> = std::result::Result<T, RpcCustomError>;
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const PERFORMANCE_SAMPLES_LIMIT: usize = 720;
+pub(crate) const RANK_MAP_CACHE_CAPACITY: NonZeroUsize =
+    NonZeroUsize::new(MAX_LEADER_SCHEDULE_STAKES as usize).unwrap();
 
 fn new_response<T>(bank: &Bank, value: T) -> RpcResponse<T> {
     RpcResponse {
         context: RpcResponseContext::new(bank.slot()),
         value,
     }
+}
+
+fn rank_map_response(epoch: Epoch, stakes: &VersionedEpochStakes) -> Arc<RpcVatActiveSetRankMap> {
+    let rank_map = stakes.bls_pubkey_to_rank_map();
+    let validators = rank_map
+        .iter()
+        .map(|(rank, entry)| {
+            // Keep the wire format explicit, and require a decision when the runtime adds fields.
+            let BLSPubkeyStakeEntry {
+                vote_account_pubkey,
+                node_pubkey,
+                bls_pubkey,
+                stake,
+            } = entry;
+            RpcVatActiveSetRankMapEntry {
+                rank,
+                vote_pubkey: vote_account_pubkey.to_string(),
+                node_pubkey: node_pubkey.to_string(),
+                bls_pubkey_compressed: bs58::encode(bls_pubkey.to_bytes_compressed()).into_string(),
+                stake: stake.get(),
+            }
+        })
+        .collect();
+    Arc::new(RpcVatActiveSetRankMap {
+        epoch,
+        total_stake: rank_map.total_stake().get(),
+        validators,
+    })
 }
 
 fn is_finalized(
@@ -257,7 +289,7 @@ pub struct JsonRpcRequestProcessor {
     bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
-    rank_map_cache: Arc<RwLock<RankMapCache>>,
+    rank_map_cache: Arc<RankMapCache>,
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -422,7 +454,7 @@ impl JsonRpcRequestProcessor {
         bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
-        rank_map_cache: Arc<RwLock<RankMapCache>>,
+        rank_map_cache: Arc<RankMapCache>,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -530,7 +562,7 @@ impl JsonRpcRequestProcessor {
             bigtable_ledger_storage: None,
             optimistically_confirmed_bank,
             largest_accounts_cache: Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-            rank_map_cache: Arc::new(RwLock::new(RankMapCache::default())),
+            rank_map_cache: Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache,
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
@@ -945,11 +977,11 @@ impl JsonRpcRequestProcessor {
             })
     }
 
-    pub async fn get_rank_map(
+    pub async fn get_vat_active_set_rank_map(
         &self,
         slot: Slot,
-        config: RpcRankMapConfig,
-    ) -> Result<RpcResponse<Option<Arc<RpcRankMap>>>> {
+        config: RpcVatActiveSetRankMapConfig,
+    ) -> Result<RpcResponse<Option<Arc<RpcVatActiveSetRankMap>>>> {
         let identity = config.identity.as_deref();
         if let Some(identity) = identity {
             verify_pubkey(identity)?;
@@ -962,25 +994,23 @@ impl JsonRpcRequestProcessor {
         if bank.epoch_stakes_from_slot(slot).is_none() {
             return Ok(new_response(&bank, None));
         }
-        let cell = self.rank_map_cache.write().unwrap().get_or_insert(epoch);
+        let cell = self.rank_map_cache.get_or_insert(epoch);
         let cached = cell
             .get_or_try_init(|| async {
                 let bank = Arc::clone(&bank);
                 self.runtime
                     .spawn_blocking(move || {
-                        rank_map_response(
-                            epoch,
-                            bank.epoch_stakes_from_slot(slot)
-                                .expect("epoch stakes were found in this bank before spawning"),
-                        )
+                        bank.epoch_stakes_from_slot(slot)
+                            .map(|stakes| rank_map_response(epoch, stakes))
+                            .ok_or_else(Error::internal_error)
                     })
                     .await
-                    .map_err(|_| Error::internal_error())
+                    .map_err(|_| Error::internal_error())?
             })
             .await?;
         let value = match identity {
             None => Arc::clone(cached),
-            Some(identity) => Arc::new(RpcRankMap {
+            Some(identity) => Arc::new(RpcVatActiveSetRankMap {
                 epoch: cached.epoch,
                 total_stake: cached.total_stake,
                 validators: cached
@@ -3181,13 +3211,13 @@ pub mod rpc_bank {
         fn get_ag_genesis_cert(&self, meta: Self::Metadata)
         -> Result<Option<WireBlockCertMessage>>;
 
-        #[rpc(meta, name = "getRankMap")]
-        fn get_rank_map(
+        #[rpc(meta, name = "getVATActiveSetRankMap")]
+        fn get_vat_active_set_rank_map(
             &self,
             meta: Self::Metadata,
             slot: Slot,
-            config: Option<RpcRankMapConfig>,
-        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcRankMap>>>>>;
+            config: Option<RpcVatActiveSetRankMapConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcVatActiveSetRankMap>>>>>;
 
         #[rpc(meta, name = "getBlockProduction")]
         fn get_block_production(
@@ -3272,14 +3302,18 @@ pub mod rpc_bank {
             Ok(meta.get_ag_genesis_cert())
         }
 
-        fn get_rank_map(
+        fn get_vat_active_set_rank_map(
             &self,
             meta: Self::Metadata,
             slot: Slot,
-            config: Option<RpcRankMapConfig>,
-        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcRankMap>>>>> {
-            debug!("get_rank_map rpc request received: {slot}");
-            async move { meta.get_rank_map(slot, config.unwrap_or_default()).await }.boxed()
+            config: Option<RpcVatActiveSetRankMapConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcVatActiveSetRankMap>>>>> {
+            debug!("get_vat_active_set_rank_map rpc request received: {slot}");
+            async move {
+                meta.get_vat_active_set_rank_map(slot, config.unwrap_or_default())
+                    .await
+            }
+            .boxed()
         }
 
         fn get_block_production(
@@ -5089,7 +5123,7 @@ pub mod tests {
                 None,
                 optimistically_confirmed_bank,
                 Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-                Arc::new(RwLock::new(RankMapCache::default())),
+                Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
                 max_slots.clone(),
                 Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
                 max_complete_transaction_status_slot.clone(),
@@ -5459,10 +5493,10 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_get_rank_map() {
+    fn test_rpc_get_vat_active_set_rank_map() {
         let rpc = RpcHandler::start();
-        let request = create_test_request("getRankMap", Some(json!([0])));
-        let response: RpcResponse<Option<RpcRankMap>> =
+        let request = create_test_request("getVATActiveSetRankMap", Some(json!([0])));
+        let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         let rank_map = response.value.unwrap();
 
@@ -5490,14 +5524,18 @@ pub mod tests {
         );
         assert_eq!(rank_map.total_stake, validator.stake);
 
-        let request = create_test_request("getRankMap", Some(json!([TEST_SLOTS_PER_EPOCH])));
-        let response: RpcResponse<Option<RpcRankMap>> =
+        let request = create_test_request(
+            "getVATActiveSetRankMap",
+            Some(json!([TEST_SLOTS_PER_EPOCH])),
+        );
+        let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert_eq!(response.value.unwrap().epoch, 1);
 
         let unavailable_slot = TEST_SLOTS_PER_EPOCH * 2;
-        let request = create_test_request("getRankMap", Some(json!([unavailable_slot])));
-        let response: RpcResponse<Option<RpcRankMap>> =
+        let request =
+            create_test_request("getVATActiveSetRankMap", Some(json!([unavailable_slot])));
+        let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert!(response.value.is_none());
     }
@@ -5540,7 +5578,7 @@ pub mod tests {
 
     #[test]
     fn test_rpc_rank_map_cache_and_filter() {
-        let rpc = RpcHandler::start();
+        let mut rpc = RpcHandler::start();
         let stakes = rank_map_test_stakes(&[100, 300, 200]);
         let mut bank = Bank::new_from_parent(rpc.working_bank(), SlotLeader::default(), 1);
         bank.set_epoch_stakes_for_test(0, stakes);
@@ -5551,14 +5589,14 @@ pub mod tests {
         let runtime_map = Arc::clone(epoch_stakes.bls_pubkey_to_rank_map());
         let account_refs = Arc::strong_count(&accounts);
         let map_refs = Arc::strong_count(&runtime_map);
-        let config = RpcRankMapConfig {
+        let config = RpcVatActiveSetRankMapConfig {
             min_context_slot: Some(1),
-            ..RpcRankMapConfig::default()
+            ..RpcVatActiveSetRankMapConfig::default()
         };
         let first = rpc
             .meta
             .runtime
-            .block_on(rpc.meta.get_rank_map(0, config.clone()))
+            .block_on(rpc.meta.get_vat_active_set_rank_map(0, config.clone()))
             .unwrap();
         assert_eq!(first.context.slot, 1);
         let first = first.value.unwrap();
@@ -5586,7 +5624,7 @@ pub mod tests {
         let rooted = rpc
             .meta
             .runtime
-            .block_on(rpc.meta.get_rank_map(0, config.clone()))
+            .block_on(rpc.meta.get_vat_active_set_rank_map(0, config.clone()))
             .unwrap();
         assert_eq!(rooted.context.slot, 1);
         assert!(Arc::ptr_eq(&first, &rooted.value.unwrap()));
@@ -5596,49 +5634,74 @@ pub mod tests {
         let second = rpc
             .meta
             .runtime
-            .block_on(rpc.meta.get_rank_map(1, config))
+            .block_on(rpc.meta.get_vat_active_set_rank_map(1, config))
             .unwrap();
         assert_eq!(second.context.slot, 3);
         assert!(Arc::ptr_eq(&first, &second.value.unwrap()));
         for validator in &first.validators {
             let request = create_test_request(
-                "getRankMap",
+                "getVATActiveSetRankMap",
                 Some(json!([0, {
                     "identity": validator.node_pubkey, "minContextSlot": 1
                 }])),
             );
-            let response: RpcResponse<Option<RpcRankMap>> =
+            let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
                 parse_success_result(rpc.handle_request_sync(request));
             let filtered = response.value.unwrap();
             assert_eq!(filtered.validators, std::slice::from_ref(validator));
             assert_eq!(filtered.total_stake, first.total_stake);
         }
         let request = create_test_request(
-            "getRankMap",
+            "getVATActiveSetRankMap",
             Some(json!([0, {"identity": Pubkey::new_unique().to_string()}])),
         );
-        let response: RpcResponse<Option<RpcRankMap>> =
+        let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert!(response.value.unwrap().validators.is_empty());
+
+        // Retained epochs remain available after the RPC response cache is discarded.
+        rpc.meta.rank_map_cache = Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY));
+        let rebuilt = rpc
+            .meta
+            .runtime
+            .block_on(
+                rpc.meta
+                    .get_vat_active_set_rank_map(0, RpcVatActiveSetRankMapConfig::default()),
+            )
+            .unwrap();
+        assert_eq!(rebuilt.context.slot, 3);
+        let rebuilt = rebuilt.value.unwrap();
+        assert!(!Arc::ptr_eq(&first, &rebuilt));
+        assert_eq!(first, rebuilt);
     }
 
     #[test]
     fn test_rpc_rank_map_errors() {
         let rpc = RpcHandler::start();
+        let request = create_test_request("getRankMap", Some(json!([0])));
+        let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, -32601);
         for slot in [0, TEST_SLOTS_PER_EPOCH * 2] {
-            let request =
-                create_test_request("getRankMap", Some(json!([slot, {"minContextSlot": 1}])));
+            let request = create_test_request(
+                "getVATActiveSetRankMap",
+                Some(json!([slot, {"minContextSlot": 1}])),
+            );
             let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
             assert_eq!(code, JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED);
         }
         for commitment in ["processed", "confirmed", "finalized"] {
-            let request =
-                create_test_request("getRankMap", Some(json!([0, {"commitment": commitment}])));
+            let request = create_test_request(
+                "getVATActiveSetRankMap",
+                Some(json!([0, {"commitment": commitment}])),
+            );
             let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
             assert_eq!(code, -32602);
             assert!(message.contains("unknown field `commitment`"));
         }
-        let request = create_test_request("getRankMap", Some(json!([0, {"identity": "invalid"}])));
+        let request = create_test_request(
+            "getVATActiveSetRankMap",
+            Some(json!([0, {"identity": "invalid"}])),
+        );
         let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
         assert_eq!(code, -32602);
     }
@@ -7576,7 +7639,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank,
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-            Arc::new(RwLock::new(RankMapCache::default())),
+            Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
@@ -7899,7 +7962,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank,
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-            Arc::new(RwLock::new(RankMapCache::default())),
+            Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
@@ -9758,7 +9821,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank.clone(),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-            Arc::new(RwLock::new(RankMapCache::default())),
+            Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             max_complete_transaction_status_slot,

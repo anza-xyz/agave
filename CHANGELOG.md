@@ -25,10 +25,11 @@ Release channels have their own copy of this changelog:
   `MinContextSlotNotReached` (-32016) when the node's context slot at the finalized commitment is
   below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
   `getBlocks` behavior.
-* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
-  for the epoch containing a requested slot, with an optional identity filter. Always queries
-  finalized state; there is no commitment parameter.
-* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Added `getVATActiveSetRankMap` to return validator ranks, vote accounts, identities, BLS keys,
+  and stakes for the epoch containing a requested slot, with an optional identity filter.
+  Always queries finalized state; there is no commitment parameter.
+* Added `RpcClient::get_vat_active_set_rank_map`, which accepts an optional identity filter
+  and minimum context slot through its config argument.
 * Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
   instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
   preserves the existing parsed output.

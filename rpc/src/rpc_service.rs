@@ -693,7 +693,7 @@ impl JsonRpcService {
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
             largest_accounts_cache,
-            Arc::new(RwLock::new(RankMapCache::default())),
+            Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
