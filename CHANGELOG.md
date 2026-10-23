@@ -32,6 +32,8 @@ Release channels have their own copy of this changelog:
 * Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
   instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
   preserves the existing parsed output.
+* `getAccountInfo` and `getMultipleAccounts` are now available on validators running without
+  `--full-rpc-api`.
 
 ### Validator
 
