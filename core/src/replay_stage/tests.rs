@@ -2856,6 +2856,186 @@ fn test_check_propagation_skip_propagation_check() {
     ));
 }
 
+#[test_case::test_case(false; "tower")]
+#[test_case::test_case(true; "alpenglow")]
+#[tokio::test]
+async fn test_duplicate_repair_corrects_processed_account_notifications(alpenglow: bool) {
+    use {
+        solana_account::AccountSharedData,
+        solana_account_decoder::UiAccountEncoding,
+        solana_commitment_config::CommitmentConfig,
+        solana_rpc::rpc_subscription_tracker::{AccountSubscriptionParams, SubscriptionParams},
+        solana_runtime::commitment::CommitmentSlots,
+    };
+
+    let ReplayBlockstoreComponents {
+        vote_simulator:
+            VoteSimulator {
+                bank_forks,
+                mut progress,
+                ..
+            },
+        blockstore,
+        leader_schedule_cache,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None);
+    let root = bank_forks.read().unwrap().root_bank();
+    let subscriptions = RpcSubscriptions::default_with_bank_forks(
+        Arc::new(AtomicU64::default()),
+        bank_forks.clone(),
+    );
+    let mut receiver = subscriptions.control().broadcast_receiver();
+    let accounts = [Pubkey::new_unique(), Pubkey::new_unique()];
+    let tokens = accounts.map(|pubkey| {
+        subscriptions
+            .control()
+            .subscribe(SubscriptionParams::Account(AccountSubscriptionParams {
+                pubkey,
+                commitment: CommitmentConfig::processed(),
+                encoding: UiAccountEncoding::Base64,
+                data_slice: None,
+            }))
+            .unwrap()
+    });
+    let slot_token = subscriptions
+        .control()
+        .subscribe(SubscriptionParams::Slot)
+        .unwrap();
+    subscriptions.notify_slot(0, 0, 0);
+    let ready = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready.subscription_id, slot_token.id());
+
+    let owner = Pubkey::new_unique();
+    let bank1 = Bank::new_from_parent(root.clone(), SlotLeader::default(), 1);
+    bank1.store_account(&accounts[0], &AccountSharedData::new(20, 0, &owner));
+    bank1.freeze();
+    let bank1 = bank_forks
+        .write()
+        .unwrap()
+        .insert(bank1)
+        .clone_without_scheduler();
+    let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+    bank2.store_account(&accounts[1], &AccountSharedData::new(40, 0, &owner));
+    bank2.freeze();
+    bank_forks.write().unwrap().insert(bank2);
+    blockstore.add_tree(tr(0) / (tr(1) / tr(2)), false, false, 3, Hash::default());
+    subscriptions.notify_subscribers(CommitmentSlots::new_from_slot(2));
+    for _ in 0..2 {
+        let notification = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let index = tokens
+            .iter()
+            .position(|token| token.id() == notification.subscription_id)
+            .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&notification.json.upgrade().unwrap()).unwrap();
+        assert_eq!(
+            value["params"]["result"]["value"]["lamports"],
+            [20, 40][index]
+        );
+    }
+
+    if alpenglow {
+        let block_id = Hash::new_unique();
+        blockstore
+            .set_double_merkle_root(1, BlockLocation::Original, block_id)
+            .unwrap();
+        blockstore.set_dead_slot(1).unwrap();
+        let latest_switch_request = LatestSwitchRequest::default();
+        latest_switch_request.try_advance(SwitchBankEvent::Switch {
+            block: Block {
+                slot: 1,
+                block_id: block_id.into(),
+            },
+        });
+        let mut pending_switch = None;
+        ReplayStage::process_switch_bank_events(
+            &Pubkey::new_unique(),
+            &latest_switch_request,
+            &mut pending_switch,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut Vec::new(),
+            None,
+            Some(&subscriptions),
+        )
+        .unwrap();
+        assert!(pending_switch.is_none());
+    } else {
+        let mut ancestors = bank_forks.read().unwrap().ancestors();
+        let mut descendants = bank_forks.read().unwrap().descendants();
+        let (sender, receiver) = bounded(1);
+        ReplayStage::dump_then_repair_correct_slots(
+            &mut HashMap::from([(1, Hash::new_unique())]),
+            &mut ancestors,
+            &mut descendants,
+            &mut progress,
+            &bank_forks,
+            &blockstore,
+            None,
+            &mut PurgeRepairSlotCounter::default(),
+            &sender,
+            &Pubkey::new_unique(),
+            &leader_schedule_cache,
+            Some(&subscriptions),
+        );
+        assert_eq!(receiver.recv().unwrap().len(), 1);
+    }
+    assert!(bank_forks.read().unwrap().get(1).is_none());
+    assert!(bank_forks.read().unwrap().get(2).is_none());
+
+    let replacement1 = Bank::new_from_parent(root, SlotLeader::default(), 1);
+    replacement1.store_account(&accounts[0], &AccountSharedData::new(30, 0, &owner));
+    let replacement1 = bank_forks
+        .write()
+        .unwrap()
+        .insert(replacement1)
+        .clone_without_scheduler();
+    let replacement2 = Bank::new_from_parent(replacement1, SlotLeader::default(), 2);
+    replacement2.store_account(&accounts[1], &AccountSharedData::new(50, 0, &owner));
+    let replacement2 = bank_forks
+        .write()
+        .unwrap()
+        .insert(replacement2)
+        .clone_without_scheduler();
+    let child = Bank::new_from_parent(replacement2, SlotLeader::default(), 3);
+    bank_forks.write().unwrap().insert(child);
+    subscriptions.notify_subscribers(CommitmentSlots::new_from_slot(3));
+    for _ in 0..2 {
+        let notification = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let index = tokens
+            .iter()
+            .position(|token| token.id() == notification.subscription_id)
+            .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&notification.json.upgrade().unwrap()).unwrap();
+        assert_eq!(value["params"]["result"]["context"]["slot"], 3);
+        assert_eq!(
+            value["params"]["result"]["value"]["lamports"],
+            [30, 50][index]
+        );
+    }
+    // A subsequent bank notification must not repeat the corrections. The slot notification
+    // is a queue barrier, so this does not rely on sleeping to detect an extra account update.
+    subscriptions.notify_subscribers(CommitmentSlots::new_from_slot(3));
+    subscriptions.notify_slot(3, 2, 0);
+    let next = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.subscription_id, slot_token.id());
+    assert!(receiver.try_recv().is_err());
+}
+
 #[test]
 fn test_clear_slots_clears_status_cache_for_removed_bank() {
     let VoteSimulator {
@@ -2884,7 +3064,7 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
     assert!(bank_forks.read().unwrap().get(1).is_none());
     assert!(bank1.get_signature_status(&transfer_signature).is_some());
 
-    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new(), None).unwrap();
+    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new(), None, None).unwrap();
 
     assert!(bank1.get_signature_status(&transfer_signature).is_none());
 }
@@ -2924,6 +3104,7 @@ fn test_clear_slots_propagates_transaction_status_disconnect() {
                 &mut progress,
                 &mut Vec::new(),
                 Some((&transaction_status_sender, source, purge_input)),
+                None,
             ),
             Err(ReplayStageError::PurgeTransactionHistory { slot: 1, .. })
         );
@@ -3000,6 +3181,7 @@ fn test_switch_bank_purges_cleared_descendants() {
         &mut progress,
         &mut Vec::new(),
         Some(&transaction_status_sender),
+        None,
     )
     .unwrap();
 
@@ -3017,6 +3199,7 @@ fn test_switch_bank_purges_cleared_descendants() {
         &mut progress,
         &mut Vec::new(),
         Some(&transaction_status_sender),
+        None,
     )
     .unwrap();
 
@@ -3102,6 +3285,7 @@ fn test_purge_unconfirmed_duplicate_slot() {
         &root_bank,
         &bank_forks,
         &blockstore,
+        None,
     );
     for i in 5..=7 {
         assert!(bank_forks.read().unwrap().get(i).is_none());
@@ -3142,6 +3326,7 @@ fn test_purge_unconfirmed_duplicate_slot() {
         &root_bank,
         &bank_forks,
         &blockstore,
+        None,
     );
     for i in 4..=6 {
         assert!(bank_forks.read().unwrap().get(i).is_none());
@@ -3165,6 +3350,7 @@ fn test_purge_unconfirmed_duplicate_slot() {
         &root_bank,
         &bank_forks,
         &blockstore,
+        None,
     );
     for i in 1..=6 {
         assert!(bank_forks.read().unwrap().get(i).is_none());
@@ -3232,6 +3418,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
         &root_bank,
         &bank_forks,
         &blockstore,
+        None,
     );
     for slot in &[3, 5, 6, 7] {
         assert!(bank_forks.read().unwrap().get(*slot).is_none());
@@ -3454,6 +3641,7 @@ fn test_update_parent_restart() {
         &post_migration_status_for_tests(),
         Some(&entry_notification_sender),
         Some(&transaction_status_sender),
+        None,
     )
     .unwrap();
 
@@ -3629,6 +3817,7 @@ fn test_update_parent_tower_gated() {
         &MigrationStatus::default(),
         None,
         None,
+        None,
     )
     .unwrap();
 
@@ -3674,6 +3863,7 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
         &rx,
         &replay_vote_sender,
         &post_migration_status_for_tests(),
+        None,
         None,
         None,
     )
@@ -3724,6 +3914,7 @@ fn test_update_parent_keeps_hard() {
         &rx,
         &replay_vote_sender,
         &post_migration_status_for_tests(),
+        None,
         None,
         None,
     )
@@ -4834,6 +5025,7 @@ fn test_dump_then_repair_correct_slots() {
         &dumped_slots_sender,
         &Pubkey::new_unique(),
         leader_schedule_cache,
+        None,
     );
     assert_eq!(should_be_dumped, dumped_slots_receiver.recv().ok().unwrap());
 
@@ -4953,6 +5145,7 @@ fn setup_vote_then_rollback(
         &dumped_slots_sender,
         &Pubkey::new_unique(),
         leader_schedule_cache,
+        None,
     );
 
     // Check everything was purged properly
@@ -6347,6 +6540,7 @@ fn test_dumped_slot_not_causing_panic() {
         &dumped_slots_sender,
         my_pubkey,
         &leader_schedule_cache,
+        None,
     );
     assert_eq!(
         dumped_slots_receiver.recv_timeout(Duration::from_secs(1)),
@@ -6432,6 +6626,7 @@ fn test_dump_own_slots_fails() {
         &dumped_slots_sender,
         my_pubkey,
         leader_schedule_cache,
+        None,
     );
 }
 

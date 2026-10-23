@@ -43,7 +43,7 @@ use {
     solana_vote::vote_transaction::VoteTransaction,
     std::{
         cell::RefCell,
-        collections::{HashMap, VecDeque},
+        collections::{HashMap, HashSet, VecDeque},
         io::Cursor,
         str,
         sync::{
@@ -99,6 +99,7 @@ pub enum NotificationEntry {
     SlotUpdate(SlotUpdate),
     Root(Slot),
     Bank(CommitmentSlots),
+    SlotsRemoved(HashSet<Slot>),
     Gossip(Slot),
     SignaturesReceived((Slot, Vec<Signature>)),
     Subscribed(SubscriptionParams, SubscriptionId),
@@ -116,6 +117,7 @@ impl std::fmt::Debug for NotificationEntry {
             NotificationEntry::Bank(commitment_slots) => {
                 write!(f, "Bank({{slot: {:?}}})", commitment_slots.slot)
             }
+            NotificationEntry::SlotsRemoved(slots) => write!(f, "SlotsRemoved({slots:?})"),
             NotificationEntry::SignaturesReceived(slot_signatures) => {
                 write!(f, "SignaturesReceived({slot_signatures:?})")
             }
@@ -700,6 +702,15 @@ impl RpcSubscriptions {
         self.enqueue_notification(NotificationEntry::Bank(commitment_slots));
     }
 
+    /// Invalidate processed account notifications from removed banks. Queue this after removing
+    /// the banks and before notifying subscribers about their replacements.
+    pub fn notify_slots_removed(&self, slots: impl IntoIterator<Item = Slot>) {
+        let slots = slots.into_iter().collect::<HashSet<_>>();
+        if !slots.is_empty() {
+            self.enqueue_notification(NotificationEntry::SlotsRemoved(slots));
+        }
+    }
+
     /// Notify Confirmed commitment-level subscribers of changes to any accounts or new
     /// signatures.
     pub fn notify_gossip_subscribers(&self, slot: Slot) {
@@ -821,6 +832,9 @@ impl RpcSubscriptions {
                                 stats.notify_root_count += 1;
                                 notifier.notify(root, sub, false);
                             }
+                        }
+                        NotificationEntry::SlotsRemoved(slots) => {
+                            subscriptions.invalidate_accounts(&slots);
                         }
                         NotificationEntry::Bank(commitment_slots) => {
                             const SOURCE: &str = "bank";

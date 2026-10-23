@@ -195,10 +195,13 @@ agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["
 bencher = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
+serde_json = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
+solana-account-decoder = { workspace = true }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api", "svm-internal"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
+solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
