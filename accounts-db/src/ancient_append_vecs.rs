@@ -296,6 +296,19 @@ impl AccountsDb {
         mut tuning: PackedAncientStorageTuning,
         metrics: &mut SquashStatsSub,
     ) {
+        // Ancient packing only writes alive accounts. Skip storages containing
+        // non-purgeable tombstones, but allow tombstone-free storages to be packed.
+        let sorted_slots = sorted_slots
+            .into_iter()
+            .filter(|slot| {
+                self.can_purge_zero_lamport_accounts(*slot)
+                    || self
+                        .storage
+                        .get_slot_storage_entry(*slot)
+                        .is_some_and(|storage| storage.num_tombstones() == 0)
+            })
+            .collect::<Vec<_>>();
+
         self.shrink_ancient_stats
             .slot
             .store(*sorted_slots.first().unwrap_or(&0), Ordering::Relaxed);
@@ -530,10 +543,9 @@ impl AccountsDb {
         for shrink_collect in accounts_to_combine.accounts_to_combine {
             let slot = shrink_collect.slot;
 
-            // Ancient squash only runs on slots far older than the latest full snapshot, where
-            // tombstones are purgeable and `shrink_collect` drops them rather than carrying them
-            // forward. The squash write path has no tombstone handling, so a non-empty list here
-            // would be silently lost; assert the invariant at the point that loss would occur.
+            // The ancient packer must never discard non-purgeable tombstones.
+            // Slot selection excludes storages that require carrying them forward.
+            // Keep this assertion to detect violations of that invariant.
             debug_assert!(
                 shrink_collect.tombstones_to_carry_forward.is_empty(),
                 "ancient squash reached a carry-forward tombstone at slot {slot}",
@@ -2475,6 +2487,153 @@ mod tests {
 
         let mut stats_sub = SquashStatsSub::default();
         db.combine_ancient_slots_packed_internal(sorted_slots, tuning, &mut stats_sub);
+    }
+
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    #[test_case(ACCOUNTS_DB_CONFIG_SPLIT_FILE)]
+    fn test_ancient_squash_packs_tombstone_free_slot(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
+
+        let slot = 2;
+        db.set_latest_full_snapshot_slot(slot - 1);
+
+        let pubkey = Pubkey::new_unique();
+        let account = AccountSharedData::new(1, 48, &Pubkey::default());
+        let storage = db.create_store(slot, 1_000);
+
+        append_single_account_with_default_hash(
+            &storage,
+            &pubkey,
+            &account,
+            true,
+            Some(&db.accounts_index),
+        );
+
+        db.storage.insert(Arc::new(storage));
+
+        let storage_before = db.storage.get_slot_storage_entry(slot).unwrap();
+        assert_eq!(storage_before.num_tombstones(), 0);
+
+        combine_ancient_slots_packed_for_tests(&db, vec![slot]);
+
+        let storage_after = db.storage.get_slot_storage_entry(slot).unwrap();
+
+        assert!(
+            !Arc::ptr_eq(&storage_before, &storage_after),
+            "A tombstone-free slot should remain eligible for ancient packing"
+        );
+    }
+
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
+    #[test_case(ACCOUNTS_DB_CONFIG_SPLIT_FILE)]
+    fn test_ancient_squash_skips_only_non_purgeable_slots(accounts_db_config: AccountsDbConfig) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
+
+        let purgeable_slot = 2;
+        let protected_slot = 3;
+
+        // Slot 2 is covered by the latest full snapshot.
+        // Slot 3 still needs its tombstone for incremental snapshots.
+        db.set_latest_full_snapshot_slot(purgeable_slot);
+
+        for slot in [purgeable_slot, protected_slot] {
+            let alive_pubkey = Pubkey::new_unique();
+            let tombstone_pubkey = Pubkey::new_unique();
+
+            let alive_account = AccountSharedData::new(1, 48, &Pubkey::default());
+            let tombstone_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+            let storage = db.create_store(slot, 1_000);
+
+            append_single_account_with_default_hash(
+                &storage,
+                &alive_pubkey,
+                &alive_account,
+                true,
+                Some(&db.accounts_index),
+            );
+
+            let tombstone_accounts = [(tombstone_pubkey, tombstone_account)];
+
+            let offsets = storage
+                .write_accounts(&(slot, tombstone_accounts.as_slice()))
+                .unwrap();
+
+            storage.batch_insert_tombstone_offsets(offsets);
+            db.storage.insert(Arc::new(storage));
+        }
+
+        let protected_storage_before = db.storage.get_slot_storage_entry(protected_slot).unwrap();
+
+        assert_eq!(protected_storage_before.num_tombstones(), 1);
+
+        combine_ancient_slots_packed_for_tests(&db, vec![purgeable_slot, protected_slot]);
+
+        let purgeable_storage = db.storage.get_slot_storage_entry(purgeable_slot).unwrap();
+
+        let protected_storage_after = db.storage.get_slot_storage_entry(protected_slot).unwrap();
+
+        // The eligible slot was processed and its tombstone removed.
+        assert_eq!(purgeable_storage.num_tombstones(), 0);
+
+        // The protected slot and its original storage remain untouched.
+        assert_eq!(protected_storage_after.num_tombstones(), 1);
+
+        assert!(Arc::ptr_eq(
+            &protected_storage_before,
+            &protected_storage_after,
+        ));
+    }
+
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC, false)]
+    #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC, true)]
+    #[test_case(ACCOUNTS_DB_CONFIG_SPLIT_FILE, false)]
+    #[test_case(ACCOUNTS_DB_CONFIG_SPLIT_FILE, true)]
+    fn test_ancient_squash_tombstone_retention(
+        accounts_db_config: AccountsDbConfig,
+        snapshot_covers_slot: bool,
+    ) {
+        let db = AccountsDb::new_for_tests_with_config(Vec::new(), accounts_db_config);
+
+        let slot = 2;
+        db.set_latest_full_snapshot_slot(if snapshot_covers_slot { slot } else { slot - 1 });
+        let alive_pubkey = Pubkey::new_unique();
+        let tombstone_pubkey = Pubkey::new_unique();
+
+        let alive_account = AccountSharedData::new(1, 48, &Pubkey::default());
+
+        let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+        let storage = db.create_store(slot, 1_000);
+
+        append_single_account_with_default_hash(
+            &storage,
+            &alive_pubkey,
+            &alive_account,
+            true,
+            Some(&db.accounts_index),
+        );
+
+        let tombstone_accounts = [(tombstone_pubkey, zero_lamport_account)];
+
+        let offsets = storage
+            .write_accounts(&(slot, tombstone_accounts.as_slice()))
+            .unwrap();
+
+        storage.batch_insert_tombstone_offsets(offsets);
+        db.storage.insert(Arc::new(storage));
+
+        combine_ancient_slots_packed_for_tests(&db, vec![slot]);
+
+        let storage = db.storage.get_slot_storage_entry(slot).unwrap();
+
+        let expected_tombstones = if snapshot_covers_slot { 0 } else { 1 };
+
+        assert_eq!(
+            storage.num_tombstones(),
+            expected_tombstones,
+            "Unexpected tombstone count after ancient squash"
+        );
     }
 
     #[test_case(ACCOUNTS_DB_CONFIG_APPEND_VEC)]
