@@ -1,3 +1,4 @@
+use agave_votor_messages::stake::NonZeroStake;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -26,6 +27,7 @@ pub(crate) struct VerifiedBatch {
     vote: Vote,
     aggregates: Vec<VoteAggregate>,
     sender_vote_account_pubkeys: Vec<Pubkey>,
+    verified_stake: NonZeroStake,
 }
 
 impl VerifiedBatch {
@@ -33,12 +35,18 @@ impl VerifiedBatch {
         vote: Vote,
         aggregates: Vec<VoteAggregate>,
         sender_vote_account_pubkeys: Vec<Pubkey>,
+        verified_stake: NonZeroStake,
     ) -> Self {
         Self {
             vote,
             aggregates,
             sender_vote_account_pubkeys,
+            verified_stake,
         }
+    }
+
+    pub(crate) fn verified_stake(&self) -> NonZeroStake {
+        self.verified_stake
     }
 
     pub(crate) fn len(&self) -> usize {
