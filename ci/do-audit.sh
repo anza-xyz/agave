@@ -156,6 +156,10 @@ xtask_cargo_audit_extra_args=(
   # The webpki-roots and webpki-root-certs advisories documented above also affect xtask.
   --ignore RUSTSEC-2026-0381
   --ignore RUSTSEC-2026-0383
+
+  # The crypto-bigint advisory documented above also affects xtask, via octocrab's
+  # jsonwebtoken. xtask authenticates with a personal token and never signs JWTs.
+  --ignore RUSTSEC-2026-0387
 )
 
 lock_files="$(git ls-files ':**Cargo.lock')"
