@@ -1699,6 +1699,16 @@ pub(crate) mod tests {
             );
         }
 
+        // Enter the window and root the bank, latching EBPP.
+        goto_end_of_slot(bank.clone());
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            slots_per_epoch / 2,
+        );
+        bank.prune_program_cache(&bank_forks.read().unwrap());
+
         // Advance to the last slot of the epoch, observe the two environments.
         goto_end_of_slot(bank.clone());
         let bank = Bank::new_from_parent_with_bank_forks(
