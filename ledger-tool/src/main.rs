@@ -44,7 +44,10 @@ use {
         cost_update_service::report_cost_tracker_stats,
         resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
-        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
+        validator::{
+            BlockProductionMethod, BlockVerificationMethod, SCHEDULER_BINDINGS_IPC_FILENAME,
+            TransactionStructure,
+        },
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
     solana_entry::entry::create_ticks,
@@ -2239,6 +2242,16 @@ fn main() {
                         .long("no-block-cost-limits")
                         .takes_value(false)
                         .help("Disable block cost limits effectively by setting them to the max"),
+                )
+                .arg(
+                    Arg::with_name("enable_scheduler_bindings")
+                        .long("enable-scheduler-bindings")
+                        .takes_value(false)
+                        .help(
+                            "Enables external processes to connect and manage block production. \
+                             Waits for an external scheduler to connect to scheduler_bindings.ipc \
+                             in the ledger directory before simulating",
+                        ),
                 ),
         )
         .subcommand(
@@ -2659,6 +2672,9 @@ fn main() {
                     create_snapshot(ledger_path, arg_matches);
                 }
                 ("simulate-block-production", Some(arg_matches)) => {
+                    let scheduler_bindings = arg_matches
+                        .is_present("enable_scheduler_bindings")
+                        .then(|| ledger_path.join(SCHEDULER_BINDINGS_IPC_FILENAME));
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);
 
                     let banking_trace_events = load_banking_trace_events_or_exit(&ledger_path);
@@ -2700,12 +2716,16 @@ fn main() {
                     );
 
                     info!("Using: block-production-method: {block_production_method}");
+                    if let Some(path) = &scheduler_bindings {
+                        info!("Using: scheduler bindings at {}", path.display());
+                    }
 
                     match simulator.start(
                         genesis_config,
                         bank_forks,
                         blockstore,
                         block_production_method,
+                        scheduler_bindings,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {

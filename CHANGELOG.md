@@ -48,6 +48,9 @@ Release channels have their own copy of this changelog:
 * The default full snapshot interval is now 200,000 slots.
 * XDP interface, address, and transmitter setup failures now report startup errors instead of
   panicking.
+* `agave-ledger-tool simulate-block-production` now accepts `--enable-scheduler-bindings`, as
+  `agave-validator` does: it waits for an external scheduler to connect to
+  `<ledger-path>/scheduler_bindings.ipc` and lets it manage block production.
 
 #### Deprecations
 

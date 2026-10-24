@@ -119,6 +119,11 @@ use {
 ///
 /// Warm-up starts at T=-WARMUP_DURATION (~ 13 secs). As soon as warm up is initiated, we invoke
 /// `BankingStage::new_num_threads()` as well to simulate the pre-leader slot's tx-buffering time.
+///
+/// Given a scheduler bindings path, block production is handed to an external scheduler as with
+/// `agave-validator --enable-scheduler-bindings`: the simulation waits for one to connect there
+/// before purging, PoH and `BankingStage` start, so it schedules every simulated slot. Reconnects
+/// and the fallback to the internal scheduler behave as on a validator.
 pub struct BankingSimulator {
     banking_trace_events: BankingTraceEvents,
     first_simulated_slot: Slot,
@@ -690,6 +695,7 @@ impl BankingSimulator {
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
+        scheduler_bindings: Option<PathBuf>,
     ) -> (SenderLoop, SimulatorLoop, SimulatorThreads) {
         let parent_slot = self.parent_slot().unwrap();
         let mut packet_batches_by_time = self.banking_trace_events.packet_batches_by_time;
@@ -709,6 +715,30 @@ impl BankingSimulator {
         );
 
         let exit = Arc::new(AtomicBool::default());
+
+        // Wait for the external scheduler before purging slots or starting PoH, so that
+        // `BankingStage` starts with its session already queued.
+        let (banking_control_sender, banking_control_receiver) = mpsc::channel(1);
+        #[cfg(unix)]
+        match scheduler_bindings {
+            Some(path) => {
+                info!(
+                    "Waiting for an external scheduler to connect to {}...",
+                    path.display()
+                );
+                crate::scheduler_bindings_server::spawn_after_first_session(
+                    &path,
+                    banking_control_sender,
+                );
+                info!("External scheduler connected");
+            }
+            None => drop(banking_control_sender),
+        }
+        #[cfg(not(unix))]
+        {
+            assert!(scheduler_bindings.is_none());
+            drop(banking_control_sender);
+        }
 
         if let Some(end_slot) = blockstore
             .slot_meta_iterator(self.first_simulated_slot)
@@ -816,7 +846,7 @@ impl BankingSimulator {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
-            mpsc::channel(1).1,
+            banking_control_receiver,
             num_workers,
             SchedulerConfig::default(),
             None,
@@ -894,12 +924,14 @@ impl BankingSimulator {
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
+        scheduler_bindings: Option<PathBuf>,
     ) -> Result<(), SimulateError> {
         let (sender_loop, simulator_loop, simulator_threads) = self.prepare_simulation(
             genesis_config,
             bank_forks,
             blockstore,
             block_production_method,
+            scheduler_bindings,
         );
 
         sender_loop.log_starting();
