@@ -293,9 +293,10 @@ pub struct IndexGenerationInfo {
     pub calculated_accounts_lt_hash: AccountsLtHash,
     /// The capitalization, in lamports, calculated during index generation.
     pub calculated_capitalization: u64,
-    /// Every stake program account seen in the storages, sorted, no repeats.
-    /// Old versions count too, so some may not be stake accounts any more.
-    pub stake_pubkeys: Vec<Pubkey>,
+    /// Every account seen in the storages with one of the requested owners,
+    /// keyed by owner, sorted, no repeats. Old versions count too, so some
+    /// may have a different owner now.
+    pub pubkeys_by_owner: ahash::HashMap<Pubkey, Vec<Pubkey>>,
 }
 
 /// Accumulator for the values produced while generating the index
@@ -322,8 +323,8 @@ struct IndexGenerationAccumulator {
     num_obsolete_accounts_skipped: u64,
     /// The number of zero-lamport pubkeys found in this slot
     num_zero_lamport_pubkeys: u64,
-    /// Stake program accounts seen by this thread
-    stake_pubkeys: Vec<Pubkey>,
+    /// Accounts with one of the requested owners seen by this thread
+    pubkeys_by_owner: ahash::HashMap<Pubkey, Vec<Pubkey>>,
     slot_arena: IndexGenerationSlotArena,
 }
 impl IndexGenerationAccumulator {
@@ -340,7 +341,7 @@ impl IndexGenerationAccumulator {
             capitalization: 0,
             num_obsolete_accounts_skipped: 0,
             num_zero_lamport_pubkeys: 0,
-            stake_pubkeys: Vec::new(),
+            pubkeys_by_owner: ahash::HashMap::new(),
             slot_arena: IndexGenerationSlotArena::default(),
         }
     }
@@ -360,7 +361,12 @@ impl IndexGenerationAccumulator {
             .expect("capitalization cannot overflow");
         self.num_obsolete_accounts_skipped += other.num_obsolete_accounts_skipped;
         self.num_zero_lamport_pubkeys += other.num_zero_lamport_pubkeys;
-        self.stake_pubkeys.append(&mut other.stake_pubkeys);
+        for (owner, mut pubkeys) in other.pubkeys_by_owner.drain() {
+            self.pubkeys_by_owner
+                .entry(owner)
+                .or_default()
+                .append(&mut pubkeys);
+        }
     }
 }
 
@@ -4560,6 +4566,7 @@ impl AccountsDb {
         files_per_batch: usize,
         accum: &mut IndexGenerationAccumulator,
         num_processed: &AtomicU64,
+        owners: &[Pubkey],
     ) {
         // Skipping the page cache reduces kernel memory reclaim during heavy index allocations.
         let use_direct_io = self.use_direct_io;
@@ -4589,7 +4596,13 @@ impl AccountsDb {
                     let (file, read_limit) = (file.as_ref(), file.read_limit());
                     reader.set_file(file, read_limit).expect("set storage file");
                 }
-                self.generate_index_for_slot(&mut reader, accum, item.original_index, item.storage);
+                self.generate_index_for_slot(
+                    &mut reader,
+                    accum,
+                    item.original_index,
+                    item.storage,
+                    owners,
+                );
                 num_processed.fetch_add(1, Ordering::Relaxed);
             }
             buf_reader = reader.rebind().expect("rebind storage reader");
@@ -4603,6 +4616,7 @@ impl AccountsDb {
         accum: &mut IndexGenerationAccumulator,
         storage_index: usize,
         storage: &'a AccountStorageEntry,
+        owners: &[Pubkey],
     ) {
         let slot = storage.slot();
         let store_id = storage.id();
@@ -4617,7 +4631,7 @@ impl AccountsDb {
         // Batches this thread's account lt-hashes across all its storages; merged
         // into other accumulators in `accumulate`.
         let lt_hash_acc = &mut accum.lt_hash_acc;
-        let stake_pubkeys = &mut accum.stake_pubkeys;
+        let pubkeys_by_owner = &mut accum.pubkeys_by_owner;
 
         let geyser_notifier = self
             .accounts_update_notifier
@@ -4642,8 +4656,11 @@ impl AccountsDb {
                 if !is_account_zero_lamport {
                     accounts_data_len += data_len as u64;
                     all_accounts_are_zero_lamports = false;
-                    if solana_sdk_ids::stake::check_id(account.owner()) {
-                        stake_pubkeys.push(*account.pubkey);
+                    if owners.contains(account.owner()) {
+                        pubkeys_by_owner
+                            .entry(*account.owner())
+                            .or_default()
+                            .push(*account.pubkey);
                     }
                 } else {
                     // Collect zero-lamport pubkeys so they can be added to `uncleaned_pubkeys`
@@ -4747,6 +4764,7 @@ impl AccountsDb {
         &self,
         limit_load_slot_count_from_snapshot: Option<usize>,
         verify: bool,
+        owners: &[Pubkey],
     ) -> IndexGenerationInfo {
         let mut total_time = Measure::start("generate_index");
 
@@ -4787,6 +4805,7 @@ impl AccountsDb {
                                 files_per_batch,
                                 &mut thread_accum,
                                 &num_processed,
+                                owners,
                             );
                             thread_accum
                         })
@@ -5074,14 +5093,16 @@ impl AccountsDb {
                 total_accum.capitalization,
             );
         };
-        let mut stake_pubkeys = total_accum.stake_pubkeys;
-        stake_pubkeys.par_sort_unstable();
-        stake_pubkeys.dedup();
+        let mut pubkeys_by_owner = total_accum.pubkeys_by_owner;
+        for pubkeys in pubkeys_by_owner.values_mut() {
+            pubkeys.par_sort_unstable();
+            pubkeys.dedup();
+        }
         IndexGenerationInfo {
             accounts_data_len: total_accum.accounts_data_len,
             calculated_accounts_lt_hash: AccountsLtHash(accounts_lt_hash),
             calculated_capitalization,
-            stake_pubkeys,
+            pubkeys_by_owner,
         }
     }
 

@@ -74,8 +74,7 @@ use {
             MaxAllowableDrift, calculate_stake_weighted_timestamp,
         },
         stakes::{
-            DelegatedStakes, DeserializableDelegationStakes, EpochBoundaryStakes,
-            SerdeStakesToStakeFormat, Stakes, StakesCache,
+            DelegatedStakes, EpochBoundaryStakes, SerdeStakesToStakeFormat, Stakes, StakesCache,
         },
         status_cache::{SlotDelta, StatusCache},
         sysvar_account::{create_account, from_account},
@@ -521,7 +520,6 @@ pub enum VATHealthError {
         fee_rate_governor(pub),
         epoch_schedule(pub),
         inflation(pub),
-        stakes(pub),
         is_delta(pub),
         accounts_data_len(pub),
         versioned_epoch_stakes(pub),
@@ -552,7 +550,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) fee_rate_governor: FeeRateGovernor,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
-    pub(crate) stakes: DeserializableDelegationStakes,
     /// Transformed into `HashMap<Epoch, VersionedEpochStakes>` in `serde_snapshot` and passed to
     /// `Bank::new_from_snapshot` as separate parameter for performance (conversion is time consuming)
     pub(crate) versioned_epoch_stakes: Vec<(Epoch, DeserializableVersionedEpochStakes)>,
@@ -588,13 +585,6 @@ impl Default for BankFieldsToDeserialize {
             fee_rate_governor: FeeRateGovernor::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Inflation::default(),
-            stakes: DeserializableDelegationStakes {
-                vote_accounts: VoteAccounts::default(),
-                stake_delegations: Vec::default(),
-                unused: u64::default(),
-                epoch: Epoch::default(),
-                stake_history: CowStakeHistory::default(),
-            },
             versioned_epoch_stakes: Vec::default(),
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
@@ -2079,18 +2069,20 @@ impl Bank {
         new
     }
 
-    fn load_rent_from_account_for_snapshot_load(
+    fn load_sysvar_for_snapshot_load<T>(
         accounts: &Accounts,
         ancestors: &Ancestors,
-    ) -> Rent {
-        // The serialized rent collector is deprecated. Instead, reconstruct from fields plus
-        // the rent sysvar account state.
-        let rent_sysvar = accounts
-            .load_do_not_populate_read_cache(ancestors, &sysvar::rent::id())
-            .expect("snapshot must contain rent sysvar account")
+        id: &Pubkey,
+    ) -> T
+    where
+        T: wincode::DeserializeOwned<Dst = T>,
+    {
+        let account = accounts
+            .load_do_not_populate_read_cache(ancestors, id)
+            .unwrap_or_else(|| panic!("snapshot must contain sysvar account {id}"))
             .0;
-        from_account::<sysvar::rent::Rent>(&rent_sysvar)
-            .expect("snapshot must contain well-formed rent sysvar account")
+        wincode::deserialize(account.data())
+            .unwrap_or_else(|_| panic!("snapshot must contain well-formed sysvar account {id}"))
     }
 
     /// Complete bank initialization for block execution. Performs epoch
@@ -2178,7 +2170,7 @@ impl Bank {
         leader_for_tests: Option<SlotLeader>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_data_size_initial: u64,
-        stake_pubkeys: Vec<Pubkey>,
+        pubkeys_by_owner: ahash::HashMap<Pubkey, Vec<Pubkey>>,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     ) -> Self {
         let now = Instant::now();
@@ -2189,25 +2181,38 @@ impl Bank {
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
         let rewards_calculation_thread_pool = rewards_calculation_thread_pool();
-        // The stake delegations come from the stake accounts found while
-        // building the accounts index, not from the list in the snapshot.
-        // Vote accounts, epoch and stake history still come from the snapshot.
+        // Build the stakes cache from accounts-db, not from the copy in the
+        // snapshot. Stake and vote accounts were found while building the
+        // index. Stake history comes from its sysvar, which the cache writes
+        // at every epoch boundary. The feature set does not exist yet, so
+        // the one feature the stake math needs is read from its account.
         //
         // Note that we are disabling the read cache while we populate the stakes cache.
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
-        let (stakes, stakes_time) = measure_time!(
-            Stakes::load_from_accounts(fields.stakes, stake_pubkeys, |pubkey| {
-                let (account, _slot) = bank_rc
-                    .accounts
-                    .load_do_not_populate_read_cache(&ancestors, pubkey)?;
-                Some(account)
-            })
-            .expect(
-                "Stakes cache is inconsistent with accounts-db. This can indicate a corrupted \
-                 snapshot or bugs in cached accounts or accounts-db.",
-            )
+        let load_account = |pubkey: &Pubkey| {
+            let (account, _slot) = bank_rc
+                .accounts
+                .load_do_not_populate_read_cache(&ancestors, pubkey)?;
+            Some(account)
+        };
+        let stake_history = Self::load_sysvar_for_snapshot_load(
+            &bank_rc.accounts,
+            &ancestors,
+            &stake_history::id(),
         );
+        let new_rate_activation_epoch =
+            load_account(&feature_set::reduce_stake_warmup_cooldown::id())
+                .and_then(|account| feature::state::from_account(&account))
+                .and_then(|feature| feature.activated_at)
+                .map(|activation_slot| fields.epoch_schedule.get_epoch(activation_slot));
+        let (stakes, stakes_time) = measure_time!(Stakes::load_from_accounts(
+            epoch,
+            stake_history,
+            new_rate_activation_epoch,
+            pubkeys_by_owner,
+            load_account,
+        ));
         info!("Loading Stakes took: {stakes_time}");
         assert!(
             fields.versioned_epoch_stakes.is_empty(),
@@ -2247,7 +2252,8 @@ impl Bank {
         );
 
         let stakes_accounts_load_duration = now.elapsed();
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc.accounts, &ancestors);
+        let rent =
+            Self::load_sysvar_for_snapshot_load(&bank_rc.accounts, &ancestors, &sysvar::rent::id());
         let partitioned_rewards_stake_account_stores_per_block = bank_rc
             .accounts
             .accounts_db
@@ -6251,8 +6257,6 @@ impl Bank {
                 self.get_epoch_rewards_sysvar().active,
             );
         }
-        self.stakes_cache
-            .refresh_delegated_stakes(self.new_warmup_cooldown_rate_epoch());
 
         self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
 
@@ -6918,7 +6922,8 @@ impl Bank {
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let mut bank = Self::default_with_bank_rc(bank_rc);
         let ancestors = Ancestors::from(vec![(slot, bank.bank_id())]);
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank.rc.accounts, &ancestors);
+        let rent =
+            Self::load_sysvar_for_snapshot_load(&bank.rc.accounts, &ancestors, &sysvar::rent::id());
         bank.blockhash_queue = RwLock::new(fields.blockhash_queue);
         bank.ancestors = ancestors;
         bank.hash = RwLock::new(fields.hash);
@@ -7048,8 +7053,6 @@ impl Bank {
                 bank.get_epoch_rewards_sysvar().active,
             );
         }
-        bank.stakes_cache
-            .refresh_delegated_stakes(bank.new_warmup_cooldown_rate_epoch());
 
         // If booting mid-distribution, recalculate reward partitions from the
         // EpochRewards sysvar (mirrors initialize_after_snapshot_restore).

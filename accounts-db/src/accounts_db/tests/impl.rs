@@ -106,7 +106,7 @@ fn generate_index_for_storage(
 ) {
     let mut reader = accounts_file::new_scan_accounts_reader();
     storage.accounts.set_file_on_reader(&mut reader).unwrap();
-    db.generate_index_for_slot(&mut reader, accum, 0, storage);
+    db.generate_index_for_slot(&mut reader, accum, 0, storage, &[]);
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn test_generate_index_with_direct_io() {
             store.write_accounts(&(slot, &accounts[..])).unwrap();
             db.storage.insert(Arc::new(store));
         }
-        let info = db.generate_index(None, false);
+        let info = db.generate_index(None, false, &[]);
         let alive = Vec::from_iter((0..NUM_SLOTS).map(|slot| {
             let storage = db.get_storage_for_slot(slot).unwrap();
             (storage.num_alive_accounts(), storage.num_alive_bytes())
@@ -210,7 +210,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     let append_vec = Arc::new(append_vec);
     db.storage.insert(Arc::clone(&append_vec));
     assert!(!db.accounts_index.contains(&pubkey));
-    let result = db.generate_index(None, false);
+    let result = db.generate_index(None, false, &[]);
 
     // The zero-lamport account stays alive in the index; its pubkey is added to
     // `uncleaned_pubkeys` for clean to handle
@@ -236,30 +236,43 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
 }
 
 #[test]
-fn test_generate_index_collects_stake_pubkeys() {
+fn test_generate_index_collects_pubkeys_by_owner() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let stake_owner = solana_sdk_ids::stake::id();
+    let vote_owner = solana_sdk_ids::vote::id();
     let staked = Pubkey::from([1; 32]);
     let closed = Pubkey::from([2; 32]);
     let other = Pubkey::from([3; 32]);
+    let voter = Pubkey::from([4; 32]);
     let stake_account = AccountSharedData::new(1, 0, &stake_owner);
     let closed_account = AccountSharedData::new(0, 0, &stake_owner);
     let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let vote_account = AccountSharedData::new(1, 0, &vote_owner);
 
-    // Write the same accounts in two slots so the list has repeats.
+    // Write the same accounts in two slots so the lists have repeats.
     let data = [
         (&staked, &stake_account),
         (&closed, &closed_account),
         (&other, &other_account),
+        (&voter, &vote_account),
     ];
     for slot in [0, 1] {
         let store = db.create_store(slot, 1000);
         store.write_accounts(&(slot, &data[..])).unwrap();
         db.storage.insert(Arc::new(store));
     }
+    // The newest version of `staked` has another owner. Old versions still
+    // count.
+    let store = db.create_store(2, 1000);
+    store
+        .write_accounts(&(2, &[(&staked, &other_account)][..]))
+        .unwrap();
+    db.storage.insert(Arc::new(store));
 
-    let result = db.generate_index(None, false);
-    assert_eq!(result.stake_pubkeys, vec![staked]);
+    let result = db.generate_index(None, false, &[stake_owner, vote_owner]);
+    assert_eq!(result.pubkeys_by_owner.len(), 2);
+    assert_eq!(result.pubkeys_by_owner[&stake_owner], vec![staked]);
+    assert_eq!(result.pubkeys_by_owner[&vote_owner], vec![voter]);
 }
 
 #[test]
@@ -1444,7 +1457,7 @@ fn test_clean_converts_zero_lamport_single_ref_account_to_tombstone_after_shrink
     // Build the index from the storage, the way startup does. Every account gets a single index
     // entry, including the zero lamport ones, and the storage's alive bytes are derived from the
     // accounts it holds. `verify` checks each index entry against the account it points at.
-    accounts_db.generate_index(None, true);
+    accounts_db.generate_index(None, true, &[]);
 
     // index generation does not mark tombstones
     assert_eq!(storage1.num_tombstones(), 0);
