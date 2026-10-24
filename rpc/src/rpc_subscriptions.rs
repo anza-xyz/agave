@@ -1277,6 +1277,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_notify_slots_removed_ignores_empty_and_deduplicates() {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (broadcast_sender, _) = broadcast::channel(1);
+        let subscriptions = RpcSubscriptions {
+            notification_sender: Some(sender.clone()),
+            t_cleanup: None,
+            exit: Arc::new(AtomicBool::new(false)),
+            control: SubscriptionControl::new(1, sender, broadcast_sender),
+        };
+
+        subscriptions.notify_slots_removed([]);
+        assert!(receiver.try_recv().is_err());
+
+        subscriptions.notify_slots_removed([42, 42]);
+        let notification = receiver.try_recv().unwrap();
+        // Include the removed slot in diagnostics if the notification queue disconnects.
+        assert_eq!(format!("{:?}", notification.entry), "SlotsRemoved({42})");
+        let NotificationEntry::SlotsRemoved(slots) = notification.entry else {
+            panic!("expected removed slots notification");
+        };
+        assert_eq!(slots, HashSet::from([42]));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn test_account_and_program_notifications_honor_data_slice() {
         use {
             solana_account_decoder::UiDataSliceConfig,
