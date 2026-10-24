@@ -9,12 +9,41 @@ pub use {
     solana_transaction_status_client_types::{TransactionDetails, UiTransactionEncoding},
 };
 
+// Flattening Option<CommitmentConfig> treats invalid commitment values as missing.
+// Read the level directly while preserving the public field type and JSON format.
+mod option_commitment_config {
+    use {
+        serde::{Deserialize, Deserializer, Serialize, Serializer},
+        solana_commitment_config::{CommitmentConfig, CommitmentLevel},
+    };
+
+    pub fn serialize<S: Serializer>(
+        commitment: &Option<CommitmentConfig>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        commitment
+            .map(|config| config.commitment)
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<CommitmentConfig>, D::Error> {
+        Option::<CommitmentLevel>::deserialize(deserializer)
+            .map(|commitment| commitment.map(|commitment| CommitmentConfig { commitment }))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSignatureStatusConfig {
     #[serde(default)]
     pub search_transaction_history: bool,
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
 }
@@ -44,7 +73,11 @@ pub struct RpcSimulateTransactionConfig {
     pub sig_verify: bool,
     #[serde(default)]
     pub replace_recent_blockhash: bool,
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub encoding: Option<UiTransactionEncoding>,
     pub accounts: Option<RpcSimulateTransactionAccountsConfig>,
@@ -58,7 +91,11 @@ pub struct RpcSimulateTransactionConfig {
 #[serde(rename_all = "camelCase")]
 pub struct RpcRequestAirdropConfig {
     pub recent_blockhash: Option<String>, // base-58 encoded blockhash
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
 }
 
@@ -67,7 +104,11 @@ pub struct RpcRequestAirdropConfig {
 pub struct RpcLeaderScheduleConfig {
     pub identity: Option<String>, // validator identity, as a base-58 encoded string
     pub key_by_vote_account: Option<bool>, // key the schedule by vote account instead of identity
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
 }
 
@@ -83,7 +124,11 @@ pub struct RpcBlockProductionConfigRange {
 pub struct RpcBlockProductionConfig {
     pub identity: Option<String>, // validator identity, as a base-58 encoded string
     pub range: Option<RpcBlockProductionConfigRange>, // current epoch if `None`
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
 }
 
@@ -91,7 +136,11 @@ pub struct RpcBlockProductionConfig {
 #[serde(rename_all = "camelCase")]
 pub struct RpcGetVoteAccountsConfig {
     pub vote_pubkey: Option<String>, // validator vote address, as a base-58 encoded string
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub keep_unstaked_delinquents: Option<bool>,
     pub delinquent_slot_distance: Option<u64>,
@@ -123,7 +172,11 @@ pub enum RpcLargestAccountsFilter {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcLargestAccountsConfig {
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub filter: Option<RpcLargestAccountsFilter>,
     pub sort_results: Option<bool>,
@@ -132,7 +185,11 @@ pub struct RpcLargestAccountsConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSupplyConfig {
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     #[serde(default)]
     pub exclude_non_circulating_accounts_list: bool,
@@ -142,7 +199,11 @@ pub struct RpcSupplyConfig {
 #[serde(rename_all = "camelCase")]
 pub struct RpcEpochConfig {
     pub epoch: Option<Epoch>,
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
 }
@@ -160,7 +221,11 @@ pub enum RpcAccountIndex {
 pub struct RpcAccountInfoConfig {
     pub encoding: Option<UiAccountEncoding>,
     pub data_slice: Option<UiDataSliceConfig>,
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
 }
@@ -191,7 +256,11 @@ pub enum RpcTransactionLogsFilter {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcTransactionLogsConfig {
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
 }
 
@@ -205,7 +274,11 @@ pub enum RpcTokenAccountsFilter {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSignatureSubscribeConfig {
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub enable_received_notification: Option<bool>,
 }
@@ -220,7 +293,11 @@ pub enum RpcBlockSubscribeFilter {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcBlockSubscribeConfig {
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub encoding: Option<UiTransactionEncoding>,
     pub transaction_details: Option<TransactionDetails>,
@@ -234,7 +311,11 @@ pub struct RpcSignaturesForAddressConfig {
     pub before: Option<String>, // Signature as base-58 string
     pub until: Option<String>,  // Signature as base-58 string
     pub limit: Option<usize>,
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
 }
@@ -276,7 +357,11 @@ pub struct RpcBlockConfig {
     pub encoding: Option<UiTransactionEncoding>,
     pub transaction_details: Option<TransactionDetails>,
     pub rewards: Option<bool>,
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub max_supported_transaction_version: Option<u8>,
 }
@@ -317,7 +402,11 @@ impl From<RpcBlockConfig> for RpcEncodingConfigWrapper<RpcBlockConfig> {
 #[serde(rename_all = "camelCase")]
 pub struct RpcTransactionConfig {
     pub encoding: Option<UiTransactionEncoding>,
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub max_supported_transaction_version: Option<u8>,
     pub min_context_slot: Option<Slot>,
@@ -351,7 +440,11 @@ impl RpcBlocksConfigWrapper {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcContextConfig {
-    #[serde(flatten)]
+    #[serde(
+        default,
+        with = "option_commitment_config",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
 }
@@ -367,7 +460,88 @@ pub struct RpcRankMapConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::RpcTransactionLogsFilter;
+    use {super::*, serde::de::DeserializeOwned, serde_json::json, std::fmt::Debug};
+
+    fn check_commitment_config<T: DeserializeOwned + Serialize + Debug>() {
+        for commitment in ["processed", "confirmed", "finalized"] {
+            let config: T = serde_json::from_value(json!({"commitment": commitment})).unwrap();
+            assert_eq!(
+                serde_json::to_value(config).unwrap()["commitment"],
+                commitment
+            );
+        }
+
+        for input in [json!({}), json!({"commitment": null})] {
+            let config: T = serde_json::from_value(input).unwrap();
+            assert!(
+                serde_json::to_value(config)
+                    .unwrap()
+                    .get("commitment")
+                    .is_none()
+            );
+        }
+
+        for commitment in [
+            json!("bad"),
+            json!(""),
+            json!(123),
+            json!(true),
+            json!([]),
+            json!({}),
+        ] {
+            let error = serde_json::from_value::<T>(json!({"commitment": commitment}))
+                .expect_err("invalid commitment must be rejected");
+            assert!(error.is_data(), "{error}");
+        }
+    }
+
+    #[test]
+    fn test_commitment_config_deserialization() {
+        check_commitment_config::<RpcSignatureStatusConfig>();
+        check_commitment_config::<RpcSimulateTransactionConfig>();
+        check_commitment_config::<RpcRequestAirdropConfig>();
+        check_commitment_config::<RpcLeaderScheduleConfig>();
+        check_commitment_config::<RpcBlockProductionConfig>();
+        check_commitment_config::<RpcGetVoteAccountsConfig>();
+        check_commitment_config::<RpcLargestAccountsConfig>();
+        check_commitment_config::<RpcSupplyConfig>();
+        check_commitment_config::<RpcEpochConfig>();
+        check_commitment_config::<RpcAccountInfoConfig>();
+        check_commitment_config::<RpcProgramAccountsConfig>();
+        check_commitment_config::<RpcTransactionLogsConfig>();
+        check_commitment_config::<RpcSignatureSubscribeConfig>();
+        check_commitment_config::<RpcBlockSubscribeConfig>();
+        check_commitment_config::<RpcSignaturesForAddressConfig>();
+        check_commitment_config::<RpcBlockConfig>();
+        check_commitment_config::<RpcTransactionConfig>();
+        check_commitment_config::<RpcContextConfig>();
+        check_commitment_config::<RpcBlocksConfigWrapper>();
+        check_commitment_config::<RpcLeaderScheduleConfigWrapper>();
+        check_commitment_config::<RpcEncodingConfigWrapper<RpcBlockConfig>>();
+        check_commitment_config::<RpcEncodingConfigWrapper<RpcTransactionConfig>>();
+    }
+
+    #[test]
+    fn test_commitment_config_preserves_other_fields() {
+        let config: RpcProgramAccountsConfig = serde_json::from_value(json!({
+            "commitment": "confirmed",
+            "encoding": "base64",
+            "minContextSlot": 123,
+            "withContext": true,
+            "unknownField": "ignored",
+        }))
+        .unwrap();
+        assert_eq!(
+            config.account_config.commitment,
+            Some(CommitmentConfig::confirmed())
+        );
+        assert_eq!(
+            config.account_config.encoding,
+            Some(UiAccountEncoding::Base64)
+        );
+        assert_eq!(config.account_config.min_context_slot, Some(123));
+        assert_eq!(config.with_context, Some(true));
+    }
 
     #[test]
     #[allow(deprecated)]
