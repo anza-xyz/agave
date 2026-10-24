@@ -183,6 +183,9 @@ use {
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
+/// Socket in the ledger directory that external schedulers connect to when scheduler bindings are
+/// enabled.
+pub const SCHEDULER_BINDINGS_IPC_FILENAME: &str = "scheduler_bindings.ipc";
 
 #[derive(Clone, EnumCount, EnumIter, EnumString, VariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
@@ -1859,7 +1862,7 @@ impl Validator {
             banking_control_receiver,
             config.enable_scheduler_bindings.then(|| {
                 (
-                    ledger_path.join("scheduler_bindings.ipc"),
+                    ledger_path.join(SCHEDULER_BINDINGS_IPC_FILENAME),
                     banking_control_sender.clone(),
                 )
             }),

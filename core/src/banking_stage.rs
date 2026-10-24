@@ -419,7 +419,11 @@ impl BankingStage {
     }
 
     async fn run(mut self, initial_args: BankingControlMsg) -> std::thread::Result<()> {
-        self.spawn_scheduler(initial_args).unwrap();
+        let initial_args =
+            Self::take_queued_control_message(&mut self.banking_control_receiver, initial_args);
+        if self.spawn_scheduler(initial_args).is_err() {
+            self.cycle_threads_fallback().await.unwrap();
+        }
 
         loop {
             tokio::select! {
@@ -448,6 +452,15 @@ impl BankingStage {
         }
 
         Ok(())
+    }
+
+    /// Returns a control message queued before the manager started in place of `initial_args`,
+    /// so a scheduler that connected first (as in banking simulation) is the only one spawned.
+    fn take_queued_control_message(
+        banking_control_receiver: &mut mpsc::Receiver<BankingControlMsg>,
+        initial_args: BankingControlMsg,
+    ) -> BankingControlMsg {
+        banking_control_receiver.try_recv().unwrap_or(initial_args)
     }
 
     async fn cycle_threads(&mut self, args: BankingControlMsg) -> Result<(), ()> {
@@ -1030,6 +1043,36 @@ mod tests {
         exit.store(true, Ordering::Relaxed);
         banking_stage.join().unwrap();
         poh_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_take_queued_control_message() {
+        let internal = |num_workers| BankingControlMsg::Internal {
+            block_production_method: BlockProductionMethod::default(),
+            num_workers: NonZeroUsize::new(num_workers).unwrap(),
+            config: SchedulerConfig::default(),
+        };
+        let has_num_workers = |message: BankingControlMsg, expected: usize| {
+            matches!(
+                message,
+                BankingControlMsg::Internal { num_workers, .. } if num_workers.get() == expected
+            )
+        };
+        let (sender, mut receiver) = mpsc::channel(1);
+
+        // Nothing queued: the initial arguments are kept.
+        let message = BankingStage::take_queued_control_message(&mut receiver, internal(1));
+        assert!(has_num_workers(message, 1));
+
+        // A queued message replaces them.
+        sender.try_send(internal(2)).unwrap();
+        let message = BankingStage::take_queued_control_message(&mut receiver, internal(1));
+        assert!(has_num_workers(message, 2));
+
+        // A closed channel keeps them.
+        drop(sender);
+        let message = BankingStage::take_queued_control_message(&mut receiver, internal(1));
+        assert!(has_num_workers(message, 1));
     }
 
     #[test]
