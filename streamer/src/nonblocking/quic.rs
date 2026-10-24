@@ -25,10 +25,7 @@ use {
         net::{IpAddr, SocketAddr},
         ops::RangeInclusive,
         pin::Pin,
-        sync::{
-            Arc, RwLock,
-            atomic::{AtomicU64, Ordering},
-        },
+        sync::{Arc, RwLock, atomic::Ordering},
         task::Poll,
         time::{Duration, Instant},
     },
@@ -912,7 +909,6 @@ fn handle_chunks(
 struct ConnectionEntry<S: OpaqueStreamerCounter> {
     cancel: CancellationToken,
     peer_type: ConnectionPeerType,
-    last_update: Arc<AtomicU64>,
     port: u16,
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
@@ -924,7 +920,6 @@ impl<S: OpaqueStreamerCounter> ConnectionEntry<S> {
     fn new(
         cancel: CancellationToken,
         peer_type: ConnectionPeerType,
-        last_update: Arc<AtomicU64>,
         port: u16,
         client_connection_tracker: ClientConnectionTracker,
         connection: Option<Connection>,
@@ -933,16 +928,11 @@ impl<S: OpaqueStreamerCounter> ConnectionEntry<S> {
         Self {
             cancel,
             peer_type,
-            last_update,
             port,
             _client_connection_tracker: client_connection_tracker,
             connection,
             stream_counter,
         }
-    }
-
-    fn last_update(&self) -> u64 {
-        self.last_update.load(Ordering::Relaxed)
     }
 
     fn stake(&self) -> u64 {
@@ -1013,24 +1003,6 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
         matches!(self.table_type, ConnectionTableType::Staked)
     }
 
-    pub(crate) fn prune_oldest(&mut self, max_size: usize) -> usize {
-        let mut num_pruned = 0;
-        let key = |(_, connections): &(_, &Vec<_>)| {
-            connections.iter().map(ConnectionEntry::last_update).min()
-        };
-        while self.total_size.saturating_sub(num_pruned) > max_size {
-            match self.table.values().enumerate().min_by_key(key) {
-                None => break,
-                Some((index, connections)) => {
-                    num_pruned += connections.len();
-                    self.table.swap_remove_index(index);
-                }
-            }
-        }
-        self.total_size = self.total_size.saturating_sub(num_pruned);
-        num_pruned
-    }
-
     // Randomly selects sample_size many connections, evicts the one with the
     // lowest stake, and returns the number of pruned connections.
     // If the stakes of all the sampled connections are higher than the
@@ -1064,10 +1036,9 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
         client_connection_tracker: ClientConnectionTracker,
         connection: Option<Connection>,
         peer_type: ConnectionPeerType,
-        last_update: Arc<AtomicU64>,
         max_connections_per_peer: usize,
         stream_counter_factory: F,
-    ) -> Option<(Arc<AtomicU64>, CancellationToken, Arc<S>)> {
+    ) -> Option<(CancellationToken, Arc<S>)> {
         let connection_entry = self.table.entry(key).or_default();
         let has_connection_capacity = connection_entry
             .len()
@@ -1083,14 +1054,13 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
             connection_entry.push(ConnectionEntry::new(
                 cancel.clone(),
                 peer_type,
-                last_update.clone(),
                 port,
                 client_connection_tracker,
                 connection,
                 stream_counter.clone(),
             ));
             self.total_size += 1;
-            Some((last_update, cancel, stream_counter))
+            Some((cancel, stream_counter))
         } else {
             if let Some(connection) = connection {
                 connection.close(
@@ -1812,13 +1782,12 @@ pub mod test {
         agave_logger::setup();
         let cancel = CancellationToken::new();
         let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
-        let mut num_entries = 5;
         let max_connections_per_peer = 10;
-        let sockets: Vec<_> = (0..num_entries)
+        let sockets: Vec<_> = (0..5)
             .map(|i| SocketAddr::new(IpAddr::V4(Ipv4Addr::new(i, 0, 0, 0)), 0))
             .collect();
         let stats = Arc::new(StreamerStats::default());
-        for (i, socket) in sockets.iter().enumerate() {
+        for socket in &sockets {
             table
                 .try_add_connection(
                     ConnectionTableKey::IP(socket.ip()),
@@ -1826,13 +1795,12 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {}),
                 )
                 .unwrap();
         }
-        num_entries += 1;
+        // A second connection on the first peer: 6 entries over 5 buckets.
         table
             .try_add_connection(
                 ConnectionTableKey::IP(sockets[0].ip()),
@@ -1840,26 +1808,32 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                Arc::new(AtomicU64::new(5)),
                 max_connections_per_peer,
                 || Arc::new(NullStreamerCounter {}),
             )
             .unwrap();
+        assert_eq!(table.total_size, 6);
 
-        let new_size = 3;
-        let pruned = table.prune_oldest(new_size);
-        assert_eq!(pruned, num_entries as usize - new_size);
-        for v in table.table.values() {
-            for x in v {
-                assert!((x.last_update() + 1) >= (num_entries as u64 - new_size as u64));
-            }
+        // One key per call: the whole bucket is evicted.
+        while table.total_size > 3 {
+            let pruned = table.prune_random(1, u64::MAX);
+            assert!(pruned == 1 || pruned == 2);
         }
-        assert_eq!(table.table.len(), new_size);
-        assert_eq!(table.total_size, new_size);
-        for socket in sockets.iter().take(num_entries as usize).skip(new_size - 1) {
+        assert!(table.total_size <= 3);
+        // Emptied buckets are removed, never left behind.
+        assert!(
+            table
+                .table
+                .values()
+                .all(|connections| !connections.is_empty())
+        );
+        assert!(table.table.len() <= 3);
+
+        for socket in &sockets {
             table.remove_connection(ConnectionTableKey::IP(socket.ip()), socket.port(), 0);
         }
         assert_eq!(table.total_size, 0);
+        assert!(table.table.is_empty());
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
@@ -1876,7 +1850,7 @@ pub mod test {
         let stats = Arc::new(StreamerStats::default());
 
         let pubkeys: Vec<_> = (0..num_entries).map(|_| Pubkey::new_unique()).collect();
-        for (i, pubkey) in pubkeys.iter().enumerate() {
+        for pubkey in &pubkeys {
             table
                 .try_add_connection(
                     ConnectionTableKey::Pubkey(*pubkey),
@@ -1884,7 +1858,6 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {}),
                 )
@@ -1892,11 +1865,13 @@ pub mod test {
         }
 
         let new_size = 3;
-        let pruned = table.prune_oldest(new_size);
-        assert_eq!(pruned, num_entries as usize - new_size);
-        assert_eq!(table.table.len(), new_size);
+        // One key per call: each pubkey holds one connection.
+        while table.total_size > new_size {
+            assert_eq!(table.prune_random(1, u64::MAX), 1);
+        }
         assert_eq!(table.total_size, new_size);
-        for pubkey in pubkeys.iter().take(num_entries as usize).skip(new_size - 1) {
+        assert_eq!(table.table.len(), new_size);
+        for pubkey in &pubkeys {
             table.remove_connection(ConnectionTableKey::Pubkey(*pubkey), 0, 0);
         }
         assert_eq!(table.total_size, 0);
@@ -1913,7 +1888,7 @@ pub mod test {
         let max_connections_per_peer = 10;
         let stats = Arc::new(StreamerStats::default());
 
-        (0..2).for_each(|i| {
+        (0..2).for_each(|_| {
             table
                 .try_add_connection(
                     ConnectionTableKey::Pubkey(pubkey1),
@@ -1921,7 +1896,6 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new(i)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {}),
                 )
@@ -1934,7 +1908,6 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                Arc::new(AtomicU64::new(2)),
                 max_connections_per_peer,
                 || Arc::new(NullStreamerCounter {}),
             )
@@ -1962,7 +1935,7 @@ pub mod test {
         let pubkey = Pubkey::new_unique();
         let stats: Arc<StreamerStats> = Arc::new(StreamerStats::default());
 
-        (0..max_connections_per_peer).for_each(|i| {
+        (0..max_connections_per_peer).for_each(|_| {
             table
                 .try_add_connection(
                     ConnectionTableKey::Pubkey(pubkey),
@@ -1970,7 +1943,6 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {}),
                 )
@@ -1987,7 +1959,6 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new(10)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {})
                 )
@@ -2005,7 +1976,6 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new(10)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {})
                 )
@@ -2015,13 +1985,24 @@ pub mod test {
         assert_eq!(table.total_size, num_entries);
 
         let new_max_size = 3;
-        let pruned = table.prune_oldest(new_max_size);
-        assert!(pruned >= num_entries - new_max_size);
-        assert!(table.table.len() <= new_max_size);
+        // One key per call: the whole bucket is evicted.
+        while table.total_size > new_max_size {
+            let pruned = table.prune_random(1, u64::MAX);
+            assert!(pruned == 1 || pruned == 10);
+        }
         assert!(table.total_size <= new_max_size);
+        assert!(table.table.len() <= 2);
+        assert!(
+            table
+                .table
+                .values()
+                .all(|connections| !connections.is_empty())
+        );
 
+        table.remove_connection(ConnectionTableKey::Pubkey(pubkey), 0, 0);
         table.remove_connection(ConnectionTableKey::Pubkey(pubkey2), 0, 0);
         assert_eq!(table.total_size, 0);
+        assert!(table.table.is_empty());
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
@@ -2047,7 +2028,6 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Staked((i + 1) as u64),
-                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {}),
                 )
@@ -2084,7 +2064,7 @@ pub mod test {
             .collect();
         let stats: Arc<StreamerStats> = Arc::new(StreamerStats::default());
 
-        for (i, socket) in sockets.iter().enumerate() {
+        for socket in &sockets {
             table
                 .try_add_connection(
                     ConnectionTableKey::IP(socket.ip()),
@@ -2092,7 +2072,6 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new((i * 2) as u64)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {}),
                 )
@@ -2105,7 +2084,6 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    Arc::new(AtomicU64::new((i * 2 + 1) as u64)),
                     max_connections_per_peer,
                     || Arc::new(NullStreamerCounter {}),
                 )
@@ -2121,7 +2099,6 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                Arc::new(AtomicU64::new((num_ips * 2) as u64)),
                 max_connections_per_peer,
                 || Arc::new(NullStreamerCounter {}),
             )
