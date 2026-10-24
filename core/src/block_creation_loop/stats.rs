@@ -117,6 +117,10 @@ pub(crate) struct SlotMetrics {
     pub(super) slot_delay_us: u64,
     pub(super) replay_is_behind_us: u64,
     pub(super) reward_certs_skipped: u64,
+    /// Time from requesting rewards to the block footer's nonblocking observation.
+    pub(super) reward_certs_observation_us: Option<u64>,
+    pub(super) reward_certs_recovery_ready: u64,
+    pub(super) reward_certs_recovery_pending: u64,
     pub(super) vote_accounts_update_stats: Option<VoteAccountUpdateStats>,
 }
 
@@ -131,6 +135,9 @@ impl SlotMetrics {
             slot_delay_us: 0,
             replay_is_behind_us: 0,
             reward_certs_skipped: 0,
+            reward_certs_observation_us: None,
+            reward_certs_recovery_ready: 0,
+            reward_certs_recovery_pending: 0,
             vote_accounts_update_stats: None,
         }
     }
@@ -145,6 +152,9 @@ impl SlotMetrics {
             slot_delay_us,
             replay_is_behind_us,
             reward_certs_skipped,
+            reward_certs_observation_us,
+            reward_certs_recovery_ready,
+            reward_certs_recovery_pending,
             vote_accounts_update_stats,
         } = self;
         datapoint_info!(
@@ -157,6 +167,9 @@ impl SlotMetrics {
             ("slot_delay_us", slot_delay_us, i64),
             ("replay_is_behind_us", replay_is_behind_us, i64),
             ("reward_certs_skipped", reward_certs_skipped, i64),
+            ("reward_certs_observation_us", reward_certs_observation_us, Option<i64>),
+            ("reward_certs_recovery_ready", reward_certs_recovery_ready, i64),
+            ("reward_certs_recovery_pending", reward_certs_recovery_pending, i64),
             ("vote_accounts_update_us", vote_accounts_update_stats.as_ref().map(|s| s.update_us), Option<i64>),
             ("vote_accounts_updated", vote_accounts_update_stats.as_ref().map(|s| s.vote_accounts_updated), Option<i64>),
         );

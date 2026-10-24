@@ -29,6 +29,13 @@ pub mod repair;
 pub mod replay_stage;
 pub mod resource_limits;
 mod result;
+/// Reward certificate construction, exposed for benchmarks.
+#[cfg(feature = "dev-context-only-utils")]
+pub mod reward_certs {
+    pub use crate::block_creation_loop::rewards::{
+        certs_builder::CertsBuilder, msg_types::RewardRespSucc,
+    };
+}
 pub mod sample_performance_service;
 #[cfg(unix)]
 mod scheduler_bindings_server;

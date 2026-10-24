@@ -1,4 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
+#[path = "local_cluster/reward_recovery.rs"]
+mod reward_recovery;
+
 use {
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
@@ -2196,6 +2199,18 @@ fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
     );
 }
 fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
+    test_alpenglow_nodes_with_config(
+        num_nodes,
+        num_offline_nodes,
+        ValidatorConfig::default_for_test(),
+    );
+}
+
+fn test_alpenglow_nodes_with_config(
+    num_nodes: usize,
+    num_offline_nodes: usize,
+    mut validator_config: ValidatorConfig,
+) {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
     let validator_keys = (0..num_nodes)
         .map(|i| {
@@ -2208,7 +2223,6 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
             )
         })
         .collect::<Vec<_>>();
-    let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.wait_for_supermajority = Some(0);
 
     let mut config = ClusterConfig {
@@ -2279,6 +2293,23 @@ fn test_alpenglow_4_1_offline() {
     const NUM_NODES: usize = 4;
     const NUM_OFFLINE: usize = 1;
     test_alpenglow_nodes_basic(NUM_NODES, NUM_OFFLINE);
+}
+
+/// Runs the four-node baseline with reward recovery enabled on every validator, so leaders admit
+/// certificates and raw vote signatures for rewards and run the recovery threads while the
+/// cluster lands transactions and roots.
+#[test]
+#[serial]
+fn test_alpenglow_4_reward_recovery() {
+    const NUM_NODES: usize = 4;
+    test_alpenglow_nodes_with_config(
+        NUM_NODES,
+        0,
+        ValidatorConfig {
+            enable_reward_recovery: true,
+            ..ValidatorConfig::default_for_test()
+        },
+    );
 }
 
 /// Basic restart coverage for the Alpenglow execution path.

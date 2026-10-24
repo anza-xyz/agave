@@ -782,6 +782,18 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("enable_reward_recovery")
+            .long("enable-reward-recovery")
+            .takes_value(false)
+            .hidden(hidden_unless_forced())
+            .help(
+                "Enable experimental reward recovery. As leader, this node then also includes \
+                 validators whose votes it missed in the reward certificates it publishes, when \
+                 other validators' certificates show those votes. It verifies everything it \
+                 publishes exactly as replay does.",
+            ),
+    )
+    .arg(
         Arg::with_name("block_verification_method")
             .long("block-verification-method")
             .value_name("METHOD")

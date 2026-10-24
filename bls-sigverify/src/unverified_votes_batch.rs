@@ -69,6 +69,7 @@ impl UnverifiedBatch {
     pub(crate) fn verify(
         &mut self,
         max_validators: usize,
+        retain_reward_signatures: bool,
         ban_sender: &BanSender,
         thread_pool: &ThreadPool,
     ) -> (Option<VerifiedBatch>, VoteVerificationStats) {
@@ -94,6 +95,11 @@ impl UnverifiedBatch {
                             Vote::from(self.vote_payload_to_sign),
                             vec![vote_aggregate],
                             pubkeys,
+                            if retain_reward_signatures {
+                                vec![(unverified_vote.rank, unverified_vote.vote_message.signature)]
+                            } else {
+                                vec![]
+                            },
                         )),
                         stats,
                     )
@@ -129,6 +135,14 @@ impl UnverifiedBatch {
                         Vote::from(self.vote_payload_to_sign),
                         vec![vote_aggregate],
                         sender_vote_account_pubkeys,
+                        if retain_reward_signatures {
+                            self.batch
+                                .iter()
+                                .map(|vote| (vote.rank, vote.vote_message.signature))
+                                .collect()
+                        } else {
+                            vec![]
+                        },
                     )),
                     stats,
                 )
@@ -142,6 +156,7 @@ impl UnverifiedBatch {
                         max_validators,
                         &self.batch,
                         sender_vote_account_pubkeys,
+                        retain_reward_signatures,
                         &hashed_msg,
                         thread_pool
                     ));
@@ -279,42 +294,67 @@ fn verify_individual_votes(
     max_validators: usize,
     unverified_votes: &[UnverifiedVotePayload],
     sender_vote_account_pubkeys: Vec<Pubkey>,
+    retain_reward_signatures: bool,
     hashed_msg: &HashedMessage,
     thread_pool: &ThreadPool,
 ) -> (Option<VerifiedBatch>, Vec<(Pubkey, BlsError)>) {
     let prepared_msg = PreparedHashedMessage::from_hashed_message(hashed_msg);
-    let (aggregates, sender_vote_account_pubkeys, failed) = thread_pool.install(|| {
-        unverified_votes
-            .into_par_iter()
-            .zip(sender_vote_account_pubkeys)
-            .fold(
-                || (vec![], vec![], vec![]),
-                |(mut verified, mut sender_vote_account_pubkeys, mut failed),
-                 (unverified_vote, sender_vote_account_pubkey)| {
-                    let sender_identity_pubkey = unverified_vote.sender_identity_pubkey;
-                    match unverified_vote.verify(max_validators, Either::Right(&prepared_msg)) {
-                        Ok(aggregate) => {
-                            verified.push(aggregate);
-                            sender_vote_account_pubkeys.push(sender_vote_account_pubkey);
+    let (aggregates, sender_vote_account_pubkeys, reward_signatures, failed) =
+        thread_pool.install(|| {
+            unverified_votes
+                .into_par_iter()
+                .zip(sender_vote_account_pubkeys)
+                .fold(
+                    || (vec![], vec![], vec![], vec![]),
+                    |(
+                        mut verified,
+                        mut sender_vote_account_pubkeys,
+                        mut reward_signatures,
+                        mut failed,
+                    ),
+                     (unverified_vote, sender_vote_account_pubkey)| {
+                        let sender_identity_pubkey = unverified_vote.sender_identity_pubkey;
+                        match unverified_vote.verify(max_validators, Either::Right(&prepared_msg)) {
+                            Ok(aggregate) => {
+                                verified.push(aggregate);
+                                sender_vote_account_pubkeys.push(sender_vote_account_pubkey);
+                                if retain_reward_signatures {
+                                    reward_signatures.push((
+                                        unverified_vote.rank,
+                                        unverified_vote.vote_message.signature,
+                                    ));
+                                }
+                            }
+                            Err(e) => failed.push((sender_identity_pubkey, e)),
                         }
-                        Err(e) => failed.push((sender_identity_pubkey, e)),
-                    }
-                    (verified, sender_vote_account_pubkeys, failed)
-                },
-            )
-            .reduce(
-                || (vec![], vec![], vec![]),
-                |mut left, mut right| {
-                    left.0.append(&mut right.0);
-                    left.1.append(&mut right.1);
-                    left.2.append(&mut right.2);
-                    left
-                },
-            )
-    });
+                        (
+                            verified,
+                            sender_vote_account_pubkeys,
+                            reward_signatures,
+                            failed,
+                        )
+                    },
+                )
+                .reduce(
+                    || (vec![], vec![], vec![], vec![]),
+                    |mut left, mut right| {
+                        left.0.append(&mut right.0);
+                        left.1.append(&mut right.1);
+                        left.2.append(&mut right.2);
+                        left.3.append(&mut right.3);
+                        left
+                    },
+                )
+        });
     (
-        (!aggregates.is_empty())
-            .then(|| VerifiedBatch::new(vote, aggregates, sender_vote_account_pubkeys)),
+        (!aggregates.is_empty()).then(|| {
+            VerifiedBatch::new(
+                vote,
+                aggregates,
+                sender_vote_account_pubkeys,
+                reward_signatures,
+            )
+        }),
         failed,
     )
 }
@@ -353,5 +393,157 @@ impl UnverifiedVotePayload {
             max_validators,
             vote_msg,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        agave_votor_transport::endpoint::stub_ban_channel_for_tests,
+        rayon::ThreadPoolBuilder,
+        solana_bls_signatures::{Keypair as BlsKeypair, Scalar, Signature},
+    };
+
+    fn payload(
+        vote: Vote,
+        shred_version: u16,
+        rank: u16,
+        keypair: &BlsKeypair,
+        signature: Signature,
+    ) -> UnverifiedVotePayload {
+        UnverifiedVotePayload {
+            vote_message: UnverifiedVoteMessage {
+                vote,
+                signature,
+                shred_version,
+            },
+            sender_bls_pubkey: keypair.public,
+            sender_identity_pubkey: Pubkey::new_unique(),
+            rank,
+            stake: NonZeroStake::new(1).unwrap(),
+        }
+    }
+
+    #[test]
+    fn optimistic_reward_components_are_retained_without_individual_verification() {
+        let vote = Vote::new_skip_vote(100);
+        let shred_version = 7;
+        let vote_payload = VotePayloadToSign::new_from_vote(vote, shred_version);
+        let message = wincode::serialize(&vote_payload).unwrap();
+        let keypairs = [BlsKeypair::new(), BlsKeypair::new()];
+        let valid_signatures = keypairs.each_ref().map(|keypair| keypair.sign(&message));
+        let delta = BlsKeypair::new().sign(&message);
+        // The perturbations cancel in the aggregate, although neither component verifies.
+        let signatures: [Signature; 2] = [
+            SignatureProjective::aggregate_with_weights(
+                [&valid_signatures[0], &delta].into_iter(),
+                [Scalar::ONE, Scalar::ONE].iter(),
+            )
+            .unwrap()
+            .into(),
+            SignatureProjective::aggregate_with_weights(
+                [&valid_signatures[1], &delta].into_iter(),
+                [Scalar::ONE, -Scalar::ONE].iter(),
+            )
+            .unwrap()
+            .into(),
+        ];
+        for (keypair, signature) in keypairs.iter().zip(&signatures) {
+            assert!(
+                keypair
+                    .public
+                    .verify_signature(signature, &message)
+                    .is_err()
+            );
+        }
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        for retain_reward_signatures in [false, true] {
+            let mut batch = UnverifiedBatch::new(
+                vote_payload,
+                payload(vote, shred_version, 0, &keypairs[0], signatures[0]),
+                Pubkey::new_unique(),
+            );
+            batch.push(
+                payload(vote, shred_version, 1, &keypairs[1], signatures[1]),
+                Pubkey::new_unique(),
+            );
+            let (ban_sender, _ban_receiver) = stub_ban_channel_for_tests(2);
+            let (verified, stats) = thread_pool
+                .install(|| batch.verify(2, retain_reward_signatures, &ban_sender, &thread_pool));
+            assert_eq!(stats.optimistic_verification_succeeded.0, 1);
+            let verified = verified.unwrap();
+            assert_eq!(verified.len(), 1);
+            let expected = if retain_reward_signatures {
+                vec![(0, signatures[0]), (1, signatures[1])]
+            } else {
+                vec![]
+            };
+            assert_eq!(verified.reward_signatures(), expected);
+        }
+    }
+
+    #[test]
+    fn individual_fallback_retains_only_valid_reward_components() {
+        let vote = Vote::new_skip_vote(100);
+        let shred_version = 7;
+        let vote_payload = VotePayloadToSign::new_from_vote(vote, shred_version);
+        let message = wincode::serialize(&vote_payload).unwrap();
+        let keypairs = [BlsKeypair::new(), BlsKeypair::new()];
+        let valid_signature: Signature = keypairs[0].sign(&message).into();
+        let invalid_signature = keypairs[1].sign(b"different payload").into();
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        for retain_reward_signatures in [false, true] {
+            let mut batch = UnverifiedBatch::new(
+                vote_payload,
+                payload(vote, shred_version, 0, &keypairs[0], valid_signature),
+                Pubkey::new_unique(),
+            );
+            batch.push(
+                payload(vote, shred_version, 1, &keypairs[1], invalid_signature),
+                Pubkey::new_unique(),
+            );
+            let (ban_sender, _ban_receiver) = stub_ban_channel_for_tests(2);
+            let (verified, stats) = thread_pool
+                .install(|| batch.verify(2, retain_reward_signatures, &ban_sender, &thread_pool));
+            assert_eq!(stats.optimistic_verification_failed.0, 1);
+            assert_eq!(stats.num_individual_verified.0, 1);
+            let verified = verified.unwrap();
+            let expected = if retain_reward_signatures {
+                vec![(0, valid_signature)]
+            } else {
+                vec![]
+            };
+            assert_eq!(verified.reward_signatures(), expected);
+        }
+    }
+
+    #[test]
+    fn singleton_retains_reward_components_only_when_requested() {
+        let vote = Vote::new_skip_vote(100);
+        let shred_version = 7;
+        let vote_payload = VotePayloadToSign::new_from_vote(vote, shred_version);
+        let message = wincode::serialize(&vote_payload).unwrap();
+        let keypair = BlsKeypair::new();
+        let signature = keypair.sign(&message).into();
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        for retain_reward_signatures in [false, true] {
+            let mut batch = UnverifiedBatch::new(
+                vote_payload,
+                payload(vote, shred_version, 0, &keypair, signature),
+                Pubkey::new_unique(),
+            );
+            let (ban_sender, _ban_receiver) = stub_ban_channel_for_tests(2);
+            let (verified, stats) = thread_pool
+                .install(|| batch.verify(1, retain_reward_signatures, &ban_sender, &thread_pool));
+            assert_eq!(stats.num_individual_verified.0, 1);
+            let verified = verified.unwrap();
+            let expected = if retain_reward_signatures {
+                vec![(0, signature)]
+            } else {
+                vec![]
+            };
+            assert_eq!(verified.reward_signatures(), expected);
+        }
     }
 }

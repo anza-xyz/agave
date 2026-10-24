@@ -9226,6 +9226,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-shred-version",
  "solana-signer",
+ "solana-signer-store",
  "solana-slot-hashes",
  "solana-stake-interface",
  "solana-streamer",
