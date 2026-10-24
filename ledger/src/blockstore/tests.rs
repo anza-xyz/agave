@@ -4729,8 +4729,10 @@ fn test_recovery() {
     let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let mut metrics = BlockstoreInsertionMetrics::default();
 
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (sender, receiver) = agave_wake_channel::bounded(1);
+    let dummy_retransmit_sender = EvictingSender::new(sender, receiver);
     let coding_shreds = coding_shreds.into_iter().map(|shred| {
         (
             Cow::Owned(shred),
@@ -4749,9 +4751,15 @@ fn test_recovery() {
             )),
             &mut pinnable_slice,
             &mut write_batch,
-            &mut BlockstoreInsertionMetrics::default(),
+            &mut metrics,
         )
         .unwrap();
+    assert_eq!(metrics.num_recovered_data_shreds, data_shreds.len());
+    assert_eq!(metrics.num_recovered_coding_shreds, 0);
+    assert_eq!(
+        metrics.num_recovered_retransmit_batches,
+        data_shreds.len().div_ceil(RETRANSMIT_SHRED_BATCH_SIZE),
+    );
     let shred_bufs: Vec<_> = data_shreds.iter().map(Shred::payload).cloned().collect();
 
     // Check all the data shreds were recovered
@@ -4801,7 +4809,8 @@ fn test_skip_alt_recovery() {
 
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (sender, receiver) = agave_wake_channel::bounded(1);
+    let dummy_retransmit_sender = EvictingSender::new(sender, receiver);
     let alternate_location = BlockLocation::Alternate {
         block_id: Hash::new_unique(),
     };
@@ -4826,7 +4835,9 @@ fn test_skip_alt_recovery() {
         )
         .unwrap();
 
-    assert_eq!(metrics.num_recovered, 0);
+    assert_eq!(metrics.num_recovered_data_shreds, 0);
+    assert_eq!(metrics.num_recovered_coding_shreds, 0);
+    assert_eq!(metrics.num_recovered_retransmit_batches, 0);
     assert!(
         blockstore
             .get_index_from_location(slot, alternate_location)
@@ -4902,7 +4913,8 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
             )
         })
         .collect();
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (sender, receiver) = agave_wake_channel::bounded(1);
+    let dummy_retransmit_sender = EvictingSender::new(sender, receiver);
     let mut metrics = BlockstoreInsertionMetrics::default();
     blockstore
         .do_insert_shreds(
@@ -4919,7 +4931,11 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
         )
         .unwrap();
 
-    assert_eq!(metrics.num_recovered, 0);
+    assert_eq!(metrics.num_recovered_data_shreds, 0);
+    // The invalid data shreds are discarded, but the missing coding shred is
+    // still recovered and submitted for retransmit.
+    assert_eq!(metrics.num_recovered_coding_shreds, 1);
+    assert_eq!(metrics.num_recovered_retransmit_batches, 1);
     assert_eq!(metrics.num_recovered_inserted, 0);
     assert_eq!(metrics.num_recovered_failed_invalid, 0);
 

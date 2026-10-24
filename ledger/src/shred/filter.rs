@@ -8,6 +8,8 @@ use {
     },
     crate::blockstore,
     agave_feature_set as feature_set,
+    agave_wake_channel::{Receiver, Sender},
+    itertools::Itertools,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::BytesPacket,
@@ -497,17 +499,27 @@ fn check_last_data_shred_index(index: u32) -> bool {
     (index + 1).is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
 }
 
+/// Maximum number of shreds sent to retransmit workers in one job.
+///
+/// Heavy-load measurements showed sigverify at ~5us/shred and retransmit at
+/// ~18us/shred. Splitting the typical 64-shred sigverify output into four
+/// retransmit jobs gives the worker pool enough parallelism to keep up.
+pub const RETRANSMIT_SHRED_BATCH_SIZE: usize = 16;
+
+type ShredBatch = Vec<Payload>;
+type RetransmitSender = EvictingSender<ShredBatch, Sender<ShredBatch>, Receiver<ShredBatch>>;
+
 /// Holds the context to perform filtering on shred recovery
 pub struct ShredRecoveryContext {
     /// Sender to retransmit the recovered shreds
-    retransmit_sender: EvictingSender<Vec<Payload>>,
+    retransmit_sender: RetransmitSender,
     /// Used for filtering recovered shreds
     shred_filter_ctx: ShredFilterContext,
 }
 
 impl ShredRecoveryContext {
     pub fn new(
-        retransmit_sender: EvictingSender<Vec<Payload>>,
+        retransmit_sender: RetransmitSender,
         root_bank: Arc<Bank>,
         shred_version: u16,
     ) -> Self {
@@ -572,10 +584,14 @@ impl ShredRecoveryContext {
             });
         Ok(())
     }
-    /// Send recovered shreds for retransmit
+    /// Send recovered shreds for retransmit in bounded-size jobs, moving payloads
+    /// into each job without cloning them.
     pub fn try_retransmit_shreds(&self, recovered_shreds: Vec<Payload>) {
-        if !recovered_shreds.is_empty() {
-            let _ = self.retransmit_sender.try_send(recovered_shreds);
+        for shreds in &recovered_shreds
+            .into_iter()
+            .chunks(RETRANSMIT_SHRED_BATCH_SIZE)
+        {
+            let _ = self.retransmit_sender.try_send(shreds.collect());
         }
     }
 
@@ -822,6 +838,47 @@ mod tests {
         }
     }
 
+    #[test_case(0)]
+    #[test_case(1)]
+    #[test_case(15)]
+    #[test_case(16)]
+    #[test_case(17)]
+    #[test_case(32)]
+    #[test_case(35)]
+    fn test_recovery_retransmit_batches(num_shreds: usize) {
+        let num_jobs = num_shreds.div_ceil(RETRANSMIT_SHRED_BATCH_SIZE);
+        let (sender, receiver) = agave_wake_channel::bounded(num_jobs.max(1));
+        let sender = RetransmitSender::new(sender, receiver.clone());
+        let context = ShredRecoveryContext::new(sender, new_test_bank(0), 0);
+        let shreds: Vec<_> = (0..num_shreds)
+            .map(|index| Payload::from(index.to_le_bytes().to_vec()))
+            .collect();
+
+        context.try_retransmit_shreds(shreds.clone());
+
+        let jobs: Vec<_> = std::iter::from_fn(|| receiver.try_recv().ok()).collect();
+        assert_eq!(jobs.len(), num_jobs);
+        for (job, expected) in jobs.iter().zip(shreds.chunks(RETRANSMIT_SHRED_BATCH_SIZE)) {
+            assert_eq!(job, expected);
+        }
+    }
+
+    #[test]
+    fn test_recovery_retransmit_keeps_sending_after_eviction() {
+        let (sender, receiver) = agave_wake_channel::bounded(1);
+        let sender = RetransmitSender::new(sender, receiver.clone());
+        let context = ShredRecoveryContext::new(sender, new_test_bank(0), 0);
+        let shreds: Vec<_> = (0..2 * RETRANSMIT_SHRED_BATCH_SIZE + 3)
+            .map(|index| Payload::from(index.to_le_bytes().to_vec()))
+            .collect();
+        let expected = shreds[2 * RETRANSMIT_SHRED_BATCH_SIZE..].to_vec();
+
+        context.try_retransmit_shreds(shreds);
+
+        assert_eq!(receiver.try_recv().unwrap(), expected);
+        assert!(receiver.is_empty());
+    }
+
     #[test]
     fn test_recovery_shred_limits() {
         agave_logger::setup();
@@ -843,7 +900,8 @@ mod tests {
         // Feed recovery only coding shreds. Without the custom limit below, this
         // is enough parity to recover the missing data shreds.
         let max_code_shreds_per_slot = coding_shreds[0].index();
-        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+        let (sender, receiver) = agave_wake_channel::bounded(1);
+        let dummy_retransmit_sender = RetransmitSender::new(sender, receiver);
         let mut shred_recovery_context =
             ShredRecoveryContext::new(dummy_retransmit_sender, new_test_bank(0), shred_version);
         shred_recovery_context

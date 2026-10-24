@@ -108,4 +108,16 @@ mod tests {
         assert_eq!(receiver.try_recv(), Ok(3));
         assert!(sender.is_empty());
     }
+
+    #[test]
+    fn test_evicts_oldest_on_wake_channel() {
+        let (sender, receiver) = agave_wake_channel::bounded(2);
+        let sender = EvictingSender::new(sender, receiver.clone());
+        sender.try_send(1).unwrap();
+        sender.try_send(2).unwrap();
+        assert_eq!(sender.try_send(3), Err(TrySendError::Full(1)));
+        assert_eq!(receiver.try_recv(), Ok(2));
+        assert_eq!(receiver.try_recv(), Ok(3));
+        assert!(sender.is_empty());
+    }
 }

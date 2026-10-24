@@ -23,7 +23,8 @@ use {
 fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let genesis_config = create_genesis_config(1).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (sender, receiver) = agave_wake_channel::bounded(1);
+    let dummy_retransmit_sender = EvictingSender::new(sender, receiver);
     ShredRecoveryContext::new(
         dummy_retransmit_sender,
         root_bank,

@@ -28,7 +28,12 @@ pub struct BlockstoreInsertionMetrics {
     pub num_shreds: usize,
     pub num_inserted: u64,
     pub num_repair: u64,
-    pub num_recovered: usize,
+    /// Recovered data shreds sent to retransmit.
+    pub num_recovered_data_shreds: usize,
+    /// Recovered coding shreds sent to retransmit.
+    pub num_recovered_coding_shreds: usize,
+    /// How many nonempty shred batches has been sent to retransmit stage.
+    pub num_recovered_retransmit_batches: usize,
     pub num_recovered_blockstore_error: usize,
     pub num_recovered_inserted: usize,
     pub num_recovered_failed_invalid: usize,
@@ -104,7 +109,17 @@ impl BlockstoreInsertionMetrics {
             ),
             ("num_inserted", self.num_inserted as i64, i64),
             ("num_repair", self.num_repair as i64, i64),
-            ("num_recovered", self.num_recovered as i64, i64),
+            ("num_recovered", self.num_recovered_data_shreds as i64, i64),
+            (
+                "num_recovered_coding_shreds",
+                self.num_recovered_coding_shreds as i64,
+                i64
+            ),
+            (
+                "num_recovered_retransmit_batches",
+                self.num_recovered_retransmit_batches as i64,
+                i64
+            ),
             (
                 "num_recovered_inserted",
                 self.num_recovered_inserted as i64,

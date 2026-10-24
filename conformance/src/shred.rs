@@ -166,7 +166,8 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             open_ledger()
         }
     };
-    let (retransmit_sender, _retransmit_rx) = EvictingSender::<Vec<Payload>>::new_bounded(0);
+    let (sender, receiver) = agave_wake_channel::bounded::<Vec<Payload>>(1);
+    let retransmit_sender = EvictingSender::new(sender, receiver);
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
     let handle_duplicate = |duplicate: PossibleDuplicateShred| {
