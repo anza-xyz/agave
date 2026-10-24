@@ -13050,9 +13050,9 @@ dependencies = [
 
 [[package]]
 name = "ur-registry"
-version = "1.0.8"
+version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3e5fdee1510fe809ceaecdf7e3ab75b58b4c578e3f436217cd03132f0596698"
+checksum = "e20351479cae2f2f28771f1c8f6b9532209c054cd39e5c754edef0247d6dbfe8"
 dependencies = [
  "bs58",
  "hex",
