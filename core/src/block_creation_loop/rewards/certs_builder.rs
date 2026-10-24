@@ -9,8 +9,8 @@ use {
     entry::Entry,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_measure::measure_us,
-    solana_runtime::bank::Bank,
+    solana_measure::measure::Measure,
+    solana_runtime::{bank::Bank, leader_schedule_utils::remaining_slots_in_window},
     std::{
         collections::BTreeMap,
         sync::Arc,
@@ -88,20 +88,19 @@ impl CertsBuilder {
     }
 
     /// Builds reward certificates.
-    fn build_certs(
-        &mut self,
-        bank_slot: Slot,
-    ) -> Result<RewardRespSucc, BuildRewardCertsRespError> {
-        let Some(reward_slot) = bank_slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
-            return Ok(RewardRespSucc::default());
-        };
+    fn build_certs(&mut self, bank_slot: Slot) -> Option<RewardRespSucc> {
+        let reward_slot = bank_slot.checked_sub(NUM_SLOTS_FOR_REWARD)?;
         // we assume that the block creation loop will only ever request to build reward certs in a
         // strictly increasing order so we can drop older state
         self.aggregates = self.aggregates.split_off(&reward_slot);
-        match self.aggregates.remove(&reward_slot) {
-            None => Ok(RewardRespSucc::default()),
-            Some(entry) => entry.build_certs(reward_slot),
-        }
+        let entry = self.aggregates.remove(&reward_slot)?;
+        entry
+            .build_certs(reward_slot)
+            .inspect_err(|err| {
+                let pubkey = self.cluster_info.id();
+                error!("{pubkey} building reward cert failed with {err:?}");
+            })
+            .ok()
     }
 
     pub(super) fn build_request(
@@ -111,7 +110,7 @@ impl CertsBuilder {
         let my_pubkey = self.cluster_info.id();
         match request {
             Ok(RewardRequest {
-                bank_slot,
+                window_start,
                 reply_sender,
                 request_sent,
             }) => {
@@ -120,14 +119,27 @@ impl CertsBuilder {
                     .as_micros()
                     .try_into()
                     .unwrap_or(u64::MAX);
-                let (result, build_us) = measure_us!(self.build_certs(bank_slot));
-                let resp = RewardResponse { result };
-                let _ = reply_sender.send(resp).inspect_err(|_| {
-                    info!(
-                        "{my_pubkey}: channel to send reply for bank_slot={bank_slot} disconnected"
-                    );
-                });
-                self.metrics.build_us.add_sample(build_us);
+                let mut build_measure = Measure::start("building certs");
+                let mut loop_finished = true;
+                for bank_slot in
+                    window_start..(window_start + (remaining_slots_in_window(window_start) as Slot))
+                {
+                    let result = self.build_certs(bank_slot);
+                    let resp = RewardResponse { bank_slot, result };
+                    if reply_sender.send(resp).is_err() {
+                        info!(
+                            "{my_pubkey}: channel to send reply for bank_slot={window_start} \
+                             disconnected"
+                        );
+                        loop_finished = false;
+                        break;
+                    }
+                }
+                build_measure.stop();
+                if loop_finished {
+                    let build_us = build_measure.end_as_us();
+                    self.metrics.build_us.add_sample(build_us);
+                }
                 self.metrics.queue_waited_us.add_sample(queue_waited_us);
                 self.metrics.maybe_report();
                 Ok(())
