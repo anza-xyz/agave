@@ -154,7 +154,7 @@ impl CertsBuilder {
 
         match input {
             RewardInput::External(aggregates) => {
-                for aggregate in aggregates {
+                'aggregate: for aggregate in aggregates {
                     let vote = *aggregate.vote();
                     let vote_slot = vote.slot();
                     let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
@@ -163,13 +163,13 @@ impl CertsBuilder {
                              {}",
                             root_bank.slot()
                         );
-                        return;
+                        continue;
                     };
                     let max_validators = rank_map.len();
                     let mut vote_account_pubkeys = vec![];
                     for rank in aggregate.ranks().iter_ones() {
                         let Some(stake_entry) = rank_map.get_pubkey_stake_entry(rank) else {
-                            return;
+                            continue 'aggregate;
                         };
                         vote_account_pubkeys.push(stake_entry.vote_account_pubkey);
                     }
