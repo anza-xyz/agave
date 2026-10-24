@@ -175,7 +175,7 @@ impl Tpu {
         } = sockets;
 
         let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
-        let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
+        let (vote_packet_sender, vote_packet_receiver) = bounded(0); // TPU votes are not ingested
         let evicting_vote_sender =
             EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
         let (forwarded_packet_sender, forwarded_packet_receiver) =
@@ -282,7 +282,7 @@ impl Tpu {
 
         let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_receiver,
-            vote_packet_receiver,
+            crossbeam_channel::never(), // TPU votes are not ingested
             non_vote_sender,
             tpu_vote_sender,
             forward_stage_sender.clone(),
