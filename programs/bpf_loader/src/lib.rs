@@ -575,24 +575,39 @@ fn process_loader_upgradeable_instruction(
             // Update the ProgramData account
             let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
             {
-                programdata.set_data_length(programdata_len)?;
+                let buffer = instruction_context.try_borrow_instruction_account(2)?;
+                let elf = buffer
+                    .get_data()
+                    .get(buffer_data_offset..)
+                    .ok_or(InstructionError::AccountDataTooSmall)?;
+                // When growing, append the part of the ELF past the current
+                // data rather than zero-filling it only to overwrite it.
+                let (elf_head, elf_tail) = elf
+                    .split_at_checked(
+                        programdata
+                            .get_data()
+                            .len()
+                            .saturating_sub(programdata_data_offset)
+                            .min(buffer_data_len),
+                    )
+                    .ok_or(InstructionError::AccountDataTooSmall)?;
+                if programdata_len > programdata.get_data().len() {
+                    programdata.extend_from_slice(elf_tail)?;
+                } else {
+                    programdata.set_data_length(programdata_len)?;
+                }
                 programdata.set_state(&UpgradeableLoaderState::ProgramData {
                     slot: clock.slot,
                     upgrade_authority_address: authority_key,
                 })?;
-                let dst_slice = programdata
+                programdata
                     .get_data_mut()?
                     .get_mut(
                         programdata_data_offset
-                            ..programdata_data_offset.saturating_add(buffer_data_len),
+                            ..programdata_data_offset.saturating_add(elf_head.len()),
                     )
-                    .ok_or(InstructionError::AccountDataTooSmall)?;
-                let buffer = instruction_context.try_borrow_instruction_account(2)?;
-                let src_slice = buffer
-                    .get_data()
-                    .get(buffer_data_offset..)
-                    .ok_or(InstructionError::AccountDataTooSmall)?;
-                dst_slice.copy_from_slice(src_slice);
+                    .ok_or(InstructionError::AccountDataTooSmall)?
+                    .copy_from_slice(elf_head);
             }
             programdata
                 .get_data_mut()?
