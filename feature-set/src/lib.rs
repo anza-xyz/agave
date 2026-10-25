@@ -1326,6 +1326,10 @@ pub mod enforce_correct_proof_size {
     solana_pubkey::declare_id!("turbzzBJLGMJJikLvgCCJu9e1hTmfxwarrbLndYAsK5");
 }
 
+pub mod stricter_shred_validation {
+    solana_pubkey::declare_id!("s5o4YoA9zUrw9j4v335ncdG5PpznDBsrgM6CvUGrasA");
+}
+
 pub mod provide_instruction_data_offset_in_vm_r2 {
     solana_pubkey::declare_id!("5xXZc66h4UdB6Yq7FzdBxBiRAFMMScMLwHxk2QZDaNZL");
 }
@@ -2502,6 +2506,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enforce_correct_proof_size::id(),
             "SIMD-0317: Enforce the Merkle proof size of a fixed 32:32 FEC set",
+        ),
+        (
+            stricter_shred_validation::id(),
+            "SIMD-0504: Stricter shred validation",
         ),
         (
             provide_instruction_data_offset_in_vm_r2::id(),

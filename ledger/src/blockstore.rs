@@ -270,8 +270,8 @@ pub enum PossibleDuplicateShred {
         Shred,          // original
         shred::Payload, // conflict
     ),
-    // Same Merkle root but a different payload at the same index
-    // TODO: remove once SIMD-0504 is active
+    // Same Merkle root but a different payload at the same index, before
+    // SIMD-0504 is effective for the slot
     PayloadConflict(
         Shred,          // incoming
         shred::Payload, // stored
@@ -478,6 +478,8 @@ struct ShredInsertionTracker<'a, 'batch> {
     index_meta_time_us: u64,
     // Collection of recently completed data sets (data portion of erasure batch)
     newly_completed_data_sets: Vec<CompletedDataSetInfo>,
+    // First slot for which SIMD-0504 is effective, if known
+    stricter_shred_validation_from: Option<Slot>,
 }
 
 impl<'batch> ShredInsertionTracker<'_, 'batch> {
@@ -492,6 +494,7 @@ impl<'batch> ShredInsertionTracker<'_, 'batch> {
             write_batch,
             index_meta_time_us: 0,
             newly_completed_data_sets: vec![],
+            stricter_shred_validation_from: None,
         }
     }
 }
@@ -1647,6 +1650,37 @@ impl Blockstore {
         }
     }
 
+    /// Marks the slot dead, unless it was full before this batch.
+    ///
+    /// Unlike [`Self::mark_slot_dead_if_not_full`], a slot which became full
+    /// in this batch is marked dead too, since replay can't have seen it full
+    /// before this batch is committed.
+    fn mark_slot_dead_if_not_full_before_batch(
+        &self,
+        slot: Slot,
+        shred_insertion_tracker: &mut ShredInsertionTracker,
+    ) {
+        let location = BlockLocation::Original;
+        let was_full = match shred_insertion_tracker
+            .slot_meta_working_set
+            .get(&(location, slot))
+        {
+            Some(entry) => entry.old_slot_meta.as_ref().is_some_and(SlotMeta::is_full),
+            None => self
+                .meta_from_location(slot, location)
+                .ok()
+                .flatten()
+                .is_some_and(|meta| meta.is_full()),
+        };
+        if !was_full {
+            self.dead_slots_cf.put_bytes_in_batch(
+                shred_insertion_tracker.write_batch,
+                slot,
+                &[true as u8],
+            );
+        }
+    }
+
     /// Attempts to insert shreds into blockstore and updates relevant metrics
     /// based on the results, split out by shred source (turbine vs. repair).
     fn attempt_shred_insertion<'a, 'db>(
@@ -1771,10 +1805,10 @@ impl Blockstore {
     ///
     /// Additionally, erasure sets which have enough shreds to be rebuilt for
     /// the first time in this batch are rebuilt and checked against the
-    /// SIMD-0504 per-FEC-set rules. The outcome of the checks is only reported
-    /// in metrics, not enforced.
+    /// SIMD-0504 per-FEC-set rules. Once SIMD-0504 is active for the slot, a
+    /// failed check or rebuild marks the slot dead.
     ///
-    /// Returns (recovered_shreds, recovered_data_shreds)
+    /// Returns (recovered_shreds, recovered_data_shreds, slots_failing_checks)
     fn try_shred_recovery(
         &self,
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
@@ -1785,6 +1819,7 @@ impl Blockstore {
     ) -> (
         /* recovered_shreds */ Vec<Payload>,
         /* recovered_data_shreds */ Vec<Shred>,
+        /* slots_failing_checks */ HashSet<Slot>,
     ) {
         // Recovered shreds are inserted only after this function returns, so
         // these are the shreds received in this batch.
@@ -1835,6 +1870,7 @@ impl Blockstore {
         let max_recovered_shreds = num_to_recover * DATA_SHREDS_PER_FEC_BLOCK;
         let mut recovered_shreds = Vec::with_capacity(max_recovered_shreds);
         let mut recovered_data_shreds = Vec::with_capacity(max_recovered_shreds);
+        let mut slots_failing_checks = HashSet::new();
         for (erasure_set, erasure_meta, index, actions) in erasure_sets_to_rebuild {
             let FecSetActions {
                 recover_missing_data_shreds: should_recover,
@@ -1854,11 +1890,16 @@ impl Blockstore {
                         erasure_set.slot(),
                         erasure_set.fec_set_index(),
                     );
-                    // The check is not retried. Once SIMD-0504 is active, a
-                    // failed rebuild fails the FEC set checks, which marks
-                    // the slot dead.
+                    // The check is not retried, so a failed rebuild fails the
+                    // SIMD-0504 family 2 checks for the whole slot.
                     if should_check {
+                        metrics.num_fec_set_checks_failed += 1;
                         metrics.num_fec_set_checks_rebuild_failed += 1;
+                        if shred_recovery_ctx
+                            .is_stricter_shred_validation_active(erasure_set.slot())
+                        {
+                            slots_failing_checks.insert(erasure_set.slot());
+                        }
                     }
                     continue;
                 }
@@ -1892,11 +1933,20 @@ impl Blockstore {
                             erasure_set.fec_set_index(),
                         );
                         metrics.num_fec_set_checks_failed += 1;
+                        if shred_recovery_ctx
+                            .is_stricter_shred_validation_active(erasure_set.slot())
+                        {
+                            slots_failing_checks.insert(erasure_set.slot());
+                        }
                     }
                 }
             }
         }
-        (recovered_shreds, recovered_data_shreds)
+        (
+            recovered_shreds,
+            recovered_data_shreds,
+            slots_failing_checks,
+        )
     }
 
     /// Attempts shred recovery and does the following for recovered data
@@ -1915,13 +1965,17 @@ impl Blockstore {
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
         let mut start = Measure::start("Shred recovery");
-        let (recovered_shreds, recovered_data_shreds) = self.try_shred_recovery(
-            &shred_insertion_tracker.erasure_metas,
-            &shred_insertion_tracker.index_working_set,
-            &shred_insertion_tracker.just_inserted_shreds,
-            shred_recovery_context,
-            metrics,
-        );
+        let (recovered_shreds, recovered_data_shreds, slots_failing_checks) = self
+            .try_shred_recovery(
+                &shred_insertion_tracker.erasure_metas,
+                &shred_insertion_tracker.index_working_set,
+                &shred_insertion_tracker.just_inserted_shreds,
+                shred_recovery_context,
+                metrics,
+            );
+        for slot in slots_failing_checks {
+            self.mark_slot_dead_if_not_full_before_batch(slot, shred_insertion_tracker);
+        }
         if !recovered_shreds.is_empty() {
             metrics.num_recovered_retransmit_batches += 1;
         }
@@ -2323,6 +2377,9 @@ impl Blockstore {
     ) -> Result<InsertResults> {
         let shreds = shreds.into_iter();
         let mut shred_insertion_tracker = ShredInsertionTracker::new(shreds.len(), write_batch);
+        shred_insertion_tracker.stricter_shred_validation_from = shred_recovery_context
+            .as_deref()
+            .and_then(ShredRecoveryContext::stricter_shred_validation_from);
 
         self.attempt_shred_insertion(
             shreds,
@@ -2751,6 +2808,7 @@ impl Blockstore {
             index_meta_time_us,
             duplicate_shreds,
             write_batch,
+            stricter_shred_validation_from,
             ..
         } = shred_insertion_tracker;
 
@@ -2790,6 +2848,7 @@ impl Blockstore {
                         merkle_root_meta.as_ref(),
                         &shred,
                         merkle_root,
+                        *stricter_shred_validation_from,
                         duplicate_shreds,
                     );
                 } else {
@@ -2984,6 +3043,7 @@ impl Blockstore {
             erasure_metas,
             write_batch,
             newly_completed_data_sets,
+            stricter_shred_validation_from,
         } = shred_insertion_tracker;
 
         let index_meta_working_set_entry = self.get_index_meta_entry(
@@ -3034,6 +3094,7 @@ impl Blockstore {
                         merkle_root_meta.as_ref(),
                         &shred,
                         merkle_root,
+                        *stricter_shred_validation_from,
                         duplicate_shreds,
                     );
                 } else {
@@ -3285,7 +3346,8 @@ impl Blockstore {
     }
 
     /// Checks an untrusted `shred` whose index is already occupied against the stored one.
-    /// A difference in Merkle root or payload is treated as equivocation.
+    /// A difference in Merkle root is treated as equivocation. So is a difference in payload,
+    /// until SIMD-0504 is effective for the slot.
     ///
     /// The duplicate proof is stored here, but the slot is not marked dead: the caller
     /// returns `Exists`, and `window_service` marks the slot dead after the write batch
@@ -3298,6 +3360,7 @@ impl Blockstore {
         merkle_root_meta: &MerkleRootMeta,
         shred: &Shred,
         new_merkle_root: Option<Hash>,
+        stricter_shred_validation_from: Option<Slot>,
         duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) {
         // The FEC set is fixed by the shred index, so a shred with a different
@@ -3313,14 +3376,17 @@ impl Blockstore {
         ) {
             return;
         }
-        if self.has_duplicate_shreds_in_slot(slot) {
+        // SIMD-0504 allows different but valid leader signatures over the same
+        // Merkle root.
+        if stricter_shred_validation_from.is_some_and(|first_slot| slot >= first_slot)
+            || self.has_duplicate_shreds_in_slot(slot)
+        {
             return;
         }
         // A matching Merkle root does not imply a matching payload: the leader
         // may produce several valid signatures over the same root, and the
         // erasure position of a coding shred, which places it in the Merkle
         // tree, is not bound to its index.
-        // TODO: compare Merkle roots only once SIMD-0504 is active.
         let Some(existing_shred) =
             self.get_shred_from_just_inserted_or_db(just_inserted_shreds, shred.id(), location)
         else {
