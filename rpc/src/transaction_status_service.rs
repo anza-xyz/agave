@@ -4,8 +4,11 @@
 //! frozen banks it receives.
 
 use {
-    crate::transaction_notifier_interface::TransactionNotifierArc,
-    crossbeam_channel::{Receiver, RecvTimeoutError},
+    crate::{
+        rpc_subscriptions::{NotificationEntry, TimestampedNotificationEntry},
+        transaction_notifier_interface::TransactionNotifierArc,
+    },
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     itertools::izip,
     solana_clock::Slot,
     solana_ledger::blockstore::{Blockstore, BlockstoreError},
@@ -53,6 +56,15 @@ enum Error {
 }
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Default)]
+pub struct TransactionStatusServiceConfig {
+    pub enable_rpc_transaction_history: bool,
+    pub transaction_notifier: Option<TransactionNotifierArc>,
+    pub enable_extended_tx_metadata_storage: bool,
+    pub dependency_tracker: Option<Arc<DependencyTracker>>,
+    pub transaction_history_notification_sender: Option<Sender<TimestampedNotificationEntry>>,
+}
+
 /// Advances transaction history availability once the same bank has been frozen and rooted.
 #[derive(Default)]
 struct RootedTransactionStatusTracker {
@@ -66,13 +78,13 @@ impl RootedTransactionStatusTracker {
         slot: Slot,
         bank_id: BankId,
         max_complete_and_rooted_transaction_status_slot: &AtomicU64,
-    ) {
+    ) -> Option<Slot> {
         self.frozen_banks.insert((slot, bank_id));
         self.update_max_complete_and_rooted_slot(
             slot,
             bank_id,
             max_complete_and_rooted_transaction_status_slot,
-        );
+        )
     }
 
     fn record_rooted(
@@ -80,33 +92,35 @@ impl RootedTransactionStatusTracker {
         slot: Slot,
         bank_id: BankId,
         max_complete_and_rooted_transaction_status_slot: &AtomicU64,
-    ) {
+    ) -> Option<Slot> {
         self.rooted_banks.insert((slot, bank_id));
         self.update_max_complete_and_rooted_slot(
             slot,
             bank_id,
             max_complete_and_rooted_transaction_status_slot,
-        );
+        )
     }
 
+    /// Returns the new maximum complete-and-rooted slot when this bank advances it.
     fn update_max_complete_and_rooted_slot(
         &mut self,
         slot: Slot,
         bank_id: BankId,
         max_complete_and_rooted_transaction_status_slot: &AtomicU64,
-    ) {
+    ) -> Option<Slot> {
         let bank = (slot, bank_id);
         if !self.frozen_banks.contains(&bank) || !self.rooted_banks.contains(&bank) {
-            return;
+            return None;
         }
 
-        let updated_max_complete_and_rooted_slot = max_complete_and_rooted_transaction_status_slot
-            .fetch_max(slot, Ordering::SeqCst)
-            .max(slot);
+        let previous_max_complete_and_rooted_slot =
+            max_complete_and_rooted_transaction_status_slot.fetch_max(slot, Ordering::SeqCst);
+        let updated_max_complete_and_rooted_slot = previous_max_complete_and_rooted_slot.max(slot);
         self.frozen_banks
             .retain(|(slot, _)| *slot > updated_max_complete_and_rooted_slot);
         self.rooted_banks
             .retain(|(slot, _)| *slot > updated_max_complete_and_rooted_slot);
+        (slot > previous_max_complete_and_rooted_slot).then_some(slot)
     }
 }
 
@@ -165,11 +179,8 @@ impl TransactionStatusService {
         transaction_status_receiver: Receiver<TransactionStatusMessage>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
-        enable_rpc_transaction_history: bool,
-        transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: Arc<Blockstore>,
-        enable_extended_tx_metadata_storage: bool,
-        depenency_tracker: Option<Arc<DependencyTracker>>,
+        config: TransactionStatusServiceConfig,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let thread_hdl = Builder::new()
@@ -208,11 +219,8 @@ impl TransactionStatusService {
                             &max_complete_transaction_status_slot,
                             &max_complete_and_rooted_transaction_status_slot,
                             &mut rooted_transaction_status_tracker,
-                            enable_rpc_transaction_history,
-                            transaction_notifier.clone(),
                             &blockstore,
-                            enable_extended_tx_metadata_storage,
-                            depenency_tracker.clone(),
+                            &config,
                         ) {
                             Ok(bank_frozen) => {
                                 // Only check for metrics submissions when a
@@ -245,11 +253,8 @@ impl TransactionStatusService {
         max_complete_transaction_status_slot: &Arc<AtomicU64>,
         max_complete_and_rooted_transaction_status_slot: &Arc<AtomicU64>,
         rooted_transaction_status_tracker: &mut RootedTransactionStatusTracker,
-        enable_rpc_transaction_history: bool,
-        transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: &Blockstore,
-        enable_extended_tx_metadata_storage: bool,
-        dependency_tracker: Option<Arc<DependencyTracker>>,
+        config: &TransactionStatusServiceConfig,
     ) -> Result</*bank_frozen:*/ bool> {
         match transaction_status_message {
             TransactionStatusMessage::Batch((
@@ -265,7 +270,7 @@ impl TransactionStatusService {
                 },
                 work_id,
             )) => {
-                let mut status_and_memos_batch = if enable_rpc_transaction_history {
+                let mut status_and_memos_batch = if config.enable_rpc_transaction_history {
                     Some(blockstore.get_write_batch())
                 } else {
                     None
@@ -329,7 +334,7 @@ impl TransactionStatusService {
                         cost_units: cost,
                     };
 
-                    if let Some(transaction_notifier) = transaction_notifier.as_ref() {
+                    if let Some(transaction_notifier) = config.transaction_notifier.as_ref() {
                         let is_vote = transaction.is_simple_vote_transaction();
                         let message_hash = transaction.message_hash();
                         let signature = transaction.signature();
@@ -346,7 +351,9 @@ impl TransactionStatusService {
                         );
                     }
 
-                    if !(enable_extended_tx_metadata_storage || transaction_notifier.is_some()) {
+                    if !(config.enable_extended_tx_metadata_storage
+                        || config.transaction_notifier.is_some())
+                    {
                         transaction_status_meta.log_messages.take();
                         transaction_status_meta.inner_instructions.take();
                         transaction_status_meta.return_data.take();
@@ -384,7 +391,7 @@ impl TransactionStatusService {
                     blockstore.write_batch(batch)?;
                 }
 
-                if let Some(dependency_tracker) = dependency_tracker.as_ref()
+                if let Some(dependency_tracker) = config.dependency_tracker.as_ref()
                     && let Some(work_id) = work_id
                 {
                     dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
@@ -398,19 +405,27 @@ impl TransactionStatusService {
                 }
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
-                rooted_transaction_status_tracker.record_frozen(
+                let completed_slot = rooted_transaction_status_tracker.record_frozen(
                     bank.slot(),
                     bank.bank_id(),
                     max_complete_and_rooted_transaction_status_slot,
+                );
+                Self::notify_transaction_history_complete(
+                    completed_slot,
+                    &config.transaction_history_notification_sender,
                 );
 
                 Ok(true)
             }
             TransactionStatusMessage::Rooted { slot, bank_id } => {
-                rooted_transaction_status_tracker.record_rooted(
+                let completed_slot = rooted_transaction_status_tracker.record_rooted(
                     slot,
                     bank_id,
                     max_complete_and_rooted_transaction_status_slot,
+                );
+                Self::notify_transaction_history_complete(
+                    completed_slot,
+                    &config.transaction_history_notification_sender,
                 );
                 Ok(false)
             }
@@ -421,7 +436,7 @@ impl TransactionStatusService {
                 requested_at,
                 done_sender,
             } => {
-                if enable_rpc_transaction_history {
+                if config.enable_rpc_transaction_history {
                     let queue_wait_us = requested_at.elapsed().as_micros();
                     let stats = match &purge_input {
                         TransactionHistoryPurgeInput::ReplayStage => {
@@ -456,6 +471,16 @@ impl TransactionStatusService {
 
                 Ok(false)
             }
+        }
+    }
+
+    fn notify_transaction_history_complete(
+        slot: Option<Slot>,
+        notification_sender: &Option<Sender<TimestampedNotificationEntry>>,
+    ) {
+        if let (Some(slot), Some(notification_sender)) = (slot, notification_sender) {
+            let _ = notification_sender
+                .send(NotificationEntry::TransactionHistoryComplete(slot).into());
         }
     }
 
@@ -625,21 +650,36 @@ pub(crate) mod tests {
         let mut tracker = RootedTransactionStatusTracker::default();
         let bank_id = BankId::new(1);
 
-        tracker.record_frozen(1, bank_id, &max_complete_and_rooted_slot);
+        assert_eq!(
+            tracker.record_frozen(1, bank_id, &max_complete_and_rooted_slot),
+            None
+        );
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 0);
 
-        tracker.record_rooted(1, BankId::new(2), &max_complete_and_rooted_slot);
+        assert_eq!(
+            tracker.record_rooted(1, BankId::new(2), &max_complete_and_rooted_slot),
+            None
+        );
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 0);
 
-        tracker.record_rooted(1, bank_id, &max_complete_and_rooted_slot);
+        assert_eq!(
+            tracker.record_rooted(1, bank_id, &max_complete_and_rooted_slot),
+            Some(1)
+        );
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 1);
         assert!(tracker.frozen_banks.is_empty());
         assert!(tracker.rooted_banks.is_empty());
 
         let bank_id = BankId::new(3);
-        tracker.record_rooted(2, bank_id, &max_complete_and_rooted_slot);
+        assert_eq!(
+            tracker.record_rooted(2, bank_id, &max_complete_and_rooted_slot),
+            None
+        );
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 1);
-        tracker.record_frozen(2, bank_id, &max_complete_and_rooted_slot);
+        assert_eq!(
+            tracker.record_frozen(2, bank_id, &max_complete_and_rooted_slot),
+            Some(2)
+        );
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 2);
         assert!(tracker.frozen_banks.is_empty());
         assert!(tracker.rooted_banks.is_empty());
@@ -752,11 +792,11 @@ pub(crate) mod tests {
             transaction_status_receiver,
             Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
-            false,
-            Some(test_notifier.clone()),
             blockstore,
-            false,
-            None, // No work dependency tracker
+            TransactionStatusServiceConfig {
+                transaction_notifier: Some(test_notifier.clone()),
+                ..TransactionStatusServiceConfig::default()
+            },
             exit.clone(),
         );
 
@@ -865,11 +905,13 @@ pub(crate) mod tests {
             transaction_status_receiver,
             Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
-            true,
-            Some(test_notifier.clone()),
             blockstore,
-            false,
-            Some(dependency_tracker.clone()),
+            TransactionStatusServiceConfig {
+                enable_rpc_transaction_history: true,
+                transaction_notifier: Some(test_notifier.clone()),
+                dependency_tracker: Some(dependency_tracker.clone()),
+                ..TransactionStatusServiceConfig::default()
+            },
             exit.clone(),
         );
         let work_id = 345;
@@ -933,11 +975,11 @@ pub(crate) mod tests {
             transaction_status_receiver,
             Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
-            true,
-            None,
             blockstore,
-            false,
-            None,
+            TransactionStatusServiceConfig {
+                enable_rpc_transaction_history: true,
+                ..TransactionStatusServiceConfig::default()
+            },
             exit.clone(),
         );
 

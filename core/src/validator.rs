@@ -123,9 +123,9 @@ use {
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
         rpc_service::{JsonRpcService, JsonRpcServiceConfig, RpcTpuClientArgs},
-        rpc_subscriptions::RpcSubscriptions,
+        rpc_subscriptions::{RpcNotificationChannel, RpcNotificationConfig, RpcSubscriptions},
         transaction_notifier_interface::TransactionNotifierArc,
-        transaction_status_service::TransactionStatusService,
+        transaction_status_service::{TransactionStatusService, TransactionStatusServiceConfig},
     },
     solana_runtime::{
         accounts_background_service::{
@@ -624,6 +624,7 @@ struct TransactionHistoryServices {
     transaction_status_service: Option<TransactionStatusService>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
+    rpc_notification_channel: Option<RpcNotificationChannel>,
 }
 
 /// A struct easing passing Validator TPU Configurations
@@ -969,6 +970,7 @@ impl Validator {
                 transaction_status_service,
                 max_complete_transaction_status_slot,
                 max_complete_and_rooted_transaction_status_slot,
+                rpc_notification_channel,
             },
             blockstore_process_options,
             blockstore_root_scan,
@@ -1363,7 +1365,10 @@ impl Validator {
                 block_commitment_cache.clone(),
                 optimistically_confirmed_bank.clone(),
                 &config.pubsub_config,
-                None,
+                RpcNotificationConfig {
+                    channel: rpc_notification_channel,
+                    ..RpcNotificationConfig::default()
+                },
             ));
             let pubsub_service = if !config.rpc_config.full_api {
                 None
@@ -3048,6 +3053,8 @@ fn initialize_rpc_transaction_history_services(
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let max_complete_and_rooted_transaction_status_slot =
         Arc::new(AtomicU64::new(blockstore.max_root()));
+    let rpc_notification_channel =
+        enable_rpc_transaction_history.then(crossbeam_channel::unbounded);
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
     let transaction_status_sender = Some(TransactionStatusSender {
         sender: transaction_status_sender,
@@ -3057,11 +3064,16 @@ fn initialize_rpc_transaction_history_services(
         transaction_status_receiver,
         max_complete_transaction_status_slot.clone(),
         max_complete_and_rooted_transaction_status_slot.clone(),
-        enable_rpc_transaction_history,
-        transaction_notifier,
         blockstore,
-        enable_extended_tx_metadata_storage,
-        dependency_tracker,
+        TransactionStatusServiceConfig {
+            enable_rpc_transaction_history,
+            transaction_notifier,
+            enable_extended_tx_metadata_storage,
+            dependency_tracker,
+            transaction_history_notification_sender: rpc_notification_channel
+                .as_ref()
+                .map(|(sender, _receiver)| sender.clone()),
+        },
         exit,
     ));
 
@@ -3070,6 +3082,7 @@ fn initialize_rpc_transaction_history_services(
         transaction_status_service,
         max_complete_transaction_status_slot,
         max_complete_and_rooted_transaction_status_slot,
+        rpc_notification_channel,
     }
 }
 

@@ -4791,11 +4791,11 @@ pub fn populate_blockstore_for_tests(
             transaction_status_receiver,
             max_complete_transaction_status_slot,
             Arc::new(AtomicU64::default()),
-            true,
-            None,
             blockstore,
-            false,
-            None,
+            crate::transaction_status_service::TransactionStatusServiceConfig {
+                enable_rpc_transaction_history: true,
+                ..crate::transaction_status_service::TransactionStatusServiceConfig::default()
+            },
             tss_exit.clone(),
         );
 
