@@ -29,7 +29,6 @@ use {
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::SharableBanks,
     std::{
-        borrow::Cow,
         net::UdpSocket,
         sync::{
             Arc, RwLock,
@@ -150,7 +149,7 @@ where
         // Compute the Merkle root here while in the thread pool so the serial insertion
         // path can reuse it.
         let merkle_root = shred.merkle_root().ok();
-        Some((Cow::Owned(shred), repair, block_location, merkle_root))
+        Some((shred, repair, block_location, merkle_root))
     };
     let now = Instant::now();
     let shreds: Vec<_> = thread_pool.install(|| {
@@ -483,7 +482,7 @@ mod test {
         let is_trusted = false;
         blockstore
             .insert_shreds_handle_duplicate(
-                [(Cow::Borrowed(&duplicate_shred), /*is_repaired:*/ false)],
+                [(duplicate_shred, /*is_repaired:*/ false)],
                 is_trusted,
                 &mut ShredRecoveryContext::new(
                     dummy_retransmit_sender,
@@ -540,7 +539,7 @@ mod test {
             // Simulate storing both duplicate shreds in the same batch
             let shreds = [&original_shred, &duplicate_shred]
                 .into_iter()
-                .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
+                .map(|shred| (shred.clone(), /*is_repaired:*/ false));
             let dummy_retransmit_sender = new_dummy_retransmit_sender();
             blockstore
                 .insert_shreds_handle_duplicate(
