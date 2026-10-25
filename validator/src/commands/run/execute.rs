@@ -124,15 +124,17 @@ pub fn execute(
 
     let unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
-    let replay_arenas = value_t!(matches, "replay_arenas", usize).ok();
-    if let Some(arena_count) = replay_arenas {
-        let max_replay_arenas = unified_scheduler_handler_threads
+    let execution_arenas = value_t!(matches, "execution_arenas", usize).ok();
+    if let Some(arena_count) = execution_arenas {
+        let max_execution_arenas = unified_scheduler_handler_threads
             .unwrap_or_else(DefaultSchedulerPool::default_handler_count)
+            .max(block_production_num_workers.get())
             .saturating_add(1);
-        if arena_count > max_replay_arenas {
+        if arena_count > max_execution_arenas {
             Err(format!(
-                "--experimental-replay-arenas must be at most {max_replay_arenas} (the unified \
-                 scheduler handler thread count plus one)"
+                "--experimental-execution-arenas must be at most {max_execution_arenas} (the \
+                 larger of the banking worker and unified scheduler handler thread counts, plus \
+                 one)"
             ))?;
         }
     }
@@ -588,7 +590,7 @@ pub fn execute(
             BlockVerificationMethod
         ),
         unified_scheduler_handler_threads,
-        replay_arenas,
+        execution_arenas,
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",
