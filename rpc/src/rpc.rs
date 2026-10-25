@@ -1710,6 +1710,10 @@ impl JsonRpcRequestProcessor {
                 .unwrap()
                 .highest_super_majority_root()
         {
+            Self::check_blockstore_writes_complete(
+                slot,
+                &self.max_complete_and_rooted_transaction_status_slot,
+            )?;
             let result = self.blockstore.get_rooted_block_time(slot);
             self.check_blockstore_root(&result, slot)?;
             if result.is_err()
@@ -1725,7 +1729,7 @@ impl JsonRpcRequestProcessor {
             Ok(result.ok())
         } else {
             let r_bank_forks = self.bank_forks.read().unwrap();
-            if let Some(bank) = r_bank_forks.get(slot) {
+            if let Some(bank) = r_bank_forks.get(slot).filter(|bank| bank.is_frozen()) {
                 Ok(Some(bank.clock().unix_timestamp))
             } else {
                 Err(RpcCustomError::BlockNotAvailable { slot }.into())
@@ -8686,6 +8690,8 @@ pub mod tests {
             .write()
             .unwrap()
             .set_highest_super_majority_root(7);
+        rpc.max_complete_and_rooted_transaction_status_slot
+            .store(6, Ordering::SeqCst);
 
         let request = create_test_request("getBlockTime", Some(json!([2u64])));
         let result: Option<UnixTimestamp> = parse_success_result(rpc.handle_request_sync(request));
@@ -8701,6 +8707,14 @@ pub mod tests {
         assert_eq!(result, expected);
 
         let request = create_test_request("getBlockTime", Some(json!([7u64])));
+        let response = parse_failure_response(rpc.handle_request_sync(request.clone()));
+        assert_eq!(
+            response.0,
+            JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET
+        );
+
+        rpc.max_complete_and_rooted_transaction_status_slot
+            .store(7, Ordering::SeqCst);
         let result: Option<UnixTimestamp> = parse_success_result(rpc.handle_request_sync(request));
         let expected = Some(
             rpc.bank_forks
@@ -8712,6 +8726,15 @@ pub mod tests {
                 .unix_timestamp,
         );
         assert_eq!(result, expected);
+
+        let request = create_test_request("getBlockTime", Some(json!([8u64])));
+        let response = parse_failure_response(rpc.handle_request_sync(request.clone()));
+        assert_eq!(response.0, JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE);
+
+        let bank = rpc.bank_forks.read().unwrap().get(8).unwrap();
+        bank.freeze();
+        let result: Option<UnixTimestamp> = parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result, Some(bank.clock().unix_timestamp));
 
         let request = create_test_request("getBlockTime", Some(json!([12345u64])));
         let response = parse_failure_response(rpc.handle_request_sync(request));
