@@ -3,8 +3,12 @@
 
 use {
     self::{
-        committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
-        vote_packet_receiver::VotePacketReceiver, vote_storage::VoteStorage,
+        blocked_programs::{BlockedProgramsReloader, SharedFilterKeys},
+        committer::Committer,
+        consumer::Consumer,
+        decision_maker::DecisionMaker,
+        vote_packet_receiver::VotePacketReceiver,
+        vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -20,6 +24,7 @@ use {
     },
     agave_banking_stage_ingress_types::{BankingPacketReceiver, SchedulerPriorityFloor},
     agave_votor::slot_clock::SharedAlpenglowSlotClock,
+    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded},
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
@@ -58,6 +63,7 @@ use {
 pub mod transaction_scheduler;
 
 mod alpenglow_timing;
+mod blocked_programs;
 mod committer;
 mod consume_worker;
 mod consumer;
@@ -326,7 +332,8 @@ pub struct BankingStage {
     alpenglow_slot_clock: SharedAlpenglowSlotClock,
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
-    filter_keys: Arc<HashSet<Pubkey>>,
+    filter_keys: SharedFilterKeys,
+    blocked_programs: Option<BlockedProgramsReloader>,
     priority_floor: Arc<SchedulerPriorityFloor>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
 }
@@ -352,6 +359,10 @@ impl BankingStage {
         filter_keys: Arc<HashSet<Pubkey>>,
         priority_floor: Arc<SchedulerPriorityFloor>,
     ) -> BankingStageHandle {
+        let shared_filter_keys = Arc::new(ArcSwap::new(filter_keys.clone()));
+        let blocked_programs =
+            BlockedProgramsReloader::from_env(filter_keys, shared_filter_keys.clone());
+
         let committer = Committer::new(
             transaction_status_sender,
             replay_vote_sender,
@@ -373,7 +384,8 @@ impl BankingStage {
             alpenglow_slot_clock,
             committer,
             log_messages_bytes_limit,
-            filter_keys,
+            filter_keys: shared_filter_keys,
+            blocked_programs,
             priority_floor,
             threads: FuturesUnordered::default(),
         };
@@ -403,6 +415,8 @@ impl BankingStage {
     async fn run(mut self, initial_args: BankingControlMsg) -> std::thread::Result<()> {
         self.spawn_scheduler(initial_args).unwrap();
 
+        let mut blocked_programs_interval =
+            tokio::time::interval(blocked_programs::RELOAD_INTERVAL);
         loop {
             tokio::select! {
                 biased;
@@ -419,6 +433,11 @@ impl BankingStage {
                         Err(err) => error!("Banking worker exited with error; name={name}; err={err:?}"),
                     };
                     self.cycle_threads_fallback().await.unwrap();
+                },
+                _ = blocked_programs_interval.tick(), if self.blocked_programs.is_some() => {
+                    if let Some(blocked_programs) = &mut self.blocked_programs {
+                        blocked_programs.reload();
+                    }
                 },
             }
         }

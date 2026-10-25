@@ -1,12 +1,11 @@
 use {
     super::receive_and_buffer::{PrecheckResult, precheck_transaction},
+    crate::banking_stage::blocked_programs::SharedFilterKeys,
     crossbeam_channel::{Receiver, Sender},
     solana_perf::packet::bytes::Bytes,
     solana_poh::poh_recorder::SharedLeaderState,
-    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     std::{
-        collections::HashSet,
         num::NonZeroUsize,
         sync::Arc,
         thread::{Builder, JoinHandle},
@@ -19,7 +18,7 @@ pub(crate) fn spawn_check_workers(
     result_sender: Sender<PrecheckResult>,
     sharable_banks: SharableBanks,
     shared_leader_state: SharedLeaderState,
-    filter_keys: Arc<HashSet<Pubkey>>,
+    filter_keys: SharedFilterKeys,
 ) -> Vec<JoinHandle<()>> {
     (0..num_workers.get())
         .map(|index| {
@@ -49,12 +48,13 @@ fn run_check_worker(
     result_sender: Sender<PrecheckResult>,
     sharable_banks: SharableBanks,
     shared_leader_state: SharedLeaderState,
-    filter_keys: Arc<HashSet<Pubkey>>,
+    filter_keys: SharedFilterKeys,
 ) {
     while let Ok(bytes) = work_receiver.recv() {
         let banks = sharable_banks.load();
         let working_bank = preferred_working_bank(&shared_leader_state, banks.working_bank);
-        let result = precheck_transaction(bytes, &banks.root_bank, &working_bank, &filter_keys);
+        let result =
+            precheck_transaction(bytes, &banks.root_bank, &working_bank, &filter_keys.load());
 
         // A result queue at capacity applies backpressure to check workers. Accepted
         // work is never dropped by a worker.
@@ -83,8 +83,8 @@ mod tests {
         crossbeam_channel::bounded, solana_account::AccountSharedData,
         solana_leader_schedule::SlotLeader, solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_perf::packet::BytesPacket, solana_poh::poh_recorder::LeaderState,
-        solana_runtime::bank::Bank, solana_sdk_ids::system_program, solana_signer::Signer,
-        solana_system_transaction::transfer,
+        solana_pubkey::Pubkey, solana_runtime::bank::Bank, solana_sdk_ids::system_program,
+        solana_signer::Signer, solana_system_transaction::transfer,
     };
 
     fn test_banks() -> (SharableBanks, solana_keypair::Keypair) {

@@ -572,6 +572,7 @@ mod tests {
         agave_banking_stage_ingress_types::{
             BankingPacketBatch, to_banking_packet_batch, to_single_banking_packet_batch,
         },
+        arc_swap::ArcSwap,
         crossbeam_channel::{Receiver, Sender, bounded},
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -746,7 +747,7 @@ mod tests {
             check_result_sender,
             bank_forks.read().unwrap().sharable_banks(),
             SharedLeaderState::new(0, None, None),
-            filter_keys,
+            Arc::new(ArcSwap::new(filter_keys)),
         );
         let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
             receiver,
@@ -1369,6 +1370,35 @@ mod tests {
             &mint_keypair,
             &filtered_key,
             1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive(&mut receive_and_buffer, &mut container);
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 1);
+        assert_eq!(stats.num_buffered, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_filters_invoked_program() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let filtered_program = Pubkey::new_unique();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([filtered_program])),
+            );
+
+        let transaction = Transaction::new_signed_with_payer(
+            &[Instruction::new_with_bytes(filtered_program, &[], vec![])],
+            Some(&mint_keypair.pubkey()),
+            &[&mint_keypair],
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
         let packet_batch = to_single_banking_packet_batch(&transaction);
