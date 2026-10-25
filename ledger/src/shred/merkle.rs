@@ -230,20 +230,6 @@ impl ShredCode {
     pub(super) fn num_coding_shreds(&self) -> u16 {
         self.coding_header.num_coding_shreds
     }
-
-    pub(super) fn erasure_mismatch(&self, other: &ShredCode) -> bool {
-        let CodingShredHeader {
-            num_data_shreds,
-            num_coding_shreds,
-            position: _,
-        } = &self.coding_header;
-        num_coding_shreds != &other.coding_header.num_coding_shreds
-            || num_data_shreds != &other.coding_header.num_data_shreds
-            || self.first_coding_index() != other.first_coding_index()
-            // Merkle shreds within the same erasure batch have the same merkle root.
-            // The root of the merkle tree is signed. So either the signatures match or one fails sigverify.
-            || self.common_header.signature != other.common_header.signature
-    }
 }
 
 macro_rules! impl_merkle_shred {

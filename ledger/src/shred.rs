@@ -731,14 +731,6 @@ impl Shred {
         }
     }
 
-    // Returns true if the erasure coding of the two shreds mismatch.
-    pub(crate) fn erasure_mismatch(&self, other: &Self) -> Result<bool, Error> {
-        match (self, other) {
-            (Self::ShredCode(shred), Self::ShredCode(other)) => Ok(shred.erasure_mismatch(other)),
-            _ => Err(Error::InvalidShredType),
-        }
-    }
-
     pub(crate) fn num_data_shreds(&self) -> Result<u16, Error> {
         match self {
             Self::ShredCode(shred) => Ok(shred.num_data_shreds()),
