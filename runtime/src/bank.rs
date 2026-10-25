@@ -3365,7 +3365,7 @@ impl Bank {
         #[cfg(not(feature = "dev-context-only-utils"))]
         let genesis_hash = genesis_config.hash();
         #[cfg(feature = "dev-context-only-utils")]
-        let genesis_hash = genesis_hash.unwrap_or(genesis_config.hash());
+        let genesis_hash = genesis_hash.unwrap_or_else(|| genesis_config.hash());
 
         self.blockhash_queue.write().unwrap().genesis_hash(
             &genesis_hash,

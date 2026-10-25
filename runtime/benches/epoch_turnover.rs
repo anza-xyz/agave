@@ -6,16 +6,20 @@ use {
     solana_account::{
         Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
     },
+    solana_genesis_config::GenesisConfig,
+    solana_hash::Hash,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
+        bank::{Bank, BankTestConfig, SlotLeader},
         bank_forks::BankForks,
         genesis_utils::{
             GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
         },
+        runtime_config::RuntimeConfig,
     },
     solana_sdk_ids::stake as stake_program,
+    solana_sha256_hasher::hash,
     solana_signer::Signer,
     solana_stake_interface::{
         stake_flags::StakeFlags,
@@ -29,7 +33,14 @@ use {
         sync::{Arc, RwLock},
         time::Duration,
     },
+    wincode::config::PREALLOCATION_SIZE_LIMIT_DISABLED,
 };
+
+fn genesis_hash(genesis: &GenesisConfig) -> Hash {
+    let config = wincode::config::Configuration::default()
+        .with_preallocation_size_limit::<PREALLOCATION_SIZE_LIMIT_DISABLED>();
+    hash(&wincode::config::serialize(genesis, config).unwrap())
+}
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 #[global_allocator]
@@ -159,8 +170,22 @@ fn setup_bank(
             .insert(stake_pubkey, inactive_account.clone());
     }
 
-    let (initial_bank, bank_forks) =
-        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+    // let (initial_bank, bank_forks) =
+    // Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+    let genesis_hash = genesis_hash(&genesis_config);
+    let (initial_bank, bank_forks) = Bank::new_from_genesis(
+        &genesis_config,
+        Arc::new(RuntimeConfig::default()),
+        vec![],
+        None,
+        BankTestConfig::default().accounts_db_config,
+        None,
+        None,
+        Arc::default(),
+        Some(genesis_hash),
+        None,
+    )
+    .wrap_with_bank_forks_for_tests();
 
     populate_vote_accounts(&initial_bank, vote_pubkeys, external_inflation_collector);
 
@@ -202,8 +227,9 @@ fn bench_epoch_turnover(c: &mut Criterion) {
         } else {
             "vote_account"
         };
-        let name =
-            format!("{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive_{collector_type}_collector");
+        let name = format!(
+            "{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive_{collector_type}_collector"
+        );
 
         let (initial_bank, bank_forks) = setup_bank(
             vote_accounts,
