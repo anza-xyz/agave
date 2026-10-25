@@ -117,7 +117,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     common_handler_context: CommonHandlerContext,
     block_verification_handler_count: CountOrDefault,
-    handler_thread_arenas: Option<ArenaGroup>,
+    handler_thread_arenas: Option<Arc<ArenaGroup>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
     // almost always. But, this would cause wasted and noisy Arc::clone()'s at every call sites.
@@ -219,7 +219,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        handler_thread_arenas: Option<ArenaGroup>,
+        handler_thread_arenas: Option<Arc<ArenaGroup>>,
     ) -> Arc<Self> {
         Self::do_new(
             block_verification_handler_count,
@@ -260,7 +260,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        handler_thread_arenas: Option<ArenaGroup>,
+        handler_thread_arenas: Option<Arc<ArenaGroup>>,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
@@ -2240,7 +2240,7 @@ mod tests {
             None,
             None,
             None,
-            Some(arenas),
+            Some(Arc::new(arenas)),
         );
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);

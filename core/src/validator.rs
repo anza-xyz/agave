@@ -1153,12 +1153,14 @@ impl Validator {
         // but unsplittable forever. See jemalloc's lg_extent_max_active_fit.
         const REPLAY_ARENA_RETAIN_GROW_LIMIT: usize = 64 * 1024 * 1024;
         let replay_arenas = config.replay_arenas.map(|arena_count| {
-            ArenaGroup::new(
-                arena_count,
-                REPLAY_ARENA_OVERSIZE_THRESHOLD,
-                REPLAY_ARENA_RETAIN_GROW_LIMIT,
+            Arc::new(
+                ArenaGroup::new(
+                    arena_count,
+                    REPLAY_ARENA_OVERSIZE_THRESHOLD,
+                    REPLAY_ARENA_RETAIN_GROW_LIMIT,
+                )
+                .expect("failed to create replay arenas"),
             )
-            .expect("failed to create replay arenas")
         });
         let replay_arena = replay_arenas.as_ref().map(|arenas| arenas[0]);
         let scheduler_pool = DefaultSchedulerPool::new(
@@ -1167,7 +1169,7 @@ impl Validator {
             transaction_status_sender.clone(),
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
-            replay_arenas,
+            replay_arenas.clone(),
         );
         bank_forks
             .write()
@@ -1833,6 +1835,7 @@ impl Validator {
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
+            replay_arenas,
             config.filter_keys.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),

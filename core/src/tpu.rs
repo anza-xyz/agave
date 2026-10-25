@@ -25,6 +25,7 @@ use {
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     agave_bls_sigverify::pubkeys::VerifiedVotorSlotsMessage,
+    agave_jemalloc::group::ArenaGroup,
     agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
     agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded},
@@ -154,6 +155,7 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
+        worker_thread_arenas: Option<Arc<ArenaGroup>>,
         filter_keys: Arc<HashSet<Pubkey>>,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
@@ -316,6 +318,7 @@ impl Tpu {
             banking_control_receiver,
             block_production_num_workers,
             block_production_scheduler_config,
+            worker_thread_arenas,
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
