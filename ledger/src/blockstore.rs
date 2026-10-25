@@ -21,6 +21,7 @@ use {
             self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats, Shred,
             ShredFlags, ShredId, ShredType, Shredder,
             filter::ShredRecoveryContext,
+            merkle::ErasureBatch,
             merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
         slot_stats::{ShredSource, SlotsStats},
@@ -1552,22 +1553,19 @@ impl Blockstore {
         })
     }
 
-    /// Performs shred recovery for `erasure_meta`, applying shred sanitization and filters
-    /// to the recovered shreds.
+    /// Rebuilds the whole erasure batch of `erasure_meta` from the shreds
+    /// available in blockstore, applying filters to them.
     /// Note: that we do not do recovery on the Alternate shred columns
-    fn recover_shreds(
+    fn rebuild_erasure_batch(
         &self,
         index: &Index,
         erasure_meta: &ErasureMeta,
         prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         shred_recovery_ctx: &mut ShredRecoveryContext,
-        recovered_shreds: &mut Vec<Payload>,
-        recovered_data_shreds: &mut Vec<Shred>,
-    ) -> std::result::Result<(), shred::Error> {
-        // Find shreds for this erasure set and try recovery
+    ) -> std::result::Result<ErasureBatch, shred::Error> {
         let data = self.get_recovery_data_shreds(index, erasure_meta, prev_inserted_shreds);
         let code = self.get_recovery_coding_shreds(index, erasure_meta, prev_inserted_shreds);
-        shred_recovery_ctx.recover(data.chain(code), recovered_shreds, recovered_data_shreds)
+        shred_recovery_ctx.rebuild_erasure_batch(data.chain(code))
     }
 
     /// Collects and reports [`BlockstoreRocksDbColumnFamilyMetrics`] for the
@@ -1778,22 +1776,28 @@ impl Blockstore {
         let mut recovered_shreds = Vec::with_capacity(max_recovered_shreds);
         let mut recovered_data_shreds = Vec::with_capacity(max_recovered_shreds);
         for (index, erasure_meta) in erasure_metas_to_recover {
-            let _ = self
-                .recover_shreds(
-                    index,
-                    erasure_meta,
-                    prev_inserted_shreds,
-                    shred_recovery_ctx,
-                    &mut recovered_shreds,
-                    &mut recovered_data_shreds,
-                )
-                .inspect_err(|e| {
+            let batch = match self.rebuild_erasure_batch(
+                index,
+                erasure_meta,
+                prev_inserted_shreds,
+                shred_recovery_ctx,
+            ) {
+                Ok(batch) => batch,
+                Err(err) => {
                     info!(
-                        "Unable to perform shred recovery for slot {} fec set {}: {e:?}",
+                        "Unable to perform shred recovery for slot {} fec set {}: {err:?}",
                         index.slot,
                         erasure_meta.fec_set_index()
-                    )
-                });
+                    );
+                    continue;
+                }
+            };
+            let recovered = shred_recovery_ctx.check_recovered_shreds(batch);
+            ShredRecoveryContext::collect_recovered_shreds(
+                recovered,
+                &mut recovered_shreds,
+                &mut recovered_data_shreds,
+            );
         }
         (recovered_shreds, recovered_data_shreds)
     }
