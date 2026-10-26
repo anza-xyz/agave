@@ -143,7 +143,9 @@ fn recover_pubkey_k256(
         recovery_id = RecoveryId::new(!recovery_id.is_y_odd(), recovery_id.is_x_reduced());
     }
 
-    let pubkey = VerifyingKey::recover_from_prehash_noverify(message_hash, &signature, recovery_id)
+    // `ecdsa` 0.17 folded `recover_from_prehash_noverify` into `recover_from_prehash`:
+    // it no longer verifies the signature against the recovered key.
+    let pubkey = VerifyingKey::recover_from_prehash(message_hash, &signature, recovery_id)
         .map_err(|_| PrecompileError::InvalidSignature)?;
     let encoded = pubkey.to_sec1_point(false);
     Ok(encoded.as_bytes()[1..65].try_into().unwrap())
