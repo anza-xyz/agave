@@ -39,6 +39,8 @@ const SUBMISSION_QUEUE_SIZE: u32 = 64;
 const MAX_IOWQ_WORKERS: u32 = 8;
 /// While reads are in flight, how long to wait for one to complete before taking new batches
 const COMPLETION_WAIT: Duration = Duration::from_micros(200);
+/// Reads at least this slow are logged
+const SLOW_READ_US: u64 = 5_000;
 
 pub(super) struct RingPrefetcher {
     ring: Ring<PrefetchState, ReadOp>,
@@ -134,6 +136,15 @@ impl RingOp<PrefetchState> for ReadOp {
         }
         state.read_counts.read_us += read_us;
         state.read_counts.max_read_us = state.read_counts.max_read_us.max(read_us);
+        if read_us >= SLOW_READ_US {
+            info!(
+                "slow prefetch read: pubkey {}, slot {}, {} bytes, {read_us}us, {:?}",
+                self.pubkey,
+                self.slot,
+                self.len,
+                res.as_ref().map_err(|err| err.kind()),
+            );
+        }
 
         let account = match res {
             Err(_) => None,
