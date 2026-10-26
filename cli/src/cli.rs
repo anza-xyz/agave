@@ -43,31 +43,17 @@ const CHECKED: bool = true;
 
 /// Sign a message, allowing missing signatures only for offline sign-only output.
 pub(crate) fn sign_transaction(
-    mut message: VersionedMessage,
+    message: VersionedMessage,
     signers: &[&dyn Signer],
     blockhash: Hash,
     sign_only: bool,
 ) -> Result<VersionedTransaction, SignerError> {
-    message.set_recent_blockhash(blockhash);
-    let required_signers =
-        &message.static_account_keys()[..usize::from(message.header().num_required_signatures)];
-    let message_data = message.serialize();
-    let mut signatures = vec![Signature::default(); required_signers.len()];
-    for signer in signers {
-        let pubkey = signer.try_pubkey()?;
-        let index = required_signers
-            .iter()
-            .position(|key| *key == pubkey)
-            .ok_or(SignerError::KeypairPubkeyMismatch)?;
-        signatures[index] = signer.try_sign_message(&message_data)?;
-    }
-    if !sign_only && signatures.contains(&Signature::default()) {
+    let mut transaction = VersionedTransaction::new_unsigned(message);
+    transaction.try_partial_sign(signers, blockhash)?;
+    if !sign_only && !transaction.is_signed() {
         return Err(SignerError::NotEnoughSigners);
     }
-    Ok(VersionedTransaction {
-        signatures,
-        message,
-    })
+    Ok(transaction)
 }
 
 #[derive(Debug, PartialEq)]
