@@ -30,7 +30,9 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
-    solana_rpc::transaction_status_service::TransactionStatusService,
+    solana_rpc::transaction_status_service::{
+        TransactionStatusService, TransactionStatusServiceConfig,
+    },
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
@@ -314,11 +316,15 @@ pub fn load_and_process_ledger(
             let transaction_status_service = TransactionStatusService::new(
                 transaction_status_receiver,
                 Arc::default(),
-                enable_rpc_transaction_history,
-                transaction_notifier,
+                Arc::default(),
                 write_blockstore.clone(),
-                arg_matches.is_present("enable_extended_tx_metadata_storage"),
-                None,
+                TransactionStatusServiceConfig {
+                    enable_rpc_transaction_history,
+                    transaction_notifier,
+                    enable_extended_tx_metadata_storage: arg_matches
+                        .is_present("enable_extended_tx_metadata_storage"),
+                    ..TransactionStatusServiceConfig::default()
+                },
                 tss_exit.clone(),
             );
 

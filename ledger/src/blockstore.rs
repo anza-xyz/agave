@@ -4488,6 +4488,25 @@ impl Blockstore {
         until: Option<Signature>,
         limit: usize,
     ) -> Result<SignatureInfosForAddress> {
+        self.get_confirmed_signatures_for_address2_with_filter(
+            address,
+            highest_slot,
+            before,
+            until,
+            limit,
+            |_, _| true,
+        )
+    }
+
+    pub fn get_confirmed_signatures_for_address2_with_filter(
+        &self,
+        address: Pubkey,
+        highest_slot: Slot,
+        before: Option<Signature>,
+        until: Option<Signature>,
+        limit: usize,
+        mut include: impl FnMut(Slot, &Signature) -> bool,
+    ) -> Result<SignatureInfosForAddress> {
         let max_root = self.max_root();
         let confirmed_unrooted_slots: HashSet<_> =
             AncestorIterator::new_inclusive(highest_slot, self)
@@ -4557,13 +4576,15 @@ impl Blockstore {
         let mut signatures = self.find_address_signatures_for_slot(address, slot)?;
         signatures.reverse();
         if let Some(excluded_signatures) = before_excluded_signatures.take() {
-            address_signatures.extend(
-                signatures
-                    .into_iter()
-                    .filter(|(_, signature, _)| !excluded_signatures.contains(signature)),
-            )
+            address_signatures.extend(signatures.into_iter().filter(|(slot, signature, _)| {
+                !excluded_signatures.contains(signature)
+                    && !until_excluded_signatures.contains(signature)
+                    && include(*slot, signature)
+            }))
         } else {
-            address_signatures.append(&mut signatures);
+            address_signatures.extend(signatures.into_iter().filter(|(slot, signature, _)| {
+                !until_excluded_signatures.contains(signature) && include(*slot, signature)
+            }));
         }
         get_initial_slot_timer.stop();
 
@@ -4585,7 +4606,10 @@ impl Blockstore {
                     break;
                 }
                 if key_address == address {
-                    if self.is_root(slot) || confirmed_unrooted_slots.contains(&slot) {
+                    if (self.is_root(slot) || confirmed_unrooted_slots.contains(&slot))
+                        && !until_excluded_signatures.contains(&signature)
+                        && include(slot, &signature)
+                    {
                         address_signatures.push((slot, signature, transaction_index));
                     }
                     continue;
@@ -4595,10 +4619,7 @@ impl Blockstore {
         }
         address_signatures_iter_timer.stop();
 
-        let address_signatures_iter = address_signatures
-            .into_iter()
-            .filter(|(_, signature, _)| !until_excluded_signatures.contains(signature))
-            .take(limit);
+        let address_signatures_iter = address_signatures.into_iter().take(limit);
 
         // Fill in the status information for each found transaction
         let mut get_status_info_timer = Measure::start("get_status_info_timer");
