@@ -214,7 +214,9 @@ impl RingPrefetcher {
             return Ok(());
         }
         self.ring.submit_and_wait(1, Some(COMPLETION_WAIT))?;
-        self.ring.process_completions()
+        self.ring.process_completions()?;
+        // submit the whole-account reads completions queued, rather than after the next dispatch
+        self.ring.submit()
     }
 
     fn push_read(&mut self, read: Read) -> io::Result<()> {
@@ -254,6 +256,9 @@ impl RingPrefetcher {
             offset,
             buf: Vec::with_capacity(len),
             len,
-        })
+        })?;
+        // `push` only queues the read; submit it now rather than after the whole batch is
+        // dispatched, which can be too late for the account's use
+        self.ring.submit()
     }
 }
