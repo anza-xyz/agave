@@ -489,6 +489,9 @@ impl BankingStage {
                 | BlockProductionMethod::CentralSchedulerGreedy => {
                     self.spawn_internal_central(num_workers, config)
                 }
+                BlockProductionMethod::BlockProductionScheduler => {
+                    self.spawn_block_production_scheduler(num_workers)
+                }
             },
             #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
@@ -697,11 +700,40 @@ mod external {
         },
         agave_scheduler_handshake::{
             AgaveCheckWorkerSession, AgaveSession, AgaveSimulateWorkerSession, AgaveWorkerSession,
+            setup_local_session,
         },
         tpu_to_pack::BankingPacketReceivers,
     };
 
     impl BankingStage {
+        pub(super) fn spawn_block_production_scheduler(
+            &self,
+            num_workers: NonZeroUsize,
+        ) -> Result<Vec<JoinHandle<()>>, ()> {
+            let session_config = agave_block_production_scheduler::SessionConfig {
+                worker_count: num_workers.get(),
+                ..agave_block_production_scheduler::SessionConfig::default()
+            };
+            let (agave, client) = setup_local_session(session_config.client_logon())
+                .map_err(|err| error!("Failed to create local scheduler session: {err}"))?;
+            let config = agave_block_production_scheduler::SchedulerConfig::default();
+            let mut threads = self.spawn_external(agave)?;
+            let exit = self.worker_exit_signal.clone();
+            threads.push(
+                Builder::new()
+                    .name("solBlockProdSched".to_string())
+                    .spawn(move || {
+                        if let Err(err) =
+                            agave_block_production_scheduler::run_session(client, config, &exit)
+                        {
+                            error!("Block production scheduler error: {err}");
+                        }
+                    })
+                    .unwrap(),
+            );
+            Ok(threads)
+        }
+
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
@@ -987,8 +1019,9 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn test_banking_stage_shutdown1() {
+    #[test_case::test_case(BlockProductionMethod::CentralSchedulerGreedy; "greedy")]
+    #[test_case::test_case(BlockProductionMethod::BlockProductionScheduler; "block_production_scheduler")]
+    fn test_banking_stage_shutdown1(method: BlockProductionMethod) {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let Channels {
@@ -1015,7 +1048,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralSchedulerGreedy,
+            method,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -1044,14 +1077,17 @@ mod tests {
         poh_service.join().unwrap();
     }
 
-    #[test]
-    fn test_banking_stage_entries_only_central_scheduler() {
+    #[test_case::test_case(BlockProductionMethod::CentralSchedulerGreedy; "greedy")]
+    fn test_banking_stage_entries_only_central_scheduler(method: BlockProductionMethod) {
         agave_logger::setup();
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(10);
+        // Keep a long slot without exceeding the progress protocol's tick-count range.
+        genesis_config.ticks_per_slot = solana_clock::DEFAULT_TICKS_PER_SLOT;
+        genesis_config.poh_config.target_tick_duration = Duration::from_millis(100);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let Channels {
@@ -1078,7 +1114,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralSchedulerGreedy,
+            method,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
@@ -1130,7 +1166,13 @@ mod tests {
 
         // capture the entry receiver until we've received all our entries.
         let mut entries = Vec::with_capacity(100);
+        let start_time = Instant::now();
+        const ENTRY_TIMEOUT: Duration = Duration::from_secs(10);
         loop {
+            assert!(
+                start_time.elapsed() < ENTRY_TIMEOUT,
+                "scheduler did not produce an entry"
+            );
             if let Ok((_bank, (RecorderMessage::Entry(entry), _))) = entry_receiver.try_recv() {
                 let tx_entry = !entry.transactions.is_empty();
                 entries.push(entry);
