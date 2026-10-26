@@ -1635,8 +1635,8 @@ async fn process_program_upgrade(
     ));
 
     let signers = &[fee_payer_signer, upgrade_authority_signer];
+    let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
     if sign_only {
-        let tx = message_into_signed_transaction(message, signers, blockhash, true)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1660,7 +1660,9 @@ async fn process_program_upgrade(
         )
         .await?;
 
-        let fee = rpc_client.get_fee_for_versioned_message(&message).await?;
+        let fee = rpc_client
+            .get_fee_for_versioned_message(&tx.message)
+            .await?;
         check_account_for_spend_and_fee_with_commitment(
             &rpc_client,
             &fee_payer_signer.pubkey(),
@@ -1669,7 +1671,6 @@ async fn process_program_upgrade(
             config.commitment,
         )
         .await?;
-        let tx = message_into_signed_transaction(message, signers, blockhash, false)?;
         let final_tx_sig = rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
