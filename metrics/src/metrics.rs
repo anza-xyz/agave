@@ -13,6 +13,7 @@ use {
         convert::Into,
         env,
         fmt::Write,
+        panic::PanicHookInfo,
         sync::{Arc, Barrier, Mutex, Once, RwLock},
         thread,
         time::{Duration, Instant, UNIX_EPOCH},
@@ -26,8 +27,6 @@ type CounterMap = HashMap<(&'static str, u64), CounterPoint>;
 pub enum MetricsError {
     #[error(transparent)]
     VarError(#[from] env::VarError),
-    #[error(transparent)]
-    ReqwestError(#[from] reqwest::Error),
     #[error("SOLANA_METRICS_CONFIG is invalid: '{0}'")]
     ConfigInvalid(String),
     #[error("SOLANA_METRICS_CONFIG is incomplete")]
@@ -92,7 +91,7 @@ impl InfluxDbMetricsWriter {
 
         let write_url = format!(
             "{}/write?db={}&u={}&p={}&precision=n",
-            &config.host, &config.db, &config.username, &config.password
+            config.host, config.db, config.username, config.password
         );
 
         Ok(write_url)
@@ -117,7 +116,7 @@ pub fn serialize_points(points: &Vec<DataPoint>, host_id: &str) -> String {
     }
     let mut line = String::with_capacity(len);
     for point in points {
-        let _ = write!(line, "{},host_id={}", &point.name, host_id);
+        let _ = write!(line, "{},host_id={}", point.name, host_id);
         for (name, value) in point.tags.iter() {
             let _ = write!(line, ",{name}={value}");
         }
@@ -491,23 +490,42 @@ pub fn metrics_config_sanity_check(cluster_type: ClusterType) -> Result<(), Metr
     Err(MetricsError::DbMismatch(msg))
 }
 
-pub fn query(q: &str) -> Result<String, MetricsError> {
-    let config = get_metrics_config()?;
-    let query_url = format!(
-        "{}/query?u={}&p={}&q={}",
-        &config.host, &config.username, &config.password, &q
-    );
-
-    let response = reqwest::blocking::get(query_url.as_str())?.text()?;
-
-    Ok(response)
-}
-
 /// Blocks until all pending points from previous calls to `submit` have been
 /// transmitted.
 pub fn flush() {
     let agent = get_singleton_agent();
     agent.flush();
+}
+
+pub fn submit_panic_datapoint(
+    program: &'static str,
+    version: &Option<String>,
+    panic_info: &PanicHookInfo,
+) {
+    let thread = thread::current().name().unwrap_or("unknown").to_string();
+    let location = panic_info
+        .location()
+        .map(|location| location.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let message = panic_info.to_string();
+    let version = version.clone().unwrap_or("unknown".to_string());
+
+    submit(
+        DataPoint::new("panic")
+            .add_field_str("program", program)
+            .add_field_str("thread", &thread)
+            // The 'one' field exists to give Kapacitor Alerts a numerical value
+            // to filter on
+            .add_field_i64("one", 1)
+            .add_field_str("message", &message)
+            .add_field_str("location", &location)
+            .add_field_str("version", &version)
+            .to_owned(),
+        Level::Error,
+    );
+
+    // Flush metrics immediately
+    flush();
 }
 
 /// Hook the panic handler to generate a data point on each panic
@@ -517,25 +535,7 @@ pub fn set_panic_hook(program: &'static str, version: Option<String>) {
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |ono| {
             default_hook(ono);
-            let location = match ono.location() {
-                Some(location) => location.to_string(),
-                None => "?".to_string(),
-            };
-            submit(
-                DataPoint::new("panic")
-                    .add_field_str("program", program)
-                    .add_field_str("thread", thread::current().name().unwrap_or("?"))
-                    // The 'one' field exists to give Kapacitor Alerts a numerical value
-                    // to filter on
-                    .add_field_i64("one", 1)
-                    .add_field_str("message", &ono.to_string())
-                    .add_field_str("location", &location)
-                    .add_field_str("version", version.as_ref().unwrap_or(&"".to_string()))
-                    .to_owned(),
-                Level::Error,
-            );
-            // Flush metrics immediately
-            flush();
+            submit_panic_datapoint(program, &version, ono);
 
             // Exit cleanly so the process don't limp along in a half-dead state
             std::process::exit(1);

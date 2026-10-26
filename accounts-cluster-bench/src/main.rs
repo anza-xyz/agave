@@ -19,7 +19,7 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{Keypair, read_keypair_file},
     solana_measure::measure::Measure,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_net_utils::SocketAddrSpace,
     solana_program_pack::Pack,
     solana_pubkey::Pubkey,
@@ -90,7 +90,8 @@ pub fn poll_get_latest_blockhash(client: &RpcClient) -> Option<Hash> {
 pub fn poll_get_fee_for_message(client: &RpcClient, message: &mut Message) -> (Option<u64>, Hash) {
     let mut num_retries = MAX_RPC_CALL_RETRIES;
     loop {
-        let response = client.get_fee_for_message(message);
+        let response =
+            client.get_fee_for_versioned_message(&VersionedMessage::Legacy(message.clone()));
 
         if let Ok(fee) = response {
             return (Some(fee), message.recent_blockhash);
@@ -422,7 +423,7 @@ fn process_get_transaction(
             stats.errors += 1;
             stats.total_errors_time_us += measure.as_us();
             if last_error.elapsed().as_secs() > 2 {
-                info!("get_transaction error: {:?}", &e);
+                info!("get_transaction error: {e:?}");
                 *last_error = Instant::now();
             }
         }
@@ -1154,7 +1155,7 @@ fn main() {
                 .validator(is_url_or_moniker)
                 .conflicts_with("entrypoint")
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]",
                 ),
         )
@@ -1355,7 +1356,7 @@ fn main() {
             info!("Finding cluster entry: {entrypoint_addr:?}");
             let (gossip_nodes, _validators) = discover_peers(
                 None,
-                &vec![entrypoint_addr],
+                &[entrypoint_addr],
                 None,
                 Duration::from_secs(60),
                 None,
@@ -1417,6 +1418,7 @@ fn main() {
 pub mod test {
     use {
         super::*,
+        serial_test::serial,
         solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
         solana_core::validator::ValidatorConfig,
         solana_faucet::faucet::run_local_faucet_for_tests,
@@ -1426,7 +1428,6 @@ pub mod test {
         },
         solana_measure::measure::Measure,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_poh_config::PohConfig,
         solana_program_pack::Pack,
         solana_test_validator::TestValidator,
         spl_token_interface::state::{Account, Mint},
@@ -1451,6 +1452,7 @@ pub mod test {
     const TEST_CLUSTER_MINT_LAMPORTS: u64 = 200 * LAMPORTS_PER_SOL;
 
     #[test]
+    #[serial]
     fn test_accounts_cluster_bench() {
         agave_logger::setup();
         let mut validator_config = ValidatorConfig::default_for_test();
@@ -1458,7 +1460,6 @@ pub mod test {
         let num_nodes = 1;
         let mut config = ClusterConfig {
             mint_lamports: TEST_CLUSTER_MINT_LAMPORTS,
-            poh_config: PohConfig::new_sleep(Duration::from_millis(50)),
             node_stakes: vec![100; num_nodes],
             validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
             ..ClusterConfig::default()
@@ -1501,6 +1502,7 @@ pub mod test {
     }
 
     #[test]
+    #[serial]
     fn test_halt_accounts_creation_at_max() {
         agave_logger::setup();
         let mut validator_config = ValidatorConfig::default_for_test();
@@ -1508,7 +1510,6 @@ pub mod test {
         let num_nodes = 1;
         let mut config = ClusterConfig {
             mint_lamports: TEST_CLUSTER_MINT_LAMPORTS,
-            poh_config: PohConfig::new_sleep(Duration::from_millis(50)),
             node_stakes: vec![100; num_nodes],
             validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
             ..ClusterConfig::default()
@@ -1551,6 +1552,7 @@ pub mod test {
     }
 
     #[test]
+    #[serial]
     fn test_create_then_reclaim_spl_token_accounts() {
         agave_logger::setup();
         let mint_keypair = Keypair::new();

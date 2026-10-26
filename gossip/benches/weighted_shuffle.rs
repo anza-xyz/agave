@@ -1,7 +1,7 @@
 use {
     criterion::{Criterion, criterion_group, criterion_main},
     rand::{Rng, SeedableRng},
-    rand_chacha::ChaChaRng,
+    rand_chacha::ChaCha8Rng,
     solana_gossip::weighted_shuffle::WeightedShuffle,
     std::{hint::black_box, iter::repeat_with},
 };
@@ -30,7 +30,7 @@ fn bench_weighted_shuffle_shuffle(c: &mut Criterion) {
     c.bench_function("bench_weighted_shuffle_shuffle", |b| {
         b.iter(|| {
             rng.fill(&mut seed[..]);
-            let mut rng = ChaChaRng::from_seed(seed);
+            let mut rng = ChaCha8Rng::from_seed(seed);
             weighted_shuffle
                 .clone()
                 .shuffle(&mut rng)
@@ -42,7 +42,7 @@ fn bench_weighted_shuffle_shuffle(c: &mut Criterion) {
     c.bench_function("bench_weighted_shuffle_collect", |b| {
         b.iter(|| {
             rng.fill(&mut seed[..]);
-            let mut rng = ChaChaRng::from_seed(seed);
+            let mut rng = ChaCha8Rng::from_seed(seed);
             let mut weighted_shuffle = weighted_shuffle.clone();
             let shuffle = weighted_shuffle.shuffle(&mut rng);
             black_box(shuffle.collect::<Vec<_>>());

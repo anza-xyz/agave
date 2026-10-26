@@ -1,11 +1,13 @@
 use {
+    bytes::{BufMut, BytesMut},
     solana_clock::Slot,
     solana_ledger::{
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_packet::Packet,
-    std::{io, net::SocketAddr},
+    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::{BytesPacket, Meta},
+    std::net::SocketAddr,
 };
 
 pub fn repair_response_packet(
@@ -14,7 +16,7 @@ pub fn repair_response_packet(
     shred_index: u64,
     dest: &SocketAddr,
     nonce: Nonce,
-) -> Option<Packet> {
+) -> Option<BytesPacket> {
     let shred = blockstore
         .get_data_shred(slot, shred_index)
         .expect("Blockstore could not get data shred");
@@ -27,19 +29,19 @@ pub fn repair_response_packet_from_bytes(
     bytes: impl AsRef<[u8]>,
     dest: &SocketAddr,
     nonce: Nonce,
-) -> Option<Packet> {
+) -> Option<BytesPacket> {
     let bytes = bytes.as_ref();
-    let mut packet = Packet::default();
     let size = bytes.len() + SIZE_OF_NONCE;
-    if size > packet.buffer_mut().len() {
+    if size > PACKET_DATA_SIZE {
         return None;
     }
-    packet.meta_mut().size = size;
-    packet.meta_mut().set_socket_addr(dest);
-    packet.buffer_mut()[..bytes.len()].copy_from_slice(bytes);
-    let mut wr = io::Cursor::new(&mut packet.buffer_mut()[bytes.len()..]);
-    bincode::serialize_into(&mut wr, &nonce).expect("Buffer not large enough to fit nonce");
-    Some(packet)
+    let mut buffer = BytesMut::with_capacity(size);
+    buffer.put_slice(bytes);
+    buffer.put_u32_le(nonce);
+    let mut meta = Meta::default();
+    meta.size = size;
+    meta.set_socket_addr(dest);
+    Some(BytesPacket::new(buffer.freeze(), meta))
 }
 
 #[cfg(test)]
@@ -51,7 +53,7 @@ mod test {
             shred::Shredder,
             sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
         },
-        solana_packet::PacketFlags,
+        solana_perf::packet::PacketFlags,
         solana_signer::Signer,
         std::{
             collections::HashMap,
@@ -77,14 +79,14 @@ mod test {
         packet.meta_mut().flags |= PacketFlags::REPAIR;
 
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
 
         let wrong_keypair = Keypair::new();
         let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
 
         let leader_slots: SlotPubkeys = HashMap::default();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
     }
 
     #[test]

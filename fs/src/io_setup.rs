@@ -59,7 +59,7 @@ impl IoSetupState {
     }
 
     #[cfg(target_os = "linux")]
-    pub(crate) fn shared_sqpoll_fd(&self) -> Option<BorrowedFd<'_>> {
+    pub fn shared_sqpoll_fd(&self) -> Option<BorrowedFd<'_>> {
         self.shared_sqpoll.as_ref().map(|s| s.as_fd())
     }
 }

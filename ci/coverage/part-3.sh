@@ -17,10 +17,11 @@ exclude_packages+=(--exclude solana-local-cluster)
 
 echo "--- coverage: coverage (part 3)"
 "$git_root"/ci/test-coverage.sh \
-  --features frozen-abi \
+  --features stable-abi \
   --features dev-context-only-utils \
   --workspace \
   --lib \
+  --bins \
   "${exclude_packages[@]}"
 
 # Clean up
@@ -31,7 +32,7 @@ echo "--- coverage: dev-bins"
   --features dev-context-only-utils \
   --manifest-path "$git_root"/dev-bins/Cargo.toml \
   --workspace \
-  --lib
+  --bins
 
 # Clean up
 cargo clean

@@ -3,7 +3,7 @@ use {
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_inflation::Inflation,
     solana_transaction_status_client_types::ConfirmedTransactionStatusWithSignature,
-    std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
+    std::{collections::HashMap, fmt, net::SocketAddr, num::NonZero, str::FromStr},
     thiserror::Error,
 };
 // we re-export types that are part of the public API,
@@ -307,8 +307,6 @@ pub struct RpcContactInfo {
     pub tpu_forwards: Option<SocketAddr>,
     /// Tpu QUIC forwards port
     pub tpu_forwards_quic: Option<SocketAddr>,
-    /// Tpu UDP vote port
-    pub tpu_vote: Option<SocketAddr>,
     /// Server repair UDP port
     pub serve_repair: Option<SocketAddr>,
     /// JSON RPC port
@@ -376,6 +374,10 @@ pub struct RpcIdentity {
     pub identity: String,
 }
 
+/// A legacy TowerBFT vote notification payload.
+///
+/// These notifications are no longer produced. This type is retained for API
+/// compatibility until the next major release.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcVote {
@@ -385,6 +387,32 @@ pub struct RpcVote {
     pub hash: String,
     pub timestamp: Option<UnixTimestamp>,
     pub signature: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcRankMap {
+    /// Epoch in which this rank map is effective.
+    pub epoch: Epoch,
+    /// Total stake in the full rank map, in lamports, regardless of the identity filter.
+    pub total_stake: NonZero<u64>,
+    /// Validators ordered by their Alpenglow rank.
+    pub validators: Vec<RpcRankMapEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcRankMapEntry {
+    /// Zero-based index used in Alpenglow certificate bitmaps.
+    pub rank: u16,
+    /// Vote account address, as a base-58 encoded string.
+    pub vote_pubkey: String,
+    /// Validator identity, as a base-58 encoded string.
+    pub node_pubkey: String,
+    /// Compressed BLS public key, as a base-58 encoded string.
+    pub bls_pubkey_compressed: String,
+    /// Stake assigned to this rank, in lamports.
+    pub stake: NonZero<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -592,6 +620,25 @@ pub struct RpcPrioritizationFee {
 pub mod tests {
 
     use {super::*, serde_json::json};
+
+    #[test]
+    fn test_rank_map_stakes_are_positive_json_numbers() {
+        let mut value = json!({
+            "epoch": 1,
+            "totalStake": 100,
+            "validators": [{
+                "rank": 0, "votePubkey": "vote", "nodePubkey": "node",
+                "blsPubkeyCompressed": "bls", "stake": 100
+            }]
+        });
+        let response: RpcRankMap = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(response).unwrap(), value);
+        value["totalStake"] = json!(0);
+        assert!(serde_json::from_value::<RpcRankMap>(value.clone()).is_err());
+        value["totalStake"] = json!(100);
+        value["validators"][0]["stake"] = json!(0);
+        assert!(serde_json::from_value::<RpcRankMap>(value).is_err());
+    }
 
     // Make sure that `RpcPerfSample` can read previous version JSON, one without the
     // `num_non_vote_transactions` field.

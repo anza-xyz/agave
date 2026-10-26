@@ -133,23 +133,13 @@ impl RollbackAccounts {
             },
         }
     }
-
-    /// Size of accounts tracked for rollback, used when calculating the actual
-    /// cost of transaction processing in the cost model.
-    pub fn data_size(&self) -> usize {
-        let mut total_size: usize = 0;
-        for (_, account) in self.iter() {
-            total_size = total_size.saturating_add(account.data().len());
-        }
-        total_size
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        solana_account::{ReadableAccount, WritableAccount},
+        solana_account::{ReadableAccount, WritableAccount, state_traits::StateMutWincode as _},
         solana_hash::Hash,
         solana_nonce::{
             state::{Data as NonceData, DurableNonce, State as NonceState},

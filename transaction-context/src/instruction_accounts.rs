@@ -4,7 +4,7 @@ use {
         transaction_accounts::AccountRefMut,
     },
     solana_account::{ReadableAccount, WritableAccount},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
 };
 
@@ -134,7 +134,6 @@ impl BorrowedInstructionAccount<'_, '_> {
 
         let lamports_balance = (lamports as i128).saturating_sub(old_lamports as i128);
         self.transaction_context
-            .accounts
             .add_lamports_delta(lamports_balance)?;
 
         self.touch()?;
@@ -249,22 +248,30 @@ impl BorrowedInstructionAccount<'_, '_> {
     }
 
     /// Deserializes the account data into a state
-    #[cfg(feature = "bincode")]
-    pub fn get_state<T: serde::de::DeserializeOwned>(&self) -> Result<T, InstructionError> {
-        bincode::deserialize(self.account.data()).map_err(|_| InstructionError::InvalidAccountData)
+    #[cfg(feature = "wincode")]
+    pub fn get_state<T>(&self) -> Result<T, InstructionError>
+    where
+        T: for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>,
+    {
+        wincode::config::deserialize(self.account.data(), solana_account::WINCODE_CONFIG)
+            .map_err(|_| InstructionError::InvalidAccountData)
     }
 
     /// Serializes a state into the account data
-    #[cfg(feature = "bincode")]
-    pub fn set_state<T: serde::Serialize>(&mut self, state: &T) -> Result<(), InstructionError> {
-        let data = self.get_data_mut()?;
+    #[cfg(feature = "wincode")]
+    pub fn set_state<T>(&mut self, state: &T) -> Result<(), InstructionError>
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>,
+    {
+        self.can_data_be_changed()?;
+        self.touch()?;
         let serialized_size =
-            bincode::serialized_size(state).map_err(|_| InstructionError::GenericError)?;
-        if serialized_size > data.len() as u64 {
+            wincode::config::serialized_size(state, solana_account::WINCODE_CONFIG)
+                .map_err(|_| InstructionError::GenericError)?;
+        if serialized_size > self.get_data().len() as u64 {
             return Err(InstructionError::AccountDataTooSmall);
         }
-        bincode::serialize_into(&mut *data, state).map_err(|_| InstructionError::GenericError)?;
-        Ok(())
+        self.account.set_state(state)
     }
 
     // Returns whether or the lamports currently in the account is sufficient for rent exemption should the
@@ -350,10 +357,6 @@ impl BorrowedInstructionAccount<'_, '_> {
     /// Returns an error if the account data can not be resized to the given length
     pub fn can_data_be_resized(&self, new_len: usize) -> Result<(), InstructionError> {
         let old_len = self.get_data().len();
-        // Only the owner can change the length of the data
-        if new_len != old_len && !self.is_owned_by_current_program() {
-            return Err(InstructionError::AccountDataSizeChanged);
-        }
         self.transaction_context
             .accounts
             .can_data_be_resized(old_len, new_len)?;
@@ -377,11 +380,97 @@ impl BorrowedInstructionAccount<'_, '_> {
 fn is_zeroed(buf: &[u8]) -> bool {
     const ZEROS_LEN: usize = 1024;
     const ZEROS: [u8; ZEROS_LEN] = [0; ZEROS_LEN];
-    let mut chunks = buf.chunks_exact(ZEROS_LEN);
+    let (chunks, remainder) = buf.as_chunks::<ZEROS_LEN>();
 
     #[expect(clippy::indexing_slicing)]
     {
-        chunks.all(|chunk| chunk == &ZEROS[..])
-            && chunks.remainder() == &ZEROS[..chunks.remainder().len()]
+        chunks.iter().all(|chunk| chunk == &ZEROS[..]) && remainder == &ZEROS[..remainder.len()]
+    }
+}
+
+#[cfg(all(test, feature = "wincode"))]
+mod tests {
+    use {
+        super::*, crate::transaction::TransactionContext, solana_account::AccountSharedData,
+        solana_rent::Rent,
+    };
+
+    fn new_transaction_context(account: AccountSharedData) -> TransactionContext<'static> {
+        let mut transaction_context = TransactionContext::new(
+            vec![
+                (*account.owner(), AccountSharedData::default()),
+                (Pubkey::new_unique(), account),
+            ],
+            Rent::default(),
+            1,
+            1,
+            1,
+        );
+        transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        transaction_context.push(true).unwrap();
+        transaction_context
+    }
+
+    fn with_account<R>(data: Vec<u8>, f: impl FnOnce(&mut BorrowedInstructionAccount) -> R) -> R {
+        let account = AccountSharedData::new_with_data(1, data, &Pubkey::new_unique());
+        let transaction_context = new_transaction_context(account);
+        let instruction_context = transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        f(&mut instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap())
+    }
+
+    #[test]
+    fn test_set_state_copies_shared_data_without_headroom() {
+        let state = 42u64;
+        let tail = [7u8; 100];
+        let data = [vec![0; size_of::<u64>()], tail.to_vec()].concat();
+        let account = AccountSharedData::new_with_data(1, data.clone(), &Pubkey::new_unique());
+        let shared = account.clone();
+        let mut transaction_context = new_transaction_context(account);
+        transaction_context
+            .get_current_instruction_context()
+            .unwrap()
+            .try_borrow_instruction_account(0)
+            .unwrap()
+            .set_state(&state)
+            .unwrap();
+        transaction_context.pop().unwrap();
+        let account = transaction_context
+            .deconstruct_without_keys()
+            .unwrap()
+            .swap_remove(1);
+
+        assert_eq!(account.capacity(), data.len());
+        assert_eq!(
+            account.data(),
+            [state.to_le_bytes().as_slice(), &tail].concat()
+        );
+        assert_eq!(shared.data(), data);
+    }
+
+    #[test]
+    fn test_set_state_get_state() {
+        let state = (Some(Pubkey::new_unique()), vec![1u64, 2, 3]);
+        let len = wincode::serialized_size(&state).unwrap() as usize;
+        assert_eq!(
+            with_account(vec![0; len], |account| {
+                account.set_state(&state)?;
+                account.get_state()
+            }),
+            Ok(state.clone()),
+        );
+        assert_eq!(
+            with_account(vec![0; len - 1], |account| account.set_state(&state)),
+            Err(InstructionError::AccountDataTooSmall),
+        );
     }
 }

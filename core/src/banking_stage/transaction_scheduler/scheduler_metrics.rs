@@ -57,8 +57,8 @@ pub struct SchedulerCountMetricsInner {
     pub num_unschedulable_conflicts: Saturating<usize>,
     /// Number of transactions that were unschedulable due to thread capacity.
     pub num_unschedulable_threads: Saturating<usize>,
-    /// Number of transactions that were filtered out during scheduling.
-    pub num_schedule_filtered_out: Saturating<usize>,
+    /// Number of transactions dropped due to account key filtering.
+    pub num_dropped_on_filter_key: Saturating<usize>,
     /// Number of completed transactions received from workers.
     pub num_finished: Saturating<usize>,
     /// Number of transactions that were retryable.
@@ -83,8 +83,12 @@ pub struct SchedulerCountMetricsInner {
     pub num_dropped_on_clear: Saturating<usize>,
     /// Number of transactions that were dropped during cleaning.
     pub num_dropped_on_clean: Saturating<usize>,
-    /// Number of transactions that were dropped due to exceeded capacity.
+    /// Number of packets dropped because the check-work queue was full.
+    pub num_dropped_on_check_work_queue_full: Saturating<usize>,
+    /// Number of transactions dropped due to exceeded scheduler container capacity.
     pub num_dropped_on_capacity: Saturating<usize>,
+    pub num_dropped_on_nonce_dedup: Saturating<usize>,
+    pub num_evicted_on_nonce_dedup: Saturating<usize>,
     /// Min prioritization fees in the transaction container
     pub min_prioritization_fees: u64,
     /// Max prioritization fees in the transaction container
@@ -125,7 +129,7 @@ impl SchedulerCountMetricsInner {
             num_scheduled: Saturating(num_scheduled),
             num_unschedulable_conflicts: Saturating(num_unschedulable_conflicts),
             num_unschedulable_threads: Saturating(num_unschedulable_threads),
-            num_schedule_filtered_out: Saturating(num_schedule_filtered_out),
+            num_dropped_on_filter_key: Saturating(num_dropped_on_filter_key),
             num_finished: Saturating(num_finished),
             num_retryable: Saturating(num_retryable),
             num_dropped_on_receive: Saturating(num_dropped_on_receive),
@@ -139,7 +143,10 @@ impl SchedulerCountMetricsInner {
             num_dropped_on_receive_fee_payer: Saturating(num_dropped_on_receive_fee_payer),
             num_dropped_on_clear: Saturating(num_dropped_on_clear),
             num_dropped_on_clean: Saturating(num_dropped_on_clean),
+            num_dropped_on_check_work_queue_full: Saturating(num_dropped_on_check_work_queue_full),
             num_dropped_on_capacity: Saturating(num_dropped_on_capacity),
+            num_dropped_on_nonce_dedup: Saturating(num_dropped_on_nonce_dedup),
+            num_evicted_on_nonce_dedup: Saturating(num_evicted_on_nonce_dedup),
             min_prioritization_fees: _min_prioritization_fees,
             max_prioritization_fees: _max_prioritization_fees,
         } = self;
@@ -150,11 +157,7 @@ impl SchedulerCountMetricsInner {
             ("num_scheduled", num_scheduled, i64),
             ("num_unschedulable_conflicts", num_unschedulable_conflicts, i64),
             ("num_unschedulable_threads", num_unschedulable_threads, i64),
-            (
-                "num_schedule_filtered_out",
-                num_schedule_filtered_out,
-                i64
-            ),
+            ("num_dropped_on_filter_key", num_dropped_on_filter_key, i64),
             ("num_finished", num_finished, i64),
             ("num_retryable", num_retryable, i64),
             ("num_dropped_on_receive", num_dropped_on_receive, i64),
@@ -190,9 +193,16 @@ impl SchedulerCountMetricsInner {
                 num_dropped_on_clean,
                 i64
             ),
+            (
+                "num_dropped_on_check_work_queue_full",
+                num_dropped_on_check_work_queue_full,
+                i64
+            ),
             ("num_dropped_on_capacity", num_dropped_on_capacity, i64),
+            ("num_dropped_on_nonce_dedup", num_dropped_on_nonce_dedup, i64),
+            ("num_evicted_on_nonce_dedup", num_evicted_on_nonce_dedup, i64),
             ("min_priority", self.get_min_priority(), i64),
-            ("max_priority", self.get_max_priority(), i64)
+            ("max_priority", self.get_max_priority(), i64),
         );
         if let Some(slot) = slot {
             datapoint.add_field_i64("slot", slot as i64);
@@ -206,7 +216,7 @@ impl SchedulerCountMetricsInner {
             || self.num_scheduled != Saturating(0)
             || self.num_unschedulable_conflicts != Saturating(0)
             || self.num_unschedulable_threads != Saturating(0)
-            || self.num_schedule_filtered_out != Saturating(0)
+            || self.num_dropped_on_filter_key != Saturating(0)
             || self.num_finished != Saturating(0)
             || self.num_retryable != Saturating(0)
     }
@@ -217,7 +227,7 @@ impl SchedulerCountMetricsInner {
         self.num_scheduled = Saturating(0);
         self.num_unschedulable_conflicts = Saturating(0);
         self.num_unschedulable_threads = Saturating(0);
-        self.num_schedule_filtered_out = Saturating(0);
+        self.num_dropped_on_filter_key = Saturating(0);
         self.num_finished = Saturating(0);
         self.num_retryable = Saturating(0);
         self.num_dropped_on_receive = Saturating(0);
@@ -229,7 +239,10 @@ impl SchedulerCountMetricsInner {
         self.num_dropped_on_receive_fee_payer = Saturating(0);
         self.num_dropped_on_clear = Saturating(0);
         self.num_dropped_on_clean = Saturating(0);
+        self.num_dropped_on_check_work_queue_full = Saturating(0);
         self.num_dropped_on_capacity = Saturating(0);
+        self.num_dropped_on_nonce_dedup = Saturating(0);
+        self.num_evicted_on_nonce_dedup = Saturating(0);
         self.min_prioritization_fees = u64::MAX;
         self.max_prioritization_fees = 0;
     }
@@ -297,8 +310,6 @@ pub struct SchedulerTimingMetricsInner {
     pub receive_time_us: Saturating<u64>,
     /// Time spent buffering packets.
     pub buffer_time_us: Saturating<u64>,
-    /// Time spent filtering transactions during scheduling.
-    pub schedule_filter_time_us: Saturating<u64>,
     /// Time spent scheduling transactions.
     pub schedule_time_us: Saturating<u64>,
     /// Time spent clearing transactions from the container.
@@ -307,6 +318,8 @@ pub struct SchedulerTimingMetricsInner {
     pub clean_time_us: Saturating<u64>,
     /// Time spent receiving completed transactions.
     pub receive_completed_time_us: Saturating<u64>,
+    /// Time scheduling was blocked on in-flight transactions during slot transitions.
+    pub scheduling_slot_transition_blocked_time_us: Saturating<u64>,
 }
 
 impl IntervalSchedulerTimingMetrics {
@@ -341,24 +354,29 @@ impl SchedulerTimingMetricsInner {
             decision_time_us: Saturating(decision_time_us),
             receive_time_us: Saturating(receive_time_us),
             buffer_time_us: Saturating(buffer_time_us),
-            schedule_filter_time_us: Saturating(schedule_filter_time_us),
             schedule_time_us: Saturating(schedule_time_us),
             clear_time_us: Saturating(clear_time_us),
             clean_time_us: Saturating(clean_time_us),
             receive_completed_time_us: Saturating(receive_completed_time_us),
+            scheduling_slot_transition_blocked_time_us:
+                Saturating(scheduling_slot_transition_blocked_time_us),
         } = self;
         let mut datapoint = create_datapoint!(
             @point name,
             ("decision_time_us", decision_time_us, i64),
             ("receive_time_us", receive_time_us, i64),
             ("buffer_time_us", buffer_time_us, i64),
-            ("schedule_filter_time_us", schedule_filter_time_us, i64),
             ("schedule_time_us", schedule_time_us, i64),
             ("clear_time_us", clear_time_us, i64),
             ("clean_time_us", clean_time_us, i64),
             (
                 "receive_completed_time_us",
                 receive_completed_time_us,
+                i64
+            ),
+            (
+                "scheduling_slot_transition_blocked_time_us",
+                scheduling_slot_transition_blocked_time_us,
                 i64
             )
         );
@@ -372,11 +390,11 @@ impl SchedulerTimingMetricsInner {
         self.decision_time_us = Saturating(0);
         self.receive_time_us = Saturating(0);
         self.buffer_time_us = Saturating(0);
-        self.schedule_filter_time_us = Saturating(0);
         self.schedule_time_us = Saturating(0);
         self.clear_time_us = Saturating(0);
         self.clean_time_us = Saturating(0);
         self.receive_completed_time_us = Saturating(0);
+        self.scheduling_slot_transition_blocked_time_us = Saturating(0);
     }
 }
 
@@ -445,11 +463,12 @@ impl SchedulingDetails {
         let now = Instant::now();
         if now.duration_since(self.last_report) > REPORT_INTERVAL {
             self.last_report = now;
-            if self.num_schedule_calls > 0 {
-                let avg_starting_queue_size =
-                    self.sum_starting_queue_size / self.num_schedule_calls;
-                let avg_starting_buffer_size =
-                    self.sum_starting_buffer_size / self.num_schedule_calls;
+            if let (Some(avg_starting_queue_size), Some(avg_starting_buffer_size)) = (
+                self.sum_starting_queue_size
+                    .checked_div(self.num_schedule_calls),
+                self.sum_starting_buffer_size
+                    .checked_div(self.num_schedule_calls),
+            ) {
                 let datapoint = create_datapoint!(
                     @point "scheduling_details",
                     ("num_schedule_calls", self.num_schedule_calls, i64),

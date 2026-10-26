@@ -7,15 +7,24 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
 
 [dependencies]
-bincode = { workspace = true }
 solana-account = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["bincode", "serde"] }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 spl-generic-token = { workspace = true }
+wincode = { workspace = true }
+
+[lints]
+workspace = true

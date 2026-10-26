@@ -2,7 +2,7 @@ use {
     super::{
         consumer::LeaderProcessedTransactionCounts,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
-        vote_storage::VoteBatchInsertionMetrics,
+        vote_storage::VoteInsertionMetrics,
     },
     crate::banking_stage::vote_packet_receiver::PacketReceiverStats,
     solana_clock::Slot,
@@ -97,6 +97,9 @@ struct LeaderSlotPacketCountMetrics {
     // total number of invalid vote packets filtered out during receiving from sigverify
     invalid_votes_count: u64,
 
+    // total number of vote packets filtered out due to account key filtering
+    filtered_account_key_count: u64,
+
     // total number of dropped packet due to the thread's buffered packets capacity being reached.
     exceeded_buffer_limit_dropped_packets_count: u64,
 
@@ -168,6 +171,7 @@ impl LeaderSlotPacketCountMetrics {
             failed_sanitization_count,
             failed_prioritization_count,
             invalid_votes_count,
+            filtered_account_key_count,
             exceeded_buffer_limit_dropped_packets_count,
             newly_buffered_packets_count,
             retryable_packets_filtered_count,
@@ -206,6 +210,11 @@ impl LeaderSlotPacketCountMetrics {
                 i64
             ),
             ("invalid_votes_count", invalid_votes_count, i64),
+            (
+                "filtered_account_key_count",
+                filtered_account_key_count,
+                i64
+            ),
             (
                 "exceeded_buffer_limit_dropped_packets_count",
                 exceeded_buffer_limit_dropped_packets_count,
@@ -597,10 +606,6 @@ impl LeaderSlotMetricsTracker {
                 .cost_model_throttled_transactions_count += cost_model_throttled_transactions_count;
 
             leader_slot_metrics
-                .packet_count_metrics
-                .cost_model_throttled_transactions_count += cost_model_throttled_transactions_count;
-
-            leader_slot_metrics
                 .timing_metrics
                 .process_packets_timings
                 .cost_model_us += cost_model_us;
@@ -612,19 +617,17 @@ impl LeaderSlotMetricsTracker {
         }
     }
 
-    pub(crate) fn accumulate_vote_batch_insertion_metrics(
+    pub(crate) fn accumulate_vote_insertion_metrics(
         &mut self,
-        vote_batch_insertion_metrics: &VoteBatchInsertionMetrics,
+        vote_insertion_metrics: &VoteInsertionMetrics,
     ) {
         self.increment_exceeded_buffer_limit_dropped_packets_count(
-            vote_batch_insertion_metrics.total_dropped_packets() as u64,
+            vote_insertion_metrics.total_dropped_packets() as u64,
         );
         self.increment_dropped_gossip_vote_count(
-            vote_batch_insertion_metrics.dropped_gossip_packets() as u64,
+            vote_insertion_metrics.dropped_gossip_packets() as u64
         );
-        self.increment_dropped_tpu_vote_count(
-            vote_batch_insertion_metrics.dropped_tpu_packets() as u64
-        );
+        self.increment_dropped_tpu_vote_count(vote_insertion_metrics.dropped_tpu_packets() as u64);
     }
 
     pub(crate) fn accumulate_transaction_errors(
@@ -646,6 +649,7 @@ impl LeaderSlotMetricsTracker {
                 passed_sigverify_count: Saturating(passed_sigverify_count),
                 failed_sigverify_count: Saturating(failed_sigverify_count),
                 invalid_vote_count: Saturating(invalid_vote_count),
+                filtered_account_key_count: Saturating(filtered_account_key_count),
                 failed_prioritization_count: Saturating(failed_prioritization_count),
                 failed_sanitization_count: Saturating(failed_sanitization_count),
             } = stats;
@@ -653,6 +657,7 @@ impl LeaderSlotMetricsTracker {
             metrics.total_new_valid_packets += passed_sigverify_count;
             metrics.newly_failed_sigverify_count += failed_sigverify_count;
             metrics.invalid_votes_count += invalid_vote_count;
+            metrics.filtered_account_key_count += filtered_account_key_count;
             metrics.failed_prioritization_count += failed_prioritization_count;
             metrics.failed_sanitization_count += failed_sanitization_count;
         }

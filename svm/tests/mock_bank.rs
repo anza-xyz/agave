@@ -3,7 +3,10 @@
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
-    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, WritableAccount,
+        state_traits::StateMutWincode as _,
+    },
     solana_clock::{Clock, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_structure::{FeeDetails, FeeStructure},
@@ -22,14 +25,16 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget},
     solana_svm::transaction_processor::TransactionBatchProcessor,
-    solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_callback::{
+        AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
+    },
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
-        SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
-        SyscallMemset, SyscallSetReturnData,
+        SyscallGetSysvar, SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy,
+        SyscallMemmove, SyscallMemset, SyscallPanic, SyscallSetReturnData,
     },
     solana_sysvar_id::SysvarId,
     std::{
@@ -61,35 +66,21 @@ impl ForkGraph for MockForkGraph {
 pub struct MockBankCallback {
     pub feature_set: SVMFeatureSet,
     pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
-    #[allow(clippy::type_complexity)]
-    pub inspected_accounts:
-        Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
 }
 
 impl InvokeContextCallback for MockBankCallback {}
 
-impl TransactionProcessingCallback for MockBankCallback {
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+impl AccountLoadCallback for MockBankCallback {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.account_shared_data
             .read()
             .unwrap()
             .get(pubkey)
-            .map(|account| (account.clone(), 0))
-    }
-
-    fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {
-        let account = match account_state {
-            AccountState::Dead => None,
-            AccountState::Alive(account) => Some(account.clone()),
-        };
-        self.inspected_accounts
-            .write()
-            .unwrap()
-            .entry(*address)
-            .or_default()
-            .push((account, is_writable));
+            .cloned()
     }
 }
+
+impl TransactionProcessingCallback for MockBankCallback {}
 
 impl MockBankCallback {
     pub fn calculate_fee_details(message: &impl SVMMessage, prioritization_fee: u64) -> FeeDetails {
@@ -145,8 +136,7 @@ impl MockBankCallback {
             unix_timestamp: WALLCLOCK_TIME as UnixTimestamp,
         };
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&clock).unwrap());
+        let account_data = AccountSharedData::new_data(0, &clock, &Pubkey::default()).unwrap();
         self.account_shared_data
             .write()
             .unwrap()
@@ -155,8 +145,7 @@ impl MockBankCallback {
         // default rent is fine
         let rent = Rent::default();
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&rent).unwrap());
+        let account_data = AccountSharedData::new_data(0, &rent, &Pubkey::default()).unwrap();
         self.account_shared_data
             .write()
             .unwrap()
@@ -168,8 +157,8 @@ impl MockBankCallback {
         #[allow(deprecated)]
         let recent_blockhashes = vec![BlockhashesEntry::default()];
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&recent_blockhashes).unwrap());
+        let account_data =
+            AccountSharedData::new_data(0, &recent_blockhashes, &Pubkey::default()).unwrap();
         #[allow(deprecated)]
         self.account_shared_data
             .write()
@@ -179,8 +168,8 @@ impl MockBankCallback {
         // EpochSchedule is required for non-mocked LoaderV3 deploy
         let epoch_schedule = EpochSchedule::without_warmup();
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&epoch_schedule).unwrap());
+        let account_data =
+            AccountSharedData::new_data(0, &epoch_schedule, &Pubkey::default()).unwrap();
         self.account_shared_data
             .write()
             .unwrap()
@@ -208,7 +197,8 @@ pub fn program_address(program_name: &str) -> Pubkey {
 }
 
 pub fn program_data_size(program_name: &str) -> usize {
-    load_program(program_name.to_string()).len()
+    UpgradeableLoaderState::size_of_programdata_metadata()
+        .saturating_add(load_program(program_name.to_string()).len())
 }
 
 pub fn deploy_program(name: String, deployment_slot: Slot, mock_bank: &MockBankCallback) -> Pubkey {
@@ -230,37 +220,32 @@ pub fn deploy_program_with_upgrade_authority(
     };
 
     // The program account must have funds and hold the executable binary
-    let mut account_data = AccountSharedData::default();
-    let buffer = bincode::serialize(&state).unwrap();
-    account_data.set_lamports(rent.minimum_balance(buffer.len()));
-    account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
+    let mut account_data =
+        AccountSharedData::new_data(0, &state, &solana_sdk_ids::bpf_loader_upgradeable::id())
+            .unwrap();
+    account_data.set_lamports(rent.minimum_balance(account_data.data().len()));
     account_data.set_executable(true);
-    account_data.set_data(buffer);
     mock_bank
         .account_shared_data
         .write()
         .unwrap()
         .insert(program_account, account_data);
 
-    let mut account_data = AccountSharedData::default();
     let state = UpgradeableLoaderState::ProgramData {
         slot: deployment_slot,
         upgrade_authority_address,
     };
-    let mut header = bincode::serialize(&state).unwrap();
-    let mut complement = vec![
-        0;
-        std::cmp::max(
-            0,
-            UpgradeableLoaderState::size_of_programdata_metadata().saturating_sub(header.len())
-        )
-    ];
-    let mut buffer = load_program(name);
-    header.append(&mut complement);
-    header.append(&mut buffer);
-    account_data.set_lamports(rent.minimum_balance(header.len()));
-    account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
-    account_data.set_data(header);
+    let elf = load_program(name);
+    let metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
+    let space = metadata_size.saturating_add(elf.len());
+    let mut account_data = AccountSharedData::new_data_with_space(
+        rent.minimum_balance(space),
+        &state,
+        space,
+        &solana_sdk_ids::bpf_loader_upgradeable::id(),
+    )
+    .unwrap();
+    account_data.data_as_mut_slice()[metadata_size..].copy_from_slice(&elf);
     mock_bank
         .account_shared_data
         .write()
@@ -274,18 +259,13 @@ pub fn register_builtins(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
 ) {
-    const DEPLOYMENT_SLOT: u64 = 0;
     // We must register LoaderV3 as a loadable account, otherwise programs won't execute.
     let loader_v3_name = "solana_bpf_loader_upgradeable_program";
     mock_bank.add_builtin(
         batch_processor,
         solana_sdk_ids::bpf_loader_upgradeable::id(),
         loader_v3_name,
-        ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            loader_v3_name.len(),
-            solana_bpf_loader_program::Entrypoint::register,
-        ),
+        ProgramCacheEntry::new_builtin(solana_bpf_loader_program::Entrypoint::register),
     );
 
     // Other loaders are needed for testing program cache behavior.
@@ -294,11 +274,7 @@ pub fn register_builtins(
         batch_processor,
         bpf_loader_deprecated::id(),
         loader_v1_name,
-        ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            loader_v1_name.len(),
-            solana_bpf_loader_program::Entrypoint::register,
-        ),
+        ProgramCacheEntry::new_builtin(solana_bpf_loader_program::Entrypoint::register),
     );
 
     let loader_v2_name = "solana_bpf_loader_program";
@@ -306,11 +282,7 @@ pub fn register_builtins(
         batch_processor,
         bpf_loader::id(),
         loader_v2_name,
-        ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            loader_v2_name.len(),
-            solana_bpf_loader_program::Entrypoint::register,
-        ),
+        ProgramCacheEntry::new_builtin(solana_bpf_loader_program::Entrypoint::register),
     );
 
     // In order to perform a transference of native tokens using the system instruction,
@@ -321,8 +293,6 @@ pub fn register_builtins(
         solana_system_program::id(),
         system_program_name,
         ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            system_program_name.len(),
             solana_system_program::system_processor::Entrypoint::register,
         ),
     );
@@ -333,11 +303,7 @@ pub fn register_builtins(
         batch_processor,
         compute_budget::id(),
         compute_budget_program_name,
-        ProgramCacheEntry::new_builtin(
-            DEPLOYMENT_SLOT,
-            compute_budget_program_name.len(),
-            solana_compute_budget_program::Entrypoint::register,
-        ),
+        ProgramCacheEntry::new_builtin(solana_compute_budget_program::Entrypoint::register),
     );
 }
 
@@ -350,15 +316,13 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
-        enable_register_tracing: true,
-        enable_symbol_and_section_labels: true,
+        enable_symbol_and_section_labels: false,
         reject_broken_elfs: true,
         noop_instruction_rate: 256,
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V3,
         optimize_rodata: false,
         aligned_memory_mapping: false,
-        allow_memory_region_zero: true,
     };
 
     // These functions are system calls the compile contract calls during execution, so they
@@ -380,5 +344,7 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         .expect("Registration failed");
     SyscallGetEpochScheduleSysvar::register(&mut loader, "sol_get_epoch_schedule_sysvar")
         .expect("Registration failed");
+    SyscallPanic::register(&mut loader, "sol_panic_").expect("Registration failed");
+    SyscallGetSysvar::register(&mut loader, "sol_get_sysvar").expect("Registration failed");
     ProgramRuntimeEnvironment::from(loader)
 }

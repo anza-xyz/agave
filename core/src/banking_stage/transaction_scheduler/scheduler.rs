@@ -1,15 +1,13 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     super::{
         scheduler_common::SchedulingCommon, scheduler_error::SchedulerError,
-        transaction_state::TransactionState, transaction_state_container::StateContainer,
+        transaction_state_container::StateContainer,
     },
+    solana_clock::Slot,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     std::num::Saturating,
 };
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     /// Schedule transactions from `container`.
     /// pre-graph and pre-lock filters may be passed to be applied
@@ -17,11 +15,13 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     fn schedule<S: StateContainer<Tx>>(
         &mut self,
         container: &mut S,
+        slot: Slot,
         budget: u64,
-        relax_intrabatch_account_locks: bool,
-        pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
-        pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError>;
+
+    /// Returns true if any scheduled transactions have not yet been returned
+    /// by the consume workers.
+    fn has_in_flight_transactions(&self) -> bool;
 
     /// Receive completed batches of transactions without blocking.
     /// Returns (num_transactions, num_retryable_transactions) on success.
@@ -50,17 +50,8 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     /// implementation.
     fn scheduling_common_mut(&mut self) -> &mut SchedulingCommon<Tx>;
 }
-
-/// Action to be taken by pre-lock filter.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) enum PreLockFilterAction {
-    /// Attempt to schedule the transaction.
-    AttemptToSchedule,
-}
-
 /// Metrics from scheduling transactions.
 #[derive(Default, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct SchedulingSummary {
     /// Starting queue size
     pub starting_queue_size: usize,
@@ -73,8 +64,4 @@ pub(crate) struct SchedulingSummary {
     pub num_unschedulable_conflicts: usize,
     /// Number of transactions that were skipped due to thread capacity.
     pub num_unschedulable_threads: usize,
-    /// Number of transactions that were dropped due to filter.
-    pub num_filtered_out: usize,
-    /// Time spent filtering transactions
-    pub filter_time_us: u64,
 }

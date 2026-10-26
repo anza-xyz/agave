@@ -32,7 +32,7 @@ impl TargetBuiltin {
             CoreBpfMigrationTargetType::Builtin => {
                 // The program account should exist.
                 let program_account = bank
-                    .get_account_with_fixed_root(program_address)
+                    .get_account(program_address)
                     .ok_or(CoreBpfMigrationError::AccountNotFound(*program_address))?;
 
                 // The program account should be owned by the native loader.
@@ -44,7 +44,7 @@ impl TargetBuiltin {
             }
             CoreBpfMigrationTargetType::Stateless => {
                 // The program account should _not_ exist.
-                if bank.get_account_with_fixed_root(program_address).is_some() {
+                if bank.get_account(program_address).is_some() {
                     return Err(CoreBpfMigrationError::AccountExists(*program_address));
                 }
 
@@ -57,7 +57,7 @@ impl TargetBuiltin {
         let program_data_account_lamports = if allow_prefunded {
             // The program data account should not exist, but a system account with funded
             // lamports is acceptable.
-            if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
+            if let Some(account) = bank.get_account(&program_data_address) {
                 if account.owner() != &SYSTEM_PROGRAM_ID {
                     return Err(CoreBpfMigrationError::ProgramHasDataAccount(
                         *program_address,
@@ -69,10 +69,7 @@ impl TargetBuiltin {
             }
         } else {
             // The program data account should not exist and have zero lamports.
-            if bank
-                .get_account_with_fixed_root(&program_data_address)
-                .is_some()
-            {
+            if bank.get_account(&program_data_address).is_some() {
                 return Err(CoreBpfMigrationError::ProgramHasDataAccount(
                     *program_address,
                 ));
@@ -101,14 +98,14 @@ mod tests {
         test_case::test_matrix,
     };
 
-    fn store_account<T: serde::Serialize>(
+    fn store_account<T: wincode::Serialize<Src = T>>(
         bank: &Bank,
         address: &Pubkey,
         data: &T,
         executable: bool,
         owner: &Pubkey,
     ) {
-        let data = bincode::serialize(data).unwrap();
+        let data = wincode::serialize(data).unwrap();
         let data_len = data.len();
         let lamports = bank.get_minimum_balance_for_rent_exemption(data_len);
         let account = AccountSharedData::from(Account {
@@ -129,10 +126,6 @@ mod tests {
             (solana_compute_budget_interface::id(), None),
             (solana_system_interface::program::id(), None),
             (solana_vote_interface::program::id(), None),
-            (
-                solana_sdk_ids::loader_v4::id(),
-                Some(feature_set::enable_loader_v4::id())
-            ),
             (
                 solana_sdk_ids::zk_token_proof_program::id(),
                 Some(feature_set::zk_token_sdk_enabled::id())
@@ -164,7 +157,7 @@ mod tests {
             bank.compute_and_apply_new_feature_activations();
         }
 
-        let program_account = bank.get_account_with_fixed_root(&program_address).unwrap();
+        let program_account = bank.get_account(&program_address).unwrap();
         let program_data_address = get_program_data_address(&program_address);
 
         // Success

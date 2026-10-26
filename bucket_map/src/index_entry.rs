@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
 use {
-    crate::{
-        RefCount,
-        bucket_storage::{BucketCapacity, BucketOccupied, BucketStorage, Capacity, IncludeHeader},
+    crate::bucket_storage::{
+        BucketCapacity, BucketOccupied, BucketStorage, Capacity, IncludeHeader,
     },
     bv::BitVec,
     modular_bitfield::prelude::*,
@@ -31,10 +30,9 @@ impl BucketCapacity for BucketWithHeader {
 /// needs to be multiple of size_of::<u64>()
 #[derive(Copy, Clone)]
 #[repr(C)]
-struct DataBucketRefCountOccupiedHeader {
-    /// stores `ref_count` and
-    /// occupied = OCCUPIED_OCCUPIED or OCCUPIED_FREE
-    packed_ref_count: PackedRefCount,
+struct DataBucketOccupiedHeader {
+    /// stores occupied = OCCUPIED_OCCUPIED or OCCUPIED_FREE
+    packed_header: PackedHeader,
 }
 
 #[derive(Debug, PartialEq)]
@@ -57,20 +55,20 @@ pub struct BucketWithHeader {
 impl BucketOccupied for BucketWithHeader {
     fn occupy(&mut self, element: &mut [u8], ix: usize) {
         assert!(self.is_free(element, ix));
-        let entry = get_mut_from_bytes::<DataBucketRefCountOccupiedHeader>(element);
-        entry.packed_ref_count.set_occupied(OCCUPIED_OCCUPIED);
+        let entry = get_mut_from_bytes::<DataBucketOccupiedHeader>(element);
+        entry.packed_header.set_occupied(OCCUPIED_OCCUPIED);
     }
     fn free(&mut self, element: &mut [u8], ix: usize) {
         assert!(!self.is_free(element, ix));
-        let entry = get_mut_from_bytes::<DataBucketRefCountOccupiedHeader>(element);
-        entry.packed_ref_count.set_occupied(OCCUPIED_FREE);
+        let entry = get_mut_from_bytes::<DataBucketOccupiedHeader>(element);
+        entry.packed_header.set_occupied(OCCUPIED_FREE);
     }
     fn is_free(&self, element: &[u8], _ix: usize) -> bool {
-        let entry = get_from_bytes::<DataBucketRefCountOccupiedHeader>(element);
-        entry.packed_ref_count.occupied() == OCCUPIED_FREE
+        let entry = get_from_bytes::<DataBucketOccupiedHeader>(element);
+        entry.packed_header.occupied() == OCCUPIED_FREE
     }
     fn offset_to_first_data() -> usize {
-        std::mem::size_of::<DataBucketRefCountOccupiedHeader>()
+        std::mem::size_of::<DataBucketOccupiedHeader>()
     }
     fn new(capacity: Capacity) -> Self {
         assert!(matches!(capacity, Capacity::Pow2(_)));
@@ -191,22 +189,19 @@ pub struct IndexEntryPlaceInBucket<T: 'static> {
 /// stored in the index bucket
 pub struct IndexEntry<T: Clone + Copy> {
     pub(crate) key: Pubkey, // can this be smaller if we have reduced the keys into buckets already?
-    /// depends on the contents of ref_count.slot_count_enum
     contents: SingleElementOrMultipleSlots<T>,
 }
 
-/// 63 bits available for ref count
-pub(crate) const MAX_LEGAL_REFCOUNT: RefCount = RefCount::MAX >> 1;
-
-/// hold a big `RefCount` while leaving room for extra bits to be used for things like 'Occupied'
+/// store extra bits for tracking metadata such as 'Occupied'
 #[bitfield(bits = 64)]
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
-pub(crate) struct PackedRefCount {
+struct PackedHeader {
     /// whether this entry in the data file is occupied or not
-    pub(crate) occupied: B1,
-    /// ref_count of this entry. We don't need any where near 63 bits for this value
-    pub(crate) ref_count: B63,
+    occupied: B1,
+    /// Unused
+    #[skip]
+    __: B63,
 }
 
 /// required fields when an index element references the data file
@@ -273,26 +268,6 @@ impl MultipleSlots {
     pub(crate) fn data_loc(&self, storage: &BucketStorage<DataBucket>) -> u64 {
         self.storage_offset()
             << (storage.contents.capacity_pow2() - self.storage_capacity_when_created_pow2())
-    }
-
-    /// ref_count is stored in the header per cell, in `packed_ref_count`
-    pub fn set_ref_count(
-        data_bucket: &mut BucketStorage<DataBucket>,
-        data_ix: u64,
-        ref_count: RefCount,
-    ) {
-        data_bucket
-            .get_header_mut::<DataBucketRefCountOccupiedHeader>(data_ix)
-            .packed_ref_count
-            .set_ref_count(ref_count);
-    }
-
-    /// ref_count is stored in the header per cell, in `packed_ref_count`
-    pub fn ref_count(data_bucket: &BucketStorage<DataBucket>, data_ix: u64) -> RefCount {
-        data_bucket
-            .get_header::<DataBucketRefCountOccupiedHeader>(data_ix)
-            .packed_ref_count
-            .ref_count()
     }
 }
 
@@ -443,11 +418,10 @@ impl<T: Copy + PartialEq + 'static> IndexEntryPlaceInBucket<T> {
         &self,
         index_bucket: &'a BucketStorage<IndexBucket<T>>,
         data_buckets: &'a [BucketStorage<DataBucket>],
-    ) -> (&'a [T], RefCount) {
-        let mut ref_count = 1;
-        let slot_list = match self.get_slot_count_enum(index_bucket) {
+    ) -> &'a [T] {
+        match self.get_slot_count_enum(index_bucket) {
             OccupiedEnum::ZeroSlots => {
-                // num_slots is 0. This means empty slot list and ref_count=1
+                // num_slots is 0. This means empty slot list
                 &[]
             }
             OccupiedEnum::OneSlotInIndex(single_element) => {
@@ -455,21 +429,19 @@ impl<T: Copy + PartialEq + 'static> IndexEntryPlaceInBucket<T> {
                 std::slice::from_ref(single_element)
             }
             OccupiedEnum::MultipleSlots(multiple_slots) => {
-                // slot list and ref_count are in data file
+                // slot list is in the data file
                 let data_bucket_ix =
                     MultipleSlots::data_bucket_from_num_slots(multiple_slots.num_slots);
                 let data_bucket = &data_buckets[data_bucket_ix as usize];
                 let loc = multiple_slots.data_loc(data_bucket);
                 assert!(!data_bucket.is_free(loc));
 
-                ref_count = MultipleSlots::ref_count(data_bucket, loc);
                 data_bucket.get_slice::<T>(loc, multiple_slots.num_slots, IncludeHeader::NoHeader)
             }
             _ => {
                 panic!("trying to read data from a free entry");
             }
-        };
-        (slot_list, ref_count)
+        }
     }
 
     pub fn new(ix: u64) -> Self {

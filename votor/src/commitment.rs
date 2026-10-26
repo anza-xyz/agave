@@ -1,59 +1,48 @@
 use {
-    crossbeam_channel::{Sender, TrySendError},
-    solana_clock::Slot,
-    thiserror::Error,
+    crate::common::nonblocking_send, crossbeam_channel::Sender, solana_clock::Slot,
+    solana_pubkey::Pubkey,
 };
 
-#[derive(Debug, Error)]
-pub enum CommitmentError {
-    #[error("Failed to send commitment data, channel disconnected")]
-    ChannelDisconnected,
-}
-
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum CommitmentType {
     /// Our node has voted notarize for the slot
     Notarize,
-    /// We have observed a finalization certificate for the slot
-    Finalized,
+    /// Votor has selected the slot as root
+    Rooted,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CommitmentAggregationData {
     pub commitment_type: CommitmentType,
     pub slot: Slot,
 }
 
 pub fn update_commitment_cache(
+    my_pubkey: &Pubkey,
     commitment_type: CommitmentType,
     slot: Slot,
-    commitment_sender: &Sender<CommitmentAggregationData>,
-) -> Result<(), CommitmentError> {
-    match commitment_sender.try_send(CommitmentAggregationData {
+    sender: &Sender<CommitmentAggregationData>,
+) {
+    let msg = CommitmentAggregationData {
         commitment_type,
         slot,
-    }) {
-        Err(TrySendError::Disconnected(_)) => {
-            info!("commitment_sender has disconnected");
-            return Err(CommitmentError::ChannelDisconnected);
-        }
-        Err(TrySendError::Full(_)) => error!("commitment_sender is backed up, something is wrong"),
-        Ok(_) => (),
+    };
+    if let Err(channel_name) = nonblocking_send(my_pubkey, sender, msg, "commitment_sender") {
+        warn!("{my_pubkey}: channel \"{channel_name}\" disconnected");
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crossbeam_channel::unbounded};
+    use {super::*, crossbeam_channel::bounded};
 
     #[test]
     fn test_update_commitment_cache() {
-        let (commitment_sender, commitment_receiver) = unbounded();
+        let (commitment_sender, commitment_receiver) = bounded(1024);
         let slot = 3;
         let commitment_type = CommitmentType::Notarize;
-        update_commitment_cache(commitment_type, slot, &commitment_sender)
-            .expect("Failed to send commitment data");
+        let my_pubkey = Pubkey::new_unique();
+        update_commitment_cache(&my_pubkey, commitment_type, slot, &commitment_sender);
         let received_data = commitment_receiver
             .try_recv()
             .expect("Failed to receive commitment data");
@@ -65,23 +54,17 @@ mod tests {
             }
         );
         let slot = 5;
-        let commitment_type = CommitmentType::Finalized;
-        update_commitment_cache(commitment_type, slot, &commitment_sender)
-            .expect("Failed to send commitment data");
+        let commitment_type = CommitmentType::Rooted;
+        update_commitment_cache(&my_pubkey, commitment_type, slot, &commitment_sender);
         let received_data = commitment_receiver
             .try_recv()
             .expect("Failed to receive commitment data");
         assert_eq!(
             received_data,
             CommitmentAggregationData {
-                commitment_type: CommitmentType::Finalized,
+                commitment_type: CommitmentType::Rooted,
                 slot,
             }
         );
-
-        // Close the channel and ensure the error is returned
-        drop(commitment_receiver);
-        let result = update_commitment_cache(CommitmentType::Notarize, 7, &commitment_sender);
-        assert!(matches!(result, Err(CommitmentError::ChannelDisconnected)));
     }
 }

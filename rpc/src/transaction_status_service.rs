@@ -8,13 +8,13 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::izip,
     solana_clock::Slot,
-    solana_ledger::{
-        blockstore::{Blockstore, BlockstoreError},
-        blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
-    },
+    solana_ledger::blockstore::{Blockstore, BlockstoreError},
     solana_runtime::{
         bank::{Bank, KeyedRewardsAndNumPartitions},
         dependency_tracker::DependencyTracker,
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionStatusBatch, TransactionStatusMessage,
+        },
     },
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{
@@ -27,7 +27,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::{self, Builder, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     },
     thiserror::Error,
 };
@@ -37,10 +37,56 @@ enum Error {
     #[error("blockstore operation failed: {0}")]
     Blockstore(#[from] BlockstoreError),
 
+    #[error(
+        "failed to purge transaction history for slot {slot} requested by {purge_source}: {source}"
+    )]
+    PurgeTransactionHistory {
+        slot: Slot,
+        purge_source: &'static str,
+        #[source]
+        source: BlockstoreError,
+    },
+
     #[error("received nonfrozen bank: {0}")]
     NonFrozenBank(Slot),
 }
 type Result<T> = std::result::Result<T, Error>;
+
+struct Metrics {
+    /// The number of transaction status messages received
+    num_recv_messages: u64,
+    /// The number of transaction message receive timeouts
+    num_recv_timeouts: u64,
+    /// The time at which this datapoint was last submitted
+    last_report: Instant,
+}
+
+impl Metrics {
+    const NAME: &str = "transaction-status-loop-stats";
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
+    fn new() -> Self {
+        Self {
+            num_recv_messages: 0,
+            num_recv_timeouts: 0,
+            last_report: Instant::now(),
+        }
+    }
+
+    fn should_report(&self) -> bool {
+        self.last_report.elapsed() > Self::REPORT_INTERVAL
+    }
+
+    fn report_and_reset(&mut self, channel_len: usize) {
+        datapoint_info!(
+            Self::NAME,
+            ("num_recv_messages", self.num_recv_messages as i64, i64),
+            ("num_recv_timeouts", self.num_recv_timeouts as i64, i64),
+            ("message_queue_len", channel_len as i64, i64),
+        );
+        *self = Self::new();
+    }
+}
 
 // Used when draining and shutting down TSS in unit tests.
 #[cfg(feature = "dev-context-only-utils")]
@@ -72,6 +118,7 @@ impl TransactionStatusService {
             .spawn({
                 let transaction_status_receiver = transaction_status_receiver.clone();
                 move || {
+                    let mut metrics = Metrics::new();
                     info!("{} has started", Self::SERVICE_NAME);
                     loop {
                         if exit.load(Ordering::Relaxed) {
@@ -81,12 +128,16 @@ impl TransactionStatusService {
                         let message = match transaction_status_receiver
                             .recv_timeout(Duration::from_secs(1))
                         {
-                            Ok(message) => message,
+                            Ok(message) => {
+                                metrics.num_recv_messages += 1;
+                                message
+                            }
                             Err(err @ RecvTimeoutError::Disconnected) => {
                                 info!("{} is stopping because: {err}", Self::SERVICE_NAME);
                                 break;
                             }
                             Err(RecvTimeoutError::Timeout) => {
+                                metrics.num_recv_timeouts += 1;
                                 continue;
                             }
                         };
@@ -100,7 +151,14 @@ impl TransactionStatusService {
                             enable_extended_tx_metadata_storage,
                             depenency_tracker.clone(),
                         ) {
-                            Ok(_) => {}
+                            Ok(bank_frozen) => {
+                                // Only check for metrics submissions when a
+                                // bank is frozen to avoid excessive overhead
+                                if bank_frozen && metrics.should_report() {
+                                    let queue_length = transaction_status_receiver.len();
+                                    metrics.report_and_reset(queue_length);
+                                }
+                            }
                             Err(err) => {
                                 error!("{} is stopping because: {err}", Self::SERVICE_NAME);
                                 exit.store(true, Ordering::Relaxed);
@@ -127,11 +185,12 @@ impl TransactionStatusService {
         blockstore: &Blockstore,
         enable_extended_tx_metadata_storage: bool,
         dependency_tracker: Option<Arc<DependencyTracker>>,
-    ) -> Result<()> {
+    ) -> Result</*bank_frozen:*/ bool> {
         match transaction_status_message {
             TransactionStatusMessage::Batch((
                 TransactionStatusBatch {
                     slot,
+                    bank_id,
                     transactions,
                     commit_results,
                     balances,
@@ -142,7 +201,7 @@ impl TransactionStatusService {
                 work_id,
             )) => {
                 let mut status_and_memos_batch = if enable_rpc_transaction_history {
-                    Some(blockstore.get_write_batch()?)
+                    Some(blockstore.get_write_batch())
                 } else {
                     None
                 };
@@ -212,6 +271,7 @@ impl TransactionStatusService {
                         let transaction = transaction.to_versioned_transaction();
                         transaction_notifier.notify_transaction(
                             slot,
+                            bank_id,
                             transaction_index,
                             signature,
                             message_hash,
@@ -259,11 +319,13 @@ impl TransactionStatusService {
                     blockstore.write_batch(batch)?;
                 }
 
-                if let Some(dependency_tracker) = dependency_tracker.as_ref() {
-                    if let Some(work_id) = work_id {
-                        dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
-                    }
+                if let Some(dependency_tracker) = dependency_tracker.as_ref()
+                    && let Some(work_id) = work_id
+                {
+                    dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
                 }
+
+                Ok(false)
             }
             TransactionStatusMessage::Freeze(bank) => {
                 if !bank.is_frozen() {
@@ -271,9 +333,52 @@ impl TransactionStatusService {
                 }
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
+
+                Ok(true)
+            }
+            TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                source,
+                purge_input,
+                requested_at,
+                done_sender,
+            } => {
+                if enable_rpc_transaction_history {
+                    let queue_wait_us = requested_at.elapsed().as_micros();
+                    let stats = match &purge_input {
+                        TransactionHistoryPurgeInput::ReplayStage => {
+                            blockstore.purge_transaction_history_for_replay_slot_exact(slot)
+                        }
+                        TransactionHistoryPurgeInput::SwitchBank => {
+                            blockstore.purge_transaction_history_for_slot_exact(slot)
+                        }
+                        TransactionHistoryPurgeInput::Leader(transactions) => blockstore
+                            .purge_transaction_history_for_slot_transactions_exact(
+                                slot,
+                                transactions.as_slice(),
+                            ),
+                    }
+                    .map_err(|error| Error::PurgeTransactionHistory {
+                        slot,
+                        purge_source: source.as_str(),
+                        source: error,
+                    })?;
+
+                    stats.report(
+                        slot,
+                        source.as_str(),
+                        queue_wait_us,
+                        requested_at.elapsed().as_micros(),
+                    );
+                }
+
+                if let Some(done_sender) = done_sender {
+                    let _ = done_sender.send(());
+                }
+
+                Ok(false)
             }
         }
-        Ok(())
     }
 
     fn write_block_meta(bank: &Bank, blockstore: &Blockstore) -> Result<()> {
@@ -349,9 +454,9 @@ pub(crate) mod tests {
         super::*,
         crate::transaction_notifier_interface::TransactionNotifier,
         agave_reserved_account_keys::ReservedAccountKeys,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         dashmap::DashMap,
-        solana_account::state_traits::StateMut,
+        solana_account::state_traits::StateMutWincode as _,
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
@@ -364,7 +469,10 @@ pub(crate) mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_runtime::{
+            bank::{Bank, BankId, TransactionBalancesSet},
+            transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
+        },
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -384,6 +492,7 @@ pub(crate) mod tests {
     #[derive(Eq, Hash, PartialEq)]
     struct TestNotifierKey {
         slot: Slot,
+        bank_id: BankId,
         transaction_index: usize,
         message_hash: Hash,
     }
@@ -409,6 +518,7 @@ pub(crate) mod tests {
         fn notify_transaction(
             &self,
             slot: Slot,
+            bank_id: BankId,
             transaction_index: usize,
             _signature: &Signature,
             message_hash: &Hash,
@@ -419,6 +529,7 @@ pub(crate) mod tests {
             self.notifications.insert(
                 TestNotifierKey {
                     slot,
+                    bank_id,
                     transaction_index,
                     message_hash: *message_hash,
                 },
@@ -442,7 +553,7 @@ pub(crate) mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
@@ -478,7 +589,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            fee_payer_post_balance: 0,
+            fee_payer_post_balance: Some(0),
         });
 
         let balances = TransactionBalancesSet {
@@ -516,10 +627,12 @@ pub(crate) mod tests {
         };
 
         let slot = bank.slot();
+        let bank_id = bank.bank_id();
         let message_hash = *transaction.message_hash();
         let transaction_index: usize = bank.transaction_count().try_into().unwrap();
         let transaction_status_batch = TransactionStatusBatch {
             slot,
+            bank_id,
             transactions: vec![transaction],
             commit_results: vec![commit_result],
             balances,
@@ -553,6 +666,7 @@ pub(crate) mod tests {
         assert_eq!(test_notifier.notifications.len(), 1);
         let key = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index,
             message_hash,
         };
@@ -570,7 +684,7 @@ pub(crate) mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
@@ -609,7 +723,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            fee_payer_post_balance: 0,
+            fee_payer_post_balance: Some(0),
         });
 
         let balances = TransactionBalancesSet {
@@ -623,11 +737,13 @@ pub(crate) mod tests {
         };
 
         let slot = bank.slot();
+        let bank_id = bank.bank_id();
         let transaction_index1: usize = bank.transaction_count().try_into().unwrap();
         let transaction_index2: usize = transaction_index1 + 1;
 
         let transaction_status_batch = TransactionStatusBatch {
             slot,
+            bank_id,
             transactions: vec![transaction1, transaction2],
             commit_results: vec![commit_result.clone(), commit_result],
             balances: balances.clone(),
@@ -662,11 +778,13 @@ pub(crate) mod tests {
 
         let key1 = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index: transaction_index1,
             message_hash: *expected_transaction1.message_hash(),
         };
         let key2 = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index: transaction_index2,
             message_hash: *expected_transaction2.message_hash(),
         };
@@ -693,5 +811,42 @@ pub(crate) mod tests {
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
         );
+    }
+
+    #[test]
+    fn test_purge_transaction_history_error_stops_service() {
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1);
+        let transaction_status_sender = TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let exit = Arc::new(AtomicBool::new(false));
+        let transaction_status_service = TransactionStatusService::new(
+            transaction_status_receiver,
+            Arc::new(AtomicU64::default()),
+            true,
+            None,
+            blockstore,
+            false,
+            None,
+            exit.clone(),
+        );
+
+        // With no UpdateParent marker, the purge must fail without acknowledging completion.
+        assert!(
+            transaction_status_sender
+                .send_purge_transaction_history_for_slot(
+                    42,
+                    TransactionHistoryPurgeSource::UpdateParentSignal,
+                    TransactionHistoryPurgeInput::ReplayStage,
+                    /*wait_until_finished:*/ true,
+                )
+                .is_err()
+        );
+
+        transaction_status_service.join().unwrap();
+        assert!(exit.load(Ordering::Relaxed));
     }
 }

@@ -1,8 +1,5 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
+    criterion::{Criterion, criterion_group, criterion_main},
     solana_core::{
         consensus::{Tower, tower_storage::FileTowerStorage},
         vote_simulator::VoteSimulator,
@@ -14,14 +11,13 @@ use {
     std::{
         collections::{HashMap, HashSet},
         sync::Arc,
+        time::Duration,
     },
     tempfile::TempDir,
-    test::Bencher,
     trees::tr,
 };
 
-#[bench]
-fn bench_save_tower(bench: &mut Bencher) {
+fn bench_save_tower(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
 
     let vote_account_pubkey = &Pubkey::default();
@@ -38,14 +34,14 @@ fn bench_save_tower(bench: &mut Bencher) {
         &heaviest_bank,
     );
 
-    bench.iter(move || {
-        tower.save(&tower_storage, &node_keypair).unwrap();
+    c.bench_function("bench_save_tower", |b| {
+        b.iter(|| {
+            tower.save(&tower_storage, &node_keypair).unwrap();
+        })
     });
 }
 
-#[bench]
-#[ignore]
-fn bench_generate_ancestors_descendants(bench: &mut Bencher) {
+fn bench_generate_ancestors_descendants(c: &mut Criterion) {
     let vote_account_pubkey = &Pubkey::default();
     let node_keypair = Arc::new(Keypair::new());
     let heaviest_bank = BankForks::new_rw_arc(Bank::default_for_tests())
@@ -72,10 +68,25 @@ fn bench_generate_ancestors_descendants(bench: &mut Bencher) {
         &mut tower,
     );
 
-    bench.iter(move || {
-        for _ in 0..num_banks {
-            let _ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
-            let _descendants = vote_simulator.bank_forks.read().unwrap().descendants();
-        }
+    // One pass per iteration. Repeating it `num_banks` times over an unchanged
+    // fork tree only multiplied the cost; the harness picks the iteration count.
+    c.bench_function("bench_generate_ancestors_descendants", |b| {
+        b.iter(|| {
+            let bank_forks = vote_simulator.bank_forks.read().unwrap();
+            (bank_forks.ancestors(), bank_forks.descendants())
+        })
     });
 }
+
+criterion_group! {
+    name = benches;
+    // Trim criterion's defaults: both benches are dominated by a fixture that
+    // is built once, and neither needs a long window to settle.
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(250))
+        .measurement_time(Duration::from_millis(750))
+        .sample_size(10)
+        .without_plots();
+    targets = bench_save_tower, bench_generate_ancestors_descendants
+}
+criterion_main!(benches);

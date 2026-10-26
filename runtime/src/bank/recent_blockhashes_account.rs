@@ -3,10 +3,8 @@
 #[expect(deprecated)]
 use solana_sysvar::recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes};
 use {
-    solana_account::{
-        AccountSharedData, InheritableAccountFields, create_account_shared_data_with_fields,
-        to_account,
-    },
+    crate::sysvar_account::{create_account, to_account},
+    solana_account::{AccountSharedData, InheritableAccountFields},
     std::{collections::BinaryHeap, iter::FromIterator},
 };
 
@@ -32,10 +30,7 @@ pub(in crate::bank) fn create_account_with_data_and_fields<'a, I>(
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
-    let mut account = create_account_shared_data_with_fields::<RecentBlockhashes>(
-        &RecentBlockhashes::default(),
-        fields,
-    );
+    let mut account = create_account::<RecentBlockhashes>(&RecentBlockhashes::default(), fields);
     update_account(&mut account, recent_blockhash_iter).unwrap();
     account
 }
@@ -45,8 +40,9 @@ mod tests {
     #![allow(deprecated)]
     use {
         super::*,
+        crate::sysvar_account::from_account,
         rand::{rng, seq::SliceRandom},
-        solana_account::{DUMMY_INHERITABLE_ACCOUNT_FIELDS, from_account},
+        solana_account::DUMMY_INHERITABLE_ACCOUNT_FIELDS,
         solana_hash::{HASH_BYTES, Hash},
         solana_sysvar::recent_blockhashes::Entry,
     };
@@ -61,7 +57,7 @@ mod tests {
     #[test]
     fn test_create_account_empty() {
         let account = create_account_with_data_for_test(vec![]);
-        let recent_blockhashes = from_account::<RecentBlockhashes, _>(&account).unwrap();
+        let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
         assert_eq!(recent_blockhashes, RecentBlockhashes::default());
     }
 
@@ -77,7 +73,7 @@ mod tests {
             );
             MAX_ENTRIES
         ]);
-        let recent_blockhashes = from_account::<RecentBlockhashes, _>(&account).unwrap();
+        let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
         assert_eq!(recent_blockhashes.len(), MAX_ENTRIES);
     }
 
@@ -93,7 +89,7 @@ mod tests {
             );
             MAX_ENTRIES + 1
         ]);
-        let recent_blockhashes = from_account::<RecentBlockhashes, _>(&account).unwrap();
+        let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
         assert_eq!(recent_blockhashes.len(), MAX_ENTRIES);
     }
 
@@ -117,7 +113,7 @@ mod tests {
                 .iter()
                 .map(|(i, hash)| IterItem(*i, hash, def_lamports_per_signature)),
         );
-        let recent_blockhashes = from_account::<RecentBlockhashes, _>(&account).unwrap();
+        let recent_blockhashes = from_account::<RecentBlockhashes>(&account).unwrap();
 
         let mut unsorted_recent_blockhashes: Vec<_> = unsorted_blocks
             .iter()

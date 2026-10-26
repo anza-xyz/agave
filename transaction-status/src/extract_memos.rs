@@ -71,6 +71,7 @@ fn extract_memos_inner(
                 KeyType::Unknown(program_id) => {
                     if **program_id == spl_memo_interface::v1::id()
                         || **program_id == spl_memo_interface::v3::id()
+                        || **program_id == spl_memo_interface::v4::id()
                     {
                         account_keys[index] = KeyType::MemoProgram;
                         Some(&ix.data)
@@ -95,9 +96,11 @@ mod test {
         let another_program_id = Pubkey::new_unique();
         let memo0 = "Test memo";
         let memo1 = "🦖";
+        let memo2 = "Yet another memo";
         let expected_memos = vec![
             format!("[{}] {}", memo0.len(), memo0),
             format!("[{}] {}", memo1.len(), memo1),
+            format!("[{}] {}", memo2.len(), memo2),
         ];
         let memo_instructions = vec![
             CompiledInstruction {
@@ -115,12 +118,18 @@ mod test {
                 accounts: vec![],
                 data: memo1.as_bytes().to_vec(),
             },
+            CompiledInstruction {
+                program_id_index: 4,
+                accounts: vec![],
+                data: memo2.as_bytes().to_vec(),
+            },
         ];
         let static_keys = vec![
             fee_payer,
             spl_memo_interface::v1::id(),
             another_program_id,
             spl_memo_interface::v3::id(),
+            spl_memo_interface::v4::id(),
         ];
         let account_keys = AccountKeys::new(&static_keys, None);
 

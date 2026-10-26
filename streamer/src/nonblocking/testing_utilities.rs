@@ -7,18 +7,21 @@ use {
             swqos::{SwQos, SwQosConfig},
         },
         quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
-        quic_socket::QuicSocket,
-        streamer::StakedNodes,
+        streamer::{ChannelSend, StakedNodes},
     },
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crossbeam_channel::{Receiver, bounded},
     quinn::{
         ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
         crypto::rustls::QuicClientConfig,
     },
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{
-        SocketConfiguration as SocketConfig, bind_to_with_config, localhost_port_range_for_tests,
-        multi_bind_in_range_with_config, unique_port_range_for_tests,
+    solana_net_utils::{
+        quic_socket::QuicSocket,
+        sockets::{
+            SocketConfiguration as SocketConfig, bind_to_with_config,
+            localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            unique_port_range_for_tests,
+        },
     },
     solana_perf::packet::PacketBatch,
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
@@ -41,14 +44,12 @@ pub fn spawn_stake_weighted_qos_server(
     name: &'static str,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: impl ChannelSend<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
     cancel: CancellationToken,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError>
-where
-{
+) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
 
     let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
@@ -121,7 +122,7 @@ pub fn setup_quic_server(
     qos_config: SwQosConfig,
 ) -> SpawnTestServerResult {
     let sockets = create_quic_server_sockets();
-    let (sender, receiver) = unbounded();
+    let (sender, receiver) = bounded(1024);
     let keypair = Keypair::new();
     let server_address = sockets[0].local_addr().unwrap();
     let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));

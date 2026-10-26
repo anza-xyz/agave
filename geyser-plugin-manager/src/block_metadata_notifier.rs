@@ -1,21 +1,19 @@
 use {
-    crate::{
-        block_metadata_notifier_interface::BlockMetadataNotifier,
-        geyser_plugin_manager::GeyserPluginManager,
-    },
-    agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
+    crate::block_metadata_notifier_interface::BlockMetadataNotifier,
+    agave_geyser_plugin_host::GeyserPluginHost,
+    agave_geyser_plugin_interface::{
+        geyser_plugin_interface::{ReplicaBlockInfoV5, ReplicaBlockInfoVersions},
+        transaction_status_meta::{Reward, RewardsAndNumPartitions},
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::UnixTimestamp,
-    solana_runtime::bank::KeyedRewardsAndNumPartitions,
-    solana_transaction_status::{Reward, RewardsAndNumPartitions},
+    solana_runtime::bank::{BankId, KeyedRewardsAndNumPartitions},
     std::sync::Arc,
 };
 
 pub(crate) struct BlockMetadataNotifierImpl {
-    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
 }
 
 impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
@@ -25,6 +23,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         parent_slot: u64,
         parent_blockhash: &str,
         slot: u64,
+        bank_id: BankId,
         blockhash: &str,
         rewards: &KeyedRewardsAndNumPartitions,
         block_time: Option<UnixTimestamp>,
@@ -34,11 +33,23 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         commission_rate_in_basis_points: bool,
     ) {
         let plugin_manager = self.plugin_manager.load();
-        if plugin_manager.plugins.is_empty() {
+        if plugin_manager.plugins().next().is_none() {
             return;
         }
 
-        let rewards = Self::build_rewards(rewards, commission_rate_in_basis_points);
+        // Scratch buffers owned by this call; only slices into them cross
+        // the plugin boundary.
+        let reward_pubkeys: Vec<String> = rewards
+            .keyed_rewards
+            .iter()
+            .map(|(pubkey, _)| pubkey.to_string())
+            .collect();
+        let mirror_rewards: Vec<Reward> =
+            Self::build_rewards(rewards, &reward_pubkeys, commission_rate_in_basis_points);
+        let rewards = RewardsAndNumPartitions {
+            rewards: &mirror_rewards,
+            num_partitions: rewards.num_partitions,
+        };
         let block_info = Self::build_replica_block_info(
             parent_slot,
             parent_blockhash,
@@ -51,9 +62,9 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             entry_count,
         );
 
-        for plugin in plugin_manager.plugins.iter() {
-            let block_info = ReplicaBlockInfoVersions::V0_0_4(&block_info);
-            match plugin.notify_block_metadata(block_info) {
+        for plugin in plugin_manager.plugins() {
+            let block_info = ReplicaBlockInfoVersions::V0_0_5(&block_info);
+            match plugin.notify_block_metadata_for_bank(block_info, bank_id.into()) {
                 Err(err) => {
                     error!(
                         "Failed to update block metadata at slot {}, error: {} to plugin {}",
@@ -75,47 +86,47 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
 }
 
 impl BlockMetadataNotifierImpl {
-    fn build_rewards(
+    fn build_rewards<'a>(
         rewards: &KeyedRewardsAndNumPartitions,
+        reward_pubkeys: &'a [String],
         commission_rate_in_basis_points: bool,
-    ) -> RewardsAndNumPartitions {
-        RewardsAndNumPartitions {
-            rewards: rewards
-                .keyed_rewards
-                .iter()
-                .map(|(pubkey, reward)| Reward {
-                    pubkey: pubkey.to_string(),
-                    lamports: reward.lamports,
-                    post_balance: reward.post_balance,
-                    reward_type: Some(reward.reward_type),
-                    commission: if commission_rate_in_basis_points {
-                        None
-                    } else {
-                        reward.commission_bps.map(|bps| (bps / 100) as u8)
-                    },
-                    commission_bps: if commission_rate_in_basis_points {
-                        reward.commission_bps
-                    } else {
-                        None
-                    },
-                })
-                .collect(),
-            num_partitions: rewards.num_partitions,
-        }
+    ) -> Vec<Reward<'a>> {
+        rewards
+            .keyed_rewards
+            .iter()
+            .zip(reward_pubkeys)
+            .map(|((_, reward), pubkey)| Reward {
+                pubkey,
+                lamports: reward.lamports,
+                post_balance: reward.post_balance,
+                reward_type: Some(reward.reward_type),
+                commission: if commission_rate_in_basis_points {
+                    None
+                } else {
+                    reward.commission_bps.map(|bps| (bps / 100) as u8)
+                },
+                commission_bps: if commission_rate_in_basis_points {
+                    reward.commission_bps
+                } else {
+                    None
+                },
+            })
+            .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_replica_block_info<'a>(
         parent_slot: u64,
         parent_blockhash: &'a str,
         slot: u64,
         blockhash: &'a str,
-        rewards: &'a RewardsAndNumPartitions,
+        rewards: &'a RewardsAndNumPartitions<'a>,
         block_time: Option<UnixTimestamp>,
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
-    ) -> ReplicaBlockInfoV4<'a> {
-        ReplicaBlockInfoV4 {
+    ) -> ReplicaBlockInfoV5<'a> {
+        ReplicaBlockInfoV5 {
             parent_slot,
             parent_blockhash,
             slot,
@@ -128,7 +139,236 @@ impl BlockMetadataNotifierImpl {
         }
     }
 
-    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginHost>>) -> Self {
         Self { plugin_manager }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        agave_geyser_plugin_host::{GeyserPluginHost, LoadedGeyserPlugin},
+        agave_geyser_plugin_interface::geyser_plugin_interface::{
+            GeyserPlugin, GeyserPluginError, Result,
+        },
+        arc_swap::ArcSwap,
+        libloading::Library,
+        solana_accounts_db::stake_rewards::StakeRewardInfo,
+        solana_pubkey::Pubkey,
+        solana_reward_info::RewardType,
+        std::sync::{Arc, Mutex},
+    };
+
+    type BlockMetadataUpdate = (u64, u64, u64, u64);
+
+    #[derive(Debug)]
+    struct TestBlockMetadataPlugin {
+        updates: Arc<Mutex<Vec<BlockMetadataUpdate>>>,
+        rewards_debug: Arc<Mutex<Vec<String>>>,
+        fail: bool,
+    }
+
+    impl GeyserPlugin for TestBlockMetadataPlugin {
+        fn name(&self) -> &'static str {
+            "test-block-metadata-plugin"
+        }
+
+        fn notify_block_metadata_for_bank(
+            &self,
+            blockinfo: ReplicaBlockInfoVersions,
+            bank_id: u64,
+        ) -> Result<()> {
+            let ReplicaBlockInfoVersions::V0_0_5(blockinfo) = blockinfo;
+            self.updates.lock().unwrap().push((
+                blockinfo.slot,
+                bank_id,
+                blockinfo.executed_transaction_count,
+                blockinfo.entry_count,
+            ));
+            self.rewards_debug
+                .lock()
+                .unwrap()
+                .push(format!("{:?}", blockinfo.rewards));
+            if self.fail {
+                return Err(GeyserPluginError::Custom(Box::new(std::io::Error::other(
+                    "boom",
+                ))));
+            }
+            Ok(())
+        }
+    }
+
+    fn loaded_test_plugin(plugin: TestBlockMetadataPlugin) -> Arc<LoadedGeyserPlugin> {
+        #[cfg(unix)]
+        let library = libloading::os::unix::Library::this();
+        #[cfg(windows)]
+        let library = libloading::os::windows::Library::this().unwrap();
+
+        // SAFETY: This plugin is defined in the current executable and starts no background work.
+        Arc::new(unsafe { LoadedGeyserPlugin::new(Library::from(library), Box::new(plugin), None) })
+    }
+
+    #[test]
+    fn test_notify_block_metadata_includes_bank_id() {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![loaded_test_plugin(TestBlockMetadataPlugin {
+                updates: updates.clone(),
+                rewards_debug: Arc::new(Mutex::new(Vec::new())),
+                fail: false,
+            })],
+        ))));
+        let notifier = BlockMetadataNotifierImpl::new(plugin_manager);
+        let rewards = KeyedRewardsAndNumPartitions {
+            keyed_rewards: Vec::new(),
+            num_partitions: None,
+        };
+
+        notifier.notify_block_metadata(
+            41,
+            "parent-blockhash",
+            42,
+            BankId::new(9),
+            "blockhash",
+            &rewards,
+            Some(123),
+            Some(10),
+            7,
+            3,
+            false,
+        );
+
+        assert_eq!(*updates.lock().unwrap(), vec![(42, 9, 7, 3)]);
+    }
+
+    #[test]
+    fn converts_rewards_reports_errors_and_skips_empty() {
+        // Empty plugin set: dispatch returns before building anything.
+        let empty = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::default())));
+        let notifier = BlockMetadataNotifierImpl::new(empty);
+        let no_rewards = KeyedRewardsAndNumPartitions {
+            keyed_rewards: vec![],
+            num_partitions: None,
+        };
+        notifier.notify_block_metadata(
+            0,
+            "p",
+            1,
+            BankId::new(1),
+            "b",
+            &no_rewards,
+            None,
+            None,
+            0,
+            0,
+            false,
+        );
+
+        // A failing plugin first, a recording plugin second: the error is
+        // logged and must not stop delivery to the second plugin.
+        let fail_updates = Arc::new(Mutex::new(Vec::new()));
+        let fail_rewards_debug = Arc::new(Mutex::new(Vec::new()));
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let rewards_debug = Arc::new(Mutex::new(Vec::new()));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![
+                loaded_test_plugin(TestBlockMetadataPlugin {
+                    updates: fail_updates.clone(),
+                    rewards_debug: fail_rewards_debug.clone(),
+                    fail: true,
+                }),
+                loaded_test_plugin(TestBlockMetadataPlugin {
+                    updates: updates.clone(),
+                    rewards_debug: rewards_debug.clone(),
+                    fail: false,
+                }),
+            ],
+        ))));
+        let notifier = BlockMetadataNotifierImpl::new(plugin_manager);
+
+        let pk = Pubkey::new_unique();
+        // RewardInfo lives in a private runtime module; construct it through
+        // the Vec's element type via From<StakeRewardInfo>.
+        let mut keyed = KeyedRewardsAndNumPartitions {
+            keyed_rewards: vec![],
+            num_partitions: Some(2),
+        };
+        keyed.keyed_rewards.push((
+            pk,
+            StakeRewardInfo {
+                reward_type: RewardType::Staking,
+                lamports: 5,
+                post_balance: 100,
+                commission_bps: Some(300),
+            }
+            .into(),
+        ));
+        notifier.notify_block_metadata(
+            41,
+            "ph",
+            42,
+            BankId::new(9),
+            "bh",
+            &keyed,
+            None,
+            None,
+            7,
+            3,
+            false,
+        );
+        notifier.notify_block_metadata(
+            42,
+            "ph",
+            43,
+            BankId::new(9),
+            "bh",
+            &keyed,
+            None,
+            None,
+            7,
+            3,
+            true,
+        );
+
+        let pk_s = pk.to_string();
+        let expected_pct = format!(
+            "{:?}",
+            RewardsAndNumPartitions {
+                rewards: &[Reward {
+                    pubkey: &pk_s,
+                    lamports: 5,
+                    post_balance: 100,
+                    reward_type: Some(RewardType::Staking),
+                    commission: Some(3),
+                    commission_bps: None,
+                }],
+                num_partitions: Some(2),
+            }
+        );
+        let expected_bps = format!(
+            "{:?}",
+            RewardsAndNumPartitions {
+                rewards: &[Reward {
+                    pubkey: &pk_s,
+                    lamports: 5,
+                    post_balance: 100,
+                    reward_type: Some(RewardType::Staking),
+                    commission: None,
+                    commission_bps: Some(300),
+                }],
+                num_partitions: Some(2),
+            }
+        );
+        assert_eq!(
+            *rewards_debug.lock().unwrap(),
+            vec![expected_pct.clone(), expected_bps.clone()]
+        );
+        assert_eq!(
+            *fail_rewards_debug.lock().unwrap(),
+            vec![expected_pct, expected_bps]
+        );
+        assert_eq!(updates.lock().unwrap().len(), 2);
+        assert_eq!(fail_updates.lock().unwrap().len(), 2);
     }
 }

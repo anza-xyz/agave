@@ -1,6 +1,7 @@
 use {
-    crate::Config, solana_clap_utils::input_validators::normalize_to_url_if_moniker,
-    solana_commitment_config::CommitmentConfig, std::str::FromStr,
+    crate::Config,
+    solana_commitment_config::CommitmentConfig,
+    std::{str::FromStr, sync::Once},
 };
 
 pub enum SettingType {
@@ -122,5 +123,43 @@ impl Default for ConfigInput {
             keypair_path: Self::default_keypair_path(),
             commitment: CommitmentConfig::confirmed(),
         }
+    }
+}
+
+pub fn normalize_to_url_if_moniker<T: AsRef<str>>(url_or_moniker: T) -> String {
+    match url_or_moniker.as_ref() {
+        "m" | "mainnet" => "https://api.mainnet.solana.com",
+        "mainnet-beta" => {
+            static WARN_MAINNET_BETA: Once = Once::new();
+            WARN_MAINNET_BETA.call_once(|| {
+                eprintln!(
+                    "Warning: Solana is no longer in beta! The `mainnet-beta` moniker is \
+                     deprecated, use `mainnet` or `-um` instead."
+                );
+            });
+            "https://api.mainnet.solana.com"
+        }
+        "t" | "testnet" => "https://api.testnet.solana.com",
+        "d" | "devnet" => "https://api.devnet.solana.com",
+        "l" | "localhost" => "http://localhost:8899",
+        url => url,
+    }
+    .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_to_url_if_moniker() {
+        let mainnet = "https://api.mainnet.solana.com";
+        assert_eq!(normalize_to_url_if_moniker("m"), mainnet);
+        assert_eq!(normalize_to_url_if_moniker("mainnet"), mainnet);
+        assert_eq!(normalize_to_url_if_moniker("mainnet-beta"), mainnet);
+        assert_eq!(
+            normalize_to_url_if_moniker("https://example.com"),
+            "https://example.com"
+        );
     }
 }

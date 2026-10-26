@@ -30,7 +30,10 @@ pub fn parse_vote(data: &[u8], vote_pubkey: &Pubkey) -> Result<VoteAccountType, 
     Ok(VoteAccountType::Vote(UiVoteState {
         node_pubkey: vote_state.node_pubkey.to_string(),
         authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
-        commission: (vote_state.inflation_rewards_commission_bps / 100) as u8,
+        commission: vote_state
+            .inflation_rewards_commission_bps
+            .div_ceil(100)
+            .min(u8::MAX as u16) as u8,
         votes,
         root_slot: vote_state.root_slot,
         authorized_voters,

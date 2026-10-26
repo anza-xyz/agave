@@ -3,7 +3,7 @@ pub(crate) mod tests {
     use {
         agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
         rand::Rng,
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_clock::Clock,
         solana_instruction::Instruction,
@@ -108,7 +108,7 @@ pub(crate) mod tests {
 
         let account = AccountSharedData::create_from_existing_shared_data(
             1,
-            Arc::new(bincode::serialize(&stake_account).unwrap()),
+            Arc::new(wincode::serialize(&stake_account).unwrap()),
             stake_program::id(),
             false,
             u64::MAX,

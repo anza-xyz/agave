@@ -20,7 +20,7 @@ pub enum GossipError {
     #[error("send error")]
     SendError,
     #[error("serialization error")]
-    Serialize(#[from] Box<bincode::ErrorKind>),
+    Serialize(#[from] wincode::Error),
 }
 
 impl<T> std::convert::From<SendError<T>> for GossipError {

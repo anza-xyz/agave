@@ -13,7 +13,7 @@ use {
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_structure::FeeStructure,
     solana_keypair::{Keypair, keypair_from_seed},
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
     solana_nonce::state::State as NonceState,
@@ -520,10 +520,13 @@ async fn test_transfer_all(compute_unit_price: Option<u64>) {
             ));
         }
         let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
-        let sample_message =
-            Message::new_with_blockhash(&instructions, Some(&default_signer.pubkey()), &blockhash);
+        let sample_message = VersionedMessage::Legacy(Message::new_with_blockhash(
+            &instructions,
+            Some(&default_signer.pubkey()),
+            &blockhash,
+        ));
         rpc_client
-            .get_fee_for_message(&sample_message)
+            .get_fee_for_versioned_message(&sample_message)
             .await
             .unwrap()
     };

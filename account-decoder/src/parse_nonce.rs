@@ -1,12 +1,12 @@
 use {
     crate::{UiFeeCalculator, parse_account_data::ParseAccountError},
     serde::{Deserialize, Serialize},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_nonce::{state::State, versions::Versions},
 };
 
 pub fn parse_nonce(data: &[u8]) -> Result<UiNonceState, ParseAccountError> {
-    let nonce_versions: Versions = bincode::deserialize(data)
+    let nonce_versions: Versions = wincode::deserialize(data)
         .map_err(|_| ParseAccountError::from(InstructionError::InvalidAccountData))?;
     match nonce_versions.state() {
         // This prevents parsing an allocated System-owned account with empty data of any non-zero
@@ -55,7 +55,7 @@ mod test {
     #[test]
     fn test_parse_nonce() {
         let nonce_data = Versions::new(State::Initialized(Data::default()));
-        let nonce_account_data = bincode::serialize(&nonce_data).unwrap();
+        let nonce_account_data = wincode::serialize(&nonce_data).unwrap();
         assert_eq!(
             parse_nonce(&nonce_account_data).unwrap(),
             UiNonceState::Initialized(UiNonceData {

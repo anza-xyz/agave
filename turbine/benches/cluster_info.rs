@@ -7,7 +7,8 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::{ProcessShredsStats, Shredder},
     },
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_pubkey as pubkey,
@@ -39,6 +40,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
     let bank = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank);
     let root_bank = bank_forks.read().unwrap().root_bank();
+    let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
 
     const NUM_SHREDS: usize = 32;
 
@@ -51,17 +53,16 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
     .unwrap();
 
     let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
-    let data_shreds = shredder.make_merkle_shreds_from_entries(
+    let mut shreds = shredder.make_merkle_shreds_from_entries(
         &leader_keypair,
         &entries,
         true,            // is_last_in_slot
         Hash::default(), // chained_merkle_root
         0,               // next_shred_index
         0,               // next_code_index
-        &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
-    let shreds: Vec<_> = data_shreds.take(NUM_SHREDS).collect();
+    shreds.truncate(NUM_SHREDS);
 
     let mut stakes = HashMap::new();
     const NUM_PEERS: usize = 200;
@@ -88,6 +89,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
             &mut TransmitShredsStats::default(),
             &cluster_info,
             &bank_forks,
+            &leader_schedule_cache,
             &SocketAddrSpace::Unspecified,
         )
         .unwrap();

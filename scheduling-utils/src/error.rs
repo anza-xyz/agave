@@ -3,15 +3,21 @@ use {
     solana_transaction_error::TransactionError,
 };
 
-/// Translate
-pub fn transaction_result_to_not_included_reason(result: &Result<(), TransactionError>) -> u8 {
+/// Translate a transaction result into an external scheduler response reason.
+pub fn transaction_result_to_not_included_reason(
+    result: &Result<(), TransactionError>,
+    all_or_nothing: bool,
+) -> u8 {
     match result {
         Ok(()) => not_included_reasons::NONE,
-        Err(err) => transaction_error_to_not_included_reason(err),
+        Err(err) => transaction_error_to_not_included_reason(err, all_or_nothing),
     }
 }
 
-pub fn transaction_error_to_not_included_reason(error: &TransactionError) -> u8 {
+pub fn transaction_error_to_not_included_reason(
+    error: &TransactionError,
+    all_or_nothing: bool,
+) -> u8 {
     match error {
         TransactionError::AccountInUse => not_included_reasons::ACCOUNT_IN_USE,
         TransactionError::AccountLoadedTwice => not_included_reasons::ACCOUNT_LOADED_TWICE,
@@ -88,7 +94,53 @@ pub fn transaction_error_to_not_included_reason(error: &TransactionError) -> u8 
             not_included_reasons::PROGRAM_CACHE_HIT_MAX_LIMIT
         }
 
-        // SPECIAL CASE - CommitCancelled is an internal error reused to avoid breaking sdk
-        TransactionError::CommitCancelled => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+        // SPECIAL CASE - CommitCancelled is an internal error reused to avoid breaking sdk.
+        // BailOut is the sdk variant that replaces it and carries the same meaning: the
+        // transaction was discarded to protect the leader, never reaching consensus.
+        TransactionError::CommitCancelled | TransactionError::BailOut => {
+            batch_cancelled(all_or_nothing)
+        }
+
+        // `TransactionError` is `#[non_exhaustive]`, so the match needs a wildcard.
+        // `test_every_variant_has_a_reason` walks `VARIANTS` and fails if any variant
+        // reaches it, which is what makes this unreachable.
+        _ => unreachable!("no not-included reason for {error:?}"),
+    }
+}
+
+fn batch_cancelled(all_or_nothing: bool) -> u8 {
+    if all_or_nothing {
+        not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
+    } else {
+        not_included_reasons::PARTIAL_BATCH_CANCELLED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, agave_scheduler_bindings::worker_message_types::not_included_reasons};
+
+    #[test]
+    fn test_commit_cancelled_maps_by_batch_mode() {
+        assert_eq!(
+            transaction_error_to_not_included_reason(&TransactionError::CommitCancelled, true),
+            not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
+        );
+        assert_eq!(
+            transaction_error_to_not_included_reason(&TransactionError::CommitCancelled, false),
+            not_included_reasons::PARTIAL_BATCH_CANCELLED
+        );
+    }
+
+    /// Every variant must reach a reason code rather than the `#[non_exhaustive]`
+    /// wildcard. This is what lets that wildcard be `unreachable!()`, so a variant
+    /// without a code panics here instead of in the scheduler.
+    #[test]
+    fn test_every_variant_has_a_reason() {
+        for error in TransactionError::VARIANTS {
+            for all_or_nothing in [false, true] {
+                transaction_error_to_not_included_reason(&error, all_or_nothing);
+            }
+        }
     }
 }

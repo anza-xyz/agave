@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
@@ -9,9 +11,9 @@ use {
 };
 
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "BBjevJKZyxpH1c6op3oD7xpYwVuMxDR5MJhHN8W6z1u6")
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(abi_digest = "BZedcpj1BV5iCF1n7Tt62rbyfY4gm6D5Fjtj5dDtGSh5")
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum VoteTransaction {

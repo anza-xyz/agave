@@ -4,14 +4,12 @@ use {
     crate::{
         error::{LedgerToolError, Result},
         ledger_path::canonicalize_ledger_path,
-        ledger_utils::get_program_ids,
         output::{CliDuplicateSlotProof, SlotBounds, SlotInfo, output_ledger, output_slot},
     },
     chrono::{DateTime, Utc},
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit, values_t_or_exit,
     },
-    itertools::Itertools,
     log::*,
     regex::Regex,
     serde_json::json,
@@ -28,11 +26,13 @@ use {
         blockstore_options::AccessType,
         shred::Shred,
     },
+    solana_svm_transaction::svm_message::SVMStaticMessage,
+    solana_transaction::versioned::sanitized::SanitizedVersionedTransaction,
     std::{
         borrow::Cow,
-        collections::{BTreeMap, BTreeSet, HashMap},
+        collections::{BTreeMap, BTreeSet},
         fs::File,
-        io::{BufRead, BufReader, Write, stdout},
+        io::{BufRead, BufReader},
         path::{Path, PathBuf},
         sync::atomic::AtomicBool,
         time::{Duration, UNIX_EPOCH},
@@ -165,15 +165,32 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
 
 /// Returns true if the supplied slot contains any nonvote transactions
 fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
+    let Some(slot_meta) = blockstore.meta(slot).expect("Failed to get slot meta") else {
+        return false;
+    };
+
     let (entries, _, _) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, false)
+        .get_slot_entries_with_shred_info(slot, u64::from(slot_meta.replay_fec_set_index), false)
         .expect("Failed to get slot entries");
-    let contains_nonvote = entries
-        .iter()
-        .flat_map(|entry| entry.transactions.iter())
-        .flat_map(get_program_ids)
-        .any(|program_id| *program_id != solana_vote_program::id());
-    contains_nonvote
+
+    entries
+        .into_iter()
+        .flat_map(|entry| entry.transactions.into_iter())
+        .enumerate()
+        .any(
+            |(transaction_index, tx)| match SanitizedVersionedTransaction::try_new(tx) {
+                Ok(transaction) => transaction
+                    .program_instructions_iter()
+                    .any(|(program_id, _)| *program_id != solana_vote_program::id()),
+                Err(err) => {
+                    error!(
+                        "Failed to sanitize transaction {transaction_index} in slot {slot}: \
+                         {err:?}"
+                    );
+                    true
+                }
+            },
+        )
 }
 
 type OptimisticSlotInfo = (Slot, Option<(Hash, UnixTimestamp)>, bool);
@@ -382,17 +399,6 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .help("First root to start searching from"),
             )
             .arg(
-                Arg::with_name("slot_list")
-                    .long("slot-list")
-                    .value_name("FILENAME")
-                    .required(false)
-                    .takes_value(true)
-                    .help(
-                        "The location of the output YAML file. A list of rollback slot heights \
-                         and hashes will be written to the file",
-                    ),
-            )
-            .arg(
                 Arg::with_name("num_roots")
                     .long("num-roots")
                     .value_name("NUM")
@@ -467,14 +473,6 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                 "Ending slot to stop purging (inclusive). [default: the highest slot in the \
                  ledger]",
             ))
-            .arg(
-                Arg::with_name("batch_size")
-                    .long("batch-size")
-                    .value_name("NUM")
-                    .takes_value(true)
-                    .default_value("1000")
-                    .help("Removes at most BATCH_SIZE slots while purging in loop"),
-            )
             .arg(
                 Arg::with_name("dead_slots_only")
                     .long("dead-slots-only")
@@ -646,6 +644,8 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 arg_matches,
                 AccessType::PrimaryForMaintenance,
             );
+            let mut pinnable_slice = target.new_pinnable_slice();
+            let mut write_batch = target.get_write_batch();
 
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
@@ -653,7 +653,10 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 }
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                if target.insert_cow_shreds(shreds, None, true).is_err() {
+                if target
+                    .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
+                    .is_err()
+                {
                     warn!("error inserting shreds for slot {slot}");
                 }
             }
@@ -689,10 +692,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let slots =
                 get_latest_optimistic_slots(&blockstore, num_slots, exclude_vote_only_slots);
 
-            println!(
-                "{:>20} {:>44} {:>32} {:>13}",
-                "Slot", "Bank Hash", "Timestamp", "Vote Only?"
-            );
             for (slot, hash_and_timestamp_opt, contains_nonvote) in slots.iter() {
                 let (time_str, hash_str) = if let Some((hash, timestamp)) = hash_and_timestamp_opt {
                     let secs: u64 = (timestamp / 1_000) as u64;
@@ -705,9 +704,10 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     let unknown = "Unknown";
                     (String::from(unknown), String::from(unknown))
                 };
+                let vote_only = !contains_nonvote;
                 println!(
-                    "{:>20} {:>44} {:>32} {:>13}",
-                    slot, &hash_str, &time_str, !contains_nonvote
+                    "Slot {slot}\n  Bank Hash: {hash_str:>44}, Timestamp: {time_str}, Vote Only: \
+                     {vote_only}",
                 );
             }
         }
@@ -721,15 +721,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
 
             let iter = blockstore.rooted_slot_iterator(start_root)?;
 
-            let mut output: Box<dyn Write> = if let Some(path) = arg_matches.value_of("slot_list") {
-                match File::create(path) {
-                    Ok(file) => Box::new(file),
-                    _ => Box::new(stdout()),
-                }
-            } else {
-                Box::new(stdout())
-            };
-
             for slot in iter
                 .take(num_roots)
                 .take_while(|slot| *slot <= max_height as u64)
@@ -737,8 +728,15 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 .into_iter()
                 .rev()
             {
-                let blockhash = blockstore.get_slot_entries(slot, 0)?.last().unwrap().hash;
-                writeln!(output, "{slot}: {blockhash:?}").expect("failed to write");
+                let slot_meta = blockstore
+                    .meta(slot)?
+                    .ok_or(BlockstoreError::SlotUnavailable)?;
+                let blockhash = blockstore
+                    .get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?
+                    .last()
+                    .unwrap()
+                    .hash;
+                println!("{slot}: {blockhash:?}");
             }
         }
         ("parse_full_frozen", Some(arg_matches)) => {
@@ -830,7 +828,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let start_slot = value_t_or_exit!(arg_matches, "start_slot", Slot);
             let end_slot = value_t!(arg_matches, "end_slot", Slot).ok();
             let dead_slots_only = arg_matches.is_present("dead_slots_only");
-            let batch_size = value_t_or_exit!(arg_matches, "batch_size", usize);
 
             let blockstore = crate::open_blockstore(
                 &ledger_path,
@@ -856,41 +853,23 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 )));
             }
 
-            info!(
-                "Purging data from slots {} to {} ({} slots) (dead slot only: {})",
-                start_slot,
-                end_slot,
-                end_slot - start_slot,
-                dead_slots_only,
-            );
-            let purge_from_blockstore =
-                |start_slot, end_slot| -> std::result::Result<(), BlockstoreError> {
-                    blockstore.purge_from_next_slots(start_slot, end_slot);
-                    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact)
-                };
             if !dead_slots_only {
-                let slots_iter = &(start_slot..=end_slot).chunks(batch_size);
-                for slots in slots_iter {
-                    let slots = slots.collect::<Vec<_>>();
-                    assert!(!slots.is_empty());
-
-                    let start_slot = *slots.first().unwrap();
-                    let end_slot = *slots.last().unwrap();
-                    info!(
-                        "Purging chunked slots from {} to {} ({} slots)",
-                        start_slot,
-                        end_slot,
-                        end_slot - start_slot
-                    );
-                    purge_from_blockstore(start_slot, end_slot)?;
-                }
+                blockstore.purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)?;
             } else {
-                let dead_slots_iter = blockstore
+                let dead_slots: Vec<_> = blockstore
                     .dead_slots_iterator(start_slot)?
-                    .take_while(|s| *s <= end_slot);
-                for dead_slot in dead_slots_iter {
+                    .take_while(|s| *s <= end_slot)
+                    .collect();
+                // Iterate the slots in reverse order so that purging does not
+                // retain an empty `SlotMeta` for dead slots that are chained to
+                // each other
+                for dead_slot in dead_slots.into_iter().rev() {
                     info!("Purging dead slot {dead_slot}");
-                    purge_from_blockstore(dead_slot, dead_slot)?;
+                    blockstore.purge_slots_cleanup_chaining(
+                        dead_slot,
+                        dead_slot,
+                        PurgeType::Exact,
+                    )?;
                 }
             }
         }
@@ -1003,7 +982,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     allow_dead_slots,
                     &output_format,
                     verbose_level,
-                    &mut HashMap::new(),
                 )?;
             }
         }
@@ -1016,8 +994,98 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
 pub mod tests {
     use {
         super::*,
-        solana_ledger::{blockstore::make_many_slot_entries, get_tmp_ledger_path_auto_delete},
+        solana_entry::entry::next_versioned_entry,
+        solana_instruction::Instruction,
+        solana_ledger::{
+            blockstore::{entries_to_test_shreds, make_many_slot_entries},
+            get_tmp_ledger_path_auto_delete,
+        },
+        solana_message::{Message, VersionedMessage, v0},
+        solana_pubkey::Pubkey,
+        solana_signature::Signature,
+        solana_transaction::versioned::VersionedTransaction,
+        test_case::{test_case, test_matrix},
     };
+
+    fn new_legacy_transaction(program_id: Pubkey) -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let instructions = [Instruction::new_with_bytes(program_id, &[], vec![])];
+        VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::Legacy(Message::new(&instructions, Some(&payer))),
+        }
+    }
+
+    fn new_v0_transaction(program_id: Pubkey) -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let instructions = [Instruction::new_with_bytes(program_id, &[], vec![])];
+        VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(
+                v0::Message::try_compile(&payer, &instructions, &[], Hash::default()).unwrap(),
+            ),
+        }
+    }
+
+    #[test_case(new_legacy_transaction(solana_vote_program::id()), false)]
+    #[test_case(new_legacy_transaction(Pubkey::new_unique()), true)]
+    #[test_case(new_v0_transaction(solana_vote_program::id()), false)]
+    #[test_case(new_v0_transaction(Pubkey::new_unique()), true)]
+    fn test_slot_contains_nonvote_tx(transaction: VersionedTransaction, is_nonvote: bool) {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let entry = next_versioned_entry(&Hash::default(), 1, vec![transaction]);
+        let shreds = entries_to_test_shreds(&[entry], 1, 0, true, 0);
+
+        blockstore.insert_shreds(shreds, false).unwrap();
+
+        assert_eq!(slot_contains_nonvote_tx(&blockstore, 1), is_nonvote);
+    }
+
+    enum SanitizationFailure {
+        MissingSignatures,
+        InvalidProgramIdIndex,
+    }
+
+    #[test_matrix(
+        [
+            new_legacy_transaction(Pubkey::new_unique()),
+            new_v0_transaction(Pubkey::new_unique()),
+        ],
+        [SanitizationFailure::MissingSignatures, SanitizationFailure::InvalidProgramIdIndex]
+    )]
+    fn test_slot_contains_nonvote_tx_includes_unsanitized_transaction(
+        mut transaction: VersionedTransaction,
+        failure: SanitizationFailure,
+    ) {
+        match failure {
+            SanitizationFailure::MissingSignatures => transaction.signatures.clear(),
+            SanitizationFailure::InvalidProgramIdIndex => {
+                let instructions = match &mut transaction.message {
+                    VersionedMessage::Legacy(message) => &mut message.instructions,
+                    VersionedMessage::V0(message) => &mut message.instructions,
+                    VersionedMessage::V1(message) => &mut message.instructions,
+                };
+                instructions[0].program_id_index = u8::MAX;
+            }
+        }
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let entry = next_versioned_entry(
+            &Hash::default(),
+            1,
+            vec![
+                new_legacy_transaction(solana_vote_program::id()),
+                transaction,
+            ],
+        );
+        let shreds = entries_to_test_shreds(&[entry], 1, 0, true, 0);
+
+        blockstore.insert_shreds(shreds, false).unwrap();
+
+        assert!(slot_contains_nonvote_tx(&blockstore, 1));
+    }
 
     #[test]
     fn test_latest_optimistic_ancestors() {
@@ -1029,7 +1097,7 @@ pub mod tests {
         let num_slots = 5;
         let entries_per_shred = 5;
         let (shreds, _) = make_many_slot_entries(start_slot, num_slots, entries_per_shred);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         // Mark even shreds as optimistically confirmed
         (0..num_slots).step_by(2).for_each(|slot| {

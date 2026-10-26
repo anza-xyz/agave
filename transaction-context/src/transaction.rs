@@ -1,23 +1,68 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT;
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
-        IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
-        MAX_ACCOUNTS_PER_TRANSACTION,
+        DropOnBailOut, IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
+        MAX_ACCOUNT_DATA_LEN, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_ACCOUNTS_PER_TRANSACTION,
         instruction::{InstructionContext, InstructionFrame},
-        instruction_accounts::InstructionAccount,
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
         vm_addresses::{
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
+            GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
         },
-        vm_slice::VmSlice,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_instructions_sysvar as instructions,
-    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
+use {
+    crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
+    solana_pubkey::Pubkey,
+};
+
+#[derive(Debug)]
+pub struct ComputeMeter(Cell<u64>);
+
+impl ComputeMeter {
+    /// Consume compute units
+    pub fn consume_unchecked(&self, amount: u64) {
+        let compute_meter = self.0.get();
+        self.0.set(compute_meter.saturating_sub(amount));
+    }
+
+    /// Consume compute units and check for ComputationalBudgetExceeded
+    pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn std::error::Error>> {
+        let compute_meter = self.0.get();
+        let exceeded = compute_meter < amount;
+        self.0.set(compute_meter.saturating_sub(amount));
+        if exceeded {
+            return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
+        }
+        Ok(())
+    }
+
+    /// Set compute units
+    ///
+    /// Only use for tests and benchmarks
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn mock_set_remaining(&self, remaining: u64) {
+        self.0.set(remaining);
+    }
+
+    /// Returns the remaining compute units
+    pub fn get_remaining(&self) -> u64 {
+        self.0.get()
+    }
+
+    /// Construct from compute units
+    pub fn new(remaining: u64) -> Self {
+        Self(Cell::new(remaining))
+    }
+}
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
 pub type InstructionTrace<'ix_data> = (
@@ -37,7 +82,9 @@ struct TransactionFrame {
     return_data_pubkey: Pubkey,
     return_data_scratchpad: VmSlice<u8>,
     /// Scratchpad for programs to write CPI instruction data
-    cpi_scratchpad: VmSlice<u8>,
+    pub cpi_data_scratchpad: VmSlice<u8>,
+    /// Scratchpad for programs to write CPI accounts
+    pub cpi_accounts_scratchpad: VmSlice<InstructionAccount>,
     /// Index of current executing instruction
     current_executing_instruction: u16,
     /// Number of instructions in the instruction trace (including top level and CPIs)
@@ -46,6 +93,24 @@ struct TransactionFrame {
     number_of_cpis_in_trace: u16,
     /// Number of transaction accounts
     number_of_transaction_accounts: u16,
+}
+
+#[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
+impl TransactionFrame {
+    fn configure_cpi(&mut self) {
+        self.total_number_of_instructions_in_trace =
+            self.total_number_of_instructions_in_trace.saturating_add(1);
+        let next_data_ptr = self
+            .cpi_data_scratchpad
+            .ptr()
+            .saturating_add(GUEST_REGION_SIZE);
+        self.cpi_data_scratchpad = VmSlice::new(next_data_ptr, 0);
+        let next_accounts_ptr = self
+            .cpi_accounts_scratchpad
+            .ptr()
+            .saturating_add(GUEST_REGION_SIZE);
+        self.cpi_accounts_scratchpad = VmSlice::new(next_accounts_ptr, 0);
+    }
 }
 
 /// Loaded transaction shared between runtime and programs.
@@ -62,12 +127,18 @@ pub struct TransactionContext<'ix_data> {
     transaction_frame: TransactionFrame,
     return_data_bytes: Vec<u8>,
     next_top_level_instruction_index: usize,
+    /// Instruction compute meter, for tracking compute units consumed against
+    /// the designated compute budget during program execution.
+    #[cfg(not(target_os = "solana"))]
+    pub compute_meter: ComputeMeter,
+    #[cfg(not(target_os = "solana"))]
+    pub(crate) lamports_delta: Cell<i128>,
     #[cfg(not(target_os = "solana"))]
     pub(crate) rent: Rent,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
     /// Each entry in `deduplication_maps` represents the deduplication map for each instruction.
-    deduplication_maps: Vec<Box<[u16]>>,
+    deduplication_maps: Vec<Box<[u8]>>,
     /// Each entry in `instruction_accounts` represents the array of accounts for each instruction.
     instruction_accounts: Vec<Box<[InstructionAccount]>>,
     /// Each entry in `instruction_data` represents the data for instruction at the corresponding
@@ -78,18 +149,26 @@ pub struct TransactionContext<'ix_data> {
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl<'ix_data> TransactionContext<'ix_data> {
     /// Constructs a new TransactionContext
-    pub fn new(
+    pub fn new_with_feature_flags(
         transaction_accounts: Vec<KeyedAccountSharedData>,
         rent: Rent,
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
         number_of_top_level_instructions: usize,
+        compute_meter: ComputeMeter,
+        drop_on_bail_out: DropOnBailOut,
     ) -> Self {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
             return_data_scratchpad: VmSlice::new(RETURN_DATA_SCRATCHPAD, 0),
-            cpi_scratchpad: VmSlice::new(
+            cpi_data_scratchpad: VmSlice::new(
                 GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
+                    GUEST_REGION_SIZE.saturating_mul(number_of_top_level_instructions as u64),
+                ),
+                0,
+            ),
+            cpi_accounts_scratchpad: VmSlice::new(
+                GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(
                     GUEST_REGION_SIZE.saturating_mul(number_of_top_level_instructions as u64),
                 ),
                 0,
@@ -109,7 +188,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
         );
 
         Self {
-            accounts: Rc::new(TransactionAccounts::new(transaction_accounts)),
+            accounts: Rc::new(TransactionAccounts::new_with_feature_flags(
+                transaction_accounts,
+                drop_on_bail_out,
+            )),
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
@@ -117,11 +199,33 @@ impl<'ix_data> TransactionContext<'ix_data> {
             return_data_bytes: Vec::new(),
             transaction_frame,
             next_top_level_instruction_index: 0,
+            compute_meter,
+            lamports_delta: Cell::new(0),
             rent,
             instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
             deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
             instruction_data: Vec::with_capacity(instruction_trace_capacity),
         }
+    }
+
+    /// Constructs a new TransactionContext with all features active
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new(
+        transaction_accounts: Vec<KeyedAccountSharedData>,
+        rent: Rent,
+        instruction_stack_capacity: usize,
+        instruction_trace_capacity: usize,
+        number_of_top_level_instructions: usize,
+    ) -> Self {
+        Self::new_with_feature_flags(
+            transaction_accounts,
+            rent,
+            instruction_stack_capacity,
+            instruction_trace_capacity,
+            number_of_top_level_instructions,
+            ComputeMeter::new(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64),
+            DropOnBailOut::Disabled,
+        )
     }
 
     /// Used in mock_process_instruction
@@ -135,6 +239,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .deconstruct_into_account_shared_data();
 
         Ok(accounts)
+    }
+
+    pub(crate) fn add_lamports_delta(&self, balance: i128) -> Result<(), InstructionError> {
+        let delta = self.lamports_delta.get();
+        self.lamports_delta.set(
+            delta
+                .checked_add(balance)
+                .ok_or(InstructionError::ArithmeticOverflow)?,
+        );
+        Ok(())
     }
 
     pub fn accounts(&self) -> &Rc<TransactionAccounts> {
@@ -279,11 +393,20 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_index: usize,
         program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
-        deduplication_map: Vec<u16>,
+        deduplication_map: Vec<u8>,
         instruction_data: Cow<'ix_data, [u8]>,
         caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
-        debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
+        // The deduplication map reserves u8::MAX for an absent account, and
+        // the SBF parameter ABI reserves it as the non-duplicate marker.
+        if instruction_accounts.len() > MAX_ACCOUNTS_PER_INSTRUCTION {
+            return Err(InstructionError::MaxAccountsExceeded);
+        }
+
+        debug_assert_eq!(
+            deduplication_map.len(),
+            usize::from(self.get_number_of_accounts()).min(MAX_ACCOUNTS_PER_TRANSACTION)
+        );
 
         let instruction = self
             .instruction_trace
@@ -292,17 +415,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
         // If we have a parent index, then we are dealing with a CPI.
         if let Some(caller_index) = caller_index {
-            self.transaction_frame.total_number_of_instructions_in_trace = self
-                .transaction_frame
-                .total_number_of_instructions_in_trace
-                .saturating_add(1);
             instruction.index_of_caller_instruction = caller_index;
-            let next_ptr = self
-                .transaction_frame
-                .cpi_scratchpad
-                .ptr()
-                .saturating_add(GUEST_REGION_SIZE);
-            self.transaction_frame.cpi_scratchpad = VmSlice::new(next_ptr, 0);
+            self.transaction_frame.configure_cpi();
         }
 
         instruction.program_account_index_in_tx = program_index;
@@ -319,29 +433,80 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(())
     }
 
-    /// For tests only
-    fn deduplicate_accounts_for_tests(instruction_accounts: &[InstructionAccount]) -> Vec<u16> {
-        let mut dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
-        for (idx, account) in instruction_accounts.iter().enumerate() {
-            let index_in_instruction = dedup_map
-                .get_mut(account.index_in_transaction as usize)
+    fn deduplicate_accounts(
+        num_accounts: usize,
+        instruction_accounts: &mut [InstructionAccount],
+    ) -> Vec<u8> {
+        let mut dedup_map = vec![u8::MAX; num_accounts];
+        for idx_in_ix in 0..instruction_accounts.len() {
+            let first_occurrence_in_ix = dedup_map
+                .get_mut(
+                    instruction_accounts
+                        .get(idx_in_ix)
+                        .unwrap()
+                        .index_in_transaction as usize,
+                )
                 .unwrap();
-            if *index_in_instruction == u16::MAX {
-                *index_in_instruction = idx as u16;
+            if *first_occurrence_in_ix == u8::MAX {
+                *first_occurrence_in_ix = idx_in_ix as u8;
+            } else {
+                // Let's update the signer and writable flags for the first appearance of this
+                // account.
+                let [this_account, other_account] = instruction_accounts
+                    .get_disjoint_mut([idx_in_ix, *first_occurrence_in_ix as usize])
+                    .expect("Accounts indices must exist in array");
+
+                other_account.set_is_signer(other_account.is_signer() || this_account.is_signer());
+                other_account
+                    .set_is_writable(other_account.is_writable() || this_account.is_writable());
             }
         }
+
+        Self::replicate_account_flags(instruction_accounts, &dedup_map);
         dedup_map
+    }
+
+    /// Replicate account flags to duplicated accounts.
+    /// This function only works if the accounts had been previously deduplicated, like in
+    /// `deduplicate_accounts` and `build_instruction_frame`.
+    pub fn replicate_account_flags(
+        instruction_accounts: &mut [InstructionAccount],
+        dedup_map: &[u8],
+    ) {
+        for current_index in 0..instruction_accounts.len() {
+            let instruction_account = instruction_accounts.get(current_index).unwrap();
+            let other_account_index = *dedup_map
+                .get(instruction_account.index_in_transaction as usize)
+                .expect("Deduplication map must contain this account")
+                as usize;
+
+            let Ok([current_account, reference_account]) =
+                instruction_accounts.get_disjoint_mut([current_index, other_account_index])
+            else {
+                continue;
+            };
+
+            // The deduplication procedure must have used the first occurrence of the account
+            // as the source of truths for the flags.
+            current_account
+                .set_is_signer(current_account.is_signer() || reference_account.is_signer());
+            current_account
+                .set_is_writable(current_account.is_writable() || reference_account.is_writable());
+        }
     }
 
     /// A version of `configure_top_level_instruction` to help creating the deduplication map in tests
     pub fn configure_top_level_instruction_for_tests(
         &mut self,
         program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
+        mut instruction_accounts: Vec<InstructionAccount>,
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
-        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+        debug_assert!(instruction_accounts.len() <= u8::MAX as usize);
+        let dedup_map = Self::deduplicate_accounts(
+            self.get_number_of_accounts() as usize,
+            &mut instruction_accounts,
+        );
 
         self.configure_instruction_at_index(
             self.next_top_level_instruction_index,
@@ -358,11 +523,14 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn configure_next_cpi_for_tests(
         &mut self,
         program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
+        mut instruction_accounts: Vec<InstructionAccount>,
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
-        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+        debug_assert!(instruction_accounts.len() <= u8::MAX as usize);
+        let dedup_map = Self::deduplicate_accounts(
+            self.get_number_of_accounts() as usize,
+            &mut instruction_accounts,
+        );
         let caller_index = self.get_current_instruction_index()?;
         let cpi_index = self.get_instruction_trace_length();
         self.configure_instruction_at_index(
@@ -377,9 +545,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Pushes the next instruction
-    pub fn push(&mut self) -> Result<(), InstructionError> {
+    pub fn push(&mut self, detect_overflow_early: bool) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_stack_height();
-        if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
+        if !self.instruction_stack.is_empty() && self.lamports_delta.get() != 0 {
             return Err(InstructionError::UnbalancedInstruction);
         }
         {
@@ -390,7 +558,26 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction.nesting_level = nesting_level as u16;
         }
 
-        if self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity {
+        if !detect_overflow_early
+            && self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity
+        {
+            return Err(InstructionError::MaxInstructionTraceLengthExceeded);
+        }
+
+        if detect_overflow_early
+            && ((self.transaction_frame.total_number_of_instructions_in_trace as usize
+                > self.instruction_trace_capacity)
+                || (self.number_of_called_instructions_in_trace()
+                    >= self.instruction_trace_capacity))
+        {
+            // The condition after the OR is necessary if in any case we execute more top
+            // level instructions than expected, since `total_number_of_instructions_in_trace` is
+            // with the number of top level instructions when TransactionContext is created
+            // and only updated for CPIs afterward.
+            //
+            // Having more top-level instructions than TransactionContext was created with
+            // should be impossible to happen with the current code configuration, so the extra
+            // check serves as a failsafe guard.
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
 
@@ -451,7 +638,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                                 err
                             }
                         })?;
-                    Ok(self.accounts.get_lamports_delta() != 0)
+                    Ok(self.lamports_delta.get() != 0)
                 });
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();
@@ -480,14 +667,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
         data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         self.transaction_frame.return_data_pubkey = program_id;
-        // SAFETY: `return_data_scratchpad` is backed by `self.return_data_bytes`
-        // and `return_data_bytes` is being reset to `data`
-        // in the next statement.
-        unsafe {
-            self.transaction_frame
-                .return_data_scratchpad
-                .set_len(data.len() as u64);
-        }
+        self.transaction_frame
+            .return_data_scratchpad
+            .set_len(data.len() as u64);
         self.return_data_bytes = data;
         Ok(())
     }
@@ -512,8 +694,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     // This region is not a writable account.
                     return;
                 };
-                let requested_length =
-                    vm_addr.saturating_add(len).saturating_sub(region.vm_addr) as usize;
+                let region_vm_addr_start = region.vm_addr_range().start;
+                let requested_length = vm_addr
+                    .saturating_add(len)
+                    .saturating_sub(region_vm_addr_start)
+                    as usize;
                 if requested_length > address_space_reserved_for_account as usize {
                     // Requested access goes further than the account region.
                     return;
@@ -535,7 +720,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     .saturating_sub(accounts.resize_delta())
                     .max(0) as usize;
 
-                if requested_length > region.len as usize {
+                if requested_length > region.len() {
                     // Realloc immediately here to fit the requested access,
                     // then later in CPI or deserialization realloc again to the
                     // account length the program stored in AccountInfo.
@@ -551,14 +736,49 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     {
                         return;
                     }
+
                     account.resize(new_len, 0);
-                    region.len = new_len as u64;
+                    let data_ptr = region.host_buffer().ptr() as *mut u8;
+                    let new_buffer = std::ptr::slice_from_raw_parts_mut(data_ptr, new_len);
+                    unsafe {
+                        // SAFETY:
+                        //
+                        // Contract from `MemoryRegion::redirect`: MemoryRegion must point to a
+                        // valid object live for the duration of this `MemoryMapping`.
+                        //
+                        // Evidence: There are two distinct cases, when the account buffer is
+                        // serialized and when the account buffer is directly mapped.
+                        // * In the serialization case we continue pointing at the same buffer as
+                        // before, and the original buffer must have satisfied the liveness
+                        // condition before.
+                        // * In the direct mapping case `account.resize` invalidates the buffer this
+                        // region has been pointing at, but this is fixed up later in the "unshare"
+                        // branch later.
+                        // * In the serialization case the section of serialized buffer has the
+                        // necessary padding after the account payload proper for resize. This
+                        // padding is a part of the originally constructed `MemoryRegion` and is
+                        // only later subsliced to not expose it before the first access to the
+                        // area (which invokes this handler.)
+                        //
+                        // Contract from `MemoryRegion::redirect`: For `MemoryRegion`s marked
+                        // writable, the host buffer must accept arbitrary bytes being overwritten
+                        // without it resulting in unsoundness.
+                        //
+                        // Evidence: The account payloads dont have any internal soundness
+                        // invariants. The buffer in the serialization case starts off and remains
+                        // writable (even though the HostBuffer might have been initially created as
+                        // immutable.) In the direct mapping case we redirect the region to the
+                        // buffer stored in the account later on.
+                        region.redirect(new_buffer);
+                    }
                 }
 
                 // Potentially unshare / make the account shared data unique (CoW logic).
                 if virtual_address_space_adjustments && account_data_direct_mapping {
-                    region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
-                    region.writable = true;
+                    unsafe {
+                        // SAFETY: refer to the comment above.
+                        region.redirect(account.raw_mut_data_slice());
+                    }
                 }
             },
         )
@@ -612,7 +832,8 @@ pub struct TransactionReturnData {
 pub struct ExecutionRecord {
     pub accounts: Vec<KeyedAccountSharedData>,
     pub return_data: TransactionReturnData,
-    pub touched_account_count: u64,
+    /// Parallel to `accounts`: whether each account was modified by the VM.
+    pub touched_flags: Box<[bool]>,
     pub accounts_resize_delta: i64,
 }
 
@@ -623,11 +844,16 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
         let (accounts, touched_flags, resize_delta) = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
-        let touched_account_count = touched_flags
-            .iter()
-            .fold(0usize, |accumulator, was_touched| {
-                accumulator.saturating_add(was_touched.get() as usize)
-            }) as u64;
+
+        // The flags only needed interior mutability while the VM was running.
+        // Now that we own them, unwrap the per-element `Cell`s into a plain
+        // `Box<[bool]>`. `Vec::from` reuses the box's allocation and the mapped
+        // collect reuses that same buffer in place (`Cell<bool>` and `bool` have
+        // identical layout), so no reallocation occurs.
+        let touched_flags: Box<[bool]> = Vec::from(touched_flags)
+            .into_iter()
+            .map(|flag| flag.into_inner())
+            .collect();
 
         let return_data = TransactionReturnData {
             program_id: context.transaction_frame.return_data_pubkey,
@@ -637,7 +863,7 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
         Self {
             accounts,
             return_data,
-            touched_account_count,
+            touched_flags,
             accounts_resize_delta: Cell::into_inner(resize_delta),
         }
     }
@@ -645,7 +871,7 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
 
 #[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
-    use super::*;
+    use {super::*, crate::MAX_INSTRUCTION_TRACE_LENGTH, test_case::test_case};
 
     #[test]
     fn test_instructions_sysvar_store_index_checked() {
@@ -669,7 +895,7 @@ mod tests {
         let account =
             AccountSharedData::new(rent_exempt_lamports, correct_space, &Pubkey::new_unique());
         assert_eq!(
-            build_transaction_context(account).push(),
+            build_transaction_context(account).push(true),
             Err(InstructionError::InvalidAccountOwner),
         );
 
@@ -677,7 +903,7 @@ mod tests {
         let account =
             AccountSharedData::new(rent_exempt_lamports, 0, &solana_sdk_ids::sysvar::id());
         assert_eq!(
-            build_transaction_context(account).push(),
+            build_transaction_context(account).push(true),
             Err(InstructionError::AccountDataTooSmall),
         );
 
@@ -687,7 +913,7 @@ mod tests {
             correct_space,
             &solana_sdk_ids::sysvar::id(),
         );
-        assert_eq!(build_transaction_context(account).push(), Ok(()),);
+        assert_eq!(build_transaction_context(account).push(true), Ok(()),);
     }
 
     #[test]
@@ -724,7 +950,7 @@ mod tests {
 
     #[test]
     fn test_instruction_shared_items() {
-        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 10];
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 11];
         let mut transaction_context =
             TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
 
@@ -739,7 +965,7 @@ mod tests {
                 vec![1, 2, 3, 4],
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
 
         let instruction_accounts_2 = vec![
             InstructionAccount::new(0, false, true),
@@ -753,7 +979,7 @@ mod tests {
                 vec![5, 6, 7, 8, 9],
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
 
         let instruction_accounts_3 = vec![
             InstructionAccount::new(0, false, true),
@@ -769,7 +995,7 @@ mod tests {
                 vec![10, 11],
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
 
         let first_ix_context = transaction_context
             .get_instruction_context_at_index_in_trace(0)
@@ -788,7 +1014,7 @@ mod tests {
                     .dedup_map
                     .get(acc.index_in_transaction as usize)
                     .unwrap(),
-                idx_in_ix as u16
+                idx_in_ix as u8
             );
         }
 
@@ -809,7 +1035,7 @@ mod tests {
                     .dedup_map
                     .get(acc.index_in_transaction as usize)
                     .unwrap(),
-                idx_in_ix as u16
+                idx_in_ix as u8
             );
         }
 
@@ -817,9 +1043,17 @@ mod tests {
             .get_instruction_context_at_index_in_trace(2)
             .unwrap();
         assert_eq!(
-            instruction_accounts_3.as_slice(),
+            vec![
+                InstructionAccount::new(0, false, true),
+                InstructionAccount::new(3, true, false),
+                InstructionAccount::new(5, false, false),
+                InstructionAccount::new(3, true, false),
+                InstructionAccount::new(10, false, false),
+            ]
+            .as_slice(),
             third_ix_context.instruction_accounts
         );
+
         assert_eq!(
             *third_ix_context.instruction_data,
             **transaction_context.instruction_data.get(2).unwrap()
@@ -839,7 +1073,7 @@ mod tests {
                         .dedup_map
                         .get(acc.index_in_transaction as usize)
                         .unwrap(),
-                    idx_in_ix as u16
+                    idx_in_ix as u8
                 );
             }
         }
@@ -863,7 +1097,7 @@ mod tests {
                 0,
                 0,
                 vec![InstructionAccount::new(1, false, false)],
-                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                vec![0; 3],
                 Vec::new().into(),
                 None,
             )
@@ -875,14 +1109,14 @@ mod tests {
                 1,
                 0,
                 vec![InstructionAccount::new(1, false, false)],
-                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                vec![0; 3],
                 Vec::new().into(),
                 None,
             )
             .unwrap();
 
         // Executing instruction #0
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -909,13 +1143,35 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(2))
         );
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.len(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .len(),
             0,
         );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(2))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .len(),
+            0,
+        );
+
         assert_eq!(
             transaction_context.number_of_called_instructions_in_trace(),
             1
@@ -930,7 +1186,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -956,8 +1212,19 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
         );
 
         // A nested CPI
@@ -969,7 +1236,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -985,8 +1252,19 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(4))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(4))
         );
 
         assert_eq!(
@@ -1035,7 +1313,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1051,9 +1329,21 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
         );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1083,8 +1373,19 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
         );
 
         assert_eq!(
@@ -1116,8 +1417,19 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
         );
 
         assert_eq!(
@@ -1129,7 +1441,7 @@ mod tests {
 
         // Let's go to Instruction #1 (top level)
         transaction_context.pop().unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1152,7 +1464,7 @@ mod tests {
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
 
         assert_eq!(
             transaction_context
@@ -1169,9 +1481,21 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(6))
         );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(6))
+        );
+
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1216,7 +1540,7 @@ mod tests {
                     InstructionAccount::new(0, false, false),
                     InstructionAccount::new(1, false, false),
                 ],
-                vec![u16::MAX; 256],
+                vec![u8::MAX; 3],
                 Cow::Owned(Vec::new()),
                 None,
             )
@@ -1231,13 +1555,13 @@ mod tests {
                     InstructionAccount::new(0, false, false),
                     InstructionAccount::new(1, false, true),
                 ],
-                vec![u16::MAX; 256],
+                vec![u8::MAX; 3],
                 Cow::Owned(Vec::new()),
                 None,
             )
             .unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
             0
@@ -1245,7 +1569,7 @@ mod tests {
 
         transaction_context.pop().unwrap();
 
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
             1
@@ -1262,7 +1586,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
             2
@@ -1279,7 +1603,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-        transaction_context.push().unwrap();
+        transaction_context.push(true).unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
             3
@@ -1298,5 +1622,331 @@ mod tests {
             transaction_context.get_current_instruction_index().unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn test_deduplicate_accounts() {
+        let mut instruction_accounts = vec![
+            InstructionAccount::new(0, false, true), // Account 0, writable
+            InstructionAccount::new(1, true, false), // Account 1, signer
+            InstructionAccount::new(0, false, false), // Account 0 again, not writable
+            InstructionAccount::new(2, false, true), // Account 2, writable
+            InstructionAccount::new(1, true, false), // Account 1 again, signer
+        ];
+
+        let dedup_map = TransactionContext::deduplicate_accounts(
+            instruction_accounts.len(),
+            &mut instruction_accounts,
+        );
+
+        // Check that the dedup_map correctly maps duplicate accounts
+        assert_eq!(
+            *dedup_map.first().unwrap(),
+            0,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(1).unwrap(),
+            1,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(2).unwrap(),
+            3,
+            "account must be a duplicate of itself"
+        );
+
+        // Check that duplicate accounts are properly merged
+        let acc = instruction_accounts.first().unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(
+            !acc.is_signer(),
+            "Must not be a signer because account 1 is not signer"
+        );
+        assert!(
+            acc.is_writable(),
+            "Must be writable because account 0 is writable"
+        );
+
+        let acc = instruction_accounts.get(1).unwrap();
+        assert_eq!(acc.index_in_transaction, 1);
+        assert!(
+            acc.is_signer(),
+            "Must be signer because account 1 is signer"
+        );
+        assert!(
+            !acc.is_writable(),
+            "Must not be writable because account 1 is not writable"
+        );
+
+        let acc = instruction_accounts.get(2).unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(!acc.is_signer(), "Should be merged from account 1");
+        assert!(acc.is_writable(), "Should be merged from account 0");
+
+        let acc = instruction_accounts.get(3).unwrap();
+        assert_eq!(acc.index_in_transaction, 2);
+        assert!(!acc.is_signer());
+        assert!(acc.is_writable());
+
+        let acc = instruction_accounts.get(4).unwrap();
+        assert_eq!(acc.index_in_transaction, 1);
+        assert!(
+            acc.is_signer(),
+            "Must be signer because account 1 is signer"
+        );
+        assert!(
+            !acc.is_writable(),
+            "Must not be writable because account 1 is not writable"
+        );
+
+        // Verify that the deduplication map correctly identifies duplicates
+        assert_eq!(
+            *dedup_map.first().unwrap(),
+            0,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(1).unwrap(),
+            1,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(2).unwrap(),
+            3,
+            "account must be a duplicate of itself"
+        );
+    }
+
+    #[test]
+    fn test_deduplicate_accounts_no_duplicates() {
+        let mut instruction_accounts = vec![
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(1, true, false),
+            InstructionAccount::new(2, false, false),
+        ];
+
+        let dedup_map = TransactionContext::deduplicate_accounts(
+            instruction_accounts.len(),
+            &mut instruction_accounts,
+        );
+
+        // Check that the dedup_map correctly maps each account to itself
+        assert_eq!(
+            *dedup_map.first().unwrap(),
+            0,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(1).unwrap(),
+            1,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(2).unwrap(),
+            2,
+            "account must be a duplicate of itself"
+        );
+
+        // Check that accounts are not modified
+        let acc = instruction_accounts.first().unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(!acc.is_signer());
+        assert!(acc.is_writable());
+
+        let acc = instruction_accounts.get(1).unwrap();
+        assert_eq!(acc.index_in_transaction, 1);
+        assert!(acc.is_signer());
+        assert!(!acc.is_writable());
+
+        let acc = instruction_accounts.get(2).unwrap();
+        assert_eq!(acc.index_in_transaction, 2);
+        assert!(!acc.is_signer());
+        assert!(!acc.is_writable());
+    }
+
+    #[test]
+    fn test_deduplicate_accounts_all_duplicates() {
+        let mut instruction_accounts = vec![
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(0, true, false),
+            InstructionAccount::new(0, false, false),
+        ];
+
+        let dedup_map = TransactionContext::deduplicate_accounts(
+            instruction_accounts.len(),
+            &mut instruction_accounts,
+        );
+
+        // Check that all accounts map to the first occurrence (index 0)
+        assert_eq!(
+            *dedup_map.first().unwrap(),
+            0,
+            "account must be a duplicate of itself"
+        );
+        for idx in dedup_map.iter().skip(1) {
+            assert_eq!(*idx, u8::MAX);
+        }
+
+        // Check that the first account has combined flags
+        let acc = instruction_accounts.first().unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(
+            acc.is_signer(),
+            "Should be signer because of second account"
+        );
+        assert!(
+            acc.is_writable(),
+            "Should be writable because of first account"
+        );
+
+        // Check that the other accounts have the same flags as the first
+        let acc = instruction_accounts.get(1).unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(acc.is_signer());
+        assert!(acc.is_writable());
+
+        let acc = instruction_accounts.get(2).unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(acc.is_signer());
+        assert!(acc.is_writable());
+    }
+
+    #[test_case(false; "simd_582_disabled")]
+    #[test_case(true; "simd_582_enabled")]
+    fn test_max_instruction_trace_len_exceeded(fail_early: bool) {
+        const IX_TRACE_CAPACITY: usize = 5;
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+
+        for number_of_top_level_instructions in 4..=5 {
+            // Simulate a trace capacity of 5
+            let mut transaction_context = TransactionContext::new(
+                transaction_accounts.clone(),
+                Rent::default(),
+                6,
+                IX_TRACE_CAPACITY,
+                number_of_top_level_instructions,
+            );
+
+            // Configure top-level instructions
+            for idx_to_configure in 0..number_of_top_level_instructions {
+                transaction_context
+                    .configure_instruction_at_index(
+                        idx_to_configure,
+                        0,
+                        vec![InstructionAccount::new(1, false, false)],
+                        vec![0; 3],
+                        Vec::new().into(),
+                        None,
+                    )
+                    .unwrap();
+            }
+
+            // Execute instructions
+            let mut pushed_ixs: usize = 0;
+            let mut ix_in_trace = number_of_top_level_instructions;
+            for ix_num in 0..number_of_top_level_instructions {
+                let result = transaction_context.push(fail_early);
+                pushed_ixs = pushed_ixs.saturating_add(1);
+                if !fail_early && pushed_ixs > IX_TRACE_CAPACITY {
+                    assert_eq!(pushed_ixs, IX_TRACE_CAPACITY.saturating_add(1));
+                    assert_eq!(
+                        transaction_context.number_of_called_instructions_in_trace(),
+                        IX_TRACE_CAPACITY
+                    );
+                    assert_eq!(
+                        result,
+                        Err(InstructionError::MaxInstructionTraceLengthExceeded)
+                    );
+                    break;
+                } else {
+                    assert!(result.is_ok());
+                }
+
+                // Two first ixs perform a CPI
+                if ix_num < 2 {
+                    transaction_context
+                        .configure_next_cpi_for_tests(
+                            0,
+                            vec![InstructionAccount::new(2, false, false)],
+                            Vec::new(),
+                        )
+                        .unwrap();
+
+                    ix_in_trace = ix_in_trace.saturating_add(1);
+                    pushed_ixs = pushed_ixs.saturating_add(1);
+                    let result = transaction_context.push(fail_early);
+                    if fail_early && ix_in_trace > IX_TRACE_CAPACITY {
+                        assert_eq!(ix_in_trace, IX_TRACE_CAPACITY.saturating_add(1));
+                        assert_eq!(
+                            transaction_context
+                                .transaction_frame
+                                .total_number_of_instructions_in_trace
+                                as usize,
+                            IX_TRACE_CAPACITY.saturating_add(1)
+                        );
+                        assert_eq!(
+                            result,
+                            Err(InstructionError::MaxInstructionTraceLengthExceeded)
+                        );
+                        break;
+                    } else {
+                        assert!(result.is_ok());
+                    }
+                    transaction_context.pop().unwrap();
+                }
+                transaction_context.pop().unwrap();
+            }
+        }
+    }
+
+    #[test_case(false; "simd_582_disabled")]
+    #[test_case(true; "simd_582_enabled")]
+    fn test_max_instruction_trace_len_exceeded_64_ixs(fail_early: bool) {
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+
+        // Simulate a trace capacity of 5
+        let mut transaction_context = TransactionContext::new(
+            transaction_accounts.clone(),
+            Rent::default(),
+            6,
+            MAX_INSTRUCTION_TRACE_LENGTH,
+            MAX_INSTRUCTION_TRACE_LENGTH,
+        );
+
+        // Configure top-level instructions
+        for idx_to_configure in 0..MAX_INSTRUCTION_TRACE_LENGTH {
+            transaction_context
+                .configure_instruction_at_index(
+                    idx_to_configure,
+                    0,
+                    vec![InstructionAccount::new(1, false, false)],
+                    vec![0; 3],
+                    Vec::new().into(),
+                    None,
+                )
+                .unwrap();
+        }
+
+        // Execute first top level instruction
+        transaction_context.push(fail_early).unwrap();
+        // It invokes a program
+        transaction_context
+            .configure_next_cpi_for_tests(
+                0,
+                vec![InstructionAccount::new(2, false, false)],
+                Vec::new(),
+            )
+            .unwrap();
+
+        let result = transaction_context.push(fail_early);
+        if fail_early {
+            assert_eq!(
+                result,
+                Err(InstructionError::MaxInstructionTraceLengthExceeded)
+            );
+        } else {
+            assert!(result.is_ok());
+        }
     }
 }

@@ -6,6 +6,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [features]
 agave-unstable-api = []
@@ -14,13 +15,19 @@ agave-unstable-api = []
 bytemuck = { workspace = true }
 solana-account = { workspace = true }
 solana-compute-budget = { path = "../../compute-budget", features = ["agave-unstable-api"] }
-solana-compute-budget-interface = { workspace = true }
+solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true }
+solana-message = { workspace = true }
 solana-program-test = { path = "../../program-test", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-zk-elgamal-proof-interface = { workspace = true }
 solana-zk-sdk = { workspace = true }
+
+[lints]
+workspace = true

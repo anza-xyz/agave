@@ -1,6 +1,6 @@
 use {
     crate::{
-        cluster_info::{NodeConfig, Sockets},
+        cluster_info::{DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig, Sockets},
         contact_info::{
             ContactInfo,
             Protocol::{QUIC, UDP},
@@ -41,7 +41,6 @@ struct SocketConfigs {
 #[derive(Debug, Clone)]
 pub struct MultihomingAddresses {
     pub tvu: Box<[SocketAddr]>,
-    pub tpu_vote: Box<[SocketAddr]>,
     pub tpu_quic: Box<[SocketAddr]>,
     pub tpu_forwards_quic: Box<[SocketAddr]>,
     pub tpu_vote_quic: Box<[SocketAddr]>,
@@ -108,6 +107,7 @@ impl Node {
             num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
             num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                 .expect("Number of QUIC endpoints can not be zero"),
+            num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
         };
         let mut node = Self::new_with_external_ip(pubkey, config);
         let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
@@ -130,6 +130,7 @@ impl Node {
             num_tvu_receive_sockets,
             num_tvu_retransmit_sockets,
             num_quic_endpoints,
+            num_votor_quic_endpoints: num_votor_endpoints,
         } = config;
         let bind_ip_addr = bind_ip_addrs.active();
 
@@ -209,25 +210,6 @@ impl Node {
         );
         let tpu_forwards_quic_addresses = Self::get_socket_addrs(&tpu_forwards_quic);
 
-        let (tpu_vote_port, mut tpu_vote_sockets) = multi_bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_configs.primarily_read_udp,
-            1,
-        )
-        .expect("tpu_vote multi_bind");
-
-        tpu_vote_sockets.extend(
-            Self::bind_to_extra_ip(
-                &bind_ip_addrs,
-                tpu_vote_port,
-                1,
-                socket_configs.primarily_read_udp,
-            )
-            .expect("Secondary binds for tpu vote"),
-        );
-        let tpu_vote_addresses = Self::get_socket_addrs(&tpu_vote_sockets);
-
         let (tpu_vote_quic_port, tpu_vote_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
                 .expect("tpu_vote_quic");
@@ -269,22 +251,16 @@ impl Node {
         let (_, repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("repair bind");
-        let (_, repair_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("repair_quic bind");
 
         let (serve_repair_port, serve_repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("serve_repair");
-        let (serve_repair_quic_port, serve_repair_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("serve_repair_quic");
 
         let (broadcast_port, mut broadcast) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
             socket_configs.primarily_write_udp,
-            4,
+            2,
         )
         .expect("broadcast multi_bind");
         // Multihoming TX for broadcast
@@ -292,7 +268,7 @@ impl Node {
             &mut Self::bind_to_extra_ip(
                 &bind_ip_addrs,
                 broadcast_port,
-                4,
+                2,
                 socket_configs.primarily_write_udp,
             )
             .expect("Secondary bind broadcast"),
@@ -301,13 +277,21 @@ impl Node {
         let (_, ancestor_hashes_requests) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("ancestor_hashes_requests bind");
-        let (_, ancestor_hashes_requests_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("ancestor_hashes_requests QUIC bind should succeed");
 
-        let (alpenglow_port, alpenglow) =
+        let (votor_server_port, votor_server_primary) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
+                .expect("Votor server port bind should succeed");
+        let votor_server = bind_more_with_config(
+            votor_server_primary,
+            num_votor_endpoints.get(),
+            socket_configs.primarily_read_quic,
+        )
+        .expect("Votor server SO_REUSEPORT bind should succeed");
+
+        let (_, block_id_repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("Alpenglow port bind should succeed");
+                .expect("Block ID repair port bind should succeed");
+
         // These are "client" sockets, so they could use ephemeral ports, but we
         // force them into the provided port_range to simplify the operations.
 
@@ -344,8 +328,12 @@ impl Node {
         )
         .unwrap();
 
-        let (_, quic_alpenglow_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write).unwrap();
+        let (_, quic_votor_client) = bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            socket_configs.primarily_write_quic,
+        )
+        .expect("Votor client socket bind should succeed");
 
         let (_, rpc_sts_client) = bind_in_range_with_config(
             bind_ip_addr,
@@ -391,48 +379,46 @@ impl Node {
                 .unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_forwards_quic_port)),
         )
         .unwrap();
-        info.set_tpu_vote(UDP, (advertised_ip, tpu_vote_port))
-            .unwrap();
         info.set_tpu_vote(QUIC, (advertised_ip, tpu_vote_quic_port))
             .unwrap();
         info.set_serve_repair(UDP, (advertised_ip, serve_repair_port))
             .unwrap();
-        info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
-        info.set_serve_repair(QUIC, (advertised_ip, serve_repair_quic_port))
+        // placeholder to prevent legacy agave nodes from assuming we do not have open repair ports
+        // see https://github.com/anza-xyz/agave/pull/10460#discussion_r3054463946 for context and
+        // cleanup timing.
+        info.set_serve_repair(QUIC, (advertised_ip, 1)).unwrap();
+        info.set_alpenglow((advertised_ip, votor_server_port))
             .unwrap();
 
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
-            alpenglow: Some(alpenglow),
+            votor_server,
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
-            tpu_vote: tpu_vote_sockets,
+            tpu_vote: vec![],
             broadcast,
             repair,
-            repair_quic,
             retransmit_sockets,
             serve_repair,
-            serve_repair_quic,
             ip_echo: ip_echo_sockets.into_iter().next(),
             ancestor_hashes_requests,
-            ancestor_hashes_requests_quic,
+            block_id_repair,
             tpu_quic,
             tpu_forwards_quic,
             tpu_vote_quic,
             tpu_vote_forwarding_client,
             quic_vote_client,
-            quic_alpenglow_client,
+            quic_votor_client,
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
         };
-        info!("Bound all network sockets as follows: {:?}", &sockets);
+        info!("Bound all network sockets as follows: {sockets:?}");
         Node {
             info,
             sockets,
             bind_ip_addrs: Arc::new(bind_ip_addrs),
             addresses: MultihomingAddresses {
                 tvu: tvu_addresses,
-                tpu_vote: tpu_vote_addresses,
                 tpu_quic: tpu_quic_addresses,
                 tpu_forwards_quic: tpu_forwards_quic_addresses,
                 tpu_vote_quic: tpu_vote_quic_addresses,
@@ -479,7 +465,7 @@ mod multihoming {
     use {
         crate::{
             cluster_info::ClusterInfo,
-            contact_info::Protocol::{QUIC, UDP},
+            contact_info::Protocol::QUIC,
             node::{MultihomingAddresses, Node},
         },
         solana_net_utils::multihomed_sockets::BindIpAddrs,
@@ -558,12 +544,6 @@ mod multihoming {
             let tpu_vote_quic_address = self.addresses.tpu_vote_quic[interface_index];
             cluster_info
                 .set_tpu_vote(QUIC, tpu_vote_quic_address)
-                .map_err(|e| e.to_string())?;
-
-            // tpu_vote (udp)
-            let tpu_vote_address = self.addresses.tpu_vote[interface_index];
-            cluster_info
-                .set_tpu_vote(UDP, tpu_vote_address)
                 .map_err(|e| e.to_string())?;
 
             // Update active index for tvu broadcast, tvu retransmit, and tpu forwarding client

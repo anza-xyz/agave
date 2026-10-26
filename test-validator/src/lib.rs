@@ -1,19 +1,24 @@
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8},
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
+    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     arc_swap::ArcSwap,
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::Receiver,
     log::*,
-    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
+    },
     solana_accounts_db::{
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         accounts_index::{AccountsIndexConfig, ScanFilter},
-        utils::create_accounts_run_and_snapshot_dirs,
+        utils::create_accounts_run_dir,
     },
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_cli_output::CliAccount,
     solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_commitment_config::CommitmentConfig,
@@ -26,11 +31,9 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-    solana_geyser_plugin_manager::{
-        GeyserPluginManagerRequest, geyser_plugin_manager::GeyserPluginManager,
-    },
+    solana_geyser_plugin_manager::{GeyserPluginHost, GeyserPluginManagerRequest},
     solana_gossip::{
-        cluster_info::{ClusterInfo, NodeConfig},
+        cluster_info::{ClusterInfo, DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig},
         contact_info::Protocol,
         node::Node,
     },
@@ -38,7 +41,8 @@ use {
     solana_instruction::Instruction,
     solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
     solana_ledger::{
-        blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
+        blockstore::create_new_ledger,
+        blockstore_options::{BlockstoreCleanupStrategy, LedgerColumnOptions},
         create_new_tmp_ledger,
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -67,6 +71,7 @@ use {
     solana_syscalls::create_program_runtime_environment,
     solana_transaction::{Transaction, TransactionError},
     solana_validator_exit::Exit,
+    solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     std::{
         collections::{HashMap, HashSet},
         ffi::OsStr,
@@ -107,9 +112,21 @@ pub struct TestValidatorNodeConfig {
 impl Default for TestValidatorNodeConfig {
     fn default() -> Self {
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        #[cfg(not(debug_assertions))]
         let port_range = solana_net_utils::VALIDATOR_PORT_RANGE;
-        #[cfg(debug_assertions)]
+        Self {
+            gossip_addr: SocketAddr::new(bind_ip_addr, port_range.0),
+            port_range,
+            bind_ip_addr,
+        }
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl TestValidatorNodeConfig {
+    /// Defaults suitable for unit tests; a disjoint port range will be used to
+    /// avoid "port already in use" errors for tests running in parallel
+    pub fn default_for_tests() -> Self {
+        let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         Self {
             gossip_addr: SocketAddr::new(bind_ip_addr, port_range.0),
@@ -138,7 +155,7 @@ pub struct TestValidatorGenesis {
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
-    pub max_ledger_shreds: Option<u64>,
+    pub blockstore_cleanup_strategy: BlockstoreCleanupStrategy,
     pub max_genesis_archive_unpacked_size: Option<u64>,
     pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub enable_scheduler_bindings: bool,
@@ -146,21 +163,19 @@ pub struct TestValidatorGenesis {
     compute_unit_limit: Option<u64>,
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
-    pub geyser_plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
-    admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
+    pub geyser_plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
+    pub admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
 
 impl Default for TestValidatorGenesis {
     fn default() -> Self {
-        // Default to Tower consensus to ensure proper converage pre-Alpenglow.
-        let deactivate_feature_set = [alpenglow::id()].into_iter().collect();
         Self {
             fee_rate_governor: FeeRateGovernor::default(),
             ledger_path: Option::<PathBuf>::default(),
             tower_storage: Option::<Arc<dyn TowerStorage>>::default(),
             rent: Rent::default(),
             rpc_config: JsonRpcConfig::default_for_test(),
-            pubsub_config: PubSubConfig::default(),
+            pubsub_config: PubSubConfig::default_for_tests(),
             rpc_ports: Option::<(u16, u16)>::default(),
             warp_slot: Option::<Slot>::default(),
             accounts: HashMap::<Pubkey, AccountSharedData>::default(),
@@ -173,17 +188,38 @@ impl Default for TestValidatorGenesis {
             start_progress: Arc::<RwLock<ValidatorStartProgress>>::default(),
             authorized_voter_keypairs: Arc::<RwLock<Vec<Arc<Keypair>>>>::default(),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
-            max_ledger_shreds: Option::<u64>::default(),
+            blockstore_cleanup_strategy: BlockstoreCleanupStrategy::None,
             max_genesis_archive_unpacked_size: Option::<u64>::default(),
             geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
             enable_scheduler_bindings: false,
-            deactivate_feature_set,
+            deactivate_feature_set: HashSet::default(),
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
-            geyser_plugin_manager: Arc::new(ArcSwap::new(Arc::new(GeyserPluginManager::default()))),
+            geyser_plugin_manager: Arc::new(ArcSwap::new(Arc::new(GeyserPluginHost::default()))),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
+        }
+    }
+}
+
+fn derive_bls_pubkey_from_authorized_voter_keypair(
+    authorized_voter_keypair: &Keypair,
+) -> [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE] {
+    BLSKeypair::derive_from_signer(authorized_voter_keypair, BLS_KEYPAIR_DERIVE_SEED)
+        .unwrap()
+        .public
+        .to_bytes_compressed()
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl TestValidatorGenesis {
+    /// Defaults suitable for unit tests; a disjoint port range will be used to
+    /// avoid "port already in use" errors for tests running in parallel
+    pub fn default_for_tests() -> Self {
+        Self {
+            node_config: TestValidatorNodeConfig::default_for_tests(),
+            ..Self::default()
         }
     }
 }
@@ -202,18 +238,18 @@ fn try_transform_program_data(
         if let Ok(UpgradeableLoaderState::ProgramData {
             upgrade_authority_address,
             ..
-        }) = bincode::deserialize::<UpgradeableLoaderState>(programdata_meta)
+        }) = wincode::deserialize::<UpgradeableLoaderState>(programdata_meta)
         {
             // Serialize new programdata metadata into the resulting account,
             // to overwrite the deployment slot to `0`.
-            bincode::serialize_into(
-                account.data_as_mut_slice(),
-                &UpgradeableLoaderState::ProgramData {
+            account
+                .set_state(&UpgradeableLoaderState::ProgramData {
                     slot: 0,
                     upgrade_authority_address,
-                },
-            )
-            .map_err(|_| format!("Failed to write to upgradeable programdata account {address}"))
+                })
+                .map_err(|_| {
+                    format!("Failed to write to upgradeable programdata account {address}")
+                })
         } else {
             Err(format!(
                 "Failed to read upgradeable programdata account {address}"
@@ -232,6 +268,7 @@ impl TestValidatorGenesis {
         self.deactivate_feature_set.extend(deactivate_list);
         self
     }
+
     pub fn ledger_path<P: Into<PathBuf>>(&mut self, ledger_path: P) -> &mut Self {
         self.ledger_path = Some(ledger_path.into());
         self
@@ -419,11 +456,11 @@ impl TestValidatorGenesis {
                             return Err(format!("Invalid alt account data length for {address}"));
                         }
 
-                        for address_slice in
-                            raw_addresses_data.chunks_exact(std::mem::size_of::<Pubkey>())
+                        for address_array in raw_addresses_data
+                            .as_chunks::<{ std::mem::size_of::<Pubkey>() }>()
+                            .0
                         {
-                            // safe because size was checked earlier
-                            let address = Pubkey::try_from(address_slice).unwrap();
+                            let address = Pubkey::from(*address_array);
                             alt_entries.push(address);
                         }
                         self.add_account(*address, AccountSharedData::from(account));
@@ -477,7 +514,7 @@ impl TestValidatorGenesis {
 
             if let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
-            }) = account.deserialize_data()
+            }) = account.state()
             {
                 programdata_addresses.insert(programdata_address);
             } else {
@@ -512,6 +549,8 @@ impl TestValidatorGenesis {
                         .is_none()
                     {
                         self.deactivate_feature_set.insert(*feature_id);
+                    } else {
+                        self.deactivate_feature_set.remove(feature_id);
                     }
                 });
         }
@@ -565,7 +604,7 @@ impl TestValidatorGenesis {
         for dir in dirs {
             let matched_files = match fs::read_dir(&dir) {
                 Ok(dir) => dir,
-                Err(e) => return Err(format!("Cannot read directory {}: {}", &dir, e)),
+                Err(e) => return Err(format!("Cannot read directory {dir}: {e}")),
             }
             .flatten()
             .map(|entry| entry.path())
@@ -807,29 +846,30 @@ pub struct TestValidator {
 impl TestValidator {
     /// Create a configured genesis and start validator
     /// Sync only; calling from a tokio runtime will panic due to nested runtimes.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn start_with_config(
         mint_address: Pubkey,
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        let test_validator = TestValidatorGenesis::default()
+        TestValidatorGenesis::default_for_tests()
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)
             .start_with_mint_address(mint_address, socket_addr_space)
-            .expect("validator start failed");
-        test_validator
+            .expect("validator start failed")
     }
 
     /// Create a configured genesis and start validator (async version)
+    #[cfg(feature = "dev-context-only-utils")]
     pub async fn async_start_with_config(
         mint_keypair: &Keypair,
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        TestValidatorGenesis::default()
+        TestValidatorGenesis::default_for_tests()
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
@@ -867,7 +907,6 @@ impl TestValidator {
                 warn!("Feature {feature:?} set for deactivation is not a known Feature public key",)
             }
         }
-
         let runtime_features = feature_set.runtime_features();
         let program_runtime_environment = create_program_runtime_environment(
             &runtime_features,
@@ -904,7 +943,7 @@ impl TestValidator {
                 &[upgradeable_program.program_id.as_ref()],
                 &upgradeable_program.loader,
             );
-            let mut program_data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
+            let mut program_data = wincode::serialize(&UpgradeableLoaderState::ProgramData {
                 slot: 0,
                 upgrade_authority_address: Some(upgradeable_program.upgrade_authority),
             })
@@ -921,7 +960,7 @@ impl TestValidator {
                 }),
             );
 
-            let data = bincode::serialize(&UpgradeableLoaderState::Program {
+            let data = wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address,
             })
             .unwrap();
@@ -937,13 +976,17 @@ impl TestValidator {
             );
         }
 
+        // Test validator genesis uses the vote account pubkey as the authorized voter,
+        // so the Alpenglow BLS pubkey is derived from the vote account keypair.
         let mut genesis_config = create_genesis_config_with_leader_ex(
             mint_lamports,
             &mint_address,
             &validator_identity.pubkey(),
             &validator_vote_account.pubkey(),
             &validator_stake_account.pubkey(),
-            None,
+            Some(derive_bls_pubkey_from_authorized_voter_keypair(
+                &validator_vote_account,
+            )),
             validator_stake_lamports,
             validator_identity_lamports,
             config.fee_rate_governor.clone(),
@@ -1051,6 +1094,7 @@ impl TestValidator {
                 num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
                 num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                     .expect("Number of QUIC endpoints can not be zero"),
+                num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
             };
             let mut node =
                 Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
@@ -1080,7 +1124,8 @@ impl TestValidator {
                 .iter()
                 .any(|x| x.pubkey() == vote_account_address)
             {
-                authorized_voter_keypairs.push(Arc::new(validator_vote_account))
+                // Test validator genesis uses the vote account pubkey as the authorized voter.
+                authorized_voter_keypairs.push(Arc::new(validator_vote_account));
             }
         }
 
@@ -1088,8 +1133,6 @@ impl TestValidator {
             index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             scan_filter_for_shrinking: ScanFilter::All,
-            use_registered_io_uring_buffers: false,
-            snapshots_use_direct_io: false,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
 
@@ -1106,6 +1149,7 @@ impl TestValidator {
                 }),
             log_messages_bytes_limit: config.log_messages_bytes_limit,
             transaction_account_lock_limit: config.transaction_account_lock_limit,
+            ..RuntimeConfig::default()
         };
 
         let mut validator_config = ValidatorConfig {
@@ -1122,11 +1166,7 @@ impl TestValidator {
             )),
             rpc_config: config.rpc_config.clone(),
             pubsub_config: config.pubsub_config.clone(),
-            account_paths: vec![
-                create_accounts_run_and_snapshot_dirs(ledger_path.join("accounts"))
-                    .unwrap()
-                    .0,
-            ],
+            account_paths: vec![create_accounts_run_dir(ledger_path.join("accounts")).unwrap()],
             run_verification: false, // Skip PoH verification of ledger on startup for speed
             snapshot_config: SnapshotConfig {
                 full_snapshot_archive_interval: SnapshotInterval::Slots(
@@ -1136,11 +1176,13 @@ impl TestValidator {
                 bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
                 full_snapshot_archives_dir: ledger_path.to_path_buf(),
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
+                use_registered_io_uring_buffers: false,
+                use_direct_io: false,
                 ..SnapshotConfig::default()
             },
             warp_slot: config.warp_slot,
             validator_exit: config.validator_exit.clone(),
-            max_ledger_shreds: config.max_ledger_shreds,
+            blockstore_cleanup_strategy: config.blockstore_cleanup_strategy,
             no_wait_for_vote_to_start_leader: true,
             staked_nodes_overrides: config.staked_nodes_overrides.clone(),
             accounts_db_config,
@@ -1160,7 +1202,6 @@ impl TestValidator {
             config.authorized_voter_keypairs.clone(),
             vec![],
             &validator_config,
-            true, // should_check_duplicate_instance
             rpc_to_plugin_manager_receiver,
             config.start_progress.clone(),
             socket_addr_space,
@@ -1214,7 +1255,7 @@ impl TestValidator {
     /// programs added to genesis ain't immediately usable. Actively check "Program
     /// is not deployed" error for their availibility.
     ///
-    /// Returns `TransactionError::AccountNotFound` if the payer account is not funded.
+    /// Returns `TransactionError::InvalidAccountForFee` if the payer account is not funded.
     /// The caller is responsible for ensuring the payer account has sufficient funds.
     async fn wait_for_upgradeable_programs_deployed(
         &self,
@@ -1252,10 +1293,10 @@ impl TestValidator {
                             let err_string = format!("{e:?}");
                             if err_string.contains("Program is not deployed") {
                                 debug!("{program_id:?} - not deployed");
-                            } else if err_string.contains("AccountNotFound") {
+                            } else if err_string.contains("InvalidAccountForFee") {
                                 // Payer account not funded - this is a caller error
                                 return Err(RpcClientError::from(
-                                    TransactionError::AccountNotFound,
+                                    TransactionError::InvalidAccountForFee,
                                 ));
                             } else {
                                 // Assuming all other errors could only occur *after*
@@ -1360,29 +1401,78 @@ impl Drop for TestValidator {
     }
 }
 
+// Each test starts a full validator; serialize them to avoid resource contention.
 #[cfg(test)]
+#[serial_test::serial]
 mod test {
     use {super::*, solana_feature_gate_interface::Feature};
 
+    async fn assert_feature_accounts(
+        rpc_client: &nonblocking::rpc_client::RpcClient,
+        active_features: &[Pubkey],
+        inactive_features: &[Pubkey],
+    ) {
+        for chunk in active_features.chunks(100) {
+            let active_feature_accounts = rpc_client.get_multiple_accounts(chunk).await.unwrap();
+            for feature_account in active_feature_accounts {
+                let account = feature_account.unwrap();
+                let feature_state: Feature = account.state().unwrap();
+                assert!(feature_state.activated_at.is_some());
+            }
+        }
+
+        if !inactive_features.is_empty() {
+            let inactive_feature_accounts = rpc_client
+                .get_multiple_accounts(inactive_features)
+                .await
+                .unwrap();
+            for feature_account in inactive_feature_accounts {
+                assert!(feature_account.is_none());
+            }
+        }
+    }
+
     #[test]
     fn get_health() {
-        let (test_validator, _payer) = TestValidatorGenesis::default().start();
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests().start();
         let rpc_client = test_validator.get_rpc_client();
         rpc_client.get_health().expect("health");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn nonblocking_get_health() {
-        let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
+            .start_async()
+            .await;
         let rpc_client = test_validator.get_async_rpc_client();
         rpc_client.get_health().await.expect("health");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_all_features_active_by_default() {
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
+            .start_async()
+            .await;
+        let rpc_client = test_validator.get_async_rpc_client();
+
+        let active_features = FEATURE_NAMES.keys().copied().collect::<Vec<_>>();
+        assert_feature_accounts(&rpc_client, &active_features, &[]).await;
+        assert!(
+            test_validator
+                .bank_forks()
+                .read()
+                .unwrap()
+                .root_bank()
+                .get_alpenglow_genesis_certificate()
+                .is_some()
+        );
     }
 
     #[test]
     fn test_upgradeable_program_deploayment() {
         let program_id = Pubkey::new_unique();
-        let (test_validator, payer) = TestValidatorGenesis::default()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+        let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start();
         let rpc_client = test_validator.get_rpc_client();
 
@@ -1408,8 +1498,8 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_nonblocking_upgradeable_program_deploayment() {
         let program_id = Pubkey::new_unique();
-        let (test_validator, payer) = TestValidatorGenesis::default()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+        let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start_async()
             .await;
         let rpc_client = test_validator.get_async_rpc_client();
@@ -1438,7 +1528,7 @@ mod test {
     #[should_panic]
     async fn document_tokio_panic() {
         // `start()` blows up when run within tokio
-        let (_test_validator, _payer) = TestValidatorGenesis::default().start();
+        let (_test_validator, _payer) = TestValidatorGenesis::default_for_tests().start();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1448,10 +1538,9 @@ mod test {
         [
             agave_feature_set::deprecate_rewards_sysvar::id(),
             agave_feature_set::disable_fees_sysvar::id(),
-            alpenglow::id(),
+            agave_feature_set::alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
             agave_feature_set::vote_account_initialize_v2::id(),
-            agave_feature_set::validator_admission_ticket::id(),
         ]
         .into_iter()
         .for_each(|feature| {
@@ -1462,7 +1551,7 @@ mod test {
         // Convert to `Vec` so we can get a slice.
         let control: Vec<Pubkey> = control.into_iter().collect();
 
-        let (test_validator, _payer) = TestValidatorGenesis::default()
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
             .deactivate_features(&deactivate_features)
             .start_async()
             .await;
@@ -1483,7 +1572,7 @@ mod test {
             let active_feature_accounts = rpc_client.get_multiple_accounts(chunk).await.unwrap();
             for f in active_feature_accounts {
                 let account = f.unwrap(); // Should be `Some`.
-                let feature_state: Feature = bincode::deserialize(account.data()).unwrap();
+                let feature_state: Feature = account.state().unwrap();
                 assert!(feature_state.activated_at.is_some());
             }
         }
@@ -1497,7 +1586,7 @@ mod test {
         let owner = Pubkey::new_unique();
         let account = || AccountSharedData::new(100_000, 0, &owner);
 
-        let (test_validator, _payer) = TestValidatorGenesis::default()
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
             .deactivate_features(&[with_deactivate_flag]) // Just deactivate one feature.
             .add_accounts([
                 (with_deactivate_flag, account()), // But add both accounts.
@@ -1523,13 +1612,15 @@ mod test {
         // The second one should be a feature account.
         let feature_account = our_accounts[1].as_ref().unwrap();
         assert_eq!(feature_account.owner, solana_sdk_ids::feature::id());
-        let feature_state: Feature = bincode::deserialize(feature_account.data()).unwrap();
+        let feature_state: Feature = feature_account.state().unwrap();
         assert!(feature_state.activated_at.is_some());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_core_bpf_programs() {
-        let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
+        let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
+            .start_async()
+            .await;
 
         let rpc_client = test_validator.get_async_rpc_client();
 
@@ -1567,8 +1658,8 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_wait_for_program_with_unfunded_payer() {
         let program_id = Pubkey::new_unique();
-        let (test_validator, _mint_keypair) = TestValidatorGenesis::default()
-            .add_program("../programs/bpf-loader-tests/noop", program_id)
+        let (test_validator, _mint_keypair) = TestValidatorGenesis::default_for_tests()
+            .add_program("../programs/bpf_loader/test_elfs/out/noop", program_id)
             .start_async()
             .await;
 
@@ -1580,12 +1671,12 @@ mod test {
             .wait_for_upgradeable_programs_deployed(&[&program_id], &unfunded_payer)
             .await;
 
-        // Verify it returns AccountNotFound error
+        // Verify it returns InvalidAccountForFee error
         let err = result.unwrap_err();
         assert!(matches!(
             *err.kind,
             solana_rpc_client_api::client_error::ErrorKind::TransactionError(
-                TransactionError::AccountNotFound
+                TransactionError::InvalidAccountForFee
             )
         ));
     }

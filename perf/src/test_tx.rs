@@ -4,10 +4,9 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::{
-        AccountMeta, Instruction, Message, VersionedMessage,
-        compiled_instruction::CompiledInstruction, v0::Message as MessageV0,
+        Instruction, Message, VersionedMessage, compiled_instruction::CompiledInstruction,
+        v0::Message as MessageV0,
     },
-    solana_pubkey::Pubkey,
     solana_sdk_ids::{stake, system_program},
     solana_signer::Signer,
     solana_system_interface::instruction::SystemInstruction,
@@ -23,12 +22,6 @@ pub fn test_tx() -> Transaction {
     solana_system_transaction::transfer(&keypair1, &pubkey1, 42, zero)
 }
 
-pub fn test_invalid_tx() -> Transaction {
-    let mut tx = test_tx();
-    tx.signatures = vec![Transaction::get_invalid_signature()];
-    tx
-}
-
 pub fn test_multisig_tx() -> Transaction {
     let keypair0 = Keypair::new();
     let keypair1 = Keypair::new();
@@ -41,8 +34,8 @@ pub fn test_multisig_tx() -> Transaction {
     let program_ids = vec![system_program::id(), stake::id()];
 
     let instructions = vec![CompiledInstruction::new(
-        0,
-        &bincode::serialize(&transfer_instruction).unwrap(),
+        3,
+        &wincode::serialize(&transfer_instruction).unwrap(),
         vec![0, 1],
     )];
 
@@ -72,28 +65,6 @@ where
         &Keypair::new(),    // authorized_voter_keypair
         switch_proof_hash,
     )
-}
-
-pub fn new_test_tx_with_number_of_ixs<T>(number_of_ixs: usize) -> T
-where
-    T: FromTestTx,
-{
-    let program_id = Pubkey::new_unique();
-    let account = Pubkey::new_unique();
-
-    let mut instructions = Vec::with_capacity(number_of_ixs);
-    for i in 0..number_of_ixs {
-        instructions.push(Instruction {
-            program_id,
-            accounts: vec![AccountMeta::new(account, false)],
-            data: vec![i as u8],
-        });
-    }
-
-    let payer = Keypair::new();
-    let blockhash = Hash::new_unique();
-
-    T::from_test_tx(&payer, blockhash, instructions)
 }
 
 /// Trait that unifies building legacy vs v0 transactions

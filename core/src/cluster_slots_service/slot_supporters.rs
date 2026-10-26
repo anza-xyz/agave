@@ -48,7 +48,7 @@ impl SlotSupporters {
 
     #[inline]
     pub(crate) fn set_support_by_index(&self, index: usize, stake: Stake) {
-        let old = self.supporting_stakes[index].swap(stake, Ordering::Relaxed);
+        let old = self.supporting_stakes[index].fetch_max(stake, Ordering::Relaxed);
         if stake > old {
             self.total_support.fetch_add(stake - old, Ordering::Relaxed);
         }
@@ -123,7 +123,7 @@ impl SlotSupporters {
         if !same_epoch {
             let old_len = self.supporting_stakes.len();
             let new_len = index_map.len();
-            if new_len < old_len * 2 {
+            if new_len * 2 < old_len {
                 // if new length is much less than allocation, reallocate
                 self.supporting_stakes = Vec::from_iter(repeat_atomic_u64(new_len));
             } else {

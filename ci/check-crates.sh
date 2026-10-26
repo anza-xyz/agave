@@ -88,7 +88,9 @@ for file in "${files[@]}"; do
     exit 1
   fi
 
-  response=$(curl -s https://crates.io/api/v1/crates/"$crate_name"/owners)
+  # crates.io API docs state to include a user-agent header:
+  # https://crates.io/data-access#api
+  response=$(curl -A 'Anza (https://github.com/anza-xyz/agave)' -s https://crates.io/api/v1/crates/"$crate_name"/owners)
   errors=$(echo "$response" | jq .errors)
   if [[ $errors != "null" ]]; then
     details=$(echo "$response" | jq .errors | jq -r ".[0].detail")
@@ -104,14 +106,20 @@ for file in "${files[@]}"; do
 
 or
 
-2. make a dummy publication.
+2. make a dummy publication to reserve the name (requires your own crates.io token).
 
-  example:
-  scripts/reserve-cratesio-package-name.sh \
-    --token <GRIMES_CRATESIO_TOKEN> \
-    lib solana-new-lib-crate
+  a) publish the placeholder crate:
 
-  see also: scripts/reserve-cratesio-package-name.sh --help
+       scripts/reserve-cratesio-package-name.sh \
+         --token <YOUR_CRATEIO_TOKEN> \
+         lib solana-new-lib-crate
+
+     see also: scripts/reserve-cratesio-package-name.sh --help
+
+  b) send a crate owner invitation to anza-team
+
+  c) once your PR is ready to merge, ping the devops team to accept the
+     invitation.
 "
     else
       ((error_count++))

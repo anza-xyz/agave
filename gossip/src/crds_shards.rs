@@ -63,6 +63,21 @@ impl CrdsShards {
         }
     }
 
+    pub(crate) fn find_count(&self, mask: u64, mask_bits: u32) -> usize {
+        let mask = CrdsFilter::canonical_mask(mask, mask_bits);
+        match self.shard_bits.cmp(&mask_bits) {
+            Ordering::Less | Ordering::Equal => self.shard(mask).len(),
+            Ordering::Greater => {
+                let count = 1 << (self.shard_bits - mask_bits);
+                let end = self.shard_index(mask) + 1;
+                self.shards[end - count..end]
+                    .iter()
+                    .map(IndexMap::len)
+                    .sum()
+            }
+        }
+    }
+
     #[inline]
     fn shard_index(&self, hash: u64) -> usize {
         hash.checked_shr(64 - self.shard_bits).unwrap_or(0) as usize
@@ -203,11 +218,17 @@ mod test {
             }
             shards.check(&values);
         }
-        // Random masks.
+        const SHARD_BITS: u32 = 5;
         for _ in 0..10 {
             let mask = rng.random();
             for mask_bits in 0..12 {
                 let mut set = filter_crds_values(&values, mask, mask_bits);
+                let visited = filter_crds_values(&values, mask, mask_bits.min(SHARD_BITS)).len();
+                assert_eq!(
+                    shards.find_count(mask, mask_bits),
+                    visited,
+                    "find_count should equal visited entries for mask_bits={mask_bits}"
+                );
                 for index in shards.find(mask, mask_bits) {
                     assert!(set.remove(&index));
                 }
@@ -234,5 +255,82 @@ mod test {
                 shards.check(&values);
             }
         }
+    }
+
+    #[test]
+    fn test_find_count_reflects_prefix_skew() {
+        const SHARD_BITS: u32 = 4;
+        const HOT: usize = 100;
+        const COLD: usize = 40;
+        let mut rng = rng();
+        let mut shards = CrdsShards::new(SHARD_BITS);
+        let mut values: Vec<VersionedCrdsValue> = Vec::new();
+        let prefix = |v: &VersionedCrdsValue| {
+            CrdsFilter::hash_as_u64(v.value.hash())
+                .checked_shr(64 - SHARD_BITS)
+                .unwrap_or(0)
+        };
+        while values.iter().filter(|v| prefix(v) == 0).count() < HOT {
+            let v = new_test_crds_value(&mut rng);
+            if prefix(&v) == 0 {
+                let index = values.len();
+                assert!(shards.insert(index, &v));
+                values.push(v);
+            }
+        }
+        let mut cold = 0;
+        while cold < COLD {
+            let v = new_test_crds_value(&mut rng);
+            if prefix(&v) != 0 {
+                let index = values.len();
+                assert!(shards.insert(index, &v));
+                values.push(v);
+                cold += 1;
+            }
+        }
+        let crds_len = values.len();
+        let scanned = shards.find_count(0, SHARD_BITS);
+        assert_eq!(scanned, HOT, "hot prefix must scan all its entries");
+        assert_eq!(scanned, shards.find(0, SHARD_BITS).count());
+        let average_estimate = (crds_len >> SHARD_BITS).max(1);
+        assert!(
+            scanned > average_estimate * 8,
+            "find_count={scanned} should dwarf average estimate={average_estimate}",
+        );
+    }
+
+    #[test]
+    fn test_find_count_charges_full_shard_for_fine_mask() {
+        const SHARD_BITS: u32 = 4;
+        const HOT: usize = 100;
+        let mut rng = rng();
+        let mut shards = CrdsShards::new(SHARD_BITS);
+        let mut values: Vec<VersionedCrdsValue> = Vec::new();
+        let prefix = |v: &VersionedCrdsValue| {
+            CrdsFilter::hash_as_u64(v.value.hash())
+                .checked_shr(64 - SHARD_BITS)
+                .unwrap_or(0)
+        };
+        while values.iter().filter(|v| prefix(v) == 0).count() < HOT {
+            let v = new_test_crds_value(&mut rng);
+            if prefix(&v) == 0 {
+                let index = values.len();
+                assert!(shards.insert(index, &v));
+                values.push(v);
+            }
+        }
+        let absent = (!0u64).checked_shr(SHARD_BITS).unwrap_or(0);
+        assert!(
+            !values
+                .iter()
+                .any(|v| CrdsFilter::hash_as_u64(v.value.hash()) == absent),
+            "sentinel hash must be absent",
+        );
+        assert_eq!(shards.find(absent, 64).count(), 0, "filter matches nothing");
+        assert_eq!(
+            shards.find_count(absent, 64),
+            HOT,
+            "must charge for the full physical shard scanned, not the zero matches",
+        );
     }
 }

@@ -62,8 +62,8 @@ impl SnapshotController {
         self.latest_abs_request_slot.store(slot, Ordering::Relaxed);
     }
 
-    /// Request that a fastboot snapshot is requested at the root bank next time
-    /// handle_new_roots() is called
+    /// Request that a fastboot snapshot is requested at the root bank the next time
+    /// handle_new_roots() is called without requesting a full or incremental snapshot
     pub fn request_fastboot_snapshot(&self) {
         self.request_fastboot_snapshot
             .store(true, Ordering::Relaxed);
@@ -82,9 +82,7 @@ impl SnapshotController {
         let mut is_root_bank_squashed = false;
         let mut squash_timing = SquashTiming::default();
         let mut total_snapshot_ms = 0;
-        let request_fastboot_snapshot = self
-            .request_fastboot_snapshot
-            .swap(false, Ordering::Relaxed);
+        let request_fastboot_snapshot = self.request_fastboot_snapshot.load(Ordering::Relaxed);
 
         let SnapshotGenerationIntervals {
             full_snapshot_interval,
@@ -112,6 +110,10 @@ impl SnapshotController {
             } else if should_request_incremental_snapshot {
                 Some((bank, SnapshotRequestKind::IncrementalSnapshot))
             } else if request_fastboot_snapshot {
+                // Cleared only when sent; a full or incremental request is held behind the
+                // write cache lag, so fastboot must be requested on a later root instead.
+                self.request_fastboot_snapshot
+                    .store(false, Ordering::Relaxed);
                 Some((bank, SnapshotRequestKind::FastbootSnapshot))
             } else {
                 None
@@ -172,7 +174,7 @@ impl SnapshotController {
 mod tests {
     use {
         super::*, crate::accounts_background_service::SnapshotRequestKind,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
+        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::bounded,
         solana_genesis_config::create_genesis_config, solana_leader_schedule::SlotLeader,
         std::sync::Arc, test_case::test_case,
     };
@@ -227,7 +229,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
 
@@ -287,7 +289,7 @@ mod tests {
             incremental_snapshot_archive_interval,
             ..Default::default()
         };
-        let (snapshot_request_sender, _snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, _snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
         assert_eq!(snapshot_controller.is_generating_snapshots(), expected);
@@ -318,7 +320,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
 
@@ -343,5 +345,13 @@ mod tests {
         assert_eq!(sent_request.request_kind, expected_snapshot_type);
         // Verify that the bank was squashed up to the snapshot slot
         assert_eq!(sent_request.snapshot_root_bank.slot(), num_banks);
+
+        // The fastboot request stays pending until a fastboot request is sent
+        assert_eq!(
+            snapshot_controller
+                .request_fastboot_snapshot
+                .load(Ordering::Relaxed),
+            expected_snapshot_type != SnapshotRequestKind::FastbootSnapshot,
+        );
     }
 }

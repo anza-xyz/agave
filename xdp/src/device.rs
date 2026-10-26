@@ -1,8 +1,8 @@
 use {
     crate::{
         netlink::MacAddress,
-        route::Router,
-        umem::{Frame, FrameOffset},
+        route::{RouteError, Router},
+        umem::{CompletedFrameOffset, Frame, FrameOffset},
     },
     libc::{
         AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, SYS_ioctl,
@@ -23,6 +23,17 @@ use {
 
 #[derive(Copy, Clone, Debug)]
 pub struct QueueId(pub u64);
+
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum DefaultRouteDeviceError {
+    #[error("failed to load routing tables: {0}")]
+    LoadRoutingTables(#[source] io::Error),
+    #[error("failed to find the default route: {0}")]
+    FindDefaultRoute(#[source] RouteError),
+    #[error("failed to open default route interface (index {if_index}): {source}")]
+    OpenInterface { if_index: u32, source: io::Error },
+}
 
 pub struct NetworkDevice {
     if_index: u32,
@@ -57,10 +68,14 @@ impl NetworkDevice {
         Ok(Self { if_index, if_name })
     }
 
-    pub fn new_from_default_route() -> Result<Self, io::Error> {
-        let router = Router::new()?;
-        let default_route = router.default().unwrap();
-        NetworkDevice::new_from_index(default_route.if_index)
+    pub fn new_from_default_route() -> Result<Self, DefaultRouteDeviceError> {
+        let router = Router::new().map_err(DefaultRouteDeviceError::LoadRoutingTables)?;
+        let default_route = router
+            .default()
+            .map_err(DefaultRouteDeviceError::FindDefaultRoute)?;
+        let if_index = default_route.if_index;
+        NetworkDevice::new_from_index(if_index)
+            .map_err(|source| DefaultRouteDeviceError::OpenInterface { if_index, source })
     }
 
     pub fn name(&self) -> &str {
@@ -154,9 +169,9 @@ impl NetworkDevice {
         Ok(path.file_name().unwrap().to_str().unwrap().into())
     }
 
-    pub fn open_queue(&self, queue_id: QueueId) -> Result<DeviceQueue, io::Error> {
+    pub fn open_queue(&self, queue_id: QueueId) -> DeviceQueue {
         let ring_sizes = Self::ring_sizes(&self.if_name).ok();
-        Ok(DeviceQueue::new(self.if_index, queue_id, ring_sizes))
+        DeviceQueue::new(self.if_index, queue_id, ring_sizes)
     }
 
     pub fn ring_sizes(if_name: &str) -> Result<RingSizes, io::Error> {
@@ -374,10 +389,10 @@ impl TxCompletionRing {
         }
     }
 
-    pub fn read(&mut self) -> Option<FrameOffset> {
+    pub fn read(&mut self) -> Option<CompletedFrameOffset> {
         let index = self.consumer.consume()? & self.size.saturating_sub(1);
         let index = unsafe { *self.mmap.desc.add(index as usize) } as usize;
-        Some(FrameOffset(index))
+        Some(CompletedFrameOffset(FrameOffset(index)))
     }
 
     pub fn commit(&mut self) {

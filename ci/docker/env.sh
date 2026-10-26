@@ -13,18 +13,20 @@ fi
 export CI_DOCKER_ARG_BASE_IMAGE=ubuntu:22.04
 export CI_DOCKER_ARG_RUST_VERSION="${rust_stable}"
 export CI_DOCKER_ARG_RUST_NIGHTLY_VERSION="${rust_nightly}"
-export CI_DOCKER_ARG_NODE_MAJOR=24
 export CI_DOCKER_ARG_SCCACHE_VERSION=v0.9.1
+export CI_DOCKER_ARG_NEXTEST_VERSION=0.9.137
 export CI_DOCKER_ARG_GRCOV_VERSION=v0.8.18
+export CI_DOCKER_ARG_CODECOV_VERSION=v0.8.0
 
 hash_vars=(
   "$(cat "${ci_docker_env_sh_here}/Dockerfile")"
   "${CI_DOCKER_ARG_BASE_IMAGE}"
   "${CI_DOCKER_ARG_RUST_VERSION}"
   "${CI_DOCKER_ARG_RUST_NIGHTLY_VERSION}"
-  "${CI_DOCKER_ARG_NODE_MAJOR}"
   "${CI_DOCKER_ARG_SCCACHE_VERSION}"
+  "${CI_DOCKER_ARG_NEXTEST_VERSION}"
   "${CI_DOCKER_ARG_GRCOV_VERSION}"
+  "${CI_DOCKER_ARG_CODECOV_VERSION}"
 )
 hash_input=$(IFS="_"; echo "${hash_vars[*]}")
 ci_docker_hash=$(echo -n "${hash_input}" | sha256sum | head -c 8)

@@ -1,7 +1,5 @@
 use {
-    async_trait::async_trait,
-    bincode::serialize,
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     futures_util::StreamExt,
     log::*,
     reqwest::{self, header::CONTENT_TYPE},
@@ -25,12 +23,15 @@ use {
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
-    solana_tpu_client_next::{client_builder::ClientBuilder, leader_updater::LeaderUpdater},
+    solana_tpu_client_next::{
+        client_builder::ClientBuilder, leader_updater::create_pinned_leader_updater,
+        node_address_service::LeaderTpuCacheServiceConfig,
+        websocket_node_address_service::WebsocketNodeAddressService,
+    },
     solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
     std::{
         collections::HashSet,
-        net::SocketAddr,
         sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
@@ -38,7 +39,8 @@ use {
         thread::sleep,
         time::{Duration, Instant},
     },
-    tokio::runtime::Runtime,
+    tokio::runtime::{Builder, Runtime},
+    tokio_util::sync::CancellationToken,
 };
 
 macro_rules! json_req {
@@ -90,7 +92,7 @@ fn test_rpc_send_tx() {
         Rent::default().minimum_balance(0),
         blockhash,
     );
-    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let serialized_encoded_tx = bs58::encode(wincode::serialize(&tx).unwrap()).into_string();
 
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
     let json: Value = post_rpc(req, &rpc_url);
@@ -106,11 +108,11 @@ fn test_rpc_send_tx() {
 
         let result: Option<TransactionStatus> =
             serde_json::from_value(json["result"]["value"][0].clone()).unwrap();
-        if let Some(result) = result.as_ref() {
-            if result.err.is_none() {
-                confirmed_tx = true;
-                break;
-            }
+        if let Some(result) = result.as_ref()
+            && result.err.is_none()
+        {
+            confirmed_tx = true;
+            break;
         }
 
         sleep(Duration::from_millis(500));
@@ -223,7 +225,7 @@ fn test_rpc_slot_updates() {
         TestValidator::start_with_config(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
 
     // Track when slot updates are ready
-    let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
+    let (update_sender, update_receiver) = bounded::<SlotUpdate>(1024);
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
     let rpc_pubsub_url = test_validator.rpc_pubsub_url();
@@ -243,16 +245,13 @@ fn test_rpc_slot_updates() {
         .recv_timeout(Duration::from_secs(2))
         .unwrap();
 
-    // Verify that updates are received in order for an upcoming slot
+    // Verify that updates are received for an upcoming slot
     let verify_slot = first_update.slot() + 2;
-    let expected_updates = vec![
-        "CreatedBank",
-        "Frozen",
-        "OptimisticConfirmation",
-        "Root", // TODO: debug why root signal is sent twice.
-        "Root",
-    ];
+    let expected_updates = ["CreatedBank", "Frozen"];
     let mut expected_updates = expected_updates.into_iter().peekable();
+    // Root will be emitted twice as we emit the parent when rooting a
+    // new slot so tolerate repeated Root notifications.
+    let mut expected_unordered_updates = vec!["OptimisticConfirmation", "Root", "Root"];
     // SlotUpdate::Completed is sent asynchronous to banking-stage and replay
     // when shreds are inserted into blockstore. When the leader generates
     // blocks, replay may freeze the bank before shreds are all inserted into
@@ -261,7 +260,10 @@ fn test_rpc_slot_updates() {
     let mut slot_update_completed = false;
 
     let test_start = Instant::now();
-    while expected_updates.peek().is_some() || !slot_update_completed {
+    while expected_updates.peek().is_some()
+        || !expected_unordered_updates.is_empty()
+        || !slot_update_completed
+    {
         assert!(test_start.elapsed() < Duration::from_secs(30));
         let update = update_receiver
             .recv_timeout(Duration::from_secs(2))
@@ -278,23 +280,20 @@ fn test_rpc_slot_updates() {
                 SlotUpdate::Root { .. } => "Root",
                 _ => continue,
             };
-            assert_eq!(Some(update_name), expected_updates.next());
+            if expected_updates.peek().is_some() {
+                assert_eq!(Some(update_name), expected_updates.next());
+            } else {
+                assert!(
+                    expected_unordered_updates
+                        .iter()
+                        .position(|&update| update == update_name)
+                        .map(|pos| expected_unordered_updates.swap_remove(pos))
+                        .is_some(),
+                    "unexpected slot update: {update_name}"
+                );
+            }
         }
     }
-}
-
-/// LeaderUpdater for testing - returns a fixed TPU address
-struct TestLeaderUpdater {
-    address: SocketAddr,
-}
-
-#[async_trait]
-impl LeaderUpdater for TestLeaderUpdater {
-    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
-        vec![self.address]
-    }
-
-    async fn stop(&mut self) {}
 }
 
 #[test]
@@ -310,7 +309,7 @@ fn test_rpc_subscriptions() {
 
     // Create transaction signatures to subscribe to
     let transfer_amount = Rent::default().minimum_balance(0);
-    let transactions: Vec<Transaction> = (0..1000)
+    let transactions: Vec<Transaction> = (0..100)
         .map(|_| {
             system_transaction::transfer(
                 &alice,
@@ -328,10 +327,10 @@ fn test_rpc_subscriptions() {
         .collect();
 
     // Track account notifications are received
-    let (account_sender, account_receiver) = unbounded::<(Pubkey, RpcResponse<UiAccount>)>();
+    let (account_sender, account_receiver) = bounded::<(Pubkey, RpcResponse<UiAccount>)>(1024);
     // Track when status notifications are received
     let (status_sender, status_receiver) =
-        unbounded::<(Signature, RpcResponse<RpcSignatureResult>)>();
+        bounded::<(Signature, RpcResponse<RpcSignatureResult>)>(1024);
 
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
@@ -438,9 +437,7 @@ fn test_rpc_subscriptions() {
     let bind_socket = sockets::bind_to_localhost_unique().unwrap();
     let tpu_address = *test_validator.tpu_quic();
 
-    let leader_updater = Box::new(TestLeaderUpdater {
-        address: tpu_address,
-    });
+    let leader_updater = create_pinned_leader_updater(tpu_address);
 
     let (transaction_sender, _client) = rt.block_on(async {
         ClientBuilder::new(leader_updater)
@@ -452,13 +449,10 @@ fn test_rpc_subscriptions() {
 
     // Send all transactions
     rt.block_on(async {
-        let wire_txs: Vec<_> = transactions
-            .iter()
-            .map(|tx| bincode::serialize(tx).unwrap())
-            .collect();
-        let _ = transaction_sender
-            .send_transactions_in_batch(wire_txs)
-            .await;
+        for tx in transactions.iter() {
+            let wire_tx = wincode::serialize(tx).unwrap();
+            let _ = transaction_sender.send_transaction(wire_tx).await;
+        }
     });
 
     // Track mint balance to know when transactions have completed
@@ -537,9 +531,7 @@ fn test_run_tpu_send_transaction() {
     let bind_socket = sockets::bind_to_localhost_unique().unwrap();
     let tpu_address = *test_validator.tpu_quic();
 
-    let leader_updater = Box::new(TestLeaderUpdater {
-        address: tpu_address,
-    });
+    let leader_updater = create_pinned_leader_updater(tpu_address);
 
     let (transaction_sender, _client) = rt.block_on(async {
         ClientBuilder::new(leader_updater)
@@ -549,11 +541,9 @@ fn test_run_tpu_send_transaction() {
             .expect("Failed to build TPU client")
     });
 
-    let tx_bytes = bincode::serialize(&tx).unwrap();
+    let tx_bytes = wincode::serialize(&tx).unwrap();
     rt.block_on(async {
-        let _ = transaction_sender
-            .send_transactions_in_batch(vec![tx_bytes])
-            .await;
+        let _ = transaction_sender.send_transaction(tx_bytes).await;
     });
 
     let timeout = Duration::from_secs(5);
@@ -566,6 +556,49 @@ fn test_run_tpu_send_transaction() {
             return;
         }
     }
+}
+
+#[test]
+fn test_node_address_service_slot_updates() {
+    agave_logger::setup();
+
+    let test_validator =
+        TestValidator::start_with_config(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
+
+    let rt = Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(2)
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let rpc_client = Arc::new(test_validator.get_async_rpc_client());
+        let cancel = CancellationToken::new();
+        let (provider, service) = WebsocketNodeAddressService::run(
+            rpc_client,
+            test_validator.rpc_pubsub_url(),
+            LeaderTpuCacheServiceConfig::default(),
+            cancel.clone(),
+        )
+        .await
+        .expect("WebsocketNodeAddressService should start");
+
+        let start_slot = provider.estimated_current_slot();
+        let timeout = Duration::from_secs(5);
+        let now = Instant::now();
+        loop {
+            assert!(
+                now.elapsed() < timeout,
+                "estimated slot did not advance within {timeout:?}"
+            );
+            if provider.estimated_current_slot() != start_slot {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(solana_clock::DEFAULT_MS_PER_SLOT)).await;
+        }
+
+        cancel.cancel();
+        service.shutdown().await.expect("clean shutdown");
+    });
 }
 
 #[test]

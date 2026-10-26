@@ -7,29 +7,35 @@ use {
     },
     solana_message::v0::LoadedAddresses,
     solana_serde::default_on_eof,
+    solana_transaction::{SchemaRead, SchemaWrite},
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_transaction_status::{
         InnerInstructions, Reward, RewardType, TransactionStatusMeta, TransactionTokenBalance,
     },
     std::str::FromStr,
+    wincode::{ReadError, adapter::DefaultOnEmptyRead},
 };
 
 pub mod convert;
 
 pub type StoredExtendedRewards = Vec<StoredExtendedReward>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct StoredExtendedReward {
     pubkey: String,
     lamports: i64,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<u64>")]
     post_balance: u64,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<RewardType>>")]
     reward_type: Option<RewardType>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u8>>")]
     commission: Option<u8>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u16>>")]
     commission_bps: Option<u16>,
 }
 
@@ -75,7 +81,7 @@ impl From<Reward> for StoredExtendedReward {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct StoredTokenAmount {
     pub ui_amount: f64,
     pub decimals: u8,
@@ -121,25 +127,27 @@ struct StoredTransactionError(Vec<u8>);
 impl From<StoredTransactionError> for TransactionError {
     fn from(value: StoredTransactionError) -> Self {
         let bytes = value.0;
-        bincode::deserialize(&bytes).expect("transaction error to deserialize from bytes")
+        wincode::deserialize(&bytes).expect("transaction error to deserialize from bytes")
     }
 }
 
 impl From<TransactionError> for StoredTransactionError {
     fn from(value: TransactionError) -> Self {
-        let bytes = bincode::serialize(&value).expect("transaction error to serialize to bytes");
+        let bytes = wincode::serialize(&value).expect("transaction error to serialize to bytes");
         StoredTransactionError(bytes)
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct StoredTransactionTokenBalance {
     pub account_index: u8,
     pub mint: String,
     pub ui_token_amount: StoredTokenAmount,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<String>")]
     pub owner: String,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<String>")]
     pub program_id: String,
 }
 
@@ -181,27 +189,35 @@ impl From<TransactionTokenBalance> for StoredTransactionTokenBalance {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct StoredTransactionStatusMeta {
     pub status: Result<()>,
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<InnerInstructions>>>")]
     pub inner_instructions: Option<Vec<InnerInstructions>>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<String>>>")]
     pub log_messages: Option<Vec<String>>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<StoredTransactionTokenBalance>>>")]
     pub pre_token_balances: Option<Vec<StoredTransactionTokenBalance>>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<StoredTransactionTokenBalance>>>")]
     pub post_token_balances: Option<Vec<StoredTransactionTokenBalance>>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<Vec<StoredExtendedReward>>>")]
     pub rewards: Option<Vec<StoredExtendedReward>>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<TransactionReturnData>>")]
     pub return_data: Option<TransactionReturnData>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u64>>")]
     pub compute_units_consumed: Option<u64>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "DefaultOnEmptyRead<Option<u64>>")]
     pub cost_units: Option<u64>,
 }
 
@@ -243,7 +259,7 @@ impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
 }
 
 impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
-    type Error = bincode::Error;
+    type Error = ReadError;
     fn try_from(value: TransactionStatusMeta) -> std::result::Result<Self, Self::Error> {
         let TransactionStatusMeta {
             status,
@@ -262,11 +278,9 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
         } = value;
 
         if !loaded_addresses.is_empty() {
-            // Deprecated bincode serialized status metadata doesn't support
-            // loaded addresses.
-            return Err(
-                bincode::ErrorKind::Custom("Bincode serialization is deprecated".into()).into(),
-            );
+            return Err(ReadError::Custom(
+                "deprecated stored transaction status metadata does not support loaded addresses",
+            ));
         }
 
         Ok(Self {
@@ -292,7 +306,7 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
 #[cfg(test)]
 mod tests {
     use {
-        crate::StoredTransactionError, solana_instruction::error::InstructionError,
+        crate::StoredTransactionError, solana_instruction_error::InstructionError,
         solana_transaction_error::TransactionError, test_case::test_case,
     };
 

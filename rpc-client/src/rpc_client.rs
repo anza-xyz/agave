@@ -17,9 +17,9 @@ use {
         nonblocking::{self, rpc_client::get_rpc_request_str},
         rpc_sender::*,
     },
-    serde::Serialize,
+    agave_votor_messages::wire::WireBlockCertMessage,
     serde_json::Value,
-    solana_account::{Account, ReadableAccount},
+    solana_account::{Account, state_traits::StateMutWincode as _},
     solana_account_decoder::UiAccount,
     solana_account_decoder_client_types::token::{UiTokenAccount, UiTokenAmount},
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -28,7 +28,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface::Feature,
     solana_hash::Hash,
-    solana_message::{Message as LegacyMessage, v0},
+    solana_message::{Message as LegacyMessage, VersionedMessage, v0, v1},
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
@@ -43,7 +43,9 @@ use {
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration},
+    wincode::{SchemaWrite, config::DefaultConfig},
 };
 
 #[derive(Default)]
@@ -53,6 +55,20 @@ pub struct RpcClientConfig {
 }
 
 impl RpcClientConfig {
+    /// Create a new [`RpcClientConfig`] that uses the provided [`CommitmentConfig`].
+    ///
+    /// All other configuration fields retain their default values. This helper is
+    /// convenient when a caller needs to tweak only the commitment level while
+    /// relying on the standard timeouts used by [`RpcClient`]'s constructors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_commitment_config::CommitmentConfig;
+    /// # use solana_rpc_client::rpc_client::RpcClientConfig;
+    /// let config = RpcClientConfig::with_commitment(CommitmentConfig::processed());
+    /// assert_eq!(config.commitment_config, CommitmentConfig::processed());
+    /// ```
     pub fn with_commitment(commitment_config: CommitmentConfig) -> Self {
         RpcClientConfig {
             commitment_config,
@@ -63,15 +79,24 @@ impl RpcClientConfig {
 
 /// Trait used to add support for versioned messages to RPC APIs while
 /// retaining backwards compatibility
+#[deprecated(since = "4.5.0", note = "Use VersionedMessage instead")]
 pub trait SerializableMessage {
     fn serialize(&self) -> Vec<u8>;
 }
+#[allow(deprecated)]
 impl SerializableMessage for LegacyMessage {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
     }
 }
+#[allow(deprecated)]
 impl SerializableMessage for v0::Message {
+    fn serialize(&self) -> Vec<u8> {
+        self.serialize()
+    }
+}
+#[allow(deprecated)]
+impl SerializableMessage for v1::Message {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
     }
@@ -79,7 +104,7 @@ impl SerializableMessage for v0::Message {
 
 /// Trait used to add support for versioned transactions to RPC APIs while
 /// retaining backwards compatibility
-pub trait SerializableTransaction: Serialize {
+pub trait SerializableTransaction: SchemaWrite<DefaultConfig, Src = Self> {
     fn get_signature(&self) -> &Signature;
     fn get_recent_blockhash(&self) -> &Hash;
     fn uses_durable_nonce(&self) -> bool;
@@ -965,6 +990,30 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).send_transaction_with_config(transaction, config))
     }
 
+    /// Issue an arbitrary JSON-RPC request and deserialize the response.
+    ///
+    /// This low-level helper exposes the raw RPC transport so that callers can
+    /// invoke Solana RPC methods that do not yet have dedicated wrappers on
+    /// [`RpcClient`]. The caller supplies both the [`RpcRequest`] variant and
+    /// the JSON-serializable parameter payload; the response body is converted
+    /// into the requested type.
+    ///
+    /// When possible prefer the higher-level convenience methods, which add
+    /// client-side validation and ergonomic defaults. Reach for `send` only
+    /// when you need access to new or less common RPC endpoints.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use serde_json::json;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_rpc_client_api::request::RpcRequest;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let slot: u64 = rpc_client
+    ///     .send(RpcRequest::GetSlot, json!([]))?;
+    /// assert!(slot >= 0);
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn send<T>(&self, request: RpcRequest, params: Value) -> ClientResult<T>
     where
         T: serde::de::DeserializeOwned,
@@ -1455,6 +1504,21 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_signature_statuses_with_history(signatures))
     }
 
+    /// Gets the statuses of a list of transaction signatures with the given
+    /// [`RpcSignatureStatusConfig`], which can select a commitment level and a
+    /// minimum context slot.
+    ///
+    /// [`RpcSignatureStatusConfig`]: solana_rpc_client_api::config::RpcSignatureStatusConfig
+    pub fn get_signature_statuses_with_config(
+        &self,
+        signatures: &[Signature],
+        config: RpcSignatureStatusConfig,
+    ) -> RpcResult<Vec<Option<TransactionStatus>>> {
+        self.invoke(
+            (self.rpc_client.as_ref()).get_signature_statuses_with_config(signatures, config),
+        )
+    }
+
     /// Check if a transaction has been processed with the given [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
@@ -1691,6 +1755,80 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_block_height_with_commitment(commitment_config))
     }
 
+    /// Returns the commitment information for a particular block.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getBlockCommitment`] RPC method.
+    ///
+    /// [`getBlockCommitment`]: https://solana.com/docs/rpc/http/getblockcommitment
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let commitment = rpc_client.get_block_commitment(5)?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_block_commitment(
+        &self,
+        slot: Slot,
+    ) -> ClientResult<RpcBlockCommitment<[u64; MAX_LOCKOUT_HISTORY + 1]>> {
+        self.invoke((self.rpc_client.as_ref()).get_block_commitment(slot))
+    }
+
+    /// Returns the leader of the current slot using the configured [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let leader = rpc_client.get_slot_leader()?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_slot_leader(&self) -> ClientResult<Pubkey> {
+        self.invoke((self.rpc_client.as_ref()).get_slot_leader())
+    }
+
+    /// Returns the leader of the current slot using the provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    pub fn get_slot_leader_with_commitment(
+        &self,
+        commitment_config: CommitmentConfig,
+    ) -> ClientResult<Pubkey> {
+        self.invoke((self.rpc_client.as_ref()).get_slot_leader_with_commitment(commitment_config))
+    }
+
+    /// Returns the leader of the current slot using the provided [`RpcContextConfig`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    pub fn get_slot_leader_with_config(&self, config: RpcContextConfig) -> ClientResult<Pubkey> {
+        self.invoke((self.rpc_client.as_ref()).get_slot_leader_with_config(config))
+    }
+
     /// Returns the slot leaders for a given slot range.
     ///
     /// # RPC Reference
@@ -1713,6 +1851,101 @@ impl RpcClient {
     /// ```
     pub fn get_slot_leaders(&self, start_slot: Slot, limit: u64) -> ClientResult<Vec<Pubkey>> {
         self.invoke((self.rpc_client.as_ref()).get_slot_leaders(start_slot, limit))
+    }
+
+    /// Returns Alpenglow's genesis certificate.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getAgGenesisCert`] RPC method.
+    ///
+    /// [`getAgGenesisCert`]: https://solana.com/docs/rpc/http/getaggenesiscert
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let cert = rpc_client.get_ag_genesis_cert()?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_ag_genesis_cert(&self) -> ClientResult<Option<WireBlockCertMessage>> {
+        self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
+    }
+
+    /// Returns the Alpenglow validator rank map for the epoch containing `slot`.
+    ///
+    /// Always queries finalized state, regardless of the client's default commitment.
+    ///
+    /// Returns `None` if the epoch is unavailable.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    ///
+    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let response = rpc_client.get_rank_map(certificate_slot)?;
+    /// if let Some(rank_map) = response.value {
+    ///     for validator in rank_map.validators {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_rank_map(&self, slot: Slot) -> RpcResult<Option<RpcRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_rank_map(slot))
+    }
+
+    /// Returns the Alpenglow validator rank map with an optional identity filter.
+    ///
+    /// Always queries finalized state. There is no commitment parameter.
+    ///
+    /// The filter preserves the validator's rank and the full map's total stake.
+    /// An unknown identity returns an empty validator list when the map is available.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getRankMap`] RPC method.
+    ///
+    /// [`getRankMap`]: https://solana.com/docs/rpc/http/getrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcRankMapConfig};
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let identity = "67omRD8GkXTi8daWceprtQABkDeEm3SZYHUCrthQGB9D";
+    /// let response = rpc_client.get_rank_map_with_config(
+    ///     certificate_slot,
+    ///     RpcRankMapConfig {
+    ///         identity: Some(identity.to_string()),
+    ///         ..RpcRankMapConfig::default()
+    ///     },
+    /// )?;
+    /// if let Some(rank_map) = response.value {
+    ///     if let Some(validator) = rank_map.validators.first() {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_rank_map_with_config(
+        &self,
+        slot: Slot,
+        config: RpcRankMapConfig,
+    ) -> RpcResult<Option<RpcRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_rank_map_with_config(slot, config))
     }
 
     /// Get block production for the current epoch.
@@ -2469,6 +2702,7 @@ impl RpcClient {
     ///     encoding: Some(UiTransactionEncoding::Json),
     ///     commitment: Some(CommitmentConfig::confirmed()),
     ///     max_supported_transaction_version: Some(0),
+    ///     min_context_slot: None,
     /// };
     /// let transaction = rpc_client.get_transaction_with_config(
     ///     &signature,
@@ -2648,6 +2882,7 @@ impl RpcClient {
     /// let config = RpcLeaderScheduleConfig {
     ///     identity: Some(validator_pubkey_str),
     ///     commitment: Some(CommitmentConfig::processed()),
+    ///     ..RpcLeaderScheduleConfig::default()
     /// };
     /// let leader_schedule = rpc_client.get_leader_schedule_with_config(
     ///     Some(slot),
@@ -3466,11 +3701,55 @@ impl RpcClient {
         )
     }
 
-    /// Request the transaction count.
+    /// Returns the total number of transactions processed by the cluster.
+    ///
+    /// This method uses the client's configured [commitment level][cl] when querying the
+    /// validator.
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTransactionCount`] RPC method.
+    ///
+    /// [`getTransactionCount`]: https://solana.com/docs/rpc/http/gettransactioncount
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let count = rpc_client.get_transaction_count()?;
+    /// assert!(count > 0);
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_transaction_count(&self) -> ClientResult<u64> {
         self.invoke((self.rpc_client.as_ref()).get_transaction_count())
     }
 
+    /// Returns the total number of transactions processed by the cluster using the supplied
+    /// [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTransactionCount`] RPC method.
+    ///
+    /// [`getTransactionCount`]: https://solana.com/docs/rpc/http/gettransactioncount
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_commitment_config::CommitmentConfig;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let processed = rpc_client.get_transaction_count_with_commitment(
+    ///     CommitmentConfig::processed(),
+    /// )?;
+    /// assert!(processed > 0);
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_transaction_count_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
@@ -3480,22 +3759,124 @@ impl RpcClient {
         )
     }
 
+    /// Returns the earliest slot that still has ledger data available on the node.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getFirstAvailableBlock`] RPC method.
+    ///
+    /// [`getFirstAvailableBlock`]: https://solana.com/docs/rpc/http/getfirstavailableblock
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let first_slot = rpc_client.get_first_available_block()?;
+    /// assert!(first_slot >= 0);
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_first_available_block(&self) -> ClientResult<Slot> {
         self.invoke((self.rpc_client.as_ref()).get_first_available_block())
     }
 
+    /// Returns the genesis hash advertised by the node.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getGenesisHash`] RPC method.
+    ///
+    /// [`getGenesisHash`]: https://solana.com/docs/rpc/http/getgenesishash
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let genesis_hash = rpc_client.get_genesis_hash()?;
+    /// assert!(!genesis_hash.to_string().is_empty());
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_genesis_hash(&self) -> ClientResult<Hash> {
         self.invoke((self.rpc_client.as_ref()).get_genesis_hash())
     }
 
+    /// Returns `Ok(())` when the RPC node reports a healthy status.
+    ///
+    /// Nodes typically respond with a non-error string such as `"ok"` when healthy; any other
+    /// response is converted into a [`ClientError`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getHealth`] RPC method.
+    ///
+    /// [`getHealth`]: https://solana.com/docs/rpc/http/gethealth
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// rpc_client.get_health()?;
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_health(&self) -> ClientResult<()> {
         self.invoke((self.rpc_client.as_ref()).get_health())
     }
 
+    /// Returns parsed SPL token account information for the given account address.
+    ///
+    /// The request is issued with the client's default [commitment level][cl] and deserializes the
+    /// result into [`UiTokenAccount`]. If the account does not exist or is not a token account,
+    /// `Ok(None)` is returned.
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method is built on the [`getAccountInfo`] RPC method.
+    ///
+    /// [`getAccountInfo`]: https://solana.com/docs/rpc/http/getaccountinfo
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let token_account = rpc_client.get_token_account(&Keypair::new().pubkey())?;
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_token_account(&self, pubkey: &Pubkey) -> ClientResult<Option<UiTokenAccount>> {
         self.invoke((self.rpc_client.as_ref()).get_token_account(pubkey))
     }
 
+    /// Returns parsed SPL token account information for the given account address using the
+    /// provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method is built on the [`getAccountInfo`] RPC method.
+    ///
+    /// [`getAccountInfo`]: https://solana.com/docs/rpc/http/getaccountinfo
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use solana_commitment_config::CommitmentConfig;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let info = rpc_client.get_token_account_with_commitment(
+    ///     &Keypair::new().pubkey(),
+    ///     CommitmentConfig::processed(),
+    /// )?;
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_token_account_with_commitment(
         &self,
         pubkey: &Pubkey,
@@ -3506,10 +3887,55 @@ impl RpcClient {
         )
     }
 
+    /// Returns the SPL token balance for the provided token account.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTokenAccountBalance`] RPC method.
+    ///
+    /// [`getTokenAccountBalance`]: https://solana.com/docs/rpc/http/gettokenaccountbalance
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let balance = rpc_client.get_token_account_balance(&Keypair::new().pubkey())?;
+    /// assert_eq!(balance.amount, "0");
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_token_account_balance(&self, pubkey: &Pubkey) -> ClientResult<UiTokenAmount> {
         self.invoke((self.rpc_client.as_ref()).get_token_account_balance(pubkey))
     }
 
+    /// Returns the SPL token balance for the provided token account using the given
+    /// [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTokenAccountBalance`] RPC method.
+    ///
+    /// [`getTokenAccountBalance`]: https://solana.com/docs/rpc/http/gettokenaccountbalance
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_commitment_config::CommitmentConfig;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let balance = rpc_client.get_token_account_balance_with_commitment(
+    ///     &Keypair::new().pubkey(),
+    ///     CommitmentConfig::processed(),
+    /// )?;
+    /// assert_eq!(balance.value.amount, "0");
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_token_account_balance_with_commitment(
         &self,
         pubkey: &Pubkey,
@@ -3521,6 +3947,33 @@ impl RpcClient {
         )
     }
 
+    /// Returns SPL token accounts delegated to the provided authority.
+    ///
+    /// The `token_account_filter` argument matches the filters supported by the
+    /// [`getTokenAccountsByDelegate`] RPC method.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
+    ///
+    /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_rpc_client_api::request::TokenAccountsFilter;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let delegate = Keypair::new().pubkey();
+    /// let accounts = rpc_client.get_token_accounts_by_delegate(
+    ///     &delegate,
+    ///     TokenAccountsFilter::ProgramId(Keypair::new().pubkey()),
+    /// )?;
+    /// assert!(accounts.is_empty());
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_token_accounts_by_delegate(
         &self,
         delegate: &Pubkey,
@@ -3532,6 +3985,16 @@ impl RpcClient {
         )
     }
 
+    /// Returns SPL token accounts delegated to the provided authority using the specified
+    /// [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
+    ///
+    /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
     pub fn get_token_accounts_by_delegate_with_commitment(
         &self,
         delegate: &Pubkey,
@@ -3547,6 +4010,30 @@ impl RpcClient {
         )
     }
 
+    /// Returns SPL token accounts owned by the provided wallet or program address.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTokenAccountsByOwner`] RPC method.
+    ///
+    /// [`getTokenAccountsByOwner`]: https://solana.com/docs/rpc/http/gettokenaccountsbyowner
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_rpc_client_api::request::TokenAccountsFilter;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let owner = Keypair::new().pubkey();
+    /// let accounts = rpc_client.get_token_accounts_by_owner(
+    ///     &owner,
+    ///     TokenAccountsFilter::ProgramId(Keypair::new().pubkey()),
+    /// )?;
+    /// assert!(accounts.is_empty());
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_token_accounts_by_owner(
         &self,
         owner: &Pubkey,
@@ -3557,6 +4044,16 @@ impl RpcClient {
         )
     }
 
+    /// Returns SPL token accounts owned by the provided address using the specified
+    /// [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTokenAccountsByOwner`] RPC method.
+    ///
+    /// [`getTokenAccountsByOwner`]: https://solana.com/docs/rpc/http/gettokenaccountsbyowner
     pub fn get_token_accounts_by_owner_with_commitment(
         &self,
         owner: &Pubkey,
@@ -3572,6 +4069,26 @@ impl RpcClient {
         )
     }
 
+    /// Returns the largest token accounts for a mint, ordered by balance.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTokenLargestAccounts`] RPC method.
+    ///
+    /// [`getTokenLargestAccounts`]: https://solana.com/docs/rpc/http/gettokenlargestaccounts
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let mint = Keypair::new().pubkey();
+    /// let accounts = rpc_client.get_token_largest_accounts(&mint)?;
+    /// assert!(accounts.is_empty());
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_token_largest_accounts(
         &self,
         mint: &Pubkey,
@@ -3579,6 +4096,15 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_token_largest_accounts(mint))
     }
 
+    /// Returns the largest token accounts for a mint using the specified [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTokenLargestAccounts`] RPC method.
+    ///
+    /// [`getTokenLargestAccounts`]: https://solana.com/docs/rpc/http/gettokenlargestaccounts
     pub fn get_token_largest_accounts_with_commitment(
         &self,
         mint: &Pubkey,
@@ -3590,10 +4116,39 @@ impl RpcClient {
         )
     }
 
+    /// Returns supply information for an SPL token mint.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTokenSupply`] RPC method.
+    ///
+    /// [`getTokenSupply`]: https://solana.com/docs/rpc/http/gettokensupply
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let mint = Keypair::new().pubkey();
+    /// let supply = rpc_client.get_token_supply(&mint)?;
+    /// assert_eq!(supply.amount, "0");
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn get_token_supply(&self, mint: &Pubkey) -> ClientResult<UiTokenAmount> {
         self.invoke((self.rpc_client.as_ref()).get_token_supply(mint))
     }
 
+    /// Returns supply information for an SPL token mint using the provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getTokenSupply`] RPC method.
+    ///
+    /// [`getTokenSupply`]: https://solana.com/docs/rpc/http/gettokensupply
     pub fn get_token_supply_with_commitment(
         &self,
         mint: &Pubkey,
@@ -3604,10 +4159,37 @@ impl RpcClient {
         )
     }
 
+    /// Requests an air-drop of lamports to the provided address.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`requestAirdrop`] RPC method.
+    ///
+    /// [`requestAirdrop`]: https://solana.com/docs/rpc/http/requestairdrop
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let signature = rpc_client.request_airdrop(&Keypair::new().pubkey(), 1_000_000)?;
+    /// assert!(!signature.to_string().is_empty());
+    /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
+    /// ```
     pub fn request_airdrop(&self, pubkey: &Pubkey, lamports: u64) -> ClientResult<Signature> {
         self.invoke((self.rpc_client.as_ref()).request_airdrop(pubkey, lamports))
     }
 
+    /// Requests an air-drop while specifying a recent blockhash used for the transfer.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`requestAirdrop`] RPC method with an explicit
+    /// blockhash parameter.
+    ///
+    /// [`requestAirdrop`]: https://solana.com/docs/rpc/http/requestairdrop
     pub fn request_airdrop_with_blockhash(
         &self,
         pubkey: &Pubkey,
@@ -3621,6 +4203,16 @@ impl RpcClient {
         ))
     }
 
+    /// Requests an air-drop with fine-grained configuration.
+    ///
+    /// The `config` argument allows the caller to supply options such as the desired commitment or
+    /// a preselected blockhash.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`requestAirdrop`] RPC method.
+    ///
+    /// [`requestAirdrop`]: https://solana.com/docs/rpc/http/requestairdrop
     pub fn request_airdrop_with_config(
         &self,
         pubkey: &Pubkey,
@@ -3632,6 +4224,12 @@ impl RpcClient {
         )
     }
 
+    /// Polls the network for the account's balance until a response is received.
+    ///
+    /// The method retries for up to one second, querying with the supplied [commitment level][cl].
+    /// It returns the balance the first time the request succeeds.
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
     pub fn poll_get_balance_with_commitment(
         &self,
         pubkey: &Pubkey,
@@ -3642,6 +4240,12 @@ impl RpcClient {
         )
     }
 
+    /// Waits for an account balance to reach an expected value.
+    ///
+    /// The method polls [`poll_get_balance_with_commitment`] repeatedly. If `expected_balance` is
+    /// `Some`, the function returns the balance once it matches that value; otherwise it returns the
+    /// first retrieved balance. Any polling error is swallowed and reported as `None` to mirror the
+    /// historical behavior of this synchronous helper.
     pub fn wait_for_balance_with_commitment(
         &self,
         pubkey: &Pubkey,
@@ -3685,6 +4289,14 @@ impl RpcClient {
         )
     }
 
+    /// Returns the number of confirmed blocks elapsed since the provided signature was observed.
+    ///
+    /// # RPC Reference
+    ///
+    /// This helper uses the [`getSignatureStatuses`] RPC method and inspects the
+    /// `confirmations` field of the response.
+    ///
+    /// [`getSignatureStatuses`]: https://solana.com/docs/rpc/http/getsignaturestatuses
     pub fn get_num_blocks_since_signature_confirmation(
         &self,
         signature: &Signature,
@@ -3694,10 +4306,26 @@ impl RpcClient {
         )
     }
 
+    /// Returns the most recent blockhash observed by the cluster.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getLatestBlockhash`] RPC method.
+    ///
+    /// [`getLatestBlockhash`]: https://solana.com/docs/rpc/http/getlatestblockhash
     pub fn get_latest_blockhash(&self) -> ClientResult<Hash> {
         self.invoke((self.rpc_client.as_ref()).get_latest_blockhash())
     }
 
+    /// Returns the most recent blockhash along with the last valid block height for commitment-aware clients.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getLatestBlockhash`] RPC method and uses the
+    /// provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    /// [`getLatestBlockhash`]: https://solana.com/docs/rpc/http/getlatestblockhash
     pub fn get_latest_blockhash_with_commitment(
         &self,
         commitment: CommitmentConfig,
@@ -3705,6 +4333,32 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_latest_blockhash_with_commitment(commitment))
     }
 
+    /// Returns the most recent blockhash and last valid block height along with the response
+    /// context, which includes the slot at which the node observed the blockhash.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getLatestBlockhash`] RPC method and uses the
+    /// provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    /// [`getLatestBlockhash`]: https://solana.com/docs/rpc/http/getlatestblockhash
+    pub fn get_latest_blockhash_with_commitment_and_context(
+        &self,
+        commitment: CommitmentConfig,
+    ) -> RpcResult<(Hash, u64)> {
+        self.invoke(
+            (self.rpc_client.as_ref()).get_latest_blockhash_with_commitment_and_context(commitment),
+        )
+    }
+
+    /// Checks whether a blockhash is still valid for submitting transactions.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`isBlockhashValid`] RPC method.
+    ///
+    /// [`isBlockhashValid`]: https://solana.com/docs/rpc/http/isblockhashvalid
     pub fn is_blockhash_valid(
         &self,
         blockhash: &Hash,
@@ -3713,25 +4367,58 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).is_blockhash_valid(blockhash, commitment))
     }
 
+    /// Returns the fee that the cluster would charge to process the provided message.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
+    ///
+    /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    #[deprecated(since = "4.5.0", note = "Use get_fee_for_versioned_message instead")]
+    #[allow(deprecated)]
     pub fn get_fee_for_message(&self, message: &impl SerializableMessage) -> ClientResult<u64> {
         self.invoke((self.rpc_client.as_ref()).get_fee_for_message(message))
     }
 
+    /// Returns the fee that the cluster would charge to process the provided message.
+    ///
+    /// Supports legacy, v0, and v1 messages through [`VersionedMessage`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
+    ///
+    /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    pub fn get_fee_for_versioned_message(&self, message: &VersionedMessage) -> ClientResult<u64> {
+        self.invoke((self.rpc_client.as_ref()).get_fee_for_versioned_message(message))
+    }
+
+    /// Fetches a fresh latest blockhash, retrying until it differs from the provided value.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method repeatedly calls [`getLatestBlockhash`] until the returned value changes.
+    ///
+    /// [`getLatestBlockhash`]: https://solana.com/docs/rpc/http/getlatestblockhash
     pub fn get_new_latest_blockhash(&self, blockhash: &Hash) -> ClientResult<Hash> {
         self.invoke((self.rpc_client.as_ref()).get_new_latest_blockhash(blockhash))
     }
 
+    /// Returns accumulated transport metrics for this client instance.
     pub fn get_transport_stats(&self) -> RpcTransportStats {
         (self.rpc_client.as_ref()).get_transport_stats()
     }
 
+    /// Returns the slot at which a feature was activated, if it has been activated.
+    ///
+    /// The method downloads the feature account and deserializes it into a `Feature` struct.
     pub fn get_feature_activation_slot(&self, feature_id: &Pubkey) -> ClientResult<Option<Slot>> {
         self.get_account_with_commitment(feature_id, self.commitment())
             .and_then(|maybe_feature_account| {
                 maybe_feature_account
                     .value
                     .map(|feature_account| {
-                        bincode::deserialize(feature_account.data()).map_err(|_| {
+                        feature_account.state().map_err(|_| {
                             ClientError::from(ErrorKind::Custom(
                                 "Failed to deserialize feature account".to_string(),
                             ))
@@ -3744,6 +4431,7 @@ impl RpcClient {
             })
     }
 
+    /// Blocks on the provided future using the client's Tokio runtime.
     fn invoke<T, F: std::future::Future<Output = ClientResult<T>>>(&self, f: F) -> ClientResult<T> {
         // `block_on()` panics if called within an asynchronous execution context. Whereas
         // `block_in_place()` only panics if called from a current_thread runtime, which is the
@@ -3751,10 +4439,12 @@ impl RpcClient {
         tokio::task::block_in_place(move || self.runtime.as_ref().expect("runtime").block_on(f))
     }
 
+    /// Returns a reference to the underlying asynchronous RPC client.
     pub fn get_inner_client(&self) -> &Arc<nonblocking::rpc_client::RpcClient> {
         &self.rpc_client
     }
 
+    /// Returns the Tokio runtime used to execute blocking RPC calls.
     pub fn runtime(&self) -> &tokio::runtime::Runtime {
         self.runtime.as_ref().expect("runtime")
     }
@@ -3788,18 +4478,19 @@ mod tests {
         crate::mock_sender::PUBKEY,
         assert_matches::assert_matches,
         base64::{Engine, prelude::BASE64_STANDARD},
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         jsonrpc_core::{Error, IoHandler, Params, futures::prelude::*},
         jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation, ServerBuilder},
         serde_json::{Number, json},
         solana_account_decoder::{UiAccountData, encode_ui_account},
         solana_account_decoder_client_types::UiAccountEncoding,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
         solana_message::{MessageHeader, compiled_instruction::CompiledInstruction},
         solana_rpc_client_api::client_error::ErrorKind,
         solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,
         solana_transaction_error::TransactionError,
         std::{io, thread},
@@ -3823,7 +4514,7 @@ mod tests {
     }
 
     fn _test_send() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         thread::spawn(move || {
             let rpc_addr = "0.0.0.0:0".parse().unwrap();
             let mut io = IoHandler::default();
@@ -4019,6 +4710,88 @@ mod tests {
                 .unwrap();
             assert_eq!(expected_minimum_delegation, actual_minimum_delegation);
         }
+    }
+
+    #[test]
+    fn test_get_slot_leader_variants() {
+        let expected_leader: Pubkey = PUBKEY.parse().unwrap();
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+
+        let leader = rpc_client.get_slot_leader().unwrap();
+        assert_eq!(leader, expected_leader);
+
+        let leader_with_commitment = rpc_client
+            .get_slot_leader_with_commitment(CommitmentConfig::processed())
+            .unwrap();
+        assert_eq!(leader_with_commitment, expected_leader);
+
+        let leader_with_config = rpc_client
+            .get_slot_leader_with_config(RpcContextConfig {
+                commitment: Some(CommitmentConfig::confirmed()),
+                min_context_slot: Some(1),
+            })
+            .unwrap();
+        assert_eq!(leader_with_config, expected_leader);
+    }
+
+    #[test]
+    fn test_get_rank_map_variants() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+
+        let response = rpc_client.get_rank_map(0).unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert!(response.value.is_none());
+
+        let response = rpc_client
+            .get_rank_map_with_config(
+                0,
+                RpcRankMapConfig {
+                    identity: None,
+                    min_context_slot: Some(1),
+                },
+            )
+            .unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert!(response.value.is_none());
+    }
+
+    #[test]
+    fn test_get_block_commitment() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+        let commitment = rpc_client.get_block_commitment(5).unwrap();
+
+        assert_eq!(commitment.total_stake, 42);
+        let slots = commitment.commitment.expect("commitment available");
+        assert_eq!(slots.len(), MAX_LOCKOUT_HISTORY + 1);
+    }
+
+    #[test]
+    fn test_get_signature_statuses_with_config() {
+        let signature = Signature::default();
+        let config = RpcSignatureStatusConfig {
+            search_transaction_history: false,
+            commitment: Some(CommitmentConfig::confirmed()),
+            min_context_slot: Some(1),
+        };
+
+        // The "succeeds" mock answers with one finalized status per signature.
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+        let statuses = rpc_client
+            .get_signature_statuses_with_config(&[signature], config)
+            .unwrap()
+            .value;
+        assert_eq!(statuses.len(), 1);
+        let status = statuses[0].as_ref().unwrap();
+        assert_eq!(status.slot, 1);
+        assert!(status.err.is_none());
+
+        // The "sig_not_found" mock answers with None per signature.
+        let rpc_client = RpcClient::new_mock("sig_not_found".to_string());
+        let statuses = rpc_client
+            .get_signature_statuses_with_config(&[signature], config)
+            .unwrap()
+            .value;
+        assert_eq!(statuses, vec![None]);
     }
 
     #[test]
@@ -4478,7 +5251,7 @@ mod tests {
         }
     }
 
-    #[test_case(LegacyMessage {
+    #[test_case(VersionedMessage::Legacy(LegacyMessage {
         header: MessageHeader {
             num_required_signatures: 1,
             num_readonly_signed_accounts: 0,
@@ -4491,8 +5264,8 @@ mod tests {
             accounts: vec![0],
             data: vec![],
         }],
-    }; "legacy message")]
-    #[test_case(v0::Message {
+    }); "legacy message")]
+    #[test_case(VersionedMessage::V0(v0::Message {
             header: MessageHeader {
                 num_required_signatures: 1,
                 num_readonly_signed_accounts: 0,
@@ -4506,15 +5279,22 @@ mod tests {
                 data: vec![],
             }],
             address_table_lookups: vec![],
-        }; "v0 message")]
-    fn test_get_fee_for_message_sends_properly_serialized_v0_transaction<M>(message: M)
-    where
-        M: SerializableMessage,
-    {
+        }); "v0 message")]
+    #[test_case(VersionedMessage::V1(
+        v1::Message::try_compile_with_config(
+            &Pubkey::new_unique(),
+            &[],
+            Hash::new_unique(),
+            v1::TransactionConfig::empty(),
+        ).unwrap()
+    ); "v1 message")]
+    fn test_get_fee_for_versioned_message_sends_properly_serialized_message(
+        message: VersionedMessage,
+    ) {
         let serialized_message = message.serialize();
         let serialized_message_base64 = BASE64_STANDARD.encode(serialized_message);
 
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         thread::spawn(move || {
             let rpc_addr = "0.0.0.0:0".parse().unwrap();
             let mut io = IoHandler::default();
@@ -4555,7 +5335,85 @@ mod tests {
         let rpc_addr = receiver.recv().unwrap();
         let rpc_client = RpcClient::new_socket(rpc_addr);
 
-        let fee: u64 = rpc_client.get_fee_for_message(&message).unwrap();
+        let fee: u64 = rpc_client.get_fee_for_versioned_message(&message).unwrap();
         assert_eq!(fee, 42);
+    }
+
+    #[test_case(Some(0); "zero fee")]
+    #[test_case(None; "invalid blockhash")]
+    fn test_get_fee_for_versioned_message_response(fee: Option<u64>) {
+        let mocks = Mocks::from([(
+            RpcRequest::GetFeeForMessage,
+            json!(Response {
+                context: RpcResponseContext {
+                    slot: 1,
+                    api_version: None
+                },
+                value: fee,
+            }),
+        )]);
+        let rpc_client = RpcClient::new_mock_with_mocks("succeeds".to_string(), mocks);
+        let message = VersionedMessage::Legacy(LegacyMessage::default());
+        let result = rpc_client.get_fee_for_versioned_message(&message);
+        match fee {
+            Some(fee) => assert_eq!(result.unwrap(), fee),
+            None => assert_matches!(
+                result.unwrap_err().kind(),
+                ErrorKind::Custom(message) if message == "Invalid blockhash"
+            ),
+        }
+    }
+
+    #[test]
+    fn test_get_latest_blockhash_with_commitment_and_context() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+        let expected_blockhash: Hash = PUBKEY.parse().unwrap();
+
+        let response = rpc_client
+            .get_latest_blockhash_with_commitment_and_context(CommitmentConfig::default())
+            .unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert_eq!(response.value, (expected_blockhash, 1234));
+
+        let value = rpc_client
+            .get_latest_blockhash_with_commitment(CommitmentConfig::default())
+            .unwrap();
+        assert_eq!(value, response.value);
+    }
+
+    #[test]
+    fn test_send_transaction_v1() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+
+        let key = Keypair::new();
+        let to = Pubkey::new_unique();
+        let blockhash = Hash::default();
+        let ix = system_instruction::transfer(&key.pubkey(), &to, 50);
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V1(
+                v1::Message::try_compile_with_config(
+                    &key.pubkey(),
+                    &[ix],
+                    blockhash,
+                    v1::TransactionConfig::empty(),
+                )
+                .unwrap(),
+            ),
+            &[key],
+        )
+        .unwrap();
+
+        let signature = rpc_client.send_transaction(&tx);
+        assert_eq!(signature.unwrap(), tx.signatures[0]);
+
+        let rpc_client = RpcClient::new_mock("fails".to_string());
+
+        let signature = rpc_client.send_transaction(&tx);
+        assert!(signature.is_err());
+
+        // Test bad signature returned from rpc node
+        let rpc_client = RpcClient::new_mock("malicious".to_string());
+        let signature = rpc_client.send_transaction(&tx);
+        assert!(signature.is_err());
     }
 }

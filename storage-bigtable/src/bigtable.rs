@@ -4,7 +4,7 @@ use {
     crate::{
         CredentialType,
         access_token::{AccessToken, Scope},
-        compression::{compress_best, decompress},
+        compression::{compress_zstd_or_none, decompress},
         root_ca_certificate,
     },
     hyper_util::client::legacy::connect::{HttpConnector, proxy::Tunnel},
@@ -385,10 +385,10 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         let started = Instant::now();
 
         while let Some(res) = rrr.message().await? {
-            if let Some(timeout) = self.timeout {
-                if Instant::now().duration_since(started) > timeout {
-                    return Err(Error::Timeout);
-                }
+            if let Some(timeout) = self.timeout
+                && Instant::now().duration_since(started) > timeout
+            {
+                return Err(Error::Timeout);
             }
             for (i, mut chunk) in res.chunks.into_iter().enumerate() {
                 // The comments for `read_rows_response::CellChunk` provide essential details for
@@ -723,12 +723,12 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
 
         while let Some(res) = response.message().await? {
             for entry in res.entries {
-                if let Some(status) = entry.status {
-                    if status.code != 0 {
-                        eprintln!("delete_rows error {}: {}", status.code, status.message);
-                        warn!("delete_rows error {}: {}", status.code, status.message);
-                        return Err(Error::RowDeleteFailed);
-                    }
+                if let Some(status) = entry.status
+                    && status.code != 0
+                {
+                    eprintln!("delete_rows error {}: {}", status.code, status.message);
+                    warn!("delete_rows error {}: {}", status.code, status.message);
+                    return Err(Error::RowDeleteFailed);
                 }
             }
         }
@@ -779,12 +779,12 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
 
         while let Some(res) = response.message().await? {
             for entry in res.entries {
-                if let Some(status) = entry.status {
-                    if status.code != 0 {
-                        eprintln!("put_row_data error {}: {}", status.code, status.message);
-                        warn!("put_row_data error {}: {}", status.code, status.message);
-                        return Err(Error::RowWriteFailed);
-                    }
+                if let Some(status) = entry.status
+                    && status.code != 0
+                {
+                    eprintln!("put_row_data error {}: {}", status.code, status.message);
+                    warn!("put_row_data error {}: {}", status.code, status.message);
+                    return Err(Error::RowWriteFailed);
                 }
             }
         }
@@ -880,7 +880,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         let mut bytes_written = 0;
         let mut new_row_data = vec![];
         for (row_key, data) in cells {
-            let data = compress_best(&bincode::serialize(&data).unwrap())?;
+            let data = compress_zstd_or_none(&bincode::serialize(&data).unwrap())?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("bin".to_string(), data)]));
         }
@@ -902,7 +902,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         for (row_key, data) in cells {
             let mut buf = Vec::with_capacity(data.encoded_len());
             data.encode(&mut buf).unwrap();
-            let data = compress_best(&buf)?;
+            let data = compress_zstd_or_none(&buf)?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("proto".to_string(), data)]));
         }
@@ -916,25 +916,13 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         table_name: &str,
         request: ReadRowsRequest,
     ) -> Result<tonic::Response<tonic::Streaming<ReadRowsResponse>>> {
-        let datapoint_bigtable = if table_name == "blocks" {
-            "bigtable_blocks"
-        } else if table_name == "tx" {
-            "bigtable_tx"
-        } else if table_name == "tx-by-addr" {
-            "bigtable_tx-by-addr"
-        } else if table_name == "entries" {
-            "bigtable_entries"
-        } else {
-            "bigtable_unknown"
-        };
-        datapoint_info!(datapoint_bigtable, ("read_rows", 1, i64));
         tokio::time::timeout(
             self.timeout.unwrap_or(Duration::from_secs(30)),
             self.client.read_rows(request),
         )
         .await
         .map_err(|_| {
-            datapoint_error!(datapoint_bigtable, ("timeout", 1, i64));
+            datapoint_error!("storage-bigtable-timeout", ("table", table_name, String));
             Error::Timeout
         })?
         .map_err(Error::from)
@@ -1080,7 +1068,7 @@ mod tests {
             block_time: Some(1_234_567_890),
             block_height: Some(1),
         };
-        let bincode_block = compress_best(
+        let bincode_block = compress_zstd_or_none(
             &bincode::serialize::<StoredConfirmedBlock>(&expected_block.clone().into()).unwrap(),
         )
         .unwrap();
@@ -1088,7 +1076,7 @@ mod tests {
         let protobuf_block = confirmed_block_into_protobuf(expected_block.clone());
         let mut buf = Vec::with_capacity(protobuf_block.encoded_len());
         protobuf_block.encode(&mut buf).unwrap();
-        let protobuf_block = compress_best(&buf).unwrap();
+        let protobuf_block = compress_zstd_or_none(&buf).unwrap();
 
         let deserialized = deserialize_protobuf_or_bincode_cell_data::<
             StoredConfirmedBlock,

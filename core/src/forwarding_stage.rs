@@ -2,40 +2,42 @@
 //! packets to a node that is or will be leader soon.
 
 use {
-    crate::next_leader::next_leaders,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
-    async_trait::async_trait,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
+    smallvec::SmallVec,
+    solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_cost_model::cost_model::CostModel,
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
+    solana_fee_structure::FeeDetails,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
     solana_keypair::Keypair,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
-    solana_packet as packet,
+    solana_perf::packet,
     solana_poh::poh_recorder::PohRecorder,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, CollectorFeeDetails},
         bank_forks::SharableBanks,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
-        ConnectionWorkersScheduler,
+        ConnectionWorkersScheduler, WireTransaction,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::LeaderUpdater,
-        transaction_batch::TransactionBatch,
     },
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransportError,
     std::{
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -61,10 +63,18 @@ pub struct ForwardingClientConfig<'a> {
 /// Maximum forwarding rate in bytes per second.
 const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
 
+/// Maximum number of transactions collected before forwarding a batch.
+///
 /// Value chosen because it was used historically, at some point
 /// was found to be optimal. If we need to improve performance
 /// this should be evaluated with new stage.
 const FORWARD_BATCH_SIZE: usize = 128;
+
+/// Scheduler channel capacity in transactions.
+const SCHEDULER_CHANNEL_CAPACITY: usize = FORWARD_BATCH_SIZE;
+
+/// Worker channel capacity in transactions.
+const WORKER_CHANNEL_CAPACITY: usize = FORWARD_BATCH_SIZE;
 
 /// How far ahead to look in the leader schedule when determining forwarding
 /// addresses. The unit is `NUM_CONSECUTIVE_LEADER_SLOTS`.
@@ -93,22 +103,40 @@ impl ForwardAddressGetter {
         }
     }
 
-    /// Returns a list of forwarding addresses for non-vote transactions.
-    fn get_non_vote_forwarding_addresses(
-        &self,
-        max_count: u64,
-        protocol: Protocol,
-    ) -> Vec<SocketAddr> {
-        next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
-            node.tpu_forwards(protocol)
-        })
+    /// Appends forwarding addresses for non-vote transactions to `leaders`.
+    fn non_vote_forwarding_addresses(&self, max_count: u64, leaders: &mut Vec<SocketAddr>) {
+        let mut leader_pubkeys = Vec::with_capacity(max_count as usize);
+        let recorder = self.poh_recorder.read().unwrap();
+        leader_pubkeys.extend((0..max_count).filter_map(|i| {
+            recorder.leader_after_n_slots(
+                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET
+                    + i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64,
+            )
+        }));
+        drop(recorder);
+
+        leaders.extend(leader_pubkeys.iter().filter_map(|leader_pubkey| {
+            self.cluster_info
+                .lookup_contact_info(leader_pubkey, |node| node.tpu_forwards(Protocol::QUIC))?
+                .filter(|addr| self.cluster_info.socket_addr_space().check(addr))
+        }));
     }
 
-    /// Returns the TPU vote forwarding address of the next leader, if
-    /// available.
-    fn get_vote_forwarding_addresses(&self, max_count: u64) -> Vec<SocketAddr> {
-        next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
-            node.tpu_vote(Protocol::UDP)
+    /// Returns the TPU vote forwarding address of the next leader, if available.
+    fn next_vote_forwarding_address(&self) -> Option<SocketAddr> {
+        let mut leader_pubkeys = SmallVec::<[Pubkey; NUM_LOOKAHEAD_LEADERS as usize]>::new();
+        let recorder = self.poh_recorder.read().unwrap();
+        leader_pubkeys.extend((0..NUM_LOOKAHEAD_LEADERS).filter_map(|i| {
+            recorder.leader_after_n_slots(
+                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET
+                    + i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64,
+            )
+        }));
+        drop(recorder);
+        leader_pubkeys.into_iter().find_map(|leader_pubkey| {
+            self.cluster_info
+                .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(Protocol::UDP))?
+                .filter(|addr| self.cluster_info.socket_addr_space().check(addr))
         })
     }
 }
@@ -123,7 +151,7 @@ pub(crate) struct SpawnForwardingStageResult {
 
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
-    tpu_forwaring_client_config: ForwardingClientConfig<'_>,
+    tpu_forwarding_client_config: ForwardingClientConfig<'_>,
     vote_client_udp_socket: UdpSocket,
     sharable_banks: SharableBanks,
     forward_address_getter: ForwardAddressGetter,
@@ -136,7 +164,7 @@ pub(crate) fn spawn_forwarding_stage(
         runtime_handle,
         cancel,
         node_multihoming,
-    } = tpu_forwaring_client_config;
+    } = tpu_forwarding_client_config;
 
     // Create TPU clients for each socket provided.
     // Number of clients is same as number of bind IP addresses.
@@ -260,36 +288,30 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
     /// Insert received packets into the packet container.
     fn buffer_packet_batches(
         &mut self,
-        packet_batches: BankingPacketBatch,
+        packet_batch: BankingPacketBatch,
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
-        let enable_instruction_accounts_limit =
-            bank.feature_set.snapshot().limit_instruction_accounts;
-        for batch in packet_batches.iter() {
-            for packet in batch
-                .iter()
-                .filter(|p| initial_packet_meta_filter(p.meta()))
-            {
-                let Some(packet_data) = packet.data(..) else {
-                    unreachable!(
-                        "packet.meta().discard() was already checked. If not discarded, packet \
-                         MUST have data"
-                    );
-                };
+        for packet in packet_batch
+            .iter()
+            .filter(|p| initial_packet_meta_filter(p.meta()))
+        {
+            let Some(packet_data) = packet.data(..) else {
+                unreachable!(
+                    "packet.meta().discard() was already checked. If not discarded, packet MUST \
+                     have data"
+                );
+            };
 
-                let vote_count = usize::from(is_tpu_vote_batch);
-                let non_vote_count = usize::from(!is_tpu_vote_batch);
+            let vote_count = usize::from(is_tpu_vote_batch);
+            let non_vote_count = usize::from(!is_tpu_vote_batch);
 
-                self.metrics.votes_received += vote_count;
-                self.metrics.non_votes_received += non_vote_count;
+            self.metrics.votes_received += vote_count;
+            self.metrics.non_votes_received += non_vote_count;
 
-                // Perform basic sanitization checks and calculate priority.
-                // If any steps fail, drop the packet.
-                let Some(priority) = SanitizedTransactionView::try_new_sanitized(
-                    packet_data,
-                    enable_instruction_accounts_limit,
-                )
+            // Perform basic sanitization checks and calculate priority.
+            // If any steps fail, drop the packet.
+            let Some(priority) = SanitizedTransactionView::try_new_sanitized(packet_data)
                 .map_err(|_| ())
                 .and_then(|transaction| {
                     RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
@@ -300,33 +322,32 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                     .map_err(|_| ())
                 })
                 .ok()
-                .and_then(|transaction| calculate_priority(&transaction, bank)) else {
-                    self.metrics.votes_dropped_on_receive += vote_count;
-                    self.metrics.non_votes_dropped_on_receive += non_vote_count;
+                .and_then(|transaction| calculate_priority(&transaction, bank))
+            else {
+                self.metrics.votes_dropped_on_receive += vote_count;
+                self.metrics.non_votes_dropped_on_receive += non_vote_count;
+                continue;
+            };
+
+            // If at capacity, check lowest priority item.
+            if self.packet_container.is_full() {
+                let min_priority = self.packet_container.min_priority().expect("not empty");
+                // If priority of current packet is not higher than the min
+                // drop the current packet.
+                if min_priority >= priority {
+                    self.metrics.votes_dropped_on_capacity += vote_count;
+                    self.metrics.non_votes_dropped_on_capacity += non_vote_count;
                     continue;
-                };
-
-                // If at capacity, check lowest priority item.
-                if self.packet_container.is_full() {
-                    let min_priority = self.packet_container.min_priority().expect("not empty");
-                    // If priority of current packet is not higher than the min
-                    // drop the current packet.
-                    if min_priority >= priority {
-                        self.metrics.votes_dropped_on_capacity += vote_count;
-                        self.metrics.non_votes_dropped_on_capacity += non_vote_count;
-                        continue;
-                    }
-
-                    let dropped_packet = self.packet_container.pop_min().expect("not empty");
-                    self.metrics.votes_dropped_on_capacity +=
-                        usize::from(dropped_packet.meta().is_simple_vote_tx());
-                    self.metrics.non_votes_dropped_on_capacity +=
-                        usize::from(!dropped_packet.meta().is_simple_vote_tx());
                 }
 
-                self.packet_container
-                    .insert(packet.to_bytes_packet(), priority);
+                let dropped_packet = self.packet_container.pop_min().expect("not empty");
+                self.metrics.votes_dropped_on_capacity +=
+                    usize::from(dropped_packet.meta().is_simple_vote_tx());
+                self.metrics.non_votes_dropped_on_capacity +=
+                    usize::from(!dropped_packet.meta().is_simple_vote_tx());
             }
+
+            self.packet_container.insert(packet.clone(), priority);
         }
     }
 
@@ -457,11 +478,8 @@ impl VoteClient {
         }
     }
 
-    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
-        let node_addresses = self
-            .forward_address_getter
-            .get_vote_forwarding_addresses(NUM_LOOKAHEAD_LEADERS);
-        node_addresses.first().copied()
+    fn next_valid_leader(&self) -> Option<SocketAddr> {
+        self.forward_address_getter.next_vote_forwarding_address()
     }
 }
 
@@ -470,7 +488,7 @@ impl ForwardingClient for VoteClient {
         &self,
         wire_transactions: Vec<Vec<u8>>,
     ) -> Result<(), ForwardingClientError> {
-        let Some(current_address) = self.get_next_valid_leader() else {
+        let Some(current_address) = self.next_valid_leader() else {
             return Err(ForwardingClientError::LeaderContactMissing);
         };
         let batch_with_addresses = wire_transactions
@@ -481,18 +499,15 @@ impl ForwardingClient for VoteClient {
     }
 }
 
-#[async_trait]
 impl LeaderUpdater for ForwardAddressGetter {
-    fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
-        self.get_non_vote_forwarding_addresses(lookahead_slots as u64, Protocol::QUIC)
+    fn next_leaders(&mut self, lookahead_slots: usize, leaders: &mut Vec<SocketAddr>) {
+        self.non_vote_forwarding_addresses(lookahead_slots as u64, leaders);
     }
-
-    async fn stop(&mut self) {}
 }
 
 #[derive(Clone)]
 struct TpuClientNextClient {
-    sender: mpsc::Sender<TransactionBatch>,
+    sender: mpsc::Sender<WireTransaction>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
 }
 
@@ -507,7 +522,7 @@ impl TpuClientNextClient {
         cancel: CancellationToken,
     ) -> Self {
         // For now use large channel, the more suitable size to be found later.
-        let (sender, receiver) = mpsc::channel(128);
+        let (sender, receiver) = mpsc::channel(SCHEDULER_CHANNEL_CAPACITY);
         let leader_updater = forward_address_getter;
 
         let config = Self::create_config(bind_socket, stake_identity);
@@ -540,9 +555,8 @@ impl TpuClientNextClient {
             stake_identity: stake_identity.map(StakeIdentity::new),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
-            num_connections: 128,
-            skip_check_transaction_age: true,
-            worker_channel_size: 2,
+            num_connections: NonZeroUsize::new(128).unwrap(),
+            worker_channel_size: WORKER_CHANNEL_CAPACITY,
             max_reconnect_attempts: 4,
             // Send to the next leader only, but verify that connections exist
             // for the leaders of the next `4 * NUM_CONSECUTIVE_SLOTS`.
@@ -560,9 +574,14 @@ impl ForwardingClient for TpuClientNextClient {
         &self,
         wire_transactions: Vec<Vec<u8>>,
     ) -> Result<(), ForwardingClientError> {
-        self.sender
-            .try_send(TransactionBatch::new(wire_transactions))
-            .map_err(|_e| ForwardingClientError::Failed)
+        let permits = self
+            .sender
+            .try_reserve_many(wire_transactions.len())
+            .map_err(|_err| ForwardingClientError::Failed)?;
+        for (permit, wire_transaction) in permits.zip(wire_transactions) {
+            permit.send(wire_transaction.into());
+        }
+        Ok(())
     }
 }
 
@@ -593,15 +612,13 @@ fn calculate_priority(
     transaction: &RuntimeTransaction<SanitizedTransactionView<&[u8]>>,
     bank: &Bank,
 ) -> Option<u64> {
-    let compute_budget_limits = transaction
-        .compute_budget_instruction_details()
-        .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
+    let transaction_configuration = transaction
+        .transaction_configuration(&bank.feature_set)
         .ok()?;
-    let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
 
     // Manually estimate fee here since currently interface doesn't allow a on SVM type.
     // Doesn't need to be 100% accurate so long as close and consistent.
-    let prioritization_fee = fee_budget_limits.prioritization_fee;
+    let prioritization_fee = transaction_configuration.priority_fee_lamports;
     let signature_details = transaction.signature_details();
     let signature_fee = signature_details
         .total_signatures()
@@ -766,11 +783,11 @@ fn initial_packet_meta_filter(meta: &packet::Meta) -> bool {
 mod tests {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         packet::PacketFlags,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
         solana_system_transaction as system_transaction,
@@ -810,14 +827,14 @@ mod tests {
         meta
     }
 
-    fn simple_transfer_with_flags(packet_flags: PacketFlags) -> Packet {
+    fn simple_transfer_with_flags(packet_flags: PacketFlags) -> BytesPacket {
         let transaction = system_transaction::transfer(
             &Keypair::new(),
             &Pubkey::new_unique(),
             1,
             Hash::default(),
         );
-        let mut packet = Packet::from_data(None, &transaction).unwrap();
+        let mut packet = BytesPacket::from_data(&transaction).unwrap();
         packet.meta_mut().flags = packet_flags;
         packet
     }
@@ -843,7 +860,7 @@ mod tests {
 
     #[test]
     fn test_forwarding() {
-        let (packet_batch_sender, packet_batch_receiver) = unbounded();
+        let (packet_batch_sender, packet_batch_receiver) = bounded(1024);
 
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
@@ -859,28 +876,22 @@ mod tests {
         );
 
         // Send packet batches.
-        let non_vote_packets =
-            BankingPacketBatch::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
-                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
-                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
-                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
-            ]))]);
-        let vote_packets =
-            BankingPacketBatch::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
-                simple_transfer_with_flags(
-                    PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE,
-                ),
-                simple_transfer_with_flags(
-                    PacketFlags::SIMPLE_VOTE_TX
-                        | PacketFlags::FROM_STAKED_NODE
-                        | PacketFlags::DISCARD,
-                ),
-                simple_transfer_with_flags(
-                    PacketFlags::SIMPLE_VOTE_TX
-                        | PacketFlags::FROM_STAKED_NODE
-                        | PacketFlags::FORWARDED,
-                ),
-            ]))]);
+        let non_vote_packets = BankingPacketBatch::new(PacketBatch::from(vec![
+            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
+            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
+            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
+        ]));
+        let vote_packets = BankingPacketBatch::new(PacketBatch::from(vec![
+            simple_transfer_with_flags(PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE),
+            simple_transfer_with_flags(
+                PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD,
+            ),
+            simple_transfer_with_flags(
+                PacketFlags::SIMPLE_VOTE_TX
+                    | PacketFlags::FROM_STAKED_NODE
+                    | PacketFlags::FORWARDED,
+            ),
+        ]));
 
         packet_batch_sender
             .send((non_vote_packets.clone(), false))
@@ -903,14 +914,14 @@ mod tests {
         assert_eq!(vote_wired_txs.len(), 1);
         assert_eq!(
             vote_wired_txs[0],
-            vote_packets[0].first().unwrap().data(..).unwrap()
+            vote_packets.first().unwrap().data(..).unwrap()
         );
 
         let non_vote_wired_txs = non_vote_mock_client.get_packets();
         assert_eq!(non_vote_wired_txs.len(), 1);
         assert_eq!(
             non_vote_wired_txs[0],
-            non_vote_packets[0].first().unwrap().data(..).unwrap()
+            non_vote_packets.first().unwrap().data(..).unwrap()
         );
     }
 }

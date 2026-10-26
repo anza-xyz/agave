@@ -12,7 +12,7 @@ use {
     std::{hash::BuildHasher, ops::Deref},
 };
 
-type DashmapIteratorItem<'a, K, V, S> = RefMulti<'a, K, ROValue<V>, S>;
+type DashmapIteratorItem<'a, K, V> = RefMulti<'a, K, ROValue<V>>;
 
 // Wrapper around dashmap that stores `Arc`s of values to minimize shard contention.
 #[derive(Debug)]
@@ -52,7 +52,7 @@ where
         self.inner.get(k).map(|v| ROValue::clone(&v))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = DashmapIteratorItem<'_, K, V, S>> {
+    pub fn iter(&self) -> impl Iterator<Item = DashmapIteratorItem<'_, K, V>> {
         self.inner.iter()
     }
 

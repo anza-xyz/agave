@@ -1,34 +1,39 @@
 use {
     super::*, crate::translate_mut,
     solana_program_runtime::execution_budget::SVMTransactionExecutionCost, solana_sbpf::ebpf,
+    solana_sysvar_id::SysvarId,
 };
 
-fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
+fn get_sysvar<T: SysvarId + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: u64,
-    check_aligned: bool,
-    memory_mapping: &mut MemoryMapping,
     invoke_context: &mut InvokeContext,
 ) -> Result<u64, Error> {
-    consume_compute_meter(
-        invoke_context,
-        invoke_context
-            .get_execution_cost()
-            .sysvar_base_cost
-            .saturating_add(size_of::<T>() as u64),
-    )?;
+    let amount = invoke_context
+        .get_execution_cost()
+        .sysvar_base_cost
+        .saturating_add(size_of::<T>() as u64);
+    invoke_context.consume_checked(amount)?;
 
-    if var_addr >= ebpf::MM_INPUT_START
-        && invoke_context
-            .get_feature_set()
-            .syscall_parameter_address_restrictions
-    {
+    // If a test case contains a program that is owned by the deprecated
+    // bpf loader but also contains get_sysvar syscalls, the store into the
+    // host memory will segfault due to unaligned accesses. However, this has
+    // no consensus impact because this loader was deprecated before the get_sysvar
+    // syscall was activated.
+    let check_aligned = invoke_context.get_check_aligned();
+    if !check_aligned {
+        return Err(SyscallError::UnalignedPointer.into());
+    }
+
+    if var_addr >= ebpf::MM_INPUT_START {
         return Err(SyscallError::InvalidPointer.into());
     }
+
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
     translate_mut!(
         memory_mapping,
         check_aligned,
-        let var: &mut T = map(var_addr)?;
+        let var: (&mut std::mem::MaybeUninit<T>) = map(var_addr)?;
     );
 
     // this clone looks unnecessary now, but it exists to zero out trailing alignment bytes
@@ -36,14 +41,16 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
     // but there are tests using MemoryMapping that expect to see this
     // we preserve the previous behavior out of an abundance of caution
     let sysvar: Arc<T> = sysvar?;
-    *var = T::clone(sysvar.as_ref());
+    var.write(T::clone(&sysvar));
 
     Ok(SUCCESS)
 }
 
-declare_builtin_function!(
-    /// Get a Clock sysvar
-    SyscallGetClockSysvar,
+/// Get a Clock sysvar
+pub struct SyscallGetClockSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetClockSysvar {
+    type Error = Error;
+
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -51,21 +58,19 @@ declare_builtin_function!(
         _arg3: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         get_sysvar(
-            invoke_context.get_sysvar_cache().get_clock(),
+            invoke_context.environment_config.sysvar_cache().get_clock(),
             var_addr,
-            invoke_context.get_check_aligned(),
-            memory_mapping,
             invoke_context,
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a EpochSchedule sysvar
-    SyscallGetEpochScheduleSysvar,
+/// Get a EpochSchedule sysvar
+pub struct SyscallGetEpochScheduleSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochScheduleSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -73,21 +78,22 @@ declare_builtin_function!(
         _arg3: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         get_sysvar(
-            invoke_context.get_sysvar_cache().get_epoch_schedule(),
+            invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_epoch_schedule(),
             var_addr,
-            invoke_context.get_check_aligned(),
-            memory_mapping,
             invoke_context,
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a EpochRewards sysvar
-    SyscallGetEpochRewardsSysvar,
+/// Get a EpochRewards sysvar
+pub struct SyscallGetEpochRewardsSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetEpochRewardsSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -95,21 +101,22 @@ declare_builtin_function!(
         _arg3: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         get_sysvar(
-            invoke_context.get_sysvar_cache().get_epoch_rewards(),
+            invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_epoch_rewards(),
             var_addr,
-            invoke_context.get_check_aligned(),
-            memory_mapping,
             invoke_context,
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a Fees sysvar
-    SyscallGetFeesSysvar,
+/// Get a Fees sysvar
+pub struct SyscallGetFeesSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetFeesSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -117,24 +124,22 @@ declare_builtin_function!(
         _arg3: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         #[expect(deprecated)]
         {
             get_sysvar(
-                invoke_context.get_sysvar_cache().get_fees(),
+                invoke_context.environment_config.sysvar_cache().get_fees(),
                 var_addr,
-                invoke_context.get_check_aligned(),
-                memory_mapping,
                 invoke_context,
             )
         }
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a Rent sysvar
-    SyscallGetRentSysvar,
+/// Get a Rent sysvar
+pub struct SyscallGetRentSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetRentSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -142,21 +147,19 @@ declare_builtin_function!(
         _arg3: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         get_sysvar(
-            invoke_context.get_sysvar_cache().get_rent(),
+            invoke_context.environment_config.sysvar_cache().get_rent(),
             var_addr,
-            invoke_context.get_check_aligned(),
-            memory_mapping,
             invoke_context,
         )
     }
-);
+}
 
-declare_builtin_function!(
-    /// Get a Last Restart Slot sysvar
-    SyscallGetLastRestartSlotSysvar,
+/// Get a Last Restart Slot sysvar
+pub struct SyscallGetLastRestartSlotSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetLastRestartSlotSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
@@ -164,26 +167,27 @@ declare_builtin_function!(
         _arg3: u64,
         _arg4: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         get_sysvar(
-            invoke_context.get_sysvar_cache().get_last_restart_slot(),
+            invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_last_restart_slot(),
             var_addr,
-            invoke_context.get_check_aligned(),
-            memory_mapping,
             invoke_context,
         )
     }
-);
+}
 
 const SYSVAR_NOT_FOUND: u64 = 2;
 const OFFSET_LENGTH_EXCEEDS_SYSVAR: u64 = 1;
 
 // quoted language from SIMD0127
 // because this syscall can both return error codes and abort, well-ordered error checking is crucial
-declare_builtin_function!(
-    /// Get a slice of a Sysvar in-memory representation
-    SyscallGetSysvar,
+/// Get a slice of a Sysvar in-memory representation
+pub struct SyscallGetSysvar {}
+impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetSysvar {
+    type Error = Error;
     fn rust(
         invoke_context: &mut InvokeContext<'_, '_>,
         sysvar_id_addr: u64,
@@ -191,9 +195,7 @@ declare_builtin_function!(
         offset: u64,
         length: u64,
         _arg5: u64,
-        memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let check_aligned = invoke_context.get_check_aligned();
         let SVMTransactionExecutionCost {
             sysvar_base_cost,
             cpi_bytes_per_unit,
@@ -204,26 +206,35 @@ declare_builtin_function!(
         // Abort: "Compute budget is exceeded."
         let sysvar_id_cost = 32_u64.checked_div(cpi_bytes_per_unit).unwrap_or(0);
         let sysvar_buf_cost = length.checked_div(cpi_bytes_per_unit).unwrap_or(0);
-        consume_compute_meter(
-            invoke_context,
-            sysvar_base_cost
-                .saturating_add(sysvar_id_cost)
-                .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
-        )?;
+        let cost = sysvar_base_cost
+            .saturating_add(sysvar_id_cost)
+            .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost));
+        invoke_context.consume_checked(cost)?;
 
-        if var_addr >= ebpf::MM_INPUT_START
-            && invoke_context
-                .get_feature_set()
-                .syscall_parameter_address_restrictions
-        {
+        // If a test case contains a program that is owned by the deprecated
+        // bpf loader but also contains get_sysvar syscalls, the store into the
+        // host memory will segfault due to unaligned accesses. However, this has
+        // no consensus impact because this loader was deprecated before the get_sysvar
+        // syscall was activated.
+        let check_aligned = invoke_context.get_check_aligned();
+        if !check_aligned {
+            return Err(SyscallError::UnalignedPointer.into());
+        }
+
+        if var_addr >= ebpf::MM_INPUT_START {
             return Err(SyscallError::InvalidPointer.into());
         }
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
-        translate_mut!(
-            memory_mapping,
-            check_aligned,
-            let var: &mut [u8] = map(var_addr, length)?;
-        );
+        {
+            // Just a check that this maps correctly for error compatibility with old code.
+            translate_mut!(
+                memory_mapping,
+                check_aligned,
+                let _var: (&mut [MaybeUninit<u8>]) = map(var_addr, length)?;
+            );
+        }
 
         // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
         let sysvar_id = translate_type::<Pubkey>(memory_mapping, sysvar_id_addr, check_aligned)?;
@@ -238,18 +249,24 @@ declare_builtin_function!(
             .checked_add(length)
             .ok_or(InstructionError::ArithmeticOverflow)?;
 
-        let cache = invoke_context.get_sysvar_cache();
-
         // "`2` if the sysvar data is not present in the Sysvar Cache."
-        let Some(sysvar_buf) = cache.sysvar_id_to_buffer(sysvar_id) else { return Ok(SYSVAR_NOT_FOUND) };
+        let cache = invoke_context.environment_config.sysvar_cache();
+        let Some(sysvar_buf) = cache.sysvar_id_to_buffer(sysvar_id) else {
+            return Ok(SYSVAR_NOT_FOUND);
+        };
 
         // "`1` if `offset + length` is greater than the length of the sysvar data."
         if let Some(sysvar_slice) = sysvar_buf.get(offset as usize..offset_length as usize) {
-            var.copy_from_slice(sysvar_slice);
+            translate_mut!(
+                memory_mapping,
+                check_aligned,
+                let var: (&mut [MaybeUninit<u8>]) = map(var_addr, length)?;
+            );
+            var.write_copy_of_slice(sysvar_slice);
         } else {
             return Ok(OFFSET_LENGTH_EXCEEDS_SYSVAR);
         }
 
         Ok(SUCCESS)
     }
-);
+}

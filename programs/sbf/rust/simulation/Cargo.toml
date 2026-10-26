@@ -13,12 +13,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 solana-account-info = { workspace = true }
-solana-clock = { workspace = true }
+solana-clock = { workspace = true, features = ["wincode"] }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sysvar = { workspace = true }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

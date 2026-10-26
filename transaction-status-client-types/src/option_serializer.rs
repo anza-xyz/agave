@@ -125,10 +125,10 @@ impl<T> OptionSerializer<T> {
     where
         P: FnOnce(&T) -> bool,
     {
-        if let OptionSerializer::Some(x) = self {
-            if predicate(&x) {
-                return OptionSerializer::Some(x);
-            }
+        if let OptionSerializer::Some(x) = self
+            && predicate(&x)
+        {
+            return OptionSerializer::Some(x);
         }
         OptionSerializer::None
     }

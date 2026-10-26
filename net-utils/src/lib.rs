@@ -1,18 +1,12 @@
 #![cfg(feature = "agave-unstable-api")]
 //! The `net_utils` module assists with networking
 
-// Activate some of the Rust 2024 lints to make the future migration easier.
-#![warn(if_let_rescope)]
-#![warn(keyword_idents_2024)]
-#![warn(rust_2024_incompatible_pat)]
-#![warn(tail_expr_drop_order)]
-#![warn(unsafe_attr_outside_unsafe)]
-#![warn(unsafe_op_in_unsafe_fn)]
-
 pub mod banlist;
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod multihomed_sockets;
+pub mod pinned_xdp_sender;
+pub mod quic_socket;
 pub mod socket_addr_space;
 pub mod sockets;
 #[cfg(any(target_os = "android", target_os = "windows"))]
@@ -21,15 +15,19 @@ pub(crate) mod test_port_allocator;
 #[cfg(not(any(target_os = "android", target_os = "windows")))]
 pub(crate) mod test_port_allocator;
 pub mod token_bucket;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod udp_relay;
 
 #[cfg(feature = "dev-context-only-utils")]
 pub mod tooling_for_tests;
 
 pub use {
+    agave_xdp::transmitter::TrySendError,
     ip_echo_client::IpEchoClientError,
     ip_echo_server::{
         DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,
     },
+    pinned_xdp_sender::PinnedXdpSender,
     socket_addr_space::SocketAddrSpace,
 };
 use {
@@ -64,7 +62,14 @@ pub const VALIDATOR_PORT_RANGE: PortRange = (
     crate::sockets::UNIQUE_ALLOC_BASE_PORT,
 );
 
-pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 25; // VALIDATOR_PORT_RANGE must be at least this wide
+pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 26; // VALIDATOR_PORT_RANGE must be at least this wide
+
+/// Transport protocol used to reach a peer socket.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Protocol {
+    UDP,
+    QUIC,
+}
 
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
@@ -204,16 +209,21 @@ pub fn parse_port_range(port_range: &str) -> Option<PortRange> {
     Some((start_port, end_port))
 }
 
-fn select_ipv4(host: &str, mut ips: impl Iterator<Item = IpAddr>) -> Result<IpAddr, String> {
-    let Some(first_ip) = ips.next() else {
+fn select_ipv4<T>(
+    host: &str,
+    mut values: impl Iterator<Item = T>,
+    mut ip_addr: impl FnMut(&T) -> IpAddr,
+) -> Result<T, String> {
+    let Some(first_value) = values.next() else {
         return Err(format!("Unable to resolve host: {host}"));
     };
 
-    if first_ip.is_ipv4() {
-        return Ok(first_ip);
+    if ip_addr(&first_value).is_ipv4() {
+        return Ok(first_value);
     }
 
-    ips.find(IpAddr::is_ipv4)
+    values
+        .find(|value| ip_addr(value).is_ipv4())
         .ok_or_else(|| format!("IPv6 addresses are not supported: {host}"))
 }
 
@@ -230,12 +240,12 @@ pub fn parse_host(host: &str) -> Result<IpAddr, String> {
     }
 
     // Next, check to see if it resolves to an IPv4 address
-    let mut ips = (host, 0)
+    let ips = (host, 0)
         .to_socket_addrs()
         .map_err(|err| err.to_string())?
         .map(|socket_address| socket_address.ip());
 
-    select_ipv4(host, &mut ips)
+    select_ipv4(host, ips, |ip| *ip)
 }
 
 pub fn is_host(string: String) -> Result<(), String> {
@@ -243,15 +253,10 @@ pub fn is_host(string: String) -> Result<(), String> {
 }
 
 pub fn parse_host_port(host_port: &str) -> Result<SocketAddr, String> {
-    let addrs: Vec<_> = host_port
+    let addrs = host_port
         .to_socket_addrs()
-        .map_err(|err| format!("Unable to resolve host {host_port}: {err}"))?
-        .collect();
-    if addrs.is_empty() {
-        Err(format!("Unable to resolve host: {host_port}"))
-    } else {
-        Ok(addrs[0])
-    }
+        .map_err(|err| format!("Unable to resolve host {host_port}: {err}"))?;
+    select_ipv4(host_port, addrs, SocketAddr::ip)
 }
 
 pub fn is_host_port(string: String) -> Result<(), String> {
@@ -327,7 +332,7 @@ mod tests {
             address: IpAddr::from([u16::MAX; 8]), // IPv6 variant
             shred_version: Some(u16::MAX),
         };
-        let resp_size = bincode::serialized_size(&resp).unwrap();
+        let resp_size = wincode::serialized_size(&resp).unwrap();
         assert_eq!(
             IP_ECHO_SERVER_RESPONSE_LENGTH,
             HEADER_LENGTH + resp_size as usize
@@ -345,10 +350,10 @@ mod tests {
             shred_version: Some(42),
         };
         let mut data = vec![0u8; IP_ECHO_SERVER_RESPONSE_LENGTH];
-        bincode::serialize_into(&mut data[HEADER_LENGTH..], &response).unwrap();
+        wincode::serialize_into(&mut data[HEADER_LENGTH..], &response).unwrap();
         data.truncate(HEADER_LENGTH + 20);
         assert_eq!(
-            bincode::deserialize::<IpAddr>(&data[HEADER_LENGTH..]).unwrap(),
+            wincode::deserialize::<IpAddr>(&data[HEADER_LENGTH..]).unwrap(),
             address
         );
     }
@@ -360,11 +365,20 @@ mod tests {
             525u16, 524u16, 523u16, 522u16, 521u16, 520u16, 519u16, 518u16,
         ]);
         let mut data = [0u8; IP_ECHO_SERVER_RESPONSE_LENGTH];
-        bincode::serialize_into(&mut data[HEADER_LENGTH..], &address).unwrap();
+        wincode::serialize_into(&mut data[HEADER_LENGTH..], &address).unwrap();
         let response: Result<IpEchoServerResponse, _> =
-            bincode::deserialize(&data[HEADER_LENGTH..]);
+            wincode::deserialize(&data[HEADER_LENGTH..]);
         assert_eq!(
             response.unwrap(),
+            IpEchoServerResponse {
+                address,
+                shred_version: None,
+            }
+        );
+
+        let unpadded = wincode::serialize(&address).unwrap();
+        assert_eq!(
+            wincode::deserialize::<IpEchoServerResponse>(&unpadded).unwrap(),
             IpEchoServerResponse {
                 address,
                 shred_version: None,
@@ -404,7 +418,8 @@ mod tests {
         assert_eq!(
             select_ipv4(
                 "ipv6-only.test",
-                [IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)].into_iter()
+                [IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)].into_iter(),
+                |ip| *ip,
             )
             .unwrap_err(),
             "IPv6 addresses are not supported: ipv6-only.test",
@@ -417,6 +432,7 @@ mod tests {
                     IpAddr::V4(Ipv4Addr::LOCALHOST),
                 ]
                 .into_iter(),
+                |ip| *ip,
             )
             .unwrap(),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -429,6 +445,10 @@ mod tests {
         parse_host_port("localhost").unwrap_err();
         parse_host_port("127.0.0.0:1234").unwrap();
         parse_host_port("127.0.0.0").unwrap_err();
+        assert_eq!(
+            parse_host_port("[2001:db8:abcd:42::dead:beef]:1234").unwrap_err(),
+            "IPv6 addresses are not supported: [2001:db8:abcd:42::dead:beef]:1234",
+        );
     }
 
     #[test]

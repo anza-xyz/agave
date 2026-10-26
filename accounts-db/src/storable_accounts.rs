@@ -148,6 +148,11 @@ pub trait StorableAccounts<'a>: Sync {
     }
     // current slot for account at 'index'
     fn slot(&self, index: usize) -> Slot;
+
+    /// (current slot, pubkey) for each account, in index order
+    fn slots_and_pubkeys(&self) -> impl Iterator<Item = (Slot, &Pubkey)> {
+        (0..self.len()).map(|index| (self.slot(index), self.pubkey(index)))
+    }
     /// slot that all accounts are to be written to
     fn target_slot(&self) -> Slot;
     /// true if no accounts to write
@@ -156,11 +161,6 @@ pub trait StorableAccounts<'a>: Sync {
     }
     /// # accounts to write
     fn len(&self) -> usize;
-    /// are there accounts from multiple slots
-    /// only used for an assert
-    fn contains_multiple_slots(&self) -> bool {
-        false
-    }
 }
 
 impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSharedData)]) {
@@ -250,8 +250,6 @@ pub struct StorableAccountsBySlot<'a> {
     /// starting_offsets[0] is the starting offset of slots_and_accounts[1]
     /// The starting offset of slots_and_accounts[0] is always 0
     starting_offsets_for_slots_accounts_slice: Vec<usize>,
-    /// true if there is more than 1 slot represented in slots_and_accounts
-    contains_multiple_slots: bool,
     /// total len of all accounts, across all slots_and_accounts
     len: usize,
     db: &'a AccountsDb,
@@ -268,21 +266,14 @@ impl<'a> StorableAccountsBySlot<'a> {
     ) -> Self {
         let mut cumulative_len = 0usize;
         let mut starting_offsets = Vec::with_capacity(slots_and_accounts.len());
-        let first_slot = slots_and_accounts
-            .first()
-            .map(|(slot, _)| *slot)
-            .unwrap_or_default();
-        let mut contains_multiple_slots = false;
-        for (slot, accounts) in slots_and_accounts {
+        for (_slot, accounts) in slots_and_accounts {
             cumulative_len = cumulative_len.saturating_add(accounts.len());
             starting_offsets.push(cumulative_len);
-            contains_multiple_slots |= &first_slot != slot;
         }
         Self {
             target_slot,
             slots_and_accounts,
             starting_offsets_for_slots_accounts_slice: starting_offsets,
-            contains_multiple_slots,
             len: cumulative_len,
             db,
             cached_storage: RwLock::default(),
@@ -295,9 +286,12 @@ impl<'a> StorableAccountsBySlot<'a> {
     /// on the starting_offsets based on the assumption that the
     /// starting_offsets are always sorted.
     fn find_internal_index(&self, index: usize) -> (usize, usize) {
-        // special case for when there is only one slot - just return the first index without searching.
+        // special case for when there is only one entry - just return the first index without searching.
         // This happens when we are just shrinking a single slot storage, which happens very often.
-        if !self.contains_multiple_slots {
+        // Note: we check the actual number of entries, not just whether slots differ,
+        // because multiple entries can have the same slot value (e.g., when packing
+        // newest_duplicate and no_duplicates accounts from the same source slot).
+        if self.slots_and_accounts.len() == 1 {
             return (0, index);
         }
         let upper_bound = self
@@ -338,10 +332,10 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         };
         {
             let reader = self.cached_storage.read().unwrap();
-            if reader.slot == slot {
-                if let Some(storage) = reader.storage.as_ref() {
-                    return call_callback(storage);
-                }
+            if reader.slot == slot
+                && let Some(storage) = reader.storage.as_ref()
+            {
+                return call_callback(storage);
             }
         }
         // cache doesn't contain a storage for this slot, so lookup storage in db.
@@ -385,14 +379,59 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].0
     }
+    fn slots_and_pubkeys(&self) -> impl Iterator<Item = (Slot, &Pubkey)> {
+        // walk the source slices directly, avoiding a `find_internal_index` search per account
+        self.slots_and_accounts.iter().flat_map(|(slot, accounts)| {
+            accounts
+                .iter()
+                .map(move |account| (*slot, account.pubkey()))
+        })
+    }
     fn target_slot(&self) -> Slot {
         self.target_slot
     }
     fn len(&self) -> usize {
         self.len
     }
-    fn contains_multiple_slots(&self) -> bool {
-        self.contains_multiple_slots
+}
+
+/// this tuple contains a single different source slot that applies to all accounts
+/// accounts are StoredAccountInfo
+impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountInfo<'a>], Slot) {
+    fn account<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret {
+        let stored_account_info = self.1[index];
+        let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
+        callback(account_for_storage)
+    }
+    fn account_for_geyser<Ret>(
+        &self,
+        _index: usize,
+        _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        unimplemented!();
+    }
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        self.1[index].is_zero_lamport()
+    }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].data.len()
+    }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        self.1[index].pubkey()
+    }
+    fn slot(&self, _index: usize) -> Slot {
+        // same other slot for all accounts
+        self.2
+    }
+    fn target_slot(&self) -> Slot {
+        self.0
+    }
+    fn len(&self) -> usize {
+        self.1.len()
     }
 }
 
@@ -400,15 +439,10 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
 mod tests {
     use {
         super::*,
-        crate::{
-            account_info::{AccountInfo, StorageLocation},
-            account_storage_entry::AccountStorageEntry,
-            accounts_db::get_temp_accounts_paths,
-            accounts_file::AccountsFileProvider,
-        },
+        crate::account_info::{AccountInfo, StorageLocation},
         rand::Rng,
         solana_account::{AccountSharedData, accounts_equal},
-        std::sync::Arc,
+        std::{iter, sync::Arc},
     };
 
     impl StorableAccountsBySlot<'_> {
@@ -520,47 +554,6 @@ mod tests {
         }
     }
 
-    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
-    /// this tuple contains a single different source slot that applies to all accounts
-    /// accounts are StoredAccountInfo
-    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountInfo<'a>], Slot) {
-        fn account<Ret>(
-            &self,
-            index: usize,
-            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-        ) -> Ret {
-            let stored_account_info = self.1[index];
-            let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
-            callback(account_for_storage)
-        }
-        fn account_for_geyser<Ret>(
-            &self,
-            _index: usize,
-            _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
-        ) -> Ret {
-            unimplemented!();
-        }
-        fn is_zero_lamport(&self, index: usize) -> bool {
-            self.1[index].is_zero_lamport()
-        }
-        fn data_len(&self, index: usize) -> usize {
-            self.1[index].data.len()
-        }
-        fn pubkey(&self, index: usize) -> &Pubkey {
-            self.1[index].pubkey()
-        }
-        fn slot(&self, _index: usize) -> Slot {
-            // same other slot for all accounts
-            self.2
-        }
-        fn target_slot(&self) -> Slot {
-            self.0
-        }
-        fn len(&self) -> usize {
-            self.1.len()
-        }
-    }
-
     fn compare<'a>(a: &impl StorableAccounts<'a>, b: &impl StorableAccounts<'a>) {
         assert_eq!(a.target_slot(), b.target_slot());
         assert_eq!(a.len(), b.len());
@@ -576,33 +569,12 @@ mod tests {
     }
 
     #[test]
-    fn test_contains_multiple_slots() {
-        let db = AccountsDb::new_single_for_tests();
-        let slot = 0;
-        let storage_id = 0; // does not matter
-        let offset = 0; // does not matter
-        let account_from_storage = AccountFromStorage {
-            index_info: AccountInfo::new(
-                StorageLocation::AppendVec(storage_id, offset),
-                false, // does not matter
-            ),
-            data_len: 7, // does not matter
-            pubkey: Pubkey::new_unique(),
-        };
-
-        let accounts = [&account_from_storage, &account_from_storage];
-        let accounts2 = [(slot, &accounts[..])];
-        let test3 = StorableAccountsBySlot::new(slot, &accounts2[..], &db);
-        assert!(!test3.contains_multiple_slots());
-    }
-
-    #[test]
     fn test_storable_accounts() {
         let max_slots = 3_u64;
         for target_slot in 0..max_slots {
             for entries in 0..2 {
                 for starting_slot in 0..max_slots {
-                    let db = AccountsDb::new_single_for_tests();
+                    let db = AccountsDb::default_for_tests();
                     let mut raw = Vec::new();
                     let mut raw2 = Vec::new();
                     let mut raw4 = Vec::new();
@@ -637,7 +609,7 @@ mod tests {
                             let offset = 0; // does not matter
                             AccountFromStorage {
                                 index_info: AccountInfo::new(
-                                    StorageLocation::AppendVec(storage_id, offset),
+                                    StorageLocation::AccountsFile(storage_id, offset),
                                     account.is_zero_lamport(),
                                 ),
                                 data_len: account.data.len() as u64,
@@ -666,18 +638,17 @@ mod tests {
 
                     let source_slot = starting_slot % max_slots;
 
-                    let storage = setup_sample_storage(&db, source_slot);
+                    let storage = Arc::new(db.create_store(source_slot, 10_000));
+                    db.storage.insert(storage.clone());
                     // store the accounts so they can be looked up later in `db`
-                    if let Some(offsets) = storage
-                        .accounts
-                        .write_accounts(&(source_slot, &three[..]), 0)
+                    if let Ok(offsets) = storage.accounts.write_accounts(&(source_slot, &three[..]))
                     {
                         three_accounts_from_storage_byval
                             .iter_mut()
                             .zip(offsets.offsets.iter())
                             .for_each(|(account, offset)| {
                                 account.index_info = AccountInfo::new(
-                                    StorageLocation::AppendVec(0, *offset),
+                                    StorageLocation::AccountsFile(0, *offset),
                                     account.is_zero_lamport(),
                                 )
                             });
@@ -707,29 +678,9 @@ mod tests {
                     assert_eq!(target_slot, test3.target_slot());
                     assert_eq!(target_slot, test4.target_slot());
                     assert_eq!(target_slot, test_moving_slots2.target_slot());
-                    assert!(!test2.contains_multiple_slots());
-                    assert!(!test4.contains_multiple_slots());
-                    assert_eq!(test3.contains_multiple_slots(), entries > 1);
                 }
             }
         }
-    }
-
-    fn setup_sample_storage(db: &AccountsDb, slot: Slot) -> Arc<AccountStorageEntry> {
-        let id = 2;
-        let file_size = 10_000;
-        let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
-        let data = AccountStorageEntry::new(
-            &paths[0],
-            slot,
-            id,
-            file_size,
-            AccountsFileProvider::AppendVec,
-            db.storage_access(),
-        );
-        let storage = Arc::new(data);
-        db.storage.insert(storage.clone());
-        storage
     }
 
     #[test]
@@ -768,7 +719,7 @@ mod tests {
                     let offset = 0; // does not matter
                     AccountFromStorage {
                         index_info: AccountInfo::new(
-                            StorageLocation::AppendVec(storage_id, offset),
+                            StorageLocation::AccountsFile(storage_id, offset),
                             account.is_zero_lamport(),
                         ),
                         data_len: account.data.len() as u64,
@@ -784,7 +735,7 @@ mod tests {
                 for entries1 in 0..=remaining1 {
                     let remaining2 = entries.saturating_sub(entries0 + entries1);
                     for entries2 in 0..=remaining2 {
-                        let db = AccountsDb::new_single_for_tests();
+                        let db = AccountsDb::default_for_tests();
                         let remaining3 = entries.saturating_sub(entries0 + entries1 + entries2);
                         let entries_by_level = [entries0, entries1, entries2, remaining3];
                         let mut overall_index = 0;
@@ -800,15 +751,16 @@ mod tests {
                                     let mut result =
                                         raw2_accounts_from_storage[range.clone()].to_vec();
                                     // store the accounts so they can be looked up later in `db`
-                                    let storage = setup_sample_storage(&db, slot);
-                                    if let Some(offsets) = storage
+                                    let storage = Arc::new(db.create_store(slot, 10_000));
+                                    db.storage.insert(storage.clone());
+                                    if let Ok(offsets) = storage
                                         .accounts
-                                        .write_accounts(&(slot, &raw2_refs[range.clone()]), 0)
+                                        .write_accounts(&(slot, &raw2_refs[range.clone()]))
                                     {
                                         result.iter_mut().zip(offsets.offsets.iter()).for_each(
                                             |(account, offset)| {
                                                 account.index_info = AccountInfo::new(
-                                                    StorageLocation::AppendVec(0, *offset),
+                                                    StorageLocation::AccountsFile(0, *offset),
                                                     account.is_zero_lamport(),
                                                 )
                                             },
@@ -833,7 +785,6 @@ mod tests {
                         let storable =
                             StorableAccountsBySlot::new(99, &slots_and_accounts[..], &db);
                         assert_eq!(99, storable.target_slot());
-                        assert_eq!(entries0 != entries, storable.contains_multiple_slots());
                         (0..entries).for_each(|index| {
                             let index = index as usize;
                             let mut called = false;
@@ -852,14 +803,14 @@ mod tests {
     }
 
     #[test]
-    fn test_find_internal_index() {
-        let db = AccountsDb::new_single_for_tests();
+    fn test_find_internal_index_with_multiple_entries_multiple_slots() {
+        let db = AccountsDb::default_for_tests();
         let storage_id = 0; // does not matter
         let offset = 0; // does not matter
         let account = AccountSharedData::default();
         let account_from_storage = AccountFromStorage {
             index_info: AccountInfo::new(
-                StorageLocation::AppendVec(storage_id, offset),
+                StorageLocation::AccountsFile(storage_id, offset),
                 account.is_zero_lamport(),
             ),
             data_len: account.data().len() as u64,
@@ -889,6 +840,59 @@ mod tests {
             let (slot_index2, account_index2) = storable_accounts.find_internal_index(i);
             assert_eq!(slot_index, slot_index2);
             assert_eq!(account_index, account_index2);
+        }
+    }
+
+    #[test]
+    fn test_find_internal_index_with_multiple_entries_single_slot() {
+        let accounts_db = AccountsDb::default_for_tests();
+        let all_accounts: Vec<_> = iter::repeat_with(|| AccountFromStorage {
+            index_info: AccountInfo::new(
+                StorageLocation::AccountsFile(0, 0), // id and offset do not matter
+                false,
+            ),
+            data_len: 0,
+            pubkey: Pubkey::new_unique(),
+        })
+        .take(11)
+        .collect();
+        let all_accounts: Vec<_> = all_accounts.iter().collect();
+        let (accounts1, accounts2) = all_accounts.split_at(4);
+        let slot = 7;
+        let slots_and_accounts = &[(slot, accounts1), (slot, accounts2)];
+        let storable_accounts = StorableAccountsBySlot::new(0, slots_and_accounts, &accounts_db);
+
+        for i in 0..all_accounts.len() {
+            let (slot_index1, account_index1) = storable_accounts.find_internal_index_loop(i);
+            let (slot_index2, account_index2) = storable_accounts.find_internal_index(i);
+            assert_eq!(slot_index1, slot_index2);
+            assert_eq!(account_index1, account_index2);
+        }
+    }
+
+    #[test]
+    fn test_find_internal_index_with_single_entry_single_slot() {
+        let accounts_db = AccountsDb::default_for_tests();
+        let all_accounts: Vec<_> = iter::repeat_with(|| AccountFromStorage {
+            index_info: AccountInfo::new(
+                StorageLocation::AccountsFile(0, 0), // id and offset do not matter
+                false,
+            ),
+            data_len: 0,
+            pubkey: Pubkey::new_unique(),
+        })
+        .take(5)
+        .collect();
+        let all_accounts: Vec<_> = all_accounts.iter().collect();
+        let slot = 3;
+        let slots_and_accounts = &[(slot, all_accounts.as_slice())];
+        let storable_accounts = StorableAccountsBySlot::new(0, slots_and_accounts, &accounts_db);
+
+        for i in 0..all_accounts.len() {
+            let (slot_index1, account_index1) = storable_accounts.find_internal_index_loop(i);
+            let (slot_index2, account_index2) = storable_accounts.find_internal_index(i);
+            assert_eq!(slot_index1, slot_index2);
+            assert_eq!(account_index1, account_index2);
         }
     }
 }

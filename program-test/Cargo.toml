@@ -7,6 +7,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -17,13 +23,12 @@ agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
-bincode = { workspace = true }
 chrono-humanize = { workspace = true }
 log = { workspace = true }
-serde = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
+solana-address = { workspace = true }
 solana-banks-client = { workspace = true }
 solana-banks-interface = { workspace = true }
 solana-banks-server = { workspace = true }
@@ -37,6 +42,7 @@ solana-fee-calculator = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-message = { workspace = true }
@@ -53,22 +59,29 @@ solana-runtime = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
-solana-stake-interface = { workspace = true }
+solana-stake-history = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-svm-log-collector = { workspace = true }
-solana-svm-timings = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true }
+solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-generic-token = { workspace = true }
+spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
+solana-address-lookup-table-interface = { workspace = true, features = ["bincode", "bytemuck"] }
 solana-cpi = { workspace = true }
+solana-instruction = { workspace = true, features = ["wincode"] }
 solana-program = { workspace = true }
 solana-program-test = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

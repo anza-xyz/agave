@@ -209,16 +209,7 @@ where
     }
 }
 
-pub fn normalize_to_url_if_moniker<T: AsRef<str>>(url_or_moniker: T) -> String {
-    match url_or_moniker.as_ref() {
-        "m" | "mainnet-beta" => "https://api.mainnet-beta.solana.com",
-        "t" | "testnet" => "https://api.testnet.solana.com",
-        "d" | "devnet" => "https://api.devnet.solana.com",
-        "l" | "localhost" => "http://localhost:8899",
-        url => url,
-    }
-    .to_string()
-}
+pub use solana_cli_config::normalize_to_url_if_moniker;
 
 pub fn is_epoch<T>(epoch: T) -> Result<(), String>
 where
@@ -472,11 +463,17 @@ where
 
 pub fn is_non_zero(value: impl AsRef<str>) -> Result<(), String> {
     let value = value.as_ref();
-    if value.eq("0") {
-        Err(String::from("cannot be zero"))
-    } else {
-        Ok(())
+
+    // Try parsing as f64 to catch "0.00" or "0e2"
+    if let Ok(float_val) = value.parse::<f64>() {
+        if float_val == 0.0 {
+            return Err(String::from("cannot be zero"));
+        }
+        return Ok(());
     }
+
+    // Other validators should catch parse errors.
+    Ok(())
 }
 
 #[cfg(test)]

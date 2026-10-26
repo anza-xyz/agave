@@ -28,21 +28,35 @@ pub fn println_name_value(name: &str, value: &str) {
     println!("{}", format_name_value(name, value));
 }
 
+const SPINNER_TEMPLATE: &str = "{spinner:.green} {wide_msg}";
+const MULTILINE_SPINNER_TEMPLATE: &str = "{spinner:.green} {msg}";
+
 /// Creates a new process bar for processing that will take an unknown amount of time
 pub fn new_spinner_progress_bar() -> ProgressBar {
+    new_spinner_progress_bar_with_template(SPINNER_TEMPLATE)
+}
+
+/// Creates a spinner that preserves multiline messages instead of truncating them to one line.
+pub(crate) fn new_multiline_spinner_progress_bar() -> ProgressBar {
+    new_spinner_progress_bar_with_template(MULTILINE_SPINNER_TEMPLATE)
+}
+
+fn new_spinner_progress_bar_with_template(template: &str) -> ProgressBar {
     let progress_bar = indicatif::ProgressBar::new(42);
     progress_bar.set_draw_target(ProgressDrawTarget::stdout());
-    progress_bar.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} {wide_msg}")
-            .expect("ProgresStyle::template direct input to be correct"),
-    );
+    progress_bar.set_style(spinner_progress_style(template));
     progress_bar.enable_steady_tick(Duration::from_millis(100));
 
     ProgressBar {
         progress_bar,
         is_term: console::Term::stdout().is_term(),
     }
+}
+
+fn spinner_progress_style(template: &str) -> ProgressStyle {
+    ProgressStyle::default_spinner()
+        .template(template)
+        .expect("ProgressStyle::template direct input to be correct")
 }
 
 pub struct ProgressBar {

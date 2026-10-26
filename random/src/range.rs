@@ -35,7 +35,7 @@ impl UniformU64Sampler {
     /// https://github.com/rust-random/rand/blob/937320cbfeebd4352a23086d9c6e68f067f74644/src/distributions/uniform.rs#L458-L504
     #[allow(clippy::arithmetic_side_effects)]
     pub fn new_like_instance_sample(range_end: NonZero<u64>) -> Self {
-        let ints_to_reject = (u64::MAX - range_end.get() + 1) % range_end.get();
+        let ints_to_reject = (u64::MAX - range_end.get() + 1) % range_end;
         let zone = u64::MAX - ints_to_reject;
         Self { range_end, zone }
     }

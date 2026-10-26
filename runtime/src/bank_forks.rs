@@ -2,23 +2,23 @@
 
 use {
     crate::{
-        bank::{Bank, SquashTiming, bank_hash_details},
+        bank::{Bank, BankId, SquashTiming, bank_hash_details},
         installed_scheduler_pool::{
             BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
         },
         snapshot_controller::SnapshotController,
     },
     agave_feature_set,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     arc_swap::ArcSwap,
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
-        collections::{HashMap, HashSet, hash_map::Entry},
+        collections::{BTreeSet, HashMap, HashSet, hash_map::Entry},
         ops::Index,
         sync::{Arc, RwLock},
         time::Instant,
@@ -79,7 +79,6 @@ pub struct BankForks {
     root: Slot,
     working_slot: Slot,
     sharable_banks: SharableBanks,
-    highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
 
     /// The status tracker for the Alpenglow migration. Initialized via either
@@ -105,8 +104,7 @@ impl BankForks {
             BankWithScheduler::new_without_scheduler(root_bank.clone()),
         );
 
-        let parents = root_bank.parents();
-        for parent in parents {
+        for parent in root_bank.parents_iter() {
             if banks
                 .insert(
                     parent.slot(),
@@ -137,7 +135,6 @@ impl BankForks {
             },
             banks,
             descendants,
-            highest_slot_at_startup: 0,
             scheduler_pool: None,
             migration_status,
         }));
@@ -192,6 +189,48 @@ impl BankForks {
         self.descendants.clone()
     }
 
+    /// For use when we want to remove `slots` from `BankForks`. It's not safe to remove
+    /// a bank if it's descendant(s) are still in BankForks.
+    ///
+    /// Returns the supplied unrooted slots and all descendants that are still present in bank
+    /// forks as `slots_to_purge`, plus the subset that still has a bank as `banks_to_clear`.
+    pub fn slots_to_clear(
+        &self,
+        slots: impl IntoIterator<Item = Slot>,
+    ) -> (BTreeSet<Slot>, Vec<BankWithScheduler>) {
+        let root = self.root();
+        let mut slots_to_purge = BTreeSet::new();
+        let mut bank_slots_to_clear = BTreeSet::new();
+
+        for slot in slots {
+            if slot <= root {
+                continue;
+            }
+            slots_to_purge.insert(slot);
+            if self.banks.contains_key(&slot) {
+                bank_slots_to_clear.insert(slot);
+            }
+            if let Some(slot_descendants) = self.descendants.get(&slot) {
+                bank_slots_to_clear.extend(
+                    slot_descendants
+                        .iter()
+                        .copied()
+                        .filter(|descendant| self.banks.contains_key(descendant)),
+                );
+            }
+        }
+
+        slots_to_purge.extend(&bank_slots_to_clear);
+        let banks_to_clear = bank_slots_to_clear
+            .into_iter()
+            .map(|slot| {
+                self.get_with_scheduler(slot)
+                    .expect("bank slot was present while collecting slots to clear")
+            })
+            .collect();
+        (slots_to_purge, banks_to_clear)
+    }
+
     pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
         self.banks
             .iter()
@@ -231,6 +270,14 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
+    pub fn block_id(&self, slot: Slot) -> Option<BlockId> {
+        self.get(slot).and_then(|bank| bank.block_id())
+    }
+
+    pub fn is_frozen(&self, slot: Slot) -> bool {
+        self.get(slot).map(|bank| bank.is_frozen()).unwrap_or(false)
+    }
+
     pub fn sharable_banks(&self) -> SharableBanks {
         self.sharable_banks.clone()
     }
@@ -254,12 +301,8 @@ impl BankForks {
     pub fn insert_with_scheduling_mode(
         &mut self,
         mode: SchedulingMode,
-        mut bank: Bank,
+        bank: Bank,
     ) -> BankWithScheduler {
-        if self.root < self.highest_slot_at_startup {
-            bank.set_check_program_deployment_slot(true);
-        }
-
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
             Self::install_scheduler_into_bank(scheduler_pool, mode, bank)
@@ -286,7 +329,7 @@ impl BankForks {
         mode: SchedulingMode,
         bank: Arc<Bank>,
     ) -> BankWithScheduler {
-        let context = SchedulingContext::new_with_mode(mode, bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
             return BankWithScheduler::new_without_scheduler(bank);
         };
@@ -299,36 +342,6 @@ impl BankForks {
             scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
         }
         bank_with_scheduler
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn reinstall_block_production_scheduler_into_working_genesis_bank(
-        &mut self,
-    ) -> BankWithScheduler {
-        let bank = self.working_bank();
-        assert!(self.banks.len() == 1 && bank.slot() == 0 && !bank.is_frozen());
-        let pool = self.scheduler_pool.as_ref().unwrap();
-        let mode = SchedulingMode::BlockProduction;
-        let bank = Self::install_scheduler_into_bank(pool, mode, bank);
-        self.banks
-            .insert(bank.slot(), bank.clone_with_scheduler())
-            .expect("some removed bank");
-        bank.unpause_new_block_production_scheduler();
-        bank
-    }
-
-    #[must_use]
-    pub fn toggle_unified_scheduler_block_production_mode(&self, enable: bool) -> bool {
-        if let Some(scheduler_pool) = &self.scheduler_pool {
-            scheduler_pool.toggle_block_production_mode(enable)
-        } else {
-            !enable
-        }
-    }
-
-    pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
-        self.highest_slot_at_startup = std::cmp::max(self.highest_slot_at_startup, bank.slot());
-        self.insert(bank)
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<BankWithScheduler> {
@@ -357,6 +370,20 @@ impl BankForks {
         Some(bank)
     }
 
+    pub fn highest_frozen_bank(&self) -> Option<Arc<Bank>> {
+        self.banks
+            .values()
+            .filter_map(|bank| {
+                if bank.is_frozen() {
+                    Some(bank.slot())
+                } else {
+                    None
+                }
+            })
+            .max()
+            .and_then(|slot| self.get(slot))
+    }
+
     pub fn highest_slot(&self) -> Slot {
         self.working_slot
     }
@@ -374,7 +401,11 @@ impl BankForks {
     }
 
     /// Clears associated banks from BankForks.
-    pub fn dump_slots<'a, I>(&mut self, slots: I) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
+    pub fn dump_slots<'a, I>(
+        &mut self,
+        slots: I,
+        write_bank_hash_details: bool,
+    ) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
     where
         I: Iterator<Item = &'a Slot>,
     {
@@ -384,14 +415,36 @@ impl BankForks {
                 let bank = self
                     .remove(*slot)
                     .expect("BankForks should not have been purged yet");
-                bank_hash_details::write_bank_hash_details_file(&bank)
-                    .map_err(|err| {
-                        warn!("Unable to write bank hash details file: {err}");
-                    })
-                    .ok();
+                if write_bank_hash_details {
+                    bank_hash_details::write_bank_hash_details_file(&bank)
+                        .map_err(|err| {
+                            warn!("Unable to write bank hash details file: {err}");
+                        })
+                        .ok();
+                }
                 ((*slot, bank.bank_id()), bank)
             })
             .unzip()
+    }
+
+    /// Clears a bank from bank forks. Panics if the bank is not present in bank forks.
+    ///
+    /// Callers must quiesce any scheduler for this bank before calling this
+    /// method. ReplayStage does that outside the `BankForks` write lock before
+    /// servicing clear-bank controller commands.
+    pub fn clear_bank(&mut self, slot: Slot, write_bank_hash_details: bool) {
+        let (slots_to_purge, removed_banks) =
+            self.dump_slots(std::iter::once(&slot), write_bank_hash_details);
+
+        let root_bank = self.root_bank();
+
+        root_bank.remove_unrooted_slots(&slots_to_purge);
+        drop(removed_banks);
+
+        for (slot, _) in slots_to_purge {
+            root_bank.clear_slot_signatures(slot);
+            root_bank.prune_program_cache_by_deployment_slot(slot);
+        }
     }
 
     fn do_set_root_return_metrics(
@@ -437,7 +490,7 @@ impl BankForks {
             }
         }
         let root_tx_count = root_bank
-            .parents()
+            .parents_iter()
             .last()
             .map(|bank| bank.transaction_count())
             .unwrap_or(0);
@@ -489,7 +542,7 @@ impl BankForks {
 
     pub fn prune_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
-            root_bank.prune_program_cache(root, root_bank.epoch());
+            root_bank.prune_program_cache(self);
         }
     }
 
@@ -503,6 +556,7 @@ impl BankForks {
         let set_root_start = Instant::now();
         let (removed_banks, set_root_metrics) =
             self.do_set_root_return_metrics(root, snapshot_controller, highest_super_majority_root);
+
         datapoint_info!(
             "bank-forks_set_root",
             (
@@ -528,14 +582,6 @@ impl BankForks {
                     .timings
                     .total_squash_time
                     .squash_accounts_ms,
-                i64
-            ),
-            (
-                "total_squash_accounts_index_ms",
-                set_root_metrics
-                    .timings
-                    .total_squash_time
-                    .squash_accounts_index_ms,
                 i64
             ),
             (
@@ -645,19 +691,8 @@ impl BankForks {
         // We want to collect timing separately, and the 2nd collect requires
         // a unique borrow to self which is already borrowed by self.banks
         let mut prune_slots_time = Measure::start("prune_slots");
-        let highest_super_majority_root = highest_super_majority_root.unwrap_or(root);
         let prune_slots: Vec<_> = self
-            .banks
-            .keys()
-            .copied()
-            .filter(|slot| {
-                let keep = *slot == root
-                    || self.descendants[&root].contains(slot)
-                    || (*slot < root
-                        && *slot >= highest_super_majority_root
-                        && self.descendants[slot].contains(&root));
-                !keep
-            })
+            .get_non_rooted(root, highest_super_majority_root)
             .collect();
         prune_slots_time.stop();
 
@@ -673,6 +708,22 @@ impl BankForks {
             prune_slots_time.as_ms(),
             prune_remove_time.as_ms(),
         )
+    }
+
+    pub fn get_non_rooted(
+        &self,
+        root: Slot,
+        highest_super_majority_root: Option<Slot>,
+    ) -> impl Iterator<Item = Slot> + '_ {
+        let highest_super_majority_root = highest_super_majority_root.unwrap_or(root);
+        self.banks.keys().copied().filter(move |slot| {
+            let keep = *slot == root
+                || self.descendants[&root].contains(slot)
+                || (*slot < root
+                    && *slot >= highest_super_majority_root
+                    && self.descendants[slot].contains(&root));
+            !keep
+        })
     }
 }
 
@@ -721,27 +772,104 @@ mod tests {
         super::*,
         crate::{
             bank::test_utils::update_vote_account_timestamp,
+            block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
+                create_genesis_config_with_tower_leader,
+            },
+            installed_scheduler_pool::{
+                InstalledScheduler, ResultWithTimings, ScheduleResult, SchedulerId,
+                UninstalledScheduler, UninstalledSchedulerBox, initialized_result_with_timings,
             },
         },
         agave_feature_set::FeatureSet,
+        agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType},
+            certificate::{CertSignature, GenesisCert},
+            consensus_message::Block,
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
+            wire::{WireBlockCertMessage, WireCertSignature},
         },
         assert_matches::assert_matches,
-        solana_account::Account,
-        solana_bls_signatures::Signature as BLSSignature,
+        crossbeam_channel::{Receiver, Sender, bounded},
+        solana_account::{Account, AccountSharedData},
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_pubkey::Pubkey,
         solana_rent::Rent,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
+        solana_transaction_error::TransactionError,
+        solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
+        std::{fmt::Debug, thread, time::Duration},
     };
+
+    struct BlockingScheduler {
+        context: SchedulingContext,
+        wait_started_sender: Sender<()>,
+        release_receiver: Receiver<()>,
+    }
+
+    impl Debug for BlockingScheduler {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("BlockingScheduler")
+                .field("slot", &self.context.slot())
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl InstalledScheduler for BlockingScheduler {
+        fn id(&self) -> SchedulerId {
+            1
+        }
+
+        fn context(&self) -> &SchedulingContext {
+            &self.context
+        }
+
+        fn schedule_execution(
+            &self,
+            _transaction: RuntimeTransaction<ResolvedTransactionView<bytes::Bytes>>,
+            _task_id: OrderedTaskId,
+        ) -> ScheduleResult {
+            Ok(())
+        }
+
+        fn recover_error_after_abort(&mut self) -> TransactionError {
+            unreachable!("blocking test scheduler never aborts")
+        }
+
+        fn wait_for_termination(
+            self: Box<Self>,
+            is_dropped: bool,
+        ) -> (ResultWithTimings, UninstalledSchedulerBox) {
+            assert!(!is_dropped);
+            self.wait_started_sender.send(()).unwrap();
+            self.release_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            (
+                initialized_result_with_timings(),
+                Box::new(NoopUninstalledScheduler),
+            )
+        }
+
+        fn pause_for_recent_blockhash(&mut self) {}
+
+        fn unpause_after_taken(&self) {}
+    }
+
+    #[derive(Debug)]
+    struct NoopUninstalledScheduler;
+
+    impl UninstalledScheduler for NoopUninstalledScheduler {
+        fn return_to_pool(self: Box<Self>) {}
+    }
 
     // This test verifies that BankForks::new_rw_arc() doesn't create a reference cycle.
     //
@@ -780,24 +908,106 @@ mod tests {
         assert_eq!(bank_forks.working_bank().tick_height(), 1);
     }
 
+    #[test]
+    fn test_clear_bank_after_scheduler_wait() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let root_bank = bank_forks.read().unwrap()[0].clone();
+        let child_bank = Arc::new(Bank::new_from_parent(root_bank, SlotLeader::default(), 1));
+        let (wait_started_sender, wait_started_receiver) = bounded(1);
+        let (release_sender, release_receiver) = bounded(1);
+
+        let bank_with_scheduler = BankWithScheduler::new(
+            child_bank.clone(),
+            Some(Box::new(BlockingScheduler {
+                context: SchedulingContext::new(child_bank.clone()),
+                wait_started_sender,
+                release_receiver,
+            })),
+        );
+        let account_key = Keypair::new().pubkey();
+        child_bank.store_account(
+            &account_key,
+            &AccountSharedData::new(42, 0, &system_program::ID),
+        );
+        assert!(child_bank.get_account(&account_key).is_some());
+
+        {
+            let mut bank_forks = bank_forks.write().unwrap();
+            assert!(bank_forks.banks.insert(1, bank_with_scheduler).is_none());
+            bank_forks.descendants.entry(1).or_default();
+            for parent in child_bank.proper_ancestors() {
+                bank_forks.descendants.entry(parent).or_default().insert(1);
+            }
+            bank_forks.working_slot = 1;
+            bank_forks
+                .sharable_banks
+                .working_bank
+                .store(child_bank.clone());
+        }
+
+        let clear_bank_forks = bank_forks.clone();
+        let (finish_done_sender, finish_done_receiver) = bounded(1);
+        let finish_thread = thread::spawn(move || {
+            let bank_to_clear = clear_bank_forks
+                .read()
+                .unwrap()
+                .get_with_scheduler(1)
+                .unwrap();
+            let _ = bank_to_clear.wait_for_completed_scheduler();
+            clear_bank_forks.write().unwrap().clear_bank(1, false);
+            finish_done_sender.send(()).unwrap();
+        });
+
+        wait_started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert!(
+            finish_done_receiver
+                .recv_timeout(Duration::from_millis(50))
+                .is_err()
+        );
+
+        // The scheduler drain is blocked, but `BankForks` readers must not be.
+        assert!(bank_forks.read().unwrap().get(0).is_some());
+        // The removed bank's account state must also remain available until
+        // the scheduler workers are done using it.
+        assert!(child_bank.get_account(&account_key).is_some());
+
+        release_sender.send(()).unwrap();
+        finish_thread.join().unwrap();
+        finish_done_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert!(child_bank.get_account(&account_key).is_none());
+    }
+
     fn make_root_bank_for_migration_status_test(
         root_slot: Slot,
         ff_activation_slot: Option<Slot>,
-        genesis_cert: Option<Certificate>,
+        genesis_cert: Option<GenesisCert>,
     ) -> Bank {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_genesis_config(10_000);
+        } = create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 0);
         genesis_config.epoch_schedule = EpochSchedule::new(32);
 
-        if let Some(genesis_cert) = genesis_cert.as_ref() {
-            let cert_data = wincode::serialize(genesis_cert).unwrap();
+        if let Some(genesis_cert) = genesis_cert {
+            let cert = WireBlockCertMessage {
+                block: genesis_cert.block,
+                signature: WireCertSignature {
+                    signature: genesis_cert.signature.signature,
+                    bitmap: genesis_cert.signature.bitmap,
+                },
+            };
+            let cert_data = wincode::serialize(&cert).unwrap();
             let lamports = Rent::default().minimum_balance(cert_data.len());
             let mut cert_account = Account::new(lamports, cert_data.len(), &system_program::ID);
             cert_account.data = cert_data;
             genesis_config
                 .accounts
                 .insert(*GENESIS_CERTIFICATE_ACCOUNT, cert_account);
+            EpochInflationAccountState::insert_into_genesis_config(&mut genesis_config);
         }
 
         let mut feature_set = FeatureSet::default();
@@ -826,10 +1036,12 @@ mod tests {
     #[test]
     fn test_initialize_migration_status() {
         let ff_activation_slot = 5;
-        let genesis_cert = Certificate {
-            cert_type: CertificateType::Finalize(1),
-            signature: BLSSignature::default(),
-            bitmap: vec![],
+        let genesis_cert = GenesisCert {
+            block: Block::new_unique(1),
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         };
 
         let root_bank = make_root_bank_for_migration_status_test(0, None, None);
@@ -850,8 +1062,17 @@ mod tests {
             Some(genesis_cert.clone()),
         );
         assert_eq!(
-            root_bank.get_alpenglow_genesis_certificate(),
-            Some(genesis_cert.clone())
+            root_bank.get_alpenglow_genesis_certificate().unwrap(),
+            genesis_cert.clone()
+        );
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_alpenglow_enabled());
+        assert!(!migration_status.is_full_alpenglow_epoch());
+
+        let root_bank = make_root_bank_for_migration_status_test(
+            ff_activation_slot + MIGRATION_SLOT_OFFSET,
+            Some(ff_activation_slot),
+            Some(genesis_cert.clone()),
         );
         let migration_status = BankForks::initialize_migration_status(&root_bank);
         assert!(migration_status.is_alpenglow_enabled());
@@ -876,7 +1097,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(10_000);
+        } = create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 0);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let root_bank = bank_forks.read().unwrap().root_bank();
 
@@ -906,10 +1127,12 @@ mod tests {
 
         // Migration can still succeed
         let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
-        let genesis_cert = Certificate {
-            cert_type: CertificateType::Finalize(1),
-            signature: BLSSignature::default(),
-            bitmap: vec![],
+        let genesis_cert = GenesisCert {
+            block: Block::new_unique(1),
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         };
         bank.activate_feature(&agave_feature_set::alpenglow::id());
         bank.set_alpenglow_genesis_certificate(&genesis_cert);
@@ -934,6 +1157,57 @@ mod tests {
         assert_eq!(children, *descendants.get(&0).unwrap());
         assert!(descendants[&1].is_empty());
         assert!(descendants[&2].is_empty());
+    }
+
+    #[test]
+    fn test_bank_forks_slots_to_clear() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        extend_bank_forks(
+            bank_forks.clone(),
+            &[(0, 1), (1, 2), (1, 3), (2, 4), (0, 5)],
+        );
+
+        let slots = |slots: &[Slot]| {
+            let (slots_to_purge, banks_to_clear) = bank_forks
+                .read()
+                .unwrap()
+                .slots_to_clear(slots.iter().copied());
+            let bank_slots_to_clear = banks_to_clear
+                .iter()
+                .map(|bank| bank.slot())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(banks_to_clear.len(), bank_slots_to_clear.len());
+            (slots_to_purge, bank_slots_to_clear)
+        };
+        assert_eq!(
+            slots(&[2]),
+            ([2, 4].into_iter().collect(), [2, 4].into_iter().collect())
+        );
+        assert_eq!(
+            slots(&[1]),
+            (
+                [1, 2, 3, 4].into_iter().collect(),
+                [1, 2, 3, 4].into_iter().collect(),
+            )
+        );
+        assert_eq!(
+            slots(&[0]),
+            (BTreeSet::<Slot>::new(), BTreeSet::<Slot>::new())
+        );
+        assert_eq!(
+            slots(&[6]),
+            ([6].into_iter().collect(), BTreeSet::<Slot>::new())
+        );
+        assert_eq!(
+            slots(&[1, 2, 2, 3]),
+            (
+                [1, 2, 3, 4].into_iter().collect(),
+                [1, 2, 3, 4].into_iter().collect(),
+            )
+        );
     }
 
     #[test]

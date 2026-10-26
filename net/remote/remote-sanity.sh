@@ -33,15 +33,11 @@ missing() {
 [[ -n $numNodes ]]       || missing numNodes
 [[ -n $failOnValidatorBootupFailure ]] || missing failOnValidatorBootupFailure
 
-installCheck=true
 rejectExtraNodes=false
 while [[ $1 = -o ]]; do
   opt="$2"
   shift 2
   case $opt in
-  noInstallCheck)
-    installCheck=false
-    ;;
   rejectExtraNodes)
     rejectExtraNodes=true
     ;;
@@ -65,7 +61,6 @@ local|tar|skip)
   export USE_INSTALL=1
   solana_cli=solana
   solana_gossip=solana-gossip
-  solana_install=agave-install
   ;;
 *)
   echo "Unknown deployment method: $deployMethod"
@@ -119,21 +114,6 @@ if [[ "$airdropsEnabled" = true ]]; then
 else
   echo "^^^ +++"
   echo "Note: wallet sanity is disabled as airdrops are disabled"
-fi
-
-if $installCheck && [[ -r update_manifest_keypair.json ]]; then
-  echo "--- $sanityTargetIp: agave-install test"
-
-  (
-    set -x
-    rm -rf install-data-dir
-    $solana_install init \
-      --no-modify-path \
-      --data-dir install-data-dir \
-      --url http://"$sanityTargetIp":8899 \
-
-    $solana_install info
-  )
 fi
 
 echo --- Pass

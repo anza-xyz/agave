@@ -28,6 +28,7 @@ pub struct MaxAge {
     pub alt_invalidation_slot: Slot,
 }
 
+#[cfg(test)]
 impl MaxAge {
     pub const MAX: Self = Self {
         sanitized_epoch: Epoch::MAX,
@@ -38,6 +39,7 @@ impl MaxAge {
 /// Message: [Scheduler -> Worker]
 /// Transactions to be consumed (i.e. executed, recorded, and committed)
 pub struct ConsumeWork<Tx> {
+    pub target_slot: Slot,
     pub batch_id: TransactionBatchId,
     pub ids: Vec<TransactionId>,
     pub transactions: Vec<Tx>,

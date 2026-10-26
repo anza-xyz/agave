@@ -17,12 +17,13 @@ pub struct CommittedTransaction {
     pub executed_units: u64,
     pub fee_details: FeeDetails,
     pub loaded_account_stats: TransactionLoadedAccountsStats,
-    pub fee_payer_post_balance: u64,
+    pub fee_payer_post_balance: Option<u64>,
 }
 
 pub trait TransactionCommitResultExtensions {
     fn was_committed(&self) -> bool;
     fn was_executed_successfully(&self) -> bool;
+    fn was_fee_paying(&self) -> bool;
 }
 
 impl TransactionCommitResultExtensions for TransactionCommitResult {
@@ -33,6 +34,13 @@ impl TransactionCommitResultExtensions for TransactionCommitResult {
     fn was_executed_successfully(&self) -> bool {
         match self {
             Ok(committed_tx) => committed_tx.status.is_ok(),
+            Err(_) => false,
+        }
+    }
+
+    fn was_fee_paying(&self) -> bool {
+        match self {
+            Ok(committed_tx) => committed_tx.fee_details.total_fee() > 0,
             Err(_) => false,
         }
     }

@@ -10,7 +10,7 @@ if [[ -n $DO_NOT_PUBLISH_TAR ]]; then
 fi
 
 # check channel and tag
-eval "$(ci/channel-info.sh)"
+CHANNEL="$(cargo xtask channel-info --json | jq -r '.CHANNEL')"
 
 if [[ -n "$CI_TAG" ]]; then
   CHANNEL_OR_TAG=$CI_TAG

@@ -12,7 +12,6 @@ use {
 };
 
 #[derive(Debug, PartialEq, Clone)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct VoteStateFrameV3 {
     pub(super) votes_frame: LandedVotesListFrame,
     pub(super) root_slot_frame: RootSlotFrame,
@@ -109,7 +108,7 @@ mod tests {
     fn test_try_new_zeroed() {
         let target_vote_state = VoteStateV3::default();
         let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state));
-        let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
+        let mut bytes = wincode::serialize(&target_vote_state_versions).unwrap();
 
         for i in 0..bytes.len() {
             let vote_state_frame = VoteStateFrameV3::try_new(&bytes[..i]);
@@ -148,7 +147,7 @@ mod tests {
         });
 
         let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state));
-        let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
+        let mut bytes = wincode::serialize(&target_vote_state_versions).unwrap();
 
         for i in 0..bytes.len() {
             let vote_state_frame = VoteStateFrameV3::try_new(&bytes[..i]);

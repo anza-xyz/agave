@@ -1,28 +1,19 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    curve25519_dalek::scalar::Scalar,
     solana_zk_sdk::{
         encryption::{
             elgamal::ElGamalKeypair,
             grouped_elgamal::GroupedElGamal,
             pedersen::{Pedersen, PedersenOpening},
         },
-        zk_elgamal_proof_program::proof_data::{
-            BatchedGroupedCiphertext2HandlesValidityProofData,
-            BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU64Data,
-            BatchedRangeProofU128Data, BatchedRangeProofU256Data,
-            CiphertextCiphertextEqualityProofData, CiphertextCommitmentEqualityProofData,
-            GroupedCiphertext2HandlesValidityProofData, GroupedCiphertext3HandlesValidityProofData,
-            PercentageWithCapProofData, PubkeyValidityProofData, ZeroCiphertextProofData,
-            ZkProofData,
-        },
+        zk_elgamal_proof_program::*,
     },
 };
 
 fn bench_pubkey_validity(c: &mut Criterion) {
     let keypair = ElGamalKeypair::new_rand();
-    let proof_data = PubkeyValidityProofData::new(&keypair).unwrap();
+    let proof_data = build_pubkey_validity_proof_data(&keypair).unwrap();
 
     c.bench_function("pubkey_validity", |b| {
         b.iter(|| {
@@ -34,7 +25,7 @@ fn bench_pubkey_validity(c: &mut Criterion) {
 fn bench_zero_ciphertext(c: &mut Criterion) {
     let keypair = ElGamalKeypair::new_rand();
     let ciphertext = keypair.pubkey().encrypt(0_u64);
-    let proof_data = ZeroCiphertextProofData::new(&keypair, &ciphertext).unwrap();
+    let proof_data = build_zero_ciphertext_proof_data(&keypair, &ciphertext).unwrap();
 
     c.bench_function("zero_ciphertext", |b| {
         b.iter(|| {
@@ -55,7 +46,7 @@ fn bench_grouped_ciphertext_2_handles_validity(c: &mut Criterion) {
     let grouped_ciphertext =
         GroupedElGamal::encrypt_with([destination_pubkey, auditor_pubkey], amount, &opening);
 
-    let proof_data = GroupedCiphertext2HandlesValidityProofData::new(
+    let proof_data = build_grouped_ciphertext_2_handles_validity_proof_data(
         destination_pubkey,
         auditor_pubkey,
         &grouped_ciphertext,
@@ -89,7 +80,7 @@ fn bench_grouped_ciphertext_3_handles_validity(c: &mut Criterion) {
         &opening,
     );
 
-    let proof_data = GroupedCiphertext3HandlesValidityProofData::new(
+    let proof_data = build_grouped_ciphertext_3_handles_validity_proof_data(
         source_pubkey,
         destination_pubkey,
         auditor_pubkey,
@@ -112,7 +103,7 @@ fn bench_ciphertext_commitment_equality(c: &mut Criterion) {
     let ciphertext = keypair.pubkey().encrypt(amount);
     let (commitment, opening) = Pedersen::new(amount);
 
-    let proof_data = CiphertextCommitmentEqualityProofData::new(
+    let proof_data = build_ciphertext_commitment_equality_proof_data(
         &keypair,
         &ciphertext,
         &commitment,
@@ -140,7 +131,7 @@ fn bench_ciphertext_ciphertext_equality(c: &mut Criterion) {
         .pubkey()
         .encrypt_with(amount, &destination_opening);
 
-    let proof_data = CiphertextCiphertextEqualityProofData::new(
+    let proof_data = build_ciphertext_ciphertext_equality_proof_data(
         &source_keypair,
         destination_keypair.pubkey(),
         &source_ciphertext,
@@ -176,7 +167,7 @@ fn bench_batched_grouped_ciphertext_2_handles_validity(c: &mut Criterion) {
     let grouped_ciphertext_hi =
         GroupedElGamal::encrypt_with([destination_pubkey, auditor_pubkey], amount_hi, &opening_hi);
 
-    let proof_data = BatchedGroupedCiphertext2HandlesValidityProofData::new(
+    let proof_data = build_batched_grouped_ciphertext_2_handles_validity_proof_data(
         destination_pubkey,
         auditor_pubkey,
         &grouped_ciphertext_lo,
@@ -223,7 +214,7 @@ fn bench_batched_grouped_ciphertext_3_handles_validity(c: &mut Criterion) {
         &opening_hi,
     );
 
-    let proof_data = BatchedGroupedCiphertext3HandlesValidityProofData::new(
+    let proof_data = build_batched_grouped_ciphertext_3_handles_validity_proof_data(
         source_pubkey,
         destination_pubkey,
         auditor_pubkey,
@@ -255,14 +246,13 @@ fn bench_percentage_with_cap(c: &mut Criterion) {
     let (transfer_commitment, transfer_opening) = Pedersen::new(transfer_amount);
     let (fee_commitment, fee_opening) = Pedersen::new(fee_amount);
 
-    let scalar_rate = Scalar::from(fee_rate);
-    let delta_commitment =
-        &fee_commitment * Scalar::from(10_000_u64) - &transfer_commitment * &scalar_rate;
-    let delta_opening = &fee_opening * &Scalar::from(10_000_u64) - &transfer_opening * &scalar_rate;
+    let fee_rate_u64 = fee_rate as u64;
+    let delta_commitment = &fee_commitment * 10_000_u64 - &transfer_commitment * fee_rate_u64;
+    let delta_opening = &fee_opening * 10_000_u64 - &transfer_opening * fee_rate_u64;
 
     let (claimed_commitment, claimed_opening) = Pedersen::new(delta_fee);
 
-    let proof_data = PercentageWithCapProofData::new(
+    let proof_data = build_percentage_with_cap_proof_data(
         &fee_commitment,
         &fee_opening,
         fee_amount,
@@ -301,7 +291,7 @@ fn bench_batched_range_proof_u64(c: &mut Criterion) {
     let (commitment_7, opening_7) = Pedersen::new(amount_7);
     let (commitment_8, opening_8) = Pedersen::new(amount_8);
 
-    let proof_data = BatchedRangeProofU64Data::new(
+    let proof_data = build_batched_range_proof_u64_data(
         vec![
             &commitment_1,
             &commitment_2,
@@ -349,7 +339,7 @@ fn bench_batched_range_proof_u128(c: &mut Criterion) {
     let (commitment_7, opening_7) = Pedersen::new(amount_7);
     let (commitment_8, opening_8) = Pedersen::new(amount_8);
 
-    let proof_data = BatchedRangeProofU128Data::new(
+    let proof_data = build_batched_range_proof_u128_data(
         vec![
             &commitment_1,
             &commitment_2,
@@ -397,7 +387,7 @@ fn bench_batched_range_proof_u256(c: &mut Criterion) {
     let (commitment_7, opening_7) = Pedersen::new(amount_7);
     let (commitment_8, opening_8) = Pedersen::new(amount_8);
 
-    let proof_data = BatchedRangeProofU256Data::new(
+    let proof_data = build_batched_range_proof_u256_data(
         vec![
             &commitment_1,
             &commitment_2,

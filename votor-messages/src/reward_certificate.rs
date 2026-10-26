@@ -1,14 +1,13 @@
 //! Defines aggregates used for vote rewards.
 
 use {
-    crate::consensus_message::VoteMessage,
+    crate::consensus_message::BlockId,
     solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
     solana_clock::Slot,
-    solana_hash::Hash,
-    solana_pubkey::Pubkey,
+    solana_short_vec::ShortU16,
     solana_signer_store::EncodeError,
     thiserror::Error,
-    wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::ShortU16, pod_wrapper},
+    wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, pod_wrapper},
 };
 
 // Use `BLSSignatureCompressed` directly once `BLSSignature` wincode support
@@ -69,6 +68,19 @@ impl SkipRewardCertificate {
     pub fn into_bitmap(self) -> Vec<u8> {
         self.bitmap
     }
+
+    /// Returns every field of the certificate. Callers that must not
+    /// silently ignore new fields (e.g. the geyser boundary conversion)
+    /// bind this tuple exhaustively, so growing it breaks them at compile
+    /// time.
+    pub fn as_parts(&self) -> (Slot, &BLSSignatureCompressed, &[u8]) {
+        let Self {
+            slot,
+            signature,
+            bitmap,
+        } = self;
+        (*slot, signature, bitmap)
+    }
 }
 
 /// Reward certificate for the validators that voted notar.
@@ -77,7 +89,7 @@ pub struct NotarRewardCertificate {
     /// The slot the certificate is for.
     pub slot: Slot,
     /// The block id the certificate is for.
-    pub block_id: Hash,
+    pub block_id: BlockId,
     /// The signature.
     #[wincode(with = "PodBLSSignatureCompressed")]
     pub signature: BLSSignatureCompressed,
@@ -90,7 +102,7 @@ impl NotarRewardCertificate {
     /// Returns a new instance of [`NotarRewardCertificate`].
     pub fn try_new(
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         signature: BLSSignatureCompressed,
         bitmap: Vec<u8>,
     ) -> Result<Self, RewardCertError> {
@@ -110,34 +122,24 @@ impl NotarRewardCertificate {
         &self.bitmap
     }
 
+    /// Returns every field of the certificate. Callers that must not
+    /// silently ignore new fields (e.g. the geyser boundary conversion)
+    /// bind this tuple exhaustively, so growing it breaks them at compile
+    /// time.
+    pub fn as_parts(&self) -> (Slot, &BlockId, &BLSSignatureCompressed, &[u8]) {
+        let Self {
+            slot,
+            block_id,
+            signature,
+            bitmap,
+        } = self;
+        (*slot, block_id, signature, bitmap)
+    }
+
     /// Returns the bitmap consuming self.
     pub fn into_bitmap(self) -> Vec<u8> {
         self.bitmap
     }
-}
-
-/// Message to add votes to the rewards container.
-#[derive(Debug)]
-pub struct AddVoteMessage {
-    /// List of [`VoteMessage`]s.
-    pub votes: Vec<VoteMessage>,
-}
-
-/// Request to build reward certificates.
-pub struct BuildRewardCertsRequest {
-    /// The bank slot which will include the built reward certs.
-    pub bank_slot: Slot,
-}
-
-/// Response when the reward certs are built successfully.
-#[derive(Default)]
-pub struct BuildRewardCertsRespSucc {
-    /// Skip reward certificate.  None if no skip votes were registered.
-    pub skip: Option<SkipRewardCertificate>,
-    /// Notar reward certificate.  None if no notar votes were registered.
-    pub notar: Option<NotarRewardCertificate>,
-    /// If at least one of the certs above is present, then this contains the slot for which the reward certs were built and the list of validators in the certs.
-    pub validators: Vec<Pubkey>,
 }
 
 /// Error returned when build reward certs fails.
@@ -146,10 +148,7 @@ pub enum BuildRewardCertsRespError {
     /// Building either the skip or the notar reward cert failed.
     #[error("try_new() on skip or notar cert failed with {0}")]
     RewardCertTryNew(#[from] RewardCertError),
-    /// Experienced failure with encoding.
-    #[error("encode error {0:?}")]
-    Encode(EncodeError),
+    /// Encoding failed
+    #[error("encoding failed with {0:?}")]
+    Encoding(EncodeError),
 }
-
-/// A type alias to minimise making changes if the above types change.
-pub type BuildRewardCertsResponse = Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError>;

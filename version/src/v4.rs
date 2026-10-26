@@ -1,13 +1,18 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, frozen_abi};
 use {
     crate::{client_ids::ClientId, compute_commit},
     rand::{Rng, rng},
-    serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::Error as _},
     solana_sanitize::Sanitize,
-    solana_serde_varint as serde_varint,
-    std::{convert::TryInto, fmt, str::FromStr},
+    solana_wincode_varint::Leb128Int,
+    std::{convert::TryInto, fmt, mem::MaybeUninit, str::FromStr},
+    wincode::{
+        ReadError, ReadResult, SchemaRead, SchemaWrite, WriteError, WriteResult,
+        config::Config,
+        io::{Reader, Writer},
+    },
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Prerelease {
     Stable,
@@ -79,10 +84,8 @@ impl FromStr for Prerelease {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(transparent)]
-struct PackedMinor(#[serde(with = "serde_varint")] u16);
+#[derive(Clone, Debug, PartialEq, SchemaRead, SchemaWrite)]
+struct PackedMinor(#[wincode(with = "Leb128Int<u16>")] u16);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PackedMinorPackError {
@@ -146,6 +149,15 @@ impl PackedMinor {
     }
 }
 
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi),
+    frozen_abi(
+        abi_digest = "CAvtbh3st7PCvB93NjvDDQj1tBz82BmYPL4cNXMByfLX",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
     major: u16,
@@ -271,58 +283,42 @@ impl fmt::Display for Version {
 }
 
 impl Sanitize for Version {}
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize)]
-struct SerializedVersion {
-    #[serde(with = "serde_varint")]
-    major: u16,
-    #[serde(rename = "minor")]
-    packed_minor: PackedMinor,
-    #[serde(with = "serde_varint")]
-    patch: u16,
-    commit: u32,
-    feature_set: u32,
-    #[serde(with = "serde_varint")]
-    client: u16,
-}
 
-impl Serialize for Version {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let &Version {
-            major,
-            minor,
-            patch,
-            commit,
-            feature_set,
-            ref client,
-            ref prerelease,
-        } = self;
+unsafe impl<C: Config> SchemaWrite<C> for Version {
+    type Src = Version;
 
-        let (packed_minor, patch) = PackedMinor::try_pack(minor, patch, prerelease)
-            .map_err(|err| S::Error::custom(format!("{err:?}")))?;
-        let client = u16::try_from(client.clone()).map_err(S::Error::custom)?;
+    fn size_of(src: &Version) -> WriteResult<usize> {
+        let serialized = Self::to_serialized(src)?;
+        <SerializedVersion as SchemaWrite<C>>::size_of(&serialized)
+    }
 
-        let serialized_version = SerializedVersion {
-            major,
-            packed_minor,
-            patch,
-            commit,
-            feature_set,
-            client,
-        };
-
-        SerializedVersion::serialize(&serialized_version, serializer)
+    fn write(writer: impl Writer, src: &Version) -> WriteResult<()> {
+        let serialized = Self::to_serialized(src)?;
+        <SerializedVersion as SchemaWrite<C>>::write(writer, &serialized)
     }
 }
 
-impl<'de> Deserialize<'de> for Version {
-    fn deserialize<D>(deserializer: D) -> Result<Version, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
+impl Version {
+    fn to_serialized(src: &Version) -> WriteResult<SerializedVersion> {
+        let (packed_minor, patch) = PackedMinor::try_pack(src.minor, src.patch, &src.prerelease)
+            .map_err(|_| WriteError::Custom("Version: invalid minor/patch/prerelease"))?;
+        let client = u16::try_from(src.client.clone())
+            .map_err(|_| WriteError::Custom("Version: invalid client ID"))?;
+        Ok(SerializedVersion {
+            major: src.major,
+            packed_minor,
+            patch,
+            commit: src.commit,
+            feature_set: src.feature_set,
+            client,
+        })
+    }
+}
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for Version {
+    type Dst = Version;
+
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let SerializedVersion {
             major,
             packed_minor,
@@ -330,28 +326,74 @@ impl<'de> Deserialize<'de> for Version {
             commit,
             feature_set,
             client,
-        } = SerializedVersion::deserialize(deserializer)?;
-
+        } = <SerializedVersion as SchemaRead<'de, C>>::get(reader)?;
         let (minor, patch, prerelease) = packed_minor
             .try_unpack(patch)
-            .map_err(|err| D::Error::custom(format!("{err:?}")))?;
-        let client = ClientId::from(client);
-
-        Ok(Version {
+            .map_err(|_| ReadError::Custom("Version: invalid packed minor"))?;
+        dst.write(Version {
             major,
             minor,
             patch,
             commit,
             feature_set,
-            client,
+            client: ClientId::from(client),
             prerelease,
-        })
+        });
+        Ok(())
+    }
+}
+
+#[derive(SchemaRead, SchemaWrite)]
+struct SerializedVersion {
+    #[wincode(with = "Leb128Int<u16>")]
+    major: u16,
+    packed_minor: PackedMinor,
+    #[wincode(with = "Leb128Int<u16>")]
+    patch: u16,
+    commit: u32,
+    feature_set: u32,
+    #[wincode(with = "Leb128Int<u16>")]
+    client: u16,
+}
+
+// Generates a random, always-serializable `Version`. `Version` has a packed
+// wire format with cross-field invariants (`minor` fits in 14 bits, non-stable
+// prereleases force `patch == 0`; see `PackedMinor::try_pack`), so the fields
+// cannot be sampled independently. Used as the `StableAbi` sampler.
+#[cfg(feature = "stable-abi")]
+fn random_version<R: Rng + ?Sized>(rng: &mut R) -> Version {
+    let minor = rng.random::<u16>() & PackedMinor::PRERELEASE_MINOR_MAX;
+    let (prerelease, patch) = match rng.random::<u8>() % 4 {
+        0 => (Prerelease::Stable, rng.random::<u16>()),
+        1 => (Prerelease::ReleaseCandidate(rng.random()), 0),
+        2 => (Prerelease::Beta(rng.random()), 0),
+        _ => (Prerelease::Alpha(rng.random()), 0),
+    };
+    Version::new_from_parts(
+        rng.random(),
+        minor,
+        patch,
+        rng.random(),
+        rng.random(),
+        ClientId::from(rng.random::<u16>()),
+        prerelease,
+    )
+}
+
+// `StableAbiSample` cannot be derived here because it samples fields
+// independently; `random_version` upholds the cross-field invariants instead.
+#[cfg(feature = "stable-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<Version>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Version {
+        random_version(rng)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::v3};
+    use super::*;
 
     #[test]
     fn test_prerelease_patch_is_valid() {
@@ -609,56 +651,14 @@ mod tests {
     }
 
     #[test]
-    fn test_v3_and_v4_same_size() {
-        // smallest
-        let v3_version = v3::Version {
-            major: 0,
-            minor: 0,
-            patch: 0,
-            commit: 0,
-            feature_set: 0,
-            client: 0,
-        };
-        let v4_version =
-            Version::new_from_parts(0, 0, 0, 0, 0, ClientId::Agave, Prerelease::Stable);
-        assert_eq!(
-            bincode::serialized_size(&v3_version).unwrap(),
-            bincode::serialized_size(&v4_version).unwrap(),
-        );
-
-        // largest
-        let v3_version = v3::Version {
-            major: u16::MAX,
-            minor: u16::MAX,
-            patch: u16::MAX,
-            commit: u32::MAX,
-            feature_set: u32::MAX,
-            client: u16::MAX,
-        };
-        let v4_version = Version::new_from_parts(
-            u16::MAX,
-            PackedMinor::PRERELEASE_MINOR_MAX,
-            0,
-            u32::MAX,
-            u32::MAX,
-            ClientId::Unknown(u16::MAX),
-            Prerelease::Alpha(u16::MAX),
-        );
-        assert_eq!(
-            bincode::serialized_size(&v3_version).unwrap(),
-            bincode::serialized_size(&v4_version).unwrap(),
-        );
-    }
-
-    #[test]
-    fn test_serde() {
+    fn test_wire_layout() {
         let version =
             Version::new_from_parts(0, 0, 0, 0, 0, ClientId::SolanaLabs, Prerelease::Stable);
 
-        let bytes = bincode::serialize(&version).unwrap();
+        let bytes = wincode::serialize(&version).unwrap();
         assert_eq!(bytes, [0u8; 12]);
 
-        let de_version: Version = bincode::deserialize(&bytes).unwrap();
+        let de_version: Version = wincode::deserialize(&bytes).unwrap();
         assert_eq!(version, de_version);
 
         let version = Version::new_from_parts(
@@ -671,7 +671,7 @@ mod tests {
             Prerelease::Alpha(u16::MAX),
         );
 
-        let bytes = bincode::serialize(&version).unwrap();
+        let bytes = wincode::serialize(&version).unwrap();
         assert_eq!(
             bytes,
             [
@@ -680,7 +680,7 @@ mod tests {
             ]
         );
 
-        let de_version: Version = bincode::deserialize(&bytes).unwrap();
+        let de_version: Version = wincode::deserialize(&bytes).unwrap();
         assert_eq!(version, de_version);
     }
 

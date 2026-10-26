@@ -1,21 +1,19 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
 
-#[cfg(feature = "dev-context-only-utils")]
 pub mod handler;
-#[cfg(not(feature = "dev-context-only-utils"))]
-pub(crate) mod handler;
 
 pub use solana_vote_interface::state::{vote_state_versions::*, *};
 use {
-    handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
+    crate::vote_state::handler::VoteStateVersionsInline,
+    handler::{VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
     solana_bls_signatures::{VerifiableProofOfPossession, keypair::Keypair as BLSKeypair},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -33,46 +31,17 @@ use {
     },
 };
 
-// Switch that preserves old behavior before vote state v4 feature gate.
-// This should be cleaned up when vote state v4 is activated.
-enum PreserveBehaviorInHandlerHelper {
-    V3 { check_initialized: bool },
-    V4,
-}
-
-impl PreserveBehaviorInHandlerHelper {
-    fn new(target_version: VoteStateTargetVersion, check_initialized: bool) -> Self {
-        match target_version {
-            VoteStateTargetVersion::V3 => Self::V3 { check_initialized },
-            VoteStateTargetVersion::V4 => Self::V4,
-        }
-    }
-}
-
 fn get_vote_state_handler_checked(
     vote_account: &BorrowedInstructionAccount,
-    preserve_behavior: PreserveBehaviorInHandlerHelper,
+    target_version: VoteStateTargetVersion,
 ) -> Result<VoteStateHandler, InstructionError> {
-    match preserve_behavior {
-        PreserveBehaviorInHandlerHelper::V3 { check_initialized } => {
-            // Existing flow before v4 feature gate activation:
-            // 1. Deserialize as `VoteState3`, converting during deserialization
-            // 2. Check for uninitialized
-            //
-            // Some callsites would deserialize without checking initialization
-            // status, hence the nested `check_initialized` switch.
-            let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
-            if check_initialized && vote_state.is_uninitialized() {
-                return Err(InstructionError::UninitializedAccount);
-            }
-            Ok(VoteStateHandler::new_v3(vote_state))
-        }
-        PreserveBehaviorInHandlerHelper::V4 => {
+    match target_version {
+        VoteStateTargetVersion::V4 => {
             // New flow after v4 feature gate activation:
             // 1. Deserialize as `VoteStateVersions`
             // 2. Check for uninitialized
             // 3. Convert
-            let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
+            let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
             if versioned.is_uninitialized() {
                 return Err(InstructionError::UninitializedAccount);
             }
@@ -91,7 +60,7 @@ fn check_and_filter_proposed_vote_state(
     proposed_lockouts: &mut VecDeque<Lockout>,
     proposed_root: &mut Option<Slot>,
     proposed_hash: Hash,
-    slot_hashes: &[(Slot, Hash)],
+    slot_hashes: &[SlotHash],
 ) -> Result<(), VoteError> {
     if proposed_lockouts.is_empty() {
         return Err(VoteError::EmptySlots);
@@ -103,16 +72,16 @@ fn check_and_filter_proposed_vote_state(
         .slot();
 
     // If the proposed state is not new enough, return
-    if let Some(last_vote_slot) = vote_state.votes().back().map(|lockout| lockout.slot()) {
-        if last_proposed_slot <= last_vote_slot {
-            return Err(VoteError::VoteTooOld);
-        }
+    if let Some(last_vote_slot) = vote_state.votes().back().map(|lockout| lockout.slot())
+        && last_proposed_slot <= last_vote_slot
+    {
+        return Err(VoteError::VoteTooOld);
     }
 
     if slot_hashes.is_empty() {
         return Err(VoteError::SlotsMismatch);
     }
-    let earliest_slot_hash_in_history = slot_hashes.last().unwrap().0;
+    let earliest_slot_hash_in_history = slot_hashes.last().unwrap().slot;
 
     // Check if the proposed vote state is too old to be in the SlotHash history
     if last_proposed_slot < earliest_slot_hash_in_history {
@@ -183,7 +152,7 @@ fn check_and_filter_proposed_vote_state(
         let ancestor_slot = slot_hashes[slot_hashes_index
             .checked_sub(1)
             .expect("`slot_hashes_index` is positive when computing `ancestor_slot`")]
-        .0;
+        .slot;
 
         // Find if this slot in the proposed vote state exists in the SlotHashes history
         // to confirm if it was a valid ancestor on this fork
@@ -287,9 +256,9 @@ fn check_and_filter_proposed_vote_state(
     // `proposed_vote_slot < earliest_slot_hash_in_history` ran, which is equivalent to
     // `last_proposed_slot < earliest_slot_hash_in_history`, but this is impossible
     // due to assumption 3) above.
-    assert_eq!(last_proposed_slot, slot_hashes[slot_hashes_index].0);
+    assert_eq!(last_proposed_slot, slot_hashes[slot_hashes_index].slot);
 
-    if slot_hashes[slot_hashes_index].1 != proposed_hash {
+    if slot_hashes[slot_hashes_index].hash != proposed_hash {
         // This means the newest vote in the slot has a match that
         // doesn't match the expected hash for that slot on this
         // fork
@@ -299,7 +268,7 @@ fn check_and_filter_proposed_vote_state(
             proposed_lockouts,
             proposed_root,
             proposed_hash,
-            slot_hashes[slot_hashes_index].1
+            slot_hashes[slot_hashes_index].hash
         );
         return Err(VoteError::SlotHashMismatch);
     }
@@ -328,11 +297,11 @@ fn check_and_filter_proposed_vote_state(
     Ok(())
 }
 
-fn check_slots_are_valid<T: VoteStateHandle>(
-    vote_state: &T,
+fn check_slots_are_valid(
+    vote_state: &VoteStateHandler,
     vote_slots: &[Slot],
     vote_hash: &Hash,
-    slot_hashes: &[(Slot, Hash)],
+    slot_hashes: &[SlotHash],
 ) -> Result<(), VoteError> {
     // index into the vote's slots, starting at the oldest
     // slot
@@ -364,7 +333,7 @@ fn check_slots_are_valid<T: VoteStateHandle>(
         }
 
         // 2) Find the hash for this slot `s`.
-        if vote_slots[i] != slot_hashes[j.checked_sub(1).expect("`j` is positive")].0 {
+        if vote_slots[i] != slot_hashes[j.checked_sub(1).expect("`j` is positive")].slot {
             // Decrement `j` to find newer slots
             j = j
                 .checked_sub(1)
@@ -406,7 +375,7 @@ fn check_slots_are_valid<T: VoteStateHandle>(
         );
         return Err(VoteError::SlotsMismatch);
     }
-    if &slot_hashes[j].1 != vote_hash {
+    if &slot_hashes[j].hash != vote_hash {
         // This means the newest slot in the `vote_slots` has a match that
         // doesn't match the expected hash for that slot on this
         // fork
@@ -415,7 +384,7 @@ fn check_slots_are_valid<T: VoteStateHandle>(
             vote_state.node_pubkey(),
             vote_slots,
             vote_hash,
-            slot_hashes[j].1
+            slot_hashes[j].hash
         );
         return Err(VoteError::SlotHashMismatch);
     }
@@ -493,17 +462,16 @@ pub fn process_new_vote_state(
             return Err(VoteError::ZeroConfirmations);
         } else if vote.confirmation_count() > MAX_LOCKOUT_HISTORY as u32 {
             return Err(VoteError::ConfirmationTooLarge);
-        } else if let Some(new_root) = new_root {
-            if vote.slot() <= new_root
+        } else if let Some(new_root) = new_root
+            && vote.slot() <= new_root
                 &&
                 // This check is necessary because
                 // https://github.com/ryoqun/solana/blob/df55bfb46af039cbc597cd60042d49b9d90b5961/core/src/consensus.rs#L120
                 // always sets a root for even empty towers, which is then hard unwrapped here
                 // https://github.com/ryoqun/solana/blob/df55bfb46af039cbc597cd60042d49b9d90b5961/core/src/consensus.rs#L776
                 new_root != Slot::default()
-            {
-                return Err(VoteError::SlotSmallerThanRoot);
-            }
+        {
+            return Err(VoteError::SlotSmallerThanRoot);
         }
 
         if let Some(previous_vote) = previous_vote {
@@ -638,8 +606,8 @@ pub fn process_new_vote_state(
     Ok(())
 }
 
-pub fn process_vote_unfiltered<T: VoteStateHandle>(
-    vote_state: &mut T,
+pub fn process_vote_unfiltered(
+    vote_state: &mut VoteStateHandler,
     vote_slots: &[Slot],
     vote: &Vote,
     slot_hashes: &[SlotHash],
@@ -663,7 +631,7 @@ pub fn process_vote(
     if vote.slots.is_empty() {
         return Err(VoteError::EmptySlots);
     }
-    let earliest_slot_in_history = slot_hashes.last().map(|(slot, _hash)| *slot).unwrap_or(0);
+    let earliest_slot_in_history = slot_hashes.last().map(|entry| entry.slot).unwrap_or(0);
     let vote_slots = vote
         .slots
         .iter()
@@ -684,14 +652,19 @@ pub fn process_vote(
 }
 
 /// "unchecked" functions used by tests and Tower
-pub fn process_vote_unchecked<T: VoteStateHandle>(
-    vote_state: &mut T,
+pub fn process_vote_unchecked(
+    vote_state: &mut VoteStateHandler,
     vote: Vote,
 ) -> Result<(), VoteError> {
     if vote.slots.is_empty() {
         return Err(VoteError::EmptySlots);
     }
-    let slot_hashes: Vec<_> = vote.slots.iter().rev().map(|x| (*x, vote.hash)).collect();
+    let slot_hashes: Vec<_> = vote
+        .slots
+        .iter()
+        .rev()
+        .map(|x| SlotHash::new(*x, vote.hash))
+        .collect();
     process_vote_unfiltered(
         vote_state,
         &vote.slots,
@@ -703,13 +676,13 @@ pub fn process_vote_unchecked<T: VoteStateHandle>(
 }
 
 #[cfg(test)]
-pub fn process_slot_votes_unchecked<T: VoteStateHandle>(vote_state: &mut T, slots: &[Slot]) {
+pub fn process_slot_votes_unchecked(vote_state: &mut VoteStateHandler, slots: &[Slot]) {
     for slot in slots {
         process_slot_vote_unchecked(vote_state, *slot);
     }
 }
 
-pub fn process_slot_vote_unchecked<T: VoteStateHandle>(vote_state: &mut T, slot: Slot) {
+pub fn process_slot_vote_unchecked(vote_state: &mut VoteStateHandler, slot: Slot) {
     let _ = process_vote_unchecked(vote_state, Vote::new(vec![slot], Hash::default()));
 }
 
@@ -729,10 +702,7 @@ pub fn authorize<S: std::hash::BuildHasher, F>(
 where
     F: FnOnce() -> Result<(), InstructionError>,
 {
-    let mut vote_state = get_vote_state_handler_checked(
-        vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, false),
-    )?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     match vote_authorize {
         VoteAuthorize::Voter => {
@@ -810,10 +780,7 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     custom_commission_collector_enabled: bool,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = get_vote_state_handler_checked(
-        vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, false),
-    )?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     // current authorized withdrawer must say "yay"
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
@@ -842,10 +809,7 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     clock: &Clock,
     disable_commission_update_rule: bool,
 ) -> Result<(), InstructionError> {
-    let vote_state_result = get_vote_state_handler_checked(
-        vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, false),
-    );
+    let vote_state_result = get_vote_state_handler_checked(vote_account, target_version);
     let enforce_commission_update_rule = !disable_commission_update_rule
         && match vote_state_result.as_ref() {
             Ok(decoded_vote_state) => commission > decoded_vote_state.commission(),
@@ -881,10 +845,7 @@ pub fn update_commission_bps<S: std::hash::BuildHasher>(
         return Err(InstructionError::InvalidInstructionData);
     }
 
-    let mut vote_state = get_vote_state_handler_checked(
-        vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, false),
-    )?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     // No commission update rule, per SIMD-0249 and SIMD-0291.
 
@@ -903,60 +864,72 @@ pub fn update_commission_bps<S: std::hash::BuildHasher>(
     vote_state.set_vote_account_state(vote_account)
 }
 
-pub enum NewCommissionCollector<'a, 'b> {
-    VoteAccount,
-    NewAccount(BorrowedInstructionAccount<'a, 'b>),
+/// Validates the collector per SIMD-0232 and returns its pubkey.
+///
+/// The designated commission collector must either be equal to the vote
+/// account's address OR satisfy ALL of the following constraints:
+///
+/// 1. Must be a system program owned account.
+/// 2. Must be rent-exempt.
+/// 3. Must not be a reserved account (checked via writable flag).
+fn validate_and_resolve_collector_key(
+    instruction_context: &InstructionContext,
+    vote_account: &BorrowedInstructionAccount,
+    collector_index: IndexOfAccount,
+    rent: &Rent,
+) -> Result<Pubkey, InstructionError> {
+    if instruction_context.get_key_of_instruction_account(collector_index)?
+        == vote_account.get_key()
+    {
+        return Ok(*vote_account.get_key());
+    }
+
+    let collector_account = instruction_context.try_borrow_instruction_account(collector_index)?;
+
+    // 1. Must be a system program owned account.
+    if collector_account.get_owner() != &system_program::id() {
+        return Err(InstructionError::InvalidAccountOwner);
+    }
+
+    // 2. Must be rent-exempt.
+    if !rent.is_exempt(
+        collector_account.get_lamports(),
+        collector_account.get_data().len(),
+    ) {
+        return Err(InstructionError::InsufficientFunds);
+    }
+
+    // 3. Must not be a reserved account (checked via writable flag).
+    if !collector_account.is_writable() {
+        return Err(InstructionError::InvalidArgument);
+    }
+
+    Ok(*collector_account.get_key())
 }
 
 /// Update the vote account's commission collector (SIMD-0232).
 pub fn update_commission_collector<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedInstructionAccount,
+    instruction_context: &InstructionContext,
+    vote_account_index: IndexOfAccount,
     target_version: VoteStateTargetVersion,
-    new_collector: NewCommissionCollector,
+    new_collector_index: IndexOfAccount,
     kind: CommissionKind,
     signers: &HashSet<Pubkey, S>,
     rent: &Rent,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = get_vote_state_handler_checked(
-        vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, true),
-    )?;
+    let mut vote_account =
+        instruction_context.try_borrow_instruction_account(vote_account_index)?;
+    let mut vote_state = get_vote_state_handler_checked(&vote_account, target_version)?;
 
     // Require authorized withdrawer to sign.
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
-    // Per SIMD-0232:
-    //
-    // The designated commission collector must either be equal to the vote
-    // account's address OR satisfy ALL of the following constraints:
-    //
-    // 1. Must be a system program owned account
-    // 2. Must be rent-exempt after depositing block revenue commission
-    // 3. Must not be a reserved account
-    let new_collector_key = match new_collector {
-        NewCommissionCollector::VoteAccount => *vote_account.get_key(),
-        NewCommissionCollector::NewAccount(collector_account) => {
-            // 1. Must be a system program owned account.
-            if collector_account.get_owner() != &system_program::id() {
-                return Err(InstructionError::InvalidAccountOwner);
-            }
-
-            // 2. Must be rent-exempt after depositing block revenue commission.
-            if !rent.is_exempt(
-                collector_account.get_lamports(),
-                collector_account.get_data().len(),
-            ) {
-                return Err(InstructionError::InsufficientFunds);
-            }
-
-            // 3. Must not be a reserved account (checked via writable flag).
-            if !collector_account.is_writable() {
-                return Err(InstructionError::InvalidArgument);
-            }
-
-            *collector_account.get_key()
-        }
-    };
+    let new_collector_key = validate_and_resolve_collector_key(
+        instruction_context,
+        &vote_account,
+        new_collector_index,
+        rent,
+    )?;
 
     match kind {
         CommissionKind::InflationRewards => {
@@ -967,28 +940,26 @@ pub fn update_commission_collector<S: std::hash::BuildHasher>(
         }
     }
 
-    vote_state.set_vote_account_state(vote_account)
+    vote_state.set_vote_account_state(&mut vote_account)
 }
 
 /// Deposit delegator rewards into a vote account (SIMD-0123).
-pub fn deposit_delegator_rewards(
+pub fn deposit_delegator_rewards<S: std::hash::BuildHasher>(
     invoke_context: &mut InvokeContext,
+    vote_account_index: IndexOfAccount,
+    sender_account_index: IndexOfAccount,
     deposit: u64,
+    signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    const VOTE_ACCOUNT_INDEX: IndexOfAccount = 0;
-    const SENDER_ACCOUNT_INDEX: IndexOfAccount = 1;
-
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
 
-    // Source account must be a transaction-level signer.
-    if !instruction_context.is_instruction_account_signer(SENDER_ACCOUNT_INDEX)? {
-        return Err(InstructionError::MissingRequiredSignature);
-    }
-
-    let vote_address = *instruction_context.get_key_of_instruction_account(VOTE_ACCOUNT_INDEX)?;
+    let vote_address = *instruction_context.get_key_of_instruction_account(vote_account_index)?;
     let source_address =
-        *instruction_context.get_key_of_instruction_account(SENDER_ACCOUNT_INDEX)?;
+        *instruction_context.get_key_of_instruction_account(sender_account_index)?;
+
+    // Source account must sign the transfer.
+    verify_authorized_signer(&source_address, signers)?;
 
     // SIMD-0123 states we must validate the vote account deserializes to a v4
     // *before* attempting CPI, then update the `pending_delegator_rewards`
@@ -998,14 +969,14 @@ pub fn deposit_delegator_rewards(
     // later, since we know only lamports will change.
     let mut vote_state = {
         let vote_account =
-            instruction_context.try_borrow_instruction_account(VOTE_ACCOUNT_INDEX)?;
+            instruction_context.try_borrow_instruction_account(vote_account_index)?;
 
         // Can't use `get_vote_state_handler_checked`, since it will convert
         // the underlying vote state to v4.
         // SIMD-0123 requires an *initialized v4*.
-        let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
-        if let VoteStateVersions::V4(vote_state_v4) = versioned {
-            Ok(VoteStateHandler::new_v4(*vote_state_v4))
+        let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
+        if let VoteStateVersionsInline::V4(vote_state_v4) = versioned {
+            Ok(VoteStateHandler::new_v4(vote_state_v4))
         } else {
             Err(InstructionError::InvalidAccountData)
         }
@@ -1021,7 +992,7 @@ pub fn deposit_delegator_rewards(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut vote_account =
-        instruction_context.try_borrow_instruction_account(VOTE_ACCOUNT_INDEX)?;
+        instruction_context.try_borrow_instruction_account(vote_account_index)?;
 
     vote_state.add_pending_delegator_rewards(deposit)?;
     vote_state.set_vote_account_state(&mut vote_account)
@@ -1055,16 +1026,14 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
 }
 
 // The message size is fixed:
-// "ALPENGLOW" (9) + Vote Pubkey (32) + BLS Pubkey (48) = 89 bytes
-const POP_MESSAGE_SIZE: usize = 9 + size_of::<Pubkey>() + BLS_PUBLIC_KEY_COMPRESSED_SIZE;
+// "ALPENGLOW" (9) + Vote Pubkey (32) = 41 bytes
+// Note: The BLS Pubkey (48 bytes) is appended dynamically by the
+// solana-bls-signatures crate.
+const POP_MESSAGE_SIZE: usize = 9 + size_of::<Pubkey>();
 
-pub(crate) fn generate_pop_message(
-    vote_account_pubkey: &Pubkey,
-    bls_pubkey_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-) -> [u8; POP_MESSAGE_SIZE] {
+pub(crate) fn generate_pop_message(vote_account_pubkey: &Pubkey) -> [u8; POP_MESSAGE_SIZE] {
     const LABEL_LEN: usize = 9;
     const PUBKEY_LEN: usize = size_of::<Pubkey>();
-    const BLS_LEN: usize = BLS_PUBLIC_KEY_COMPRESSED_SIZE;
 
     const LABEL_START: usize = 0;
     const LABEL_END: usize = LABEL_START + LABEL_LEN;
@@ -1072,17 +1041,13 @@ pub(crate) fn generate_pop_message(
     const PUBKEY_START: usize = LABEL_END;
     const PUBKEY_END: usize = PUBKEY_START + PUBKEY_LEN;
 
-    const BLS_START: usize = PUBKEY_END;
-    const BLS_END: usize = BLS_START + BLS_LEN;
-
     // Make sure POP_MESSAGE_SIZE matches the layout at compile time
-    const _: () = assert!(BLS_END == POP_MESSAGE_SIZE);
+    const _: () = assert!(PUBKEY_END == POP_MESSAGE_SIZE);
 
     let mut message = [0u8; POP_MESSAGE_SIZE];
 
     message[LABEL_START..LABEL_END].copy_from_slice(b"ALPENGLOW");
     message[PUBKEY_START..PUBKEY_END].copy_from_slice(vote_account_pubkey.as_ref());
-    message[BLS_START..BLS_END].copy_from_slice(bls_pubkey_bytes);
 
     message
 }
@@ -1099,7 +1064,7 @@ where
     // Consume CUs for BLS verification (SIMD-0387).
     consume_pop_compute_units()?;
 
-    let message = generate_pop_message(vote_account_pubkey, bls_pubkey_compressed_bytes);
+    let message = generate_pop_message(vote_account_pubkey);
     bls_proof_of_possession_compressed_bytes
         .verify(bls_pubkey_compressed_bytes, Some(&message))
         .map_err(|_| InstructionError::InvalidArgument)
@@ -1118,10 +1083,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
-    let vote_state = get_vote_state_handler_checked(
-        &vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, false),
-    )?;
+    let vote_state = get_vote_state_handler_checked(&vote_account, target_version)?;
 
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
@@ -1178,22 +1140,33 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 }
 
 /// Initialize the vote_state for a vote account using VoteInitV2
-/// Assumes that the account is being init as part of a account creation or balance transfer and
-/// that the transaction must be signed by the staker's keys
-/// It also verifies the BLS proof of possession for the authorized voter BLS pubkey
+/// Assumes that the account is being init as part of a account creation or
+/// balance transfer and that the transaction must be signed by the staker's
+/// keys.
+///
+/// Also validates the inflation-rewards and block-revenue collector accounts
+/// per SIMD-0464 (which delegates to the SIMD-0232 collector checks) and
+/// verifies the BLS proof of possession for the authorized voter BLS pubkey.
+#[allow(clippy::too_many_arguments)]
 pub fn initialize_account_v2<S: std::hash::BuildHasher, F>(
-    vote_account: &mut BorrowedInstructionAccount,
+    instruction_context: &InstructionContext,
+    vote_account_index: IndexOfAccount,
     target_version: VoteStateTargetVersion,
     vote_init: &VoteInitV2,
+    inflation_rewards_collector_index: IndexOfAccount,
+    block_revenue_collector_index: IndexOfAccount,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
+    rent: &Rent,
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
     F: FnOnce() -> Result<(), InstructionError>,
 {
-    VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
-    let versioned = vote_account.get_state::<VoteStateVersions>()?;
+    let mut vote_account =
+        instruction_context.try_borrow_instruction_account(vote_account_index)?;
+    VoteStateHandler::check_vote_account_length(&mut vote_account, target_version)?;
+    let versioned = vote_account.get_state::<VoteStateVersionsInline>()?;
 
     if !versioned.is_uninitialized() {
         return Err(InstructionError::AccountAlreadyInitialized);
@@ -1201,6 +1174,21 @@ where
 
     // node must agree to accept this vote account
     verify_authorized_signer(&vote_init.node_pubkey, signers)?;
+
+    // Per SIMD-0464, validate the collector accounts using the same checks as
+    // `UpdateCommissionCollector` (SIMD-0232).
+    let inflation_rewards_collector_key = validate_and_resolve_collector_key(
+        instruction_context,
+        &vote_account,
+        inflation_rewards_collector_index,
+        rent,
+    )?;
+    let block_revenue_collector_key = validate_and_resolve_collector_key(
+        instruction_context,
+        &vote_account,
+        block_revenue_collector_index,
+        rent,
+    )?;
 
     // verify the BLS pubkey proof of possession
     verify_bls_proof_of_possession(
@@ -1210,7 +1198,14 @@ where
         consume_pop_compute_units,
     )?;
 
-    VoteStateHandler::init_vote_account_state_v2(vote_account, vote_init, clock, target_version)
+    VoteStateHandler::init_vote_account_state_v2(
+        &mut vote_account,
+        vote_init,
+        &inflation_rewards_collector_key,
+        &block_revenue_collector_key,
+        clock,
+        target_version,
+    )
 }
 
 /// Initialize the vote_state for a vote account
@@ -1224,7 +1219,7 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     clock: &Clock,
 ) -> Result<(), InstructionError> {
     VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
-    let versioned = vote_account.get_state::<VoteStateVersions>()?;
+    let versioned = vote_account.get_state::<VoteStateVersionsInline>()?;
 
     if !versioned.is_uninitialized() {
         return Err(InstructionError::AccountAlreadyInitialized);
@@ -1244,10 +1239,7 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
     vote: &Vote,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = get_vote_state_handler_checked(
-        vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, true),
-    )?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
     verify_authorized_signer(&authorized_voter, signers)?;
@@ -1271,10 +1263,7 @@ pub fn process_vote_state_update<S: std::hash::BuildHasher>(
     vote_state_update: VoteStateUpdate,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = get_vote_state_handler_checked(
-        vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, true),
-    )?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
     verify_authorized_signer(&authorized_voter, signers)?;
@@ -1325,10 +1314,7 @@ pub fn process_tower_sync<S: std::hash::BuildHasher>(
     tower_sync: TowerSync,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = get_vote_state_handler_checked(
-        vote_account,
-        PreserveBehaviorInHandlerHelper::new(target_version, true),
-    )?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
     verify_authorized_signer(&authorized_voter, signers)?;
@@ -1371,34 +1357,6 @@ fn do_process_tower_sync(
     )
 }
 
-pub fn create_v3_account_with_authorized(
-    node_pubkey: &Pubkey,
-    authorized_voter: &Pubkey,
-    authorized_withdrawer: &Pubkey,
-    commission: u8,
-    lamports: u64,
-) -> AccountSharedData {
-    let mut vote_account = AccountSharedData::new(lamports, VoteStateV3::size_of(), &id());
-
-    let vote_state = VoteStateV3::new(
-        &VoteInit {
-            node_pubkey: *node_pubkey,
-            authorized_voter: *authorized_voter,
-            authorized_withdrawer: *authorized_withdrawer,
-            commission,
-        },
-        &Clock::default(),
-    );
-
-    VoteStateV3::serialize(
-        &VoteStateVersions::V3(Box::new(vote_state)),
-        vote_account.data_as_mut_slice(),
-    )
-    .unwrap();
-
-    vote_account
-}
-
 pub fn create_v4_account_with_authorized(
     node_pubkey: &Pubkey,
     authorized_voter: &Pubkey,
@@ -1424,10 +1382,10 @@ pub fn create_v4_account_with_authorized(
             authorized_voter_bls_proof_of_possession,
             authorized_withdrawer: *authorized_withdrawer,
             inflation_rewards_commission_bps,
-            inflation_rewards_collector: *inflation_rewards_collector,
             block_revenue_commission_bps,
-            block_revenue_collector: *block_revenue_collector,
         },
+        inflation_rewards_collector,
+        block_revenue_collector,
         &Clock::default(),
     );
 
@@ -1458,7 +1416,7 @@ pub fn create_bls_proof_of_possession(
     [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
 ) {
     let bls_pubkey_bytes = bls_keypair.public.to_bytes_compressed();
-    let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_bytes);
+    let message = generate_pop_message(vote_account_pubkey);
 
     let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
     let proof_of_possession_bytes = proof_of_possession.to_bytes_compressed();
@@ -1482,6 +1440,83 @@ mod tests {
         test_case::{test_case, test_matrix},
     };
 
+    fn boxed(versions: VoteStateVersionsInline) -> VoteStateVersions {
+        match versions {
+            VoteStateVersionsInline::Uninitialized => VoteStateVersions::Uninitialized,
+            VoteStateVersionsInline::V1_14_11(state) => {
+                VoteStateVersions::V1_14_11(Box::new(state))
+            }
+            VoteStateVersionsInline::V3(state) => VoteStateVersions::V3(Box::new(state)),
+            VoteStateVersionsInline::V4(state) => VoteStateVersions::V4(Box::new(state)),
+        }
+    }
+
+    /// Checks that the inline wincode decoders match the boxed `VoteStateVersions` wincode decoder
+    /// and the hand-written `VoteStateVersions::deserialize` on `data`.
+    fn assert_vote_state_decoders_agree(data: &[u8]) {
+        let inline = wincode::config::deserialize::<VoteStateVersionsInline, _>(
+            data,
+            solana_account::WINCODE_CONFIG,
+        )
+        .map(boxed)
+        .map_err(|err| err.to_string());
+        assert_eq!(
+            inline,
+            wincode::config::deserialize::<VoteStateVersions, _>(
+                data,
+                solana_account::WINCODE_CONFIG,
+            )
+            .map_err(|err| err.to_string()),
+            "data: {data:?}",
+        );
+        assert_eq!(
+            VoteStateVersionsInline::deserialize(data).map(boxed),
+            VoteStateVersions::deserialize(data),
+            "data: {data:?}",
+        );
+    }
+
+    #[test]
+    fn test_vote_state_decoders_agree() {
+        use {
+            arbitrary::{Arbitrary, Unstructured},
+            rand::Rng,
+        };
+
+        for len in [0, 4, 100, VoteStateV3::size_of(), VoteStateV4::size_of()] {
+            assert_vote_state_decoders_agree(&vec![0; len]);
+        }
+        let mut rng = rand::rng();
+        for _ in 0..4 {
+            let raw_data: Vec<u8> = (0..VoteStateV3::size_of() * 4)
+                .map(|_| rng.random::<u8>())
+                .collect();
+            let mut unstructured = Unstructured::new(&raw_data);
+            let vote_state_v3 = VoteStateV3::arbitrary(&mut unstructured).unwrap();
+            let vote_state_v4 = VoteStateV4::arbitrary(&mut unstructured).unwrap();
+            for versions in [
+                VoteStateVersions::V1_14_11(Box::new(vote_state_v3.clone().into())),
+                VoteStateVersions::new_v3(vote_state_v3),
+                VoteStateVersions::new_v4(vote_state_v4),
+            ] {
+                let encoded = wincode::serialize(&versions).unwrap();
+                let mut trailing = encoded.clone();
+                trailing.extend_from_slice(&[0xff; 16]);
+                assert_vote_state_decoders_agree(&trailing);
+                for len in 0..=encoded.len() {
+                    assert_vote_state_decoders_agree(encoded.get(..len).unwrap());
+                }
+                for index in 0..encoded.len() {
+                    for byte in [0x00, 0x01, 0x02, 0x7f, 0x80, 0xff] {
+                        let mut mutated = encoded.clone();
+                        *mutated.get_mut(index).unwrap() = byte;
+                        assert_vote_state_decoders_agree(&mutated);
+                    }
+                }
+            }
+        }
+    }
+
     const MAX_RECENT_VOTES: usize = 16;
 
     fn vote_state_new_for_test(
@@ -1498,9 +1533,6 @@ mod tests {
         let clock = Clock::default();
 
         match target_version {
-            VoteStateTargetVersion::V3 => {
-                VoteStateHandler::new_v3(VoteStateV3::new(&vote_init, &clock))
-            }
             VoteStateTargetVersion::V4 => VoteStateHandler::new_v4(VoteStateV4::new_with_defaults(
                 vote_pubkey,
                 &vote_init,
@@ -1509,7 +1541,6 @@ mod tests {
         }
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_vote_state_upgrade_from_1_14_11(target_version: VoteStateTargetVersion) {
         let vote_pubkey = solana_pubkey::new_rand();
@@ -1562,10 +1593,6 @@ mod tests {
         // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
         // required lamports for rent exempt minimum at that size
         let vote_state_v1_14_11 = match target_version {
-            VoteStateTargetVersion::V3 => {
-                // v3 can be converted directly to V1_14_11.
-                VoteState1_14_11::from(vote_state.as_ref_v3().clone())
-            }
             VoteStateTargetVersion::V4 => {
                 // v4 cannot be converted directly to V1_14_11.
                 VoteState1_14_11 {
@@ -1586,14 +1613,12 @@ mod tests {
             }
         };
         let version1_14_11_serialized =
-            bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(vote_state_v1_14_11)))
+            wincode::serialize(&VoteStateVersions::V1_14_11(Box::new(vote_state_v1_14_11)))
                 .unwrap();
-        let version1_14_11_serialized_len = version1_14_11_serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(version1_14_11_serialized_len);
-        let mut vote_account =
-            AccountSharedData::new(lamports, version1_14_11_serialized_len, &id());
-        vote_account.set_data_from_slice(&version1_14_11_serialized);
+        let lamports = rent.minimum_balance(version1_14_11_serialized.len());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, version1_14_11_serialized, &id());
 
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
@@ -1625,11 +1650,8 @@ mod tests {
         assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = get_vote_state_handler_checked(
-            &borrowed_account,
-            PreserveBehaviorInHandlerHelper::new(target_version, true),
-        )
-        .unwrap();
+        let converted_vote_state =
+            get_vote_state_handler_checked(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert!(vote_state == converted_vote_state);
@@ -1639,17 +1661,6 @@ mod tests {
         // Now re-set the vote account state, knowing the account only has
         // enough lamports for V1_14_11.
         match target_version {
-            VoteStateTargetVersion::V3 => {
-                // V3 will write out as V1_14_11.
-                assert_eq!(
-                    vote_state
-                        .clone()
-                        .set_vote_account_state(&mut borrowed_account),
-                    Ok(())
-                );
-                let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
-                assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
-            }
             VoteStateTargetVersion::V4 => {
                 // V4 will throw an error.
                 assert_eq!(
@@ -1662,11 +1673,8 @@ mod tests {
         }
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = get_vote_state_handler_checked(
-            &borrowed_account,
-            PreserveBehaviorInHandlerHelper::new(target_version, true),
-        )
-        .unwrap();
+        let converted_vote_state =
+            get_vote_state_handler_checked(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert!(vote_state == converted_vote_state);
@@ -1675,8 +1683,7 @@ mod tests {
 
         // Now top-up the vote account's lamports to be rent exempt for the target version.
         let space = match target_version {
-            VoteStateTargetVersion::V3 => VoteStateV3::size_of(),
-            VoteStateTargetVersion::V4 => VoteStateV4::size_of(), // They're the same, but for posterity
+            VoteStateTargetVersion::V4 => VoteStateV4::size_of(),
         };
         assert_eq!(
             borrowed_account.set_lamports(rent.minimum_balance(space)),
@@ -1692,26 +1699,19 @@ mod tests {
         // The vote state version should match the target version.
         let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
         match target_version {
-            VoteStateTargetVersion::V3 => {
-                assert_matches!(vote_state_version, VoteStateVersions::V3(_));
-            }
             VoteStateTargetVersion::V4 => {
                 assert_matches!(vote_state_version, VoteStateVersions::V4(_));
             }
         }
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = get_vote_state_handler_checked(
-            &borrowed_account,
-            PreserveBehaviorInHandlerHelper::new(target_version, true),
-        )
-        .unwrap();
+        let converted_vote_state =
+            get_vote_state_handler_checked(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert_eq!(vote_state, converted_vote_state);
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_vote_lockout(target_version: VoteStateTargetVersion) {
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
@@ -1746,7 +1746,7 @@ mod tests {
     }
 
     #[test_matrix(
-        [VoteStateTargetVersion::V3, VoteStateTargetVersion::V4],
+        [VoteStateTargetVersion::V4],
         [true, false]
     )]
     fn test_update_commission(
@@ -1761,11 +1761,9 @@ mod tests {
         vote_state.set_commission(10);
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
@@ -1808,12 +1806,9 @@ mod tests {
 
         // Increase commission in first half of epoch -- allowed
         assert_eq!(
-            get_vote_state_handler_checked(
-                &borrowed_account,
-                PreserveBehaviorInHandlerHelper::new(target_version, true),
-            )
-            .unwrap()
-            .commission(),
+            get_vote_state_handler_checked(&borrowed_account, target_version,)
+                .unwrap()
+                .commission(),
             10
         );
         assert_matches!(
@@ -1829,12 +1824,9 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            get_vote_state_handler_checked(
-                &borrowed_account,
-                PreserveBehaviorInHandlerHelper::new(target_version, true),
-            )
-            .unwrap()
-            .commission(),
+            get_vote_state_handler_checked(&borrowed_account, target_version,)
+                .unwrap()
+                .commission(),
             11
         );
 
@@ -1848,12 +1840,9 @@ mod tests {
             &second_half_clock,
             disable_commission_update_rule,
         );
-        let state_commission = get_vote_state_handler_checked(
-            &borrowed_account,
-            PreserveBehaviorInHandlerHelper::new(target_version, true),
-        )
-        .unwrap()
-        .commission();
+        let state_commission = get_vote_state_handler_checked(&borrowed_account, target_version)
+            .unwrap()
+            .commission();
         if disable_commission_update_rule {
             assert_matches!(result, Ok(()));
             assert_eq!(state_commission, 12);
@@ -1876,22 +1865,16 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            get_vote_state_handler_checked(
-                &borrowed_account,
-                PreserveBehaviorInHandlerHelper::new(target_version, true),
-            )
-            .unwrap()
-            .commission(),
+            get_vote_state_handler_checked(&borrowed_account, target_version,)
+                .unwrap()
+                .commission(),
             10
         );
 
         assert_eq!(
-            get_vote_state_handler_checked(
-                &borrowed_account,
-                PreserveBehaviorInHandlerHelper::new(target_version, true),
-            )
-            .unwrap()
-            .commission(),
+            get_vote_state_handler_checked(&borrowed_account, target_version,)
+                .unwrap()
+                .commission(),
             10
         );
 
@@ -1909,12 +1892,9 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            get_vote_state_handler_checked(
-                &borrowed_account,
-                PreserveBehaviorInHandlerHelper::new(target_version, true),
-            )
-            .unwrap()
-            .commission(),
+            get_vote_state_handler_checked(&borrowed_account, target_version,)
+                .unwrap()
+                .commission(),
             9
         );
     }
@@ -1936,11 +1916,9 @@ mod tests {
         vote_state.set_commission(10); // 10%
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
@@ -2025,11 +2003,8 @@ mod tests {
                 true,
             )
             .unwrap();
-            let handler = get_vote_state_handler_checked(
-                &borrowed_account,
-                PreserveBehaviorInHandlerHelper::new(target_version, true),
-            )
-            .unwrap();
+            let handler =
+                get_vote_state_handler_checked(&borrowed_account, target_version).unwrap();
             assert_eq!(
                 handler.as_ref_v4().inflation_rewards_commission_bps,
                 new_commission_bps
@@ -2053,7 +2028,6 @@ mod tests {
         commission_bps_roundtrip(50_000); // 500%
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_vote_double_lockout_after_expiration(target_version: VoteStateTargetVersion) {
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
@@ -2081,7 +2055,6 @@ mod tests {
         check_lockouts(&vote_state);
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_expire_multiple_votes(target_version: VoteStateTargetVersion) {
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
@@ -2113,7 +2086,6 @@ mod tests {
         assert_eq!(vote_state.votes()[2].confirmation_count(), 1);
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_vote_credits(target_version: VoteStateTargetVersion) {
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
@@ -2132,7 +2104,6 @@ mod tests {
         assert_eq!(vote_state.credits(), 3);
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_duplicate_vote(target_version: VoteStateTargetVersion) {
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
@@ -2144,7 +2115,6 @@ mod tests {
         assert!(vote_state.nth_recent_lockout(2).is_none());
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_nth_recent_lockout(target_version: VoteStateTargetVersion) {
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
@@ -2183,7 +2153,6 @@ mod tests {
     }
 
     /// check that two accounts with different data can be brought to the same state with one vote submission
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_process_missed_votes(target_version: VoteStateTargetVersion) {
         let mut vote_state_a = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
@@ -2196,7 +2165,12 @@ mod tests {
         // as long as b has missed less than "NUM_RECENT" votes both accounts should be in sync
         let slots = (0u64..MAX_RECENT_VOTES as u64).collect();
         let vote = Vote::new(slots, Hash::default());
-        let slot_hashes: Vec<_> = vote.slots.iter().rev().map(|x| (*x, vote.hash)).collect();
+        let slot_hashes: Vec<_> = vote
+            .slots
+            .iter()
+            .rev()
+            .map(|x| SlotHash::new(*x, vote.hash))
+            .collect();
 
         assert_eq!(
             process_vote(&mut vote_state_a, &vote, &slot_hashes, 0, 0),
@@ -2209,11 +2183,10 @@ mod tests {
         assert_eq!(recent_votes(&vote_state_a), recent_votes(&vote_state_b));
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_vote_skips_old_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(0, vote.hash)];
+        let slot_hashes = vec![SlotHash::new(0, vote.hash)];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
@@ -2226,7 +2199,6 @@ mod tests {
         assert_eq!(recent, recent_votes(&vote_state));
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_vote_empty_slot_hashes(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
@@ -2236,44 +2208,43 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_new_vote(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
+        let slot_hashes = vec![SlotHash::new(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Ok(())
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_bad_hash(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), hash(vote.hash.as_ref()))];
+        let slot_hashes = vec![SlotHash::new(
+            *vote.slots.last().unwrap(),
+            hash(vote.hash.as_ref()),
+        )];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Err(VoteError::SlotHashMismatch)
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_bad_slot(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![1], Hash::default());
-        let slot_hashes: Vec<_> = vec![(0, vote.hash)];
+        let slot_hashes = vec![SlotHash::new(0, vote.hash)];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Err(VoteError::SlotsMismatch)
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_duplicate_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
+        let slot_hashes = vec![SlotHash::new(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
@@ -2284,43 +2255,40 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_next_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
+        let slot_hashes = vec![SlotHash::new(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
 
         let vote = Vote::new(vec![0, 1], Hash::default());
-        let slot_hashes: Vec<_> = vec![(1, vote.hash), (0, vote.hash)];
+        let slot_hashes = vec![SlotHash::new(1, vote.hash), SlotHash::new(0, vote.hash)];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Ok(())
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_check_slots_are_valid_next_vote_only(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
-        let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
+        let slot_hashes = vec![SlotHash::new(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
 
         let vote = Vote::new(vec![1], Hash::default());
-        let slot_hashes: Vec<_> = vec![(1, vote.hash), (0, vote.hash)];
+        let slot_hashes = vec![SlotHash::new(1, vote.hash), SlotHash::new(0, vote.hash)];
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &slot_hashes),
             Ok(())
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_vote_empty_slots(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![], Hash::default());
@@ -2348,7 +2316,6 @@ mod tests {
     }
 
     // Test vote credit updates after "one credit per slot" feature is enabled
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_vote_state_update_increment_credits(mut vote_state: VoteStateHandler) {
         // Test data: a sequence of groups of votes to simulate having been cast, after each group a vote
@@ -2425,7 +2392,6 @@ mod tests {
     }
 
     // Test vote credit updates after "timely vote credits" feature is enabled
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_timely_credits(target_version: VoteStateTargetVersion) {
         // Each of the following (Vec<Slot>, Slot, u32) tuples gives a set of slots to cast votes on, a slot in which
@@ -2593,7 +2559,6 @@ mod tests {
         ];
 
         let new_vote_state = || match target_version {
-            VoteStateTargetVersion::V3 => VoteStateHandler::default_v3(),
             VoteStateTargetVersion::V4 => VoteStateHandler::default_v4(),
         };
 
@@ -2610,8 +2575,12 @@ mod tests {
                     hash: Hash::new_unique(),
                     timestamp: None,
                 };
-                let slot_hashes: Vec<_> =
-                    vote.slots.iter().rev().map(|x| (*x, vote.hash)).collect();
+                let slot_hashes: Vec<_> = vote
+                    .slots
+                    .iter()
+                    .rev()
+                    .map(|x| SlotHash::new(*x, vote.hash))
+                    .collect();
                 assert_eq!(
                     process_vote(
                         &mut vote_state_1,
@@ -2643,7 +2612,6 @@ mod tests {
         }
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_retroactive_voting_timely_credits(mut vote_state: VoteStateHandler) {
         // Each of the following (Vec<(Slot, int)>, Slot, Option<Slot>, u32) tuples gives the following data:
@@ -2756,7 +2724,6 @@ mod tests {
             });
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_too_many_votes(mut vote_state1: VoteStateHandler) {
         let bad_votes: VecDeque<Lockout> = (0..=MAX_LOCKOUT_HISTORY)
@@ -2781,7 +2748,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_root_rollback(mut vote_state1: VoteStateHandler) {
         for i in 0..MAX_LOCKOUT_HISTORY + 2 {
@@ -2825,7 +2791,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_zero_confirmations(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
@@ -2865,7 +2830,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_confirmations_too_large(initial_vote_state: VoteStateHandler) {
         let mut vote_state1 = initial_vote_state.clone();
@@ -2906,7 +2870,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_slot_smaller_than_root(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
@@ -2947,7 +2910,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_slots_not_ordered(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
@@ -2987,7 +2949,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_confirmations_not_ordered(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
@@ -3027,7 +2988,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_new_vote_state_lockout_mismatch(
         mut vote_state1: VoteStateHandler,
@@ -3054,7 +3014,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_confirmation_rollback(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
@@ -3089,7 +3048,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_root_progress(mut vote_state1: VoteStateHandler) {
         for i in 0..MAX_LOCKOUT_HISTORY {
@@ -3123,7 +3081,6 @@ mod tests {
         }
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_same_slot_but_not_common_ancestor(
         initial_vote_state: VoteStateHandler,
@@ -3183,7 +3140,6 @@ mod tests {
         assert_eq!(vote_state1, vote_state2);
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_lockout_violation(initial_vote_state: VoteStateHandler) {
         // Construct on-chain vote state
@@ -3225,7 +3181,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_lockout_violation2(initial_vote_state: VoteStateHandler) {
         // Construct on-chain vote state
@@ -3268,7 +3223,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_state_expired_ancestor_not_removed(mut vote_state1: VoteStateHandler) {
         // Construct on-chain vote state
@@ -3313,7 +3267,6 @@ mod tests {
         assert_eq!(vote_state1, vote_state2,);
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_process_new_vote_current_state_contains_bigger_slots(
         mut vote_state1: VoteStateHandler,
@@ -3370,7 +3323,6 @@ mod tests {
         assert_eq!(*vote_state1.votes(), good_votes);
     }
 
-    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
     #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
     fn test_filter_old_votes(mut vote_state: VoteStateHandler) {
         let old_vote_slot = 1;
@@ -3378,7 +3330,10 @@ mod tests {
 
         // Vote with all slots that are all older than the SlotHashes history should
         // error with `VotesTooOldAllFiltered`
-        let slot_hashes = vec![(3, Hash::new_unique()), (2, Hash::new_unique())];
+        let slot_hashes = vec![
+            SlotHash::new(3, Hash::new_unique()),
+            SlotHash::new(2, Hash::new_unique()),
+        ];
         assert_eq!(
             process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Err(VoteError::VotesTooOldAllFiltered)
@@ -3389,9 +3344,9 @@ mod tests {
         let vote_slot = 2;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
 
         let vote = Vote::new(vec![old_vote_slot, vote_slot], vote_slot_hash);
         process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0).unwrap();
@@ -3405,30 +3360,29 @@ mod tests {
         );
     }
 
-    fn build_slot_hashes(slots: Vec<Slot>) -> Vec<(Slot, Hash)> {
+    fn build_slot_hashes(slots: Vec<Slot>) -> Vec<SlotHash> {
         slots
             .iter()
             .rev()
-            .map(|x| (*x, Hash::new_unique()))
+            .map(|x| SlotHash::new(*x, Hash::new_unique()))
             .collect()
     }
 
     fn build_vote_state(
         target_version: VoteStateTargetVersion,
         vote_slots: Vec<Slot>,
-        slot_hashes: &[(Slot, Hash)],
+        slot_hashes: &[SlotHash],
     ) -> VoteStateHandler {
         let mut vote_state = match target_version {
-            VoteStateTargetVersion::V3 => VoteStateHandler::default_v3(),
             VoteStateTargetVersion::V4 => VoteStateHandler::default_v4(),
         };
 
         if !vote_slots.is_empty() {
             let vote_hash = slot_hashes
                 .iter()
-                .find(|(slot, _hash)| slot == vote_slots.last().unwrap())
+                .find(|entry| &entry.slot == vote_slots.last().unwrap())
                 .unwrap()
-                .1;
+                .hash;
             let vote = Vote::new(vote_slots, vote_hash);
             process_vote_unfiltered(&mut vote_state, &vote.slots, &vote, slot_hashes, 0, 0)
                 .unwrap();
@@ -3437,7 +3391,6 @@ mod tests {
         vote_state
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_empty(target_version: VoteStateTargetVersion) {
         let empty_slot_hashes = build_slot_hashes(vec![]);
@@ -3470,7 +3423,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_too_old(target_version: VoteStateTargetVersion) {
         let slot_hashes = build_slot_hashes(vec![1, 2, 3, 4]);
@@ -3542,13 +3494,13 @@ mod tests {
             build_vote_state(target_version, current_vote_state_slots, &slot_hashes);
         vote_state.set_root_slot(current_vote_state_root);
 
-        slot_hashes.retain(|slot| slot.0 >= earliest_slot_in_history);
+        slot_hashes.retain(|entry| entry.slot >= earliest_slot_in_history);
         assert!(!proposed_slots_and_lockouts.is_empty());
         let proposed_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == proposed_slots_and_lockouts.last().unwrap().0)
+            .find(|entry| entry.slot == proposed_slots_and_lockouts.last().unwrap().0)
             .unwrap()
-            .1;
+            .hash;
 
         // Test with a `TowerSync` where the root is less than `earliest_slot_in_history`.
         // Root slot in the `TowerSync` should be updated to match the root slot in the
@@ -3582,7 +3534,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_older_than_history_root(
         target_version: VoteStateTargetVersion,
@@ -3716,7 +3667,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_slots_not_ordered(
         target_version: VoteStateTargetVersion,
@@ -3728,9 +3678,9 @@ mod tests {
         let vote_slot = 3;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(2, 2), (1, 3), (vote_slot, 1)]);
         tower_sync.hash = vote_slot_hash;
         assert_eq!(
@@ -3759,7 +3709,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_older_than_history_slots_filtered(
         target_version: VoteStateTargetVersion,
@@ -3776,9 +3725,9 @@ mod tests {
         let vote_slot = 12;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let missing_older_than_history_slot = earliest_slot_in_history - 1;
         let mut tower_sync = TowerSync::from(vec![
             (1, 4),
@@ -3810,7 +3759,6 @@ mod tests {
         assert!(do_process_tower_sync(&mut vote_state, &slot_hashes, 0, 0, tower_sync,).is_ok());
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_older_than_history_slots_not_filtered(
         target_version: VoteStateTargetVersion,
@@ -3827,9 +3775,9 @@ mod tests {
         let vote_slot = 12;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let existing_older_than_history_slot = 4;
         let mut tower_sync =
             TowerSync::from(vec![(existing_older_than_history_slot, 3), (vote_slot, 2)]);
@@ -3858,7 +3806,6 @@ mod tests {
         assert!(do_process_tower_sync(&mut vote_state, &slot_hashes, 0, 0, tower_sync,).is_ok());
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_older_than_history_slots_filtered_and_not_filtered(
         target_version: VoteStateTargetVersion,
@@ -3881,9 +3828,9 @@ mod tests {
         let vote_slot = 14;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
 
         let missing_older_than_history_slot = 4;
         let existing_older_than_history_slot = 6;
@@ -3919,7 +3866,6 @@ mod tests {
         assert!(do_process_tower_sync(&mut vote_state, &slot_hashes, 0, 0, tower_sync,).is_ok());
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_slot_not_on_fork(
         target_version: VoteStateTargetVersion,
@@ -3939,9 +3885,9 @@ mod tests {
         let vote_slot = vote_state.votes().back().unwrap().slot() + 2;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(missing_vote_slot, 2), (vote_slot, 3)]);
         tower_sync.hash = vote_slot_hash;
         assert_eq!(
@@ -3977,7 +3923,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_root_on_different_fork(
         target_version: VoteStateTargetVersion,
@@ -3995,12 +3940,12 @@ mod tests {
         // Have to vote for a slot greater than the last vote in the vote state to avoid VoteTooOld
         // errors, but also this slot must be present in SlotHashes
         let vote_slot = 8;
-        assert_eq!(vote_slot, slot_hashes.first().unwrap().0);
+        assert_eq!(vote_slot, slot_hashes.first().unwrap().slot);
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(vote_slot, 1)]);
         tower_sync.hash = vote_slot_hash;
         tower_sync.root = Some(new_root);
@@ -4016,7 +3961,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_slot_newer_than_slot_history(
         target_version: VoteStateTargetVersion,
@@ -4029,7 +3973,7 @@ mod tests {
         // 2) The slot is greater than the newest slot in the slot history
         // Thus this slot is not part of the fork and the update should be rejected
         // with error `SlotsMismatch`
-        let missing_vote_slot = slot_hashes.first().unwrap().0 + 1;
+        let missing_vote_slot = slot_hashes.first().unwrap().slot + 1;
         let vote_slot_hash = Hash::new_unique();
         let mut tower_sync = TowerSync::from(vec![(8, 2), (missing_vote_slot, 3)]);
         tower_sync.hash = vote_slot_hash;
@@ -4045,7 +3989,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_slot_all_slot_hashes_in_update_ok(
         target_version: VoteStateTargetVersion,
@@ -4061,9 +4004,9 @@ mod tests {
         let vote_slot = vote_state.votes().back().unwrap().slot() + 2;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(2, 4), (4, 3), (6, 2), (vote_slot, 1)]);
         tower_sync.hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
@@ -4093,7 +4036,6 @@ mod tests {
         assert!(do_process_tower_sync(&mut vote_state, &slot_hashes, 0, 0, tower_sync,).is_ok());
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_slot_some_slot_hashes_in_update_ok(
         target_version: VoteStateTargetVersion,
@@ -4109,9 +4051,9 @@ mod tests {
         let vote_slot = vote_state.votes().back().unwrap().slot() + 2;
         let vote_slot_hash = slot_hashes
             .iter()
-            .find(|(slot, _hash)| *slot == vote_slot)
+            .find(|entry| entry.slot == vote_slot)
             .unwrap()
-            .1;
+            .hash;
         let mut tower_sync = TowerSync::from(vec![(4, 2), (vote_slot, 1)]);
         tower_sync.hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
@@ -4145,7 +4087,6 @@ mod tests {
         );
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_slot_hash_mismatch(
         target_version: VoteStateTargetVersion,
@@ -4230,7 +4171,7 @@ mod tests {
             inflation_rewards_commission_bps,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             lamports,
         );
         assert_eq!(vote_account.lamports(), lamports);
@@ -4264,11 +4205,9 @@ mod tests {
         let withdrawer_pubkey = *vote_state.authorized_withdrawer();
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
@@ -4333,6 +4272,71 @@ mod tests {
     }
 
     #[test]
+    fn test_update_validator_identity_preserves_custom_block_revenue_collector() {
+        // SIMD-0232 enabled.
+        //
+        // Once a validator has set a custom block_revenue_collector, rotating
+        // the validator identity via UpdateValidatorIdentity must NOT clobber
+        // the custom collector.
+        let custom_commission_collector_enabled = true;
+
+        let vote_pubkey = solana_pubkey::new_rand();
+        let mut vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let node_pubkey = *vote_state.node_pubkey();
+        let withdrawer_pubkey = *vote_state.authorized_withdrawer();
+
+        // Seed a custom block_revenue_collector distinct from the node identity.
+        let custom_collector = solana_pubkey::new_rand();
+        vote_state.set_block_revenue_collector(custom_collector);
+
+        let serialized = vote_state.serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
+
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let mut transaction_context = TransactionContext::new(
+            vec![(id(), processor_account), (node_pubkey, vote_account)],
+            rent,
+            0,
+            0,
+            1,
+        );
+        transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        let new_node_pubkey = solana_pubkey::new_rand();
+        let signers: HashSet<Pubkey> = vec![withdrawer_pubkey, new_node_pubkey]
+            .into_iter()
+            .collect();
+
+        update_validator_identity(
+            &mut borrowed_account,
+            VoteStateTargetVersion::V4,
+            &new_node_pubkey,
+            &signers,
+            custom_commission_collector_enabled,
+        )
+        .unwrap();
+
+        // node_pubkey updated, but block_revenue_collector preserved.
+        let vote_state =
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
+        assert_eq!(vote_state.node_pubkey, new_node_pubkey);
+        assert_eq!(vote_state.block_revenue_collector, custom_collector);
+        assert_ne!(vote_state.block_revenue_collector, new_node_pubkey);
+    }
+
+    #[test]
     fn test_get_and_update_authorized_voter_v4_with_bls() {
         let vote_account_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
@@ -4352,7 +4356,7 @@ mod tests {
             inflation_rewards_commission_bps,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             lamports,
         );
         assert_eq!(vote_account.lamports(), lamports);
@@ -4403,9 +4407,13 @@ mod tests {
             )
             .is_ok()
         );
-        let vote_state =
-            VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
-        assert_eq!(vote_state.bls_pubkey_compressed, Some(bls_pubkey));
+        let vote_state = VoteStateHandler::new_v4(
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap(),
+        );
+        assert_eq!(
+            vote_state.as_ref_v4().bls_pubkey_compressed,
+            Some(bls_pubkey)
+        );
         assert!(vote_state.has_bls_pubkey());
 
         // Test replay attack, can't use someone else's BLS pubkey and PoP
@@ -4463,9 +4471,13 @@ mod tests {
             ),
             Ok(())
         );
-        let vote_state =
-            VoteStateV4::deserialize(borrowed_account.get_data(), &new_authorized_voter).unwrap();
-        assert_eq!(vote_state.bls_pubkey_compressed, Some(new_bls_pubkey));
+        let vote_state = VoteStateHandler::new_v4(
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_authorized_voter).unwrap(),
+        );
+        assert_eq!(
+            vote_state.as_ref_v4().bls_pubkey_compressed,
+            Some(new_bls_pubkey)
+        );
         assert!(vote_state.has_bls_pubkey());
     }
 
@@ -4479,6 +4491,165 @@ mod tests {
             .configure_top_level_instruction_for_tests(0, instruction_accounts, vec![])
             .unwrap();
         transaction_context
+    }
+
+    #[test]
+    fn test_validate_and_resolve_collector_key() {
+        let rent = Rent::default();
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_account = AccountSharedData::new(1, 0, &id());
+        let collector_pubkey = solana_pubkey::new_rand();
+        let valid_collector =
+            || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+
+        // Success: VoteAccount variant returns the vote account's key.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                ],
+                vec![InstructionAccount::new(1, false, true)],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            assert_eq!(
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 0, &rent),
+                Ok(vote_pubkey),
+            );
+        }
+
+        // Success: NewAccount (happy) path returns the collector's key.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                    (collector_pubkey, valid_collector()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            assert_eq!(
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
+                Ok(collector_pubkey),
+            );
+        }
+
+        // Success: Incinerator is an accepted collector (SIMD-0232 explicitly
+        // allows it — funds sent to the incinerator are burned at end-of-block).
+        {
+            // Imagine the incinerator is temporarily holding funds at the time
+            // of the invocation.
+            let incinerator_account =
+                AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                    (solana_sdk_ids::incinerator::id(), incinerator_account),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            assert_eq!(
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
+                Ok(solana_sdk_ids::incinerator::id()),
+            );
+        }
+
+        // Fail: Collector account not system-owned.
+        {
+            let bad_owner =
+                AccountSharedData::new(rent.minimum_balance(0), 0, &solana_pubkey::new_rand());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                    (collector_pubkey, bad_owner),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            assert_eq!(
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
+                Err(InstructionError::InvalidAccountOwner),
+            );
+        }
+
+        // Fail: Collector account not rent-exempt.
+        {
+            let underfunded = AccountSharedData::new(0, 0, &system_program::id());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                    (collector_pubkey, underfunded),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            assert_eq!(
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
+                Err(InstructionError::InsufficientFunds),
+            );
+        }
+
+        // Fail: Collector account not writable (reserved account check).
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account),
+                    (vote_pubkey, vote_account),
+                    (collector_pubkey, valid_collector()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, false), // <-- Not writable
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            assert_eq!(
+                validate_and_resolve_collector_key(&instruction_context, &borrowed_vote, 1, &rent),
+                Err(InstructionError::InvalidArgument),
+            );
+        }
     }
 
     /// Test update_commission_collector (SIMD-0232).
@@ -4495,19 +4666,17 @@ mod tests {
         let signers: HashSet<Pubkey> = vec![withdrawer_pubkey].into_iter().collect();
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         let get_commission_collector =
-            |vote_account: &BorrowedInstructionAccount, kind: CommissionKind| {
-                let handler = get_vote_state_handler_checked(
-                    vote_account,
-                    PreserveBehaviorInHandlerHelper::new(target_version, true),
-                )
-                .unwrap();
+            |instruction_context: &InstructionContext, kind: CommissionKind| {
+                let vote_account = instruction_context
+                    .try_borrow_instruction_account(0)
+                    .unwrap();
+                let handler =
+                    get_vote_state_handler_checked(&vote_account, target_version).unwrap();
                 let vote_state = handler.as_ref_v4();
                 match kind {
                     CommissionKind::InflationRewards => vote_state.inflation_rewards_collector,
@@ -4541,53 +4710,43 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             // InflationRewards kind.
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
+                1,
                 CommissionKind::InflationRewards,
                 &signers,
                 &rent,
             )
             .unwrap();
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 new_collector,
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
 
             // BlockRevenue kind.
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::NewAccount(
-                    instruction_context
-                        .try_borrow_instruction_account(1)
-                        .unwrap(),
-                ),
+                1,
                 CommissionKind::BlockRevenue,
                 &signers,
                 &rent,
             )
             .unwrap();
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 new_collector,
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 new_collector,
             );
         }
@@ -4606,48 +4765,166 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             // InflationRewards kind.
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::VoteAccount,
+                1,
                 CommissionKind::InflationRewards,
                 &signers,
                 &rent,
             )
             .unwrap();
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 vote_pubkey,
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
 
             // BlockRevenue kind.
             update_commission_collector(
-                &mut borrowed_vote_account,
+                &instruction_context,
+                0,
                 target_version,
-                NewCommissionCollector::VoteAccount,
+                1,
                 CommissionKind::BlockRevenue,
                 &signers,
                 &rent,
             )
             .unwrap();
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 vote_pubkey,
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 vote_pubkey,
             );
         }
+
+        // V3 -> V4 auto-conversion side-effect: updating one collector against a
+        // V3-serialized account causes the "other" collector to be written as
+        // its V4 default (inflation_rewards_collector = vote_pubkey,
+        // block_revenue_collector = node_pubkey), per try_convert_to_vote_state_v4.
+        {
+            let v3 = get_max_sized_vote_state_v3();
+            let v3_node_pubkey = v3.node_pubkey;
+            let v3_withdrawer = v3.authorized_withdrawer;
+            let v3_vote_pubkey = solana_pubkey::new_rand();
+
+            let v4_size = VoteStateV4::size_of();
+            let mut account_data = vec![0u8; v4_size];
+            wincode::serialize_into(&mut account_data[..], &VoteStateVersions::V3(Box::new(v3)))
+                .unwrap();
+            let v3_vote_account = AccountSharedData::new_with_data(
+                rent.minimum_balance(v4_size),
+                account_data,
+                &id(),
+            );
+
+            let v3_signers: HashSet<Pubkey> = vec![v3_withdrawer].into_iter().collect();
+
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (v3_vote_pubkey, v3_vote_account),
+                    (new_collector, collector_account.clone()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            update_commission_collector(
+                &instruction_context,
+                0,
+                target_version,
+                1,
+                CommissionKind::InflationRewards,
+                &v3_signers,
+                &rent,
+            )
+            .unwrap();
+
+            // The updated field reflects the caller's new collector.
+            assert_eq!(
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
+                new_collector,
+            );
+            // The *other* field was reset to its V4-conversion default
+            // (block_revenue_collector = node_pubkey from the V3 source).
+            assert_eq!(
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
+                v3_node_pubkey,
+            );
+        }
+
+        // Should fail - deserialization error paths.
+        //
+        // All four variants produce `InvalidAccountData`:
+        // * V0_23_5 is explicitly unsupported
+        // * V1_14_11, V3, and V4 fail if state is bad
+        let run_with_account_data = |bytes: Vec<u8>| -> Result<(), InstructionError> {
+            let bad_vote_account =
+                AccountSharedData::new_with_data(rent.minimum_balance(bytes.len()), bytes, &id());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, bad_vote_account),
+                    (new_collector, collector_account.clone()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            update_commission_collector(
+                &instruction_context,
+                0,
+                target_version,
+                1,
+                CommissionKind::InflationRewards,
+                &signers,
+                &rent,
+            )
+        };
+        let variant_with_short_body = |variant: u32| -> Vec<u8> {
+            let mut bytes = vec![0u8; 8];
+            bytes[..4].copy_from_slice(&variant.to_le_bytes());
+            bytes
+        };
+
+        // Should fail - V0_23_5 not supported.
+        assert_eq!(
+            run_with_account_data(variant_with_short_body(0)),
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        // Should fail - Invalid V1_14_11 state.
+        assert_eq!(
+            run_with_account_data(variant_with_short_body(1)),
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        // Should fail - Invalid V3 state.
+        assert_eq!(
+            run_with_account_data(variant_with_short_body(2)),
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        // Should fail - Invalid V4 state.
+        assert_eq!(
+            run_with_account_data(variant_with_short_body(3)),
+            Err(InstructionError::InvalidAccountData),
+        );
 
         // Should fail - authorized withdrawer didn't sign.
         {
@@ -4665,19 +4942,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &non_signers,
                     &rent,
@@ -4685,11 +4955,11 @@ mod tests {
                 Err(InstructionError::MissingRequiredSignature)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -4710,19 +4980,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &wrong_signers,
                     &rent,
@@ -4730,11 +4993,11 @@ mod tests {
                 Err(InstructionError::MissingRequiredSignature)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -4758,19 +5021,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &signers,
                     &rent,
@@ -4778,11 +5034,11 @@ mod tests {
                 Err(InstructionError::InvalidAccountOwner)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -4804,19 +5060,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &signers,
                     &rent,
@@ -4824,11 +5073,11 @@ mod tests {
                 Err(InstructionError::InsufficientFunds)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
         }
@@ -4851,19 +5100,12 @@ mod tests {
                 &rent,
             );
             let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let mut borrowed_vote_account = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
             assert_eq!(
                 update_commission_collector(
-                    &mut borrowed_vote_account,
+                    &instruction_context,
+                    0,
                     target_version,
-                    NewCommissionCollector::NewAccount(
-                        instruction_context
-                            .try_borrow_instruction_account(1)
-                            .unwrap()
-                    ),
+                    1,
                     CommissionKind::InflationRewards,
                     &signers,
                     &rent,
@@ -4871,13 +5113,571 @@ mod tests {
                 Err(InstructionError::InvalidArgument)
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::InflationRewards),
+                get_commission_collector(&instruction_context, CommissionKind::InflationRewards),
                 original_inflation_collector, // Unchanged
             );
             assert_eq!(
-                get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
+                get_commission_collector(&instruction_context, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
+        }
+    }
+
+    #[test]
+    fn test_initialize_account_v2() {
+        let target_version = VoteStateTargetVersion::V4;
+        let rent = Rent::default();
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+
+        let vote_pubkey = solana_pubkey::new_rand();
+        let node_pubkey = solana_pubkey::new_rand();
+        let authorized_voter = solana_pubkey::new_rand();
+        let authorized_withdrawer = solana_pubkey::new_rand();
+        let inflation_collector_pubkey = solana_pubkey::new_rand();
+        let block_revenue_collector_pubkey = solana_pubkey::new_rand();
+
+        let (bls_pubkey, bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let vote_init = VoteInitV2 {
+            node_pubkey,
+            authorized_voter,
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            authorized_withdrawer,
+            inflation_rewards_commission_bps: 1_234,
+            block_revenue_commission_bps: 5_678,
+        };
+
+        let signers: HashSet<Pubkey> = vec![node_pubkey].into_iter().collect();
+        let clock = Clock::default();
+
+        let v4_size = VoteStateV4::size_of();
+        let lamports = rent.minimum_balance(v4_size);
+        let make_uninit_vote_account = || AccountSharedData::new(lamports, v4_size, &id());
+        let valid_collector_account =
+            || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+
+        let assert_v4_fields =
+            |instruction_context: &InstructionContext,
+             expected_inflation_rewards_collector: Pubkey,
+             expected_block_revenue_collector: Pubkey| {
+                let vote_account = instruction_context
+                    .try_borrow_instruction_account(0)
+                    .unwrap();
+                let VoteStateVersions::V4(v4) =
+                    vote_account.get_state::<VoteStateVersions>().unwrap()
+                else {
+                    panic!("expected v4");
+                };
+                assert_eq!(v4.node_pubkey, node_pubkey);
+                assert_eq!(
+                    v4.authorized_voters.get_authorized_voter(clock.epoch),
+                    Some(authorized_voter),
+                );
+                assert_eq!(v4.authorized_withdrawer, authorized_withdrawer);
+                assert_eq!(v4.bls_pubkey_compressed, Some(bls_pubkey));
+                assert_eq!(v4.inflation_rewards_commission_bps, 1_234);
+                assert_eq!(v4.block_revenue_commission_bps, 5_678);
+                assert_eq!(
+                    v4.inflation_rewards_collector,
+                    expected_inflation_rewards_collector
+                );
+                assert_eq!(v4.block_revenue_collector, expected_block_revenue_collector);
+                assert_eq!(v4.pending_delegator_rewards, 0);
+                assert!(v4.votes.is_empty());
+                assert_eq!(v4.root_slot, None);
+                assert!(v4.epoch_credits.is_empty());
+            };
+
+        let assert_still_uninitialized = |instruction_context: &InstructionContext| {
+            let vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            assert!(
+                vote_account
+                    .get_state::<VoteStateVersions>()
+                    .unwrap()
+                    .is_uninitialized()
+            );
+        };
+
+        // Should pass - both collectors are separate accounts.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            initialize_account_v2(
+                &instruction_context,
+                0,
+                target_version,
+                &vote_init,
+                1,
+                2,
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(
+                &instruction_context,
+                inflation_collector_pubkey,
+                block_revenue_collector_pubkey,
+            );
+        }
+
+        // Should pass - inflation collector aliased to vote account.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            initialize_account_v2(
+                &instruction_context,
+                0,
+                target_version,
+                &vote_init,
+                1,
+                2,
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(
+                &instruction_context,
+                vote_pubkey,
+                block_revenue_collector_pubkey,
+            );
+        }
+
+        // Should pass - block revenue collector aliased to vote account.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(1, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            initialize_account_v2(
+                &instruction_context,
+                0,
+                target_version,
+                &vote_init,
+                1,
+                2,
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(
+                &instruction_context,
+                inflation_collector_pubkey,
+                vote_pubkey,
+            );
+        }
+
+        // Should pass - both collectors aliased to vote account.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            initialize_account_v2(
+                &instruction_context,
+                0,
+                target_version,
+                &vote_init,
+                1,
+                2,
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(&instruction_context, vote_pubkey, vote_pubkey);
+        }
+
+        // Should pass - both collectors aliased to same external account.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            initialize_account_v2(
+                &instruction_context,
+                0,
+                target_version,
+                &vote_init,
+                1,
+                2,
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(
+                &instruction_context,
+                inflation_collector_pubkey,
+                inflation_collector_pubkey,
+            );
+        }
+
+        // Should fail - vote account is the wrong size.
+        {
+            let oversized_vote_account =
+                AccountSharedData::new(rent.minimum_balance(2 * v4_size), 2 * v4_size, &id());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, oversized_vote_account),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                initialize_account_v2(
+                    &instruction_context,
+                    0,
+                    target_version,
+                    &vote_init,
+                    1,
+                    2,
+                    &signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::InvalidAccountData),
+            );
+        }
+
+        // Should fail - not a valid vote state.
+        {
+            let invalid_vote_account =
+                AccountSharedData::new_with_data(lamports, vec![0xFFu8; v4_size], &id());
+
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, invalid_vote_account),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                initialize_account_v2(
+                    &instruction_context,
+                    0,
+                    target_version,
+                    &vote_init,
+                    1,
+                    2,
+                    &signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::InvalidAccountData),
+            );
+        }
+
+        // Should fail - vote account already initialized.
+        {
+            let preexisting_handler = vote_state_new_for_test(&vote_pubkey, target_version);
+            let preexisting_state = preexisting_handler.as_ref_v4().clone();
+            let serialized = preexisting_handler.serialize();
+            let serialized_len = serialized.len();
+            let initialized_vote_account = AccountSharedData::new_with_data(
+                rent.minimum_balance(serialized_len),
+                serialized,
+                &id(),
+            );
+
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, initialized_vote_account),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                initialize_account_v2(
+                    &instruction_context,
+                    0,
+                    target_version,
+                    &vote_init,
+                    1,
+                    2,
+                    &signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::AccountAlreadyInitialized),
+            );
+
+            // Pre-existing state must be untouched - the new init payload must
+            // not have been written.
+            let borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            let handler =
+                get_vote_state_handler_checked(&borrowed_vote_account, target_version).unwrap();
+            assert_eq!(*handler.as_ref_v4(), preexisting_state);
+        }
+
+        // Should fail - node_pubkey didn't sign.
+        {
+            let non_signers: HashSet<Pubkey> = HashSet::new();
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                initialize_account_v2(
+                    &instruction_context,
+                    0,
+                    target_version,
+                    &vote_init,
+                    1,
+                    2,
+                    &non_signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::MissingRequiredSignature),
+            );
+            assert_still_uninitialized(&instruction_context);
+        }
+
+        // Should fail - SIMD-0232 collector account checks, applied to both
+        // account indices.
+        {
+            #[derive(Clone, Copy)]
+            enum CollectorSlot {
+                Inflation,
+                BlockRevenue,
+            }
+
+            let test_bad_collector =
+                |slot: CollectorSlot,
+                 bad_collector: AccountSharedData,
+                 bad_collector_is_writable: bool,
+                 expected_error: InstructionError| {
+                    let (
+                        inflation_account,
+                        inflation_writable,
+                        block_revenue_account,
+                        block_revenue_writable,
+                    ) = match slot {
+                        CollectorSlot::Inflation => (
+                            bad_collector,
+                            bad_collector_is_writable,
+                            valid_collector_account(),
+                            true,
+                        ),
+                        CollectorSlot::BlockRevenue => (
+                            valid_collector_account(),
+                            true,
+                            bad_collector,
+                            bad_collector_is_writable,
+                        ),
+                    };
+
+                    let transaction_context = new_transaction_context(
+                        vec![
+                            (id(), processor_account.clone()),
+                            (vote_pubkey, make_uninit_vote_account()),
+                            (inflation_collector_pubkey, inflation_account),
+                            (block_revenue_collector_pubkey, block_revenue_account),
+                        ],
+                        vec![
+                            InstructionAccount::new(1, false, true),
+                            InstructionAccount::new(2, false, inflation_writable),
+                            InstructionAccount::new(3, false, block_revenue_writable),
+                        ],
+                        &rent,
+                    );
+                    let instruction_context =
+                        transaction_context.get_next_instruction_context().unwrap();
+                    assert_eq!(
+                        initialize_account_v2(
+                            &instruction_context,
+                            0,
+                            target_version,
+                            &vote_init,
+                            1,
+                            2,
+                            &signers,
+                            &clock,
+                            &rent,
+                            || Ok(()),
+                        ),
+                        Err(expected_error),
+                    );
+                    assert_still_uninitialized(&instruction_context);
+                };
+
+            for slot in [CollectorSlot::Inflation, CollectorSlot::BlockRevenue] {
+                // 1. Not system-owned.
+                test_bad_collector(
+                    slot,
+                    AccountSharedData::new(rent.minimum_balance(0), 0, &solana_pubkey::new_rand()),
+                    true,
+                    InstructionError::InvalidAccountOwner,
+                );
+
+                // 2. Not rent-exempt.
+                test_bad_collector(
+                    slot,
+                    AccountSharedData::new(0, 0, &system_program::id()),
+                    true,
+                    InstructionError::InsufficientFunds,
+                );
+
+                // 3. Not writable.
+                test_bad_collector(
+                    slot,
+                    valid_collector_account(),
+                    false,
+                    InstructionError::InvalidArgument,
+                );
+            }
+        }
+
+        // Should fail - BLS proof of possession does not verify.
+        {
+            let bad_vote_init = VoteInitV2 {
+                authorized_voter_bls_pubkey: [1u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                authorized_voter_bls_proof_of_possession: [2u8;
+                    BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+                ..vote_init
+            };
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                initialize_account_v2(
+                    &instruction_context,
+                    0,
+                    target_version,
+                    &bad_vote_init,
+                    1,
+                    2,
+                    &signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::InvalidArgument),
+            );
+            assert_still_uninitialized(&instruction_context);
         }
     }
 
@@ -4913,7 +5713,6 @@ mod tests {
         transaction_context
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_withdraw(target_version: VoteStateTargetVersion) {
         // Verify withdraw boundary conditions around the rent-exempt
@@ -4933,8 +5732,7 @@ mod tests {
 
         // Account at exact rent-exempt minimum: withdraw 1 fails.
         {
-            let mut acct = AccountSharedData::new(min_balance, serialized_len, &id());
-            acct.set_data_from_slice(&serialized);
+            let acct = AccountSharedData::new_with_data(min_balance, serialized.clone(), &id());
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             assert_eq!(
@@ -4945,8 +5743,7 @@ mod tests {
 
         // Account at exact rent-exempt minimum: withdraw all succeeds (deinit).
         {
-            let mut acct = AccountSharedData::new(min_balance, serialized_len, &id());
-            acct.set_data_from_slice(&serialized);
+            let acct = AccountSharedData::new_with_data(min_balance, serialized.clone(), &id());
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             withdraw(
@@ -4964,8 +5761,8 @@ mod tests {
 
         // Account at rent_exempt + 100: withdraw 100 succeeds.
         {
-            let mut acct = AccountSharedData::new(min_balance + 100, serialized_len, &id());
-            acct.set_data_from_slice(&serialized);
+            let acct =
+                AccountSharedData::new_with_data(min_balance + 100, serialized.clone(), &id());
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             withdraw(&ix, 0, target_version, 100, 1, &signers, &rent, &clock).unwrap();
@@ -4973,8 +5770,8 @@ mod tests {
 
         // Account at rent_exempt + 100: withdraw 101 fails.
         {
-            let mut acct = AccountSharedData::new(min_balance + 100, serialized_len, &id());
-            acct.set_data_from_slice(&serialized);
+            let acct =
+                AccountSharedData::new_with_data(min_balance + 100, serialized.clone(), &id());
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             assert_eq!(
@@ -4998,8 +5795,7 @@ mod tests {
         let serialized = handler.clone().serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len()) + extra_lamports;
-        let mut account = AccountSharedData::new(lamports, serialized.len(), &id());
-        account.set_data_from_slice(&serialized);
+        let account = AccountSharedData::new_with_data(lamports, serialized, &id());
         (handler, account)
     }
 
@@ -5188,15 +5984,14 @@ mod tests {
         // Serialize V3 into a fixed-size account buffer.
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
-        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let v3_serialized_len = wincode::serialized_size(&v3_versioned).unwrap() as usize;
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         // Drive V3 to V4 conversion through the program handler.
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
-        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
-        vote_account.set_data_from_slice(&vote_account_data);
+        let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -5209,14 +6004,14 @@ mod tests {
         // `get_vote_state_handler_checked` with V4 target triggers the full
         // deser -> conversion path; `set_vote_account_state` writes it back.
         let vote_state =
-            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+            get_vote_state_handler_checked(&borrowed, VoteStateTargetVersion::V4).unwrap();
         vote_state.set_vote_account_state(&mut borrowed).unwrap();
 
         // Inspect raw account data written by the handler.
         let account_data = borrowed.get_data();
         let v4_serialized_len = {
             let v4 = VoteStateV4::deserialize(account_data, &vote_pubkey).unwrap();
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4)).unwrap() as usize
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4)).unwrap() as usize
         };
         assert!(
             v4_serialized_len < v3_serialized_len,
@@ -5243,7 +6038,7 @@ mod tests {
         borrowed.get_data_mut().unwrap()[v4_serialized_len..].fill(0xDE);
 
         let vote_state =
-            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+            get_vote_state_handler_checked(&borrowed, VoteStateTargetVersion::V4).unwrap();
         vote_state.set_vote_account_state(&mut borrowed).unwrap();
 
         let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
@@ -5289,14 +6084,13 @@ mod tests {
         // Step 1: Populate V3 account and record V3 serialized size.
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
-        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let v3_serialized_len = wincode::serialized_size(&v3_versioned).unwrap() as usize;
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
-        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
-        vote_account.set_data_from_slice(&vote_account_data);
+        let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -5308,12 +6102,12 @@ mod tests {
 
         // Step 2: V3 -> V4 conversion via the handler.
         let vote_state =
-            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+            get_vote_state_handler_checked(&borrowed, VoteStateTargetVersion::V4).unwrap();
         vote_state.set_vote_account_state(&mut borrowed).unwrap();
 
         let v4_after_convert = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
         let v4_serialized_len =
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4_after_convert.clone())).unwrap()
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4_after_convert.clone())).unwrap()
                 as usize;
 
         assert!(
@@ -5346,7 +6140,7 @@ mod tests {
         let mut v4_empty_votes = v4_after_convert.clone();
         v4_empty_votes.votes.clear();
         let v4_empty_serialized_len =
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4_empty_votes.clone())).unwrap()
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4_empty_votes.clone())).unwrap()
                 as usize;
         assert!(
             v4_empty_serialized_len < v4_serialized_len,
@@ -5368,7 +6162,7 @@ mod tests {
 
         // Round-trip through the handler with the stale bytes.
         let vote_state =
-            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+            get_vote_state_handler_checked(&borrowed, VoteStateTargetVersion::V4).unwrap();
         vote_state.set_vote_account_state(&mut borrowed).unwrap();
 
         let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
@@ -5384,7 +6178,7 @@ mod tests {
         borrowed.get_data_mut().unwrap()[v4_empty_serialized_len..].fill(0xCD);
 
         let vote_state =
-            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+            get_vote_state_handler_checked(&borrowed, VoteStateTargetVersion::V4).unwrap();
         vote_state.set_vote_account_state(&mut borrowed).unwrap();
 
         let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
@@ -5413,7 +6207,7 @@ mod tests {
                 .set_state(&VoteStateVersions::new_v4(v4_regrowing.clone()))
                 .unwrap();
             let current_serialized_len =
-                bincode::serialized_size(&VoteStateVersions::new_v4(v4_regrowing.clone())).unwrap()
+                wincode::serialized_size(&VoteStateVersions::new_v4(v4_regrowing.clone())).unwrap()
                     as usize;
             let current_trailing = buf_size - current_serialized_len;
             assert!(
@@ -5426,8 +6220,7 @@ mod tests {
 
             // Round-trip through the handler to verify.
             let vote_state =
-                get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4)
-                    .unwrap();
+                get_vote_state_handler_checked(&borrowed, VoteStateTargetVersion::V4).unwrap();
             vote_state.set_vote_account_state(&mut borrowed).unwrap();
 
             let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
@@ -5469,12 +6262,11 @@ mod tests {
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
-        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
-        vote_account.set_data_from_slice(&vote_account_data);
+        let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -5486,13 +6278,15 @@ mod tests {
 
         // Drive conversion through the handler.
         let vote_state =
-            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+            get_vote_state_handler_checked(&borrowed, VoteStateTargetVersion::V4).unwrap();
         vote_state.set_vote_account_state(&mut borrowed).unwrap();
 
-        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
-        assert_eq!(v4.bls_pubkey_compressed, None);
+        let v4 = VoteStateHandler::new_v4(
+            VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap(),
+        );
+        assert_eq!(v4.as_ref_v4().bls_pubkey_compressed, None);
         assert!(!v4.has_bls_pubkey());
-        assert_eq!(v4.last_timestamp, last_timestamp);
+        assert_eq!(v4.as_ref_v4().last_timestamp, last_timestamp);
     }
 
     #[test]
@@ -5508,8 +6302,7 @@ mod tests {
         let serialized = vote_state.serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
-        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
-        vote_account.set_data_from_slice(&serialized);
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -5574,8 +6367,7 @@ mod tests {
         let serialized = vote_state.serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
-        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
-        vote_account.set_data_from_slice(&serialized);
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -5657,8 +6449,7 @@ mod tests {
         let serialized = vote_state.clone().serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
-        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
-        vote_account.set_data_from_slice(&serialized);
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -5720,8 +6511,7 @@ mod tests {
         let serialized = vote_state.clone().serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
-        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
-        vote_account.set_data_from_slice(&serialized);
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],

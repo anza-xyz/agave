@@ -3,12 +3,13 @@ use {
         account_locks::{AccountLocks, validate_account_locks},
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
-            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
-            ScanAccountStorageData, ScanStorageResult, UpdateIndexThreadSelection,
+            AccountsAddRootTiming, AccountsDb, LoadedAccount, PopulateReadCache,
+            ScanAccountStorageData, ScanStorageResult,
         },
         accounts_index::IndexKey,
         accounts_scan::{ScanConfig, ScanError, ScanResult},
         ancestors::Ancestors,
+        bank_id::BankId,
         is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
     },
@@ -17,7 +18,7 @@ use {
     solana_address_lookup_table_interface::{
         self as address_lookup_table, error::AddressLookupError, state::AddressLookupTable,
     },
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_message::v0::LoadedAddresses,
     solana_pubkey::Pubkey,
     solana_slot_hashes::SlotHashes,
@@ -111,7 +112,7 @@ impl Accounts {
         loaded_addresses: &mut LoadedAddresses,
     ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
-            .load_with_fixed_root(ancestors, address_table_lookup.account_key)
+            .load(ancestors, address_table_lookup.account_key)
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
 
@@ -161,22 +162,19 @@ impl Accounts {
         }
     }
 
-    pub fn load_with_fixed_root(
+    pub fn load_with_filter(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
+        load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db.load(
-            ancestors,
-            pubkey,
-            LoadHint::FixedMaxRoot,
-            PopulateReadCache::True,
-        )
+        self.accounts_db
+            .load(ancestors, pubkey, PopulateReadCache::True, load_filter)
     }
 
-    /// same as `load_with_fixed_root` except:
+    /// same as `load` except:
     /// if the account is not already in the read cache, it is NOT put in the read cache on successful load
-    pub fn load_with_fixed_root_do_not_populate_read_cache(
+    pub fn load_do_not_populate_read_cache(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
@@ -184,12 +182,12 @@ impl Accounts {
         self.accounts_db.load(
             ancestors,
             pubkey,
-            LoadHint::FixedMaxRoot,
             PopulateReadCache::False,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 
-    pub fn load_without_fixed_root(
+    pub fn load(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
@@ -197,21 +195,22 @@ impl Accounts {
         self.accounts_db.load(
             ancestors,
             pubkey,
-            LoadHint::Unspecified,
             PopulateReadCache::True,
+            None::<fn(_, &_, _) -> _>,
         )
     }
 
     /// scans underlying accounts_db for this delta (slot) with a map function
     ///   from LoadedAccount to B
     /// returns only the latest/current version of B for this slot
-    pub fn scan_slot<F, B>(&self, slot: Slot, func: F) -> Vec<B>
+    pub fn scan_slot<F, B>(&self, slot: Slot, bank_id: BankId, func: F) -> Vec<B>
     where
         F: Fn(&LoadedAccount) -> Option<B> + Send + Sync,
         B: Sync + Send + Default + std::cmp::Eq,
     {
         let scan_result = self.accounts_db.scan_account_storage(
             slot,
+            bank_id,
             |loaded_account: &LoadedAccount| {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
@@ -242,9 +241,10 @@ impl Accounts {
     pub fn load_by_program_slot(
         &self,
         slot: Slot,
+        bank_id: BankId,
         program_id: Option<&Pubkey>,
     ) -> Vec<KeyedAccountSharedData> {
-        self.scan_slot(slot, |stored_account| {
+        self.scan_slot(slot, bank_id, |stored_account| {
             program_id
                 .map(|program_id| program_id == stored_account.owner())
                 .unwrap_or(true)
@@ -436,31 +436,6 @@ impl Accounts {
         self.accounts_db.account_indexes.include_key(key)
     }
 
-    pub fn load_all(
-        &self,
-        ancestors: &Ancestors,
-        bank_id: BankId,
-        sort_results: bool,
-    ) -> ScanResult<Vec<PubkeyAccountSlot>> {
-        let mut collector = Vec::new();
-        self.accounts_db.scan_accounts(
-            ancestors,
-            bank_id,
-            |some_account_tuple| {
-                if let Some((pubkey, account, slot)) =
-                    some_account_tuple.filter(|(_, account, _)| account.is_loadable())
-                {
-                    collector.push((*pubkey, account, slot))
-                }
-            },
-            &ScanConfig::default(),
-        )?;
-        if sort_results {
-            collector.sort_unstable_by(|(a_addr, _, _), (b_addr, _, _)| a_addr.cmp(b_addr));
-        }
-        Ok(collector)
-    }
-
     pub fn scan_all<F>(
         &self,
         ancestors: &Ancestors,
@@ -482,7 +457,6 @@ impl Accounts {
         txs: impl Iterator<Item = &'a (impl SVMMessage + 'a)>,
         results: impl Iterator<Item = Result<()>>,
         tx_account_lock_limit: usize,
-        relax_intrabatch_account_locks: bool,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get keys and is_writable if successful validation.
         // We collect to fully evaluate before taking the account_locks mutex.
@@ -496,18 +470,7 @@ impl Accounts {
             .collect::<Vec<_>>();
 
         let account_locks = &mut self.account_locks.lock().unwrap();
-
-        if relax_intrabatch_account_locks {
-            account_locks.try_lock_transaction_batch(validated_batch_keys)
-        } else {
-            validated_batch_keys
-                .into_iter()
-                .map(|result_validated_tx_keys| match result_validated_tx_keys {
-                    Ok(validated_tx_keys) => account_locks.try_lock_accounts(validated_tx_keys),
-                    Err(e) => Err(e),
-                })
-                .collect()
-        }
+        account_locks.try_lock_transaction_batch(validated_batch_keys)
     }
 
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
@@ -530,52 +493,12 @@ impl Accounts {
     }
 
     /// Store `accounts` into the DB
-    ///
-    /// This version updates the accounts index sequentially,
-    /// using the same thread that calls the fn itself.
-    pub fn store_accounts_seq<'a>(
+    pub fn store_accounts<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
+        bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: Option<&Ancestors>,
-    ) {
-        self._store_accounts(
-            accounts,
-            transactions,
-            UpdateIndexThreadSelection::Inline,
-            ancestors,
-        );
-    }
-
-    /// Store `accounts` into the DB
-    ///
-    /// This version updates the accounts index in parallel,
-    /// using the foreground AccountsDb thread pool.
-    pub fn store_accounts_par<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: Option<&Ancestors>,
-    ) {
-        self._store_accounts(
-            accounts,
-            transactions,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-            ancestors,
-        );
-    }
-
-    /// Store `accounts` into the DB
-    ///
-    /// This version is a private impl, performing the common additional tasks
-    /// when storing accounts that fall outside AccountsDb itself.
-    /// E.g. geyser account update notifications.
-    fn _store_accounts<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        update_index_thread_selection: UpdateIndexThreadSelection,
-        ancestors: Option<&Ancestors>,
+        ancestors: &Ancestors,
     ) {
         let accounts_db = &self.accounts_db;
         if accounts_db.has_accounts_update_notifier() {
@@ -589,6 +512,7 @@ impl Accounts {
                 accounts.account_for_geyser(index, |pubkey, account_shared_data| {
                     accounts_db.notify_account_at_accounts_update(
                         slot,
+                        bank_id,
                         account_shared_data,
                         &transaction,
                         pubkey,
@@ -599,12 +523,12 @@ impl Accounts {
             }
         }
 
-        accounts_db.store_accounts_unfrozen(accounts, update_index_thread_selection, ancestors);
+        accounts_db.store_accounts_unfrozen(accounts, bank_id, ancestors);
     }
 
-    /// Add a slot to root.  Root slots cannot be purged
-    pub fn add_root(&self, slot: Slot) -> AccountsAddRootTiming {
-        self.accounts_db.add_root(slot)
+    /// Root a bank.  Rooted banks cannot be purged
+    pub fn add_root(&self, bank_id: BankId) -> AccountsAddRootTiming {
+        self.accounts_db.add_root(bank_id)
     }
 }
 
@@ -633,7 +557,6 @@ mod tests {
             sync::atomic::{AtomicBool, AtomicU64, Ordering},
             thread, time,
         },
-        test_case::test_case,
     };
 
     fn new_sanitized_tx<T: Signers>(
@@ -668,7 +591,7 @@ mod tests {
     #[test]
     fn test_load_lookup_table_addresses_account_not_found() {
         let ancestors = Ancestors::from(vec![0]);
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let invalid_table_key = Pubkey::new_unique();
@@ -691,7 +614,7 @@ mod tests {
     #[test]
     fn test_load_lookup_table_addresses_invalid_account_owner() {
         let ancestors = Ancestors::from(vec![0]);
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let invalid_table_key = Pubkey::new_unique();
@@ -719,7 +642,7 @@ mod tests {
     #[test]
     fn test_load_lookup_table_addresses_invalid_account_data() {
         let ancestors = Ancestors::from(vec![0]);
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let invalid_table_key = Pubkey::new_unique();
@@ -747,7 +670,7 @@ mod tests {
     #[test]
     fn test_load_lookup_table_addresses() {
         let ancestors = Ancestors::from(vec![1, 0]);
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let table_key = Pubkey::new_unique();
@@ -792,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_load_by_program_slot() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         // Load accounts owned by various programs into AccountsDb
@@ -807,18 +730,17 @@ mod tests {
         accounts.store_for_tests(0, &pubkey2, &account2);
         accounts.add_root_and_flush_write_cache(0);
 
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([2; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([2; 32])));
         assert_eq!(loaded.len(), 2);
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([3; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([3; 32])));
         assert_eq!(loaded, vec![(pubkey2, account2)]);
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([4; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([4; 32])));
         assert_eq!(loaded, vec![]);
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_lock_accounts_with_duplicates(relax_intrabatch_account_locks: bool) {
-        let accounts_db = AccountsDb::new_single_for_tests();
+    #[test]
+    fn test_lock_accounts_with_duplicates() {
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let keypair = Keypair::new();
@@ -832,19 +754,14 @@ mod tests {
         };
 
         let tx = new_sanitized_tx(&[&keypair], message, Hash::default());
-        let results = accounts.lock_accounts(
-            [tx].iter(),
-            [Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
-        );
+        let results =
+            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), MAX_TX_ACCOUNT_LOCKS);
         assert_eq!(results[0], Err(TransactionError::AccountLoadedTwice));
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_lock_accounts_with_too_many_accounts(relax_intrabatch_account_locks: bool) {
-        let accounts_db = AccountsDb::new_single_for_tests();
+    #[test]
+    fn test_lock_accounts_with_too_many_accounts() {
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let keypair = Keypair::new();
@@ -870,7 +787,6 @@ mod tests {
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
                 MAX_TX_ACCOUNT_LOCKS,
-                relax_intrabatch_account_locks,
             );
             assert_eq!(results, vec![Ok(())]);
             accounts.unlock_accounts(txs.iter().zip(&results));
@@ -897,15 +813,13 @@ mod tests {
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
                 MAX_TX_ACCOUNT_LOCKS,
-                relax_intrabatch_account_locks,
             );
             assert_eq!(results[0], Err(TransactionError::TooManyAccountLocks));
         }
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_accounts_locks(relax_intrabatch_account_locks: bool) {
+    #[test]
+    fn test_accounts_locks() {
         let keypair0 = Keypair::new();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
@@ -916,7 +830,7 @@ mod tests {
         let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
         let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
@@ -937,7 +851,6 @@ mod tests {
             [tx.clone()].iter(),
             [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
         );
 
         assert_eq!(results0, vec![Ok(())]);
@@ -974,7 +887,6 @@ mod tests {
             txs.iter(),
             vec![Ok(()); txs.len()].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
         );
         assert_eq!(
             results1,
@@ -1003,12 +915,8 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
-        let results2 = accounts.lock_accounts(
-            [tx].iter(),
-            [Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
-        );
+        let results2 =
+            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), MAX_TX_ACCOUNT_LOCKS);
         assert_eq!(
             results2,
             vec![Ok(())] // Now keypair1 account can be locked as writable
@@ -1024,9 +932,8 @@ mod tests {
         );
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_accounts_locks_multithreaded(relax_intrabatch_account_locks: bool) {
+    #[test]
+    fn test_accounts_locks_multithreaded() {
         let counter = Arc::new(AtomicU64::new(0));
         let exit = Arc::new(AtomicBool::new(false));
 
@@ -1038,7 +945,7 @@ mod tests {
         let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
         let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
@@ -1078,7 +985,6 @@ mod tests {
                     txs.iter(),
                     vec![Ok(()); txs.len()].into_iter(),
                     MAX_TX_ACCOUNT_LOCKS,
-                    relax_intrabatch_account_locks,
                 );
                 for result in results.iter() {
                     if result.is_ok() {
@@ -1098,7 +1004,6 @@ mod tests {
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
                 MAX_TX_ACCOUNT_LOCKS,
-                relax_intrabatch_account_locks,
             );
             if results[0].is_ok() {
                 let counter_value = counter_clone.clone().load(Ordering::Acquire);
@@ -1111,9 +1016,8 @@ mod tests {
         exit.store(true, Ordering::Relaxed);
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_demote_program_write_locks(relax_intrabatch_account_locks: bool) {
+    #[test]
+    fn test_demote_program_write_locks() {
         let keypair0 = Keypair::new();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
@@ -1124,7 +1028,7 @@ mod tests {
         let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
         let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
@@ -1141,12 +1045,8 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let results0 = accounts.lock_accounts(
-            [tx].iter(),
-            [Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
-        );
+        let results0 =
+            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), MAX_TX_ACCOUNT_LOCKS);
 
         assert!(results0[0].is_ok());
         // Instruction program-id account demoted to readonly
@@ -1183,14 +1083,13 @@ mod tests {
         /// useful to adapt tests written prior to introduction of the write cache
         /// to use the write cache
         pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
-            self.add_root(slot);
+            self.accounts_db.add_root_for_tests(slot);
             self.accounts_db.flush_accounts_cache_slot_for_tests(slot);
         }
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_accounts_locks_with_results(relax_intrabatch_account_locks: bool) {
+    #[test]
+    fn test_accounts_locks_with_results() {
         let keypair0 = Keypair::new();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
@@ -1201,7 +1100,7 @@ mod tests {
         let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
         let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
@@ -1246,12 +1145,8 @@ mod tests {
             Ok(()),
         ];
 
-        let results = accounts.lock_accounts(
-            txs.iter(),
-            qos_results.into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
-        );
+        let results =
+            accounts.lock_accounts(txs.iter(), qos_results.into_iter(), MAX_TX_ACCOUNT_LOCKS);
 
         assert_eq!(
             results,
@@ -1280,12 +1175,11 @@ mod tests {
         );
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_accounts_locks_intrabatch_conflicts(relax_intrabatch_account_locks: bool) {
+    #[test]
+    fn test_accounts_locks_intrabatch_conflicts() {
         let pubkey = Pubkey::new_unique();
         let account_data = AccountSharedData::new(1, 0, &Pubkey::default());
-        let accounts_db = Arc::new(AccountsDb::new_single_for_tests());
+        let accounts_db = Arc::new(AccountsDb::default_for_tests());
         accounts_db.store_for_tests((
             0,
             [
@@ -1313,7 +1207,6 @@ mod tests {
             [w_tx.clone()].iter(),
             [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
         );
 
         assert_eq!(results, vec![Ok(())]);
@@ -1323,7 +1216,6 @@ mod tests {
             [r_tx.clone()].iter(),
             [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
         );
 
         assert_eq!(results, vec![Err(TransactionError::AccountInUse)]);
@@ -1333,69 +1225,51 @@ mod tests {
             [w_tx.clone()].iter(),
             [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
         );
 
         assert_eq!(results, vec![Err(TransactionError::AccountInUse)]);
 
-        // wr conflict in-batch succeeds or fails based on feature
+        // wr conflict in-batch succeeds
         let accounts = Accounts::new(accounts_db.clone());
         let results = accounts.lock_accounts(
             [w_tx.clone(), r_tx.clone()].iter(),
             [Ok(()), Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
         );
 
-        if relax_intrabatch_account_locks {
-            assert_eq!(results, vec![Ok(()), Ok(())]);
-        } else {
-            assert_eq!(results, vec![Ok(()), Err(TransactionError::AccountInUse)]);
-        }
+        assert_eq!(results, vec![Ok(()), Ok(())]);
 
-        // ww conflict in-batch succeeds or fails based on feature
+        // ww conflict in-batch succeeds
         let accounts = Accounts::new(accounts_db);
         let results = accounts.lock_accounts(
             [w_tx, r_tx].iter(),
             [Ok(()), Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
-            relax_intrabatch_account_locks,
         );
 
-        if relax_intrabatch_account_locks {
-            assert_eq!(results, vec![Ok(()), Ok(())]);
-        } else {
-            assert_eq!(results, vec![Ok(()), Err(TransactionError::AccountInUse)]);
-        }
+        assert_eq!(results, vec![Ok(()), Ok(())]);
     }
 
     #[test]
     fn huge_clean() {
-        agave_logger::setup();
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();
-        let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-        info!("storing..");
+        let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
         for i in 0..2_000 {
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
+            let account = AccountSharedData::new(i + 1, 0, &Pubkey::default());
             accounts.store_for_tests(i, &pubkey, &account);
             accounts.store_for_tests(i, &old_pubkey, &zero_account);
             old_pubkey = pubkey;
             accounts.add_root_and_flush_write_cache(i);
-
-            if i % 1_000 == 0 {
-                info!("  store {i}");
-            }
         }
-        info!("done..cleaning..");
         accounts.accounts_db.clean_accounts_for_tests();
     }
 
     #[test]
     fn test_load_largest_accounts() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         /* This test assumes pubkey0 < pubkey1 < pubkey2.
@@ -1426,7 +1300,7 @@ mod tests {
         let all_pubkeys: HashSet<_> = vec![pubkey0, pubkey1, pubkey2].into_iter().collect();
 
         // num == 0 should always return empty set
-        let bank_id = 0;
+        let bank_id = BankId::new(0);
         assert_eq!(
             accounts
                 .load_largest_accounts(

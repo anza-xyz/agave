@@ -73,8 +73,8 @@ impl OptimisticConfirmationVerifier {
                     timestamp().try_into().unwrap(),
                 ) {
                     error!(
-                        "failed to record optimistic slot in blockstore: slot={}: {:?}",
-                        new_optimistic_slot, &e
+                        "failed to record optimistic slot in blockstore: \
+                         slot={new_optimistic_slot}: {e:?}"
                     );
                 }
                 datapoint_info!("optimistic_slot", ("slot", new_optimistic_slot, i64),);
@@ -139,8 +139,8 @@ impl OptimisticConfirmationVerifier {
 mod test {
     use {
         super::*, crate::vote_simulator::VoteSimulator, solana_leader_schedule::SlotLeader,
-        solana_ledger::get_tmp_ledger_path_auto_delete, solana_runtime::bank::Bank,
-        std::collections::HashMap, trees::tr,
+        solana_ledger::get_tmp_ledger_path_auto_delete, solana_pubkey::Pubkey,
+        solana_runtime::bank::Bank, std::collections::HashMap, trees::tr,
     };
 
     #[test]
@@ -274,7 +274,7 @@ mod test {
         );
 
         // Now set a root at slot 5, purging BankForks of slots < 5
-        vote_simulator.set_root(5);
+        vote_simulator.set_root(&Pubkey::new_unique(), 5);
 
         // Add a new bank 7 that descends from 6
         let bank6 = vote_simulator.bank_forks.read().unwrap().get(6).unwrap();

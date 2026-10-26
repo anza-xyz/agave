@@ -1,7 +1,7 @@
 use {
     bencher::{Bencher, benchmark_group, benchmark_main},
     rand::Rng,
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_pubkey::Pubkey,
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},

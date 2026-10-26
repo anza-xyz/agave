@@ -193,9 +193,9 @@ impl AggregateCommitmentService {
                 // Notarize (our first round vote in favor of a block) satisfies the Processed commitment level
                 w_block_commitment_cache.set_slot(slot);
             }
-            AlpenglowCommitmentType::Finalized => {
+            AlpenglowCommitmentType::Rooted => {
                 // There is no distinction of OC, root, or finalized in Alpengow commitment.
-                // When receiving a finalilzation certificate we set all of these values.
+                // Once votor selects a finalized bank as root, set all of these values.
                 w_block_commitment_cache.set_highest_confirmed_slot(slot);
                 w_block_commitment_cache.set_root(slot);
                 w_block_commitment_cache.set_highest_super_majority_root(slot);
@@ -327,19 +327,21 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
-        solana_account::{Account, ReadableAccount, state_traits::StateMut},
+        solana_account::{Account, ReadableAccount, state_traits::StateMutWincode as _},
         solana_leader_schedule::SlotLeader,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_runtime::{
-            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
+            genesis_utils::{
+                ValidatorVoteKeypairs, create_genesis_config_with_tower_vote_accounts,
+            },
             stake_utils,
         },
         solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
             self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4,
-            VoteStateVersions, process_slot_vote_unchecked,
+            VoteStateVersions, handler::VoteStateHandler, process_slot_vote_unchecked,
         },
     };
 
@@ -550,19 +552,22 @@ mod tests {
         // Create bank
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let mut vote_state1 = VoteStateV4::deserialize(vote_account1.data(), &pk1).unwrap();
+        let mut vote_state1 =
+            VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account1.data(), &pk1).unwrap());
         process_slot_vote_unchecked(&mut vote_state1, 3);
         process_slot_vote_unchecked(&mut vote_state1, 5);
+        let vote_state1 = vote_state1.unwrap_v4();
         if !with_node_vote_state {
             let versioned = VoteStateVersions::new_v4(vote_state1.clone());
             vote_account1.set_state(&versioned).unwrap();
             bank.store_account(&pk1, &vote_account1);
         }
 
-        let mut vote_state2 = VoteStateV4::deserialize(vote_account2.data(), &pk2).unwrap();
+        let mut vote_state2 =
+            VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account2.data(), &pk2).unwrap());
         process_slot_vote_unchecked(&mut vote_state2, 9);
         process_slot_vote_unchecked(&mut vote_state2, 10);
-        let versioned = VoteStateVersions::new_v4(vote_state2);
+        let versioned = VoteStateVersions::new_v4(vote_state2.unwrap_v4());
         vote_account2.set_state(&versioned).unwrap();
         bank.store_account(&pk2, &vote_account2);
 
@@ -638,11 +643,12 @@ mod tests {
 
         let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs];
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            vec![100; 1],
-        );
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_tower_vote_accounts(
+                1_000_000_000,
+                &validator_keypairs,
+                vec![100; 1],
+            );
 
         let (_bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 

@@ -4,82 +4,30 @@
 //! represents an approximate amount of time since the last Entry was created.
 use {
     crate::poh::Poh,
+    agave_transaction_view::{
+        transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
+    },
     crossbeam_channel::{Receiver, Sender},
-    dlopen2::symbor::{Container, SymBorApi, Symbol},
     log::*,
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
     solana_address::Address,
+    solana_cost_model::shred_limit::DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
     solana_hash::Hash,
     solana_merkle_tree::MerkleTree,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_signature::Signature,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::{
-        ffi::OsStr,
-        iter::repeat_with,
-        sync::{Once, OnceLock},
-        time::Instant,
-    },
+    std::{fmt::Formatter, iter::repeat_with, time::Instant},
     wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::BincodeLen},
 };
 
 pub type EntrySender = Sender<Vec<Entry>>;
 pub type EntryReceiver = Receiver<Vec<Entry>>;
 
-static API: OnceLock<Container<Api>> = OnceLock::new();
-
-pub fn init_poh() {
-    init(OsStr::new("libpoh-simd.so"));
-}
-
-fn init(name: &OsStr) {
-    static INIT_HOOK: Once = Once::new();
-
-    info!("Loading {name:?}");
-    INIT_HOOK.call_once(|| {
-        let path;
-        let lib_name = if let Some(perf_libs_path) = solana_perf::perf_libs::locate_perf_libs() {
-            solana_perf::perf_libs::append_to_ld_library_path(
-                perf_libs_path.to_str().unwrap_or("").to_string(),
-            );
-            path = perf_libs_path.join(name);
-            path.as_os_str()
-        } else {
-            name
-        };
-
-        match unsafe { Container::load(lib_name) } {
-            Ok(api) => _ = API.set(api),
-            Err(err) => error!("Unable to load {lib_name:?}: {err}"),
-        }
-    })
-}
-
-pub fn api() -> Option<&'static Container<Api<'static>>> {
-    {
-        static INIT_HOOK: Once = Once::new();
-        INIT_HOOK.call_once(|| {
-            if std::env::var("TEST_PERF_LIBS").is_ok() {
-                init_poh()
-            }
-        });
-    }
-
-    API.get()
-}
-
-#[derive(SymBorApi)]
-pub struct Api<'a> {
-    pub poh_verify_many_simd_avx512skx:
-        Symbol<'a, unsafe extern "C" fn(hashes: *mut u8, num_hashes: *const u64)>,
-    pub poh_verify_many_simd_avx2:
-        Symbol<'a, unsafe extern "C" fn(hashes: *mut u8, num_hashes: *const u64)>,
-}
-
-const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
-pub const MAX_DATA_SHREDS_SIZE: usize = MAX_DATA_SHREDS_PER_SLOT * solana_packet::PACKET_DATA_SIZE;
+pub const MAX_DATA_SHREDS_SIZE: usize =
+    DEFAULT_MAX_DATA_SHREDS_PER_SLOT as usize * solana_packet::PACKET_DATA_SIZE;
 pub type MaxDataShredsLen = BincodeLen<MAX_DATA_SHREDS_SIZE>;
 
 /// Each Entry contains three pieces of data. The `num_hashes` field is the number
@@ -96,19 +44,6 @@ pub type MaxDataShredsLen = BincodeLen<MAX_DATA_SHREDS_SIZE>;
 /// hash was computed by the world's fastest processor at that time. The hash chain is both
 /// a Verifiable Delay Function (VDF) and a Proof of Work (not to be confused with Proof of
 /// Work consensus!)
-///
-/// The solana core protocol currently requires an `Entry` to contain `transactions` that are
-/// executable in parallel. Implemented in:
-///
-/// * For TPU: `solana_core::banking_stage::BankingStage::process_and_record_transactions()`
-/// * For TVU: `solana_core::replay_stage::ReplayStage::replay_blockstore_into_bank()`
-///
-/// Until SIMD83 is activated:
-/// All transactions in the `transactions` field have to follow the read/write locking restrictions
-/// with regard to the accounts they reference. A single account can be either written by a single
-/// transaction, or read by one or more transactions, but not both.
-/// This enforcement is done via a call to `solana_runtime::accounts::Accounts::lock_accounts()`
-/// with the `txs` argument holding all the `transactions` in the `Entry`.
 #[derive(Debug, Default, PartialEq, Eq, Clone, SchemaWrite, SchemaRead)]
 pub struct Entry {
     /// The number of hashes since the previous Entry ID.
@@ -117,11 +52,84 @@ pub struct Entry {
     /// The SHA-256 hash `num_hashes` after the previous Entry ID.
     pub hash: Hash,
 
-    /// An unordered list of transactions that were observed before the Entry ID was
+    /// An ordered list of transactions that were observed before the Entry ID was
     /// generated. They may have been observed before a previous Entry ID but were
     /// pushed back into this list to ensure deterministic interpretation of the ledger.
     #[wincode(with = "WincodeVec<VersionedTransaction, MaxDataShredsLen>")]
     pub transactions: Vec<VersionedTransaction>,
+}
+
+pub struct EntryView<D: TransactionData> {
+    /// The number of hashes since the previous Entry ID.
+    pub num_hashes: u64,
+
+    /// The SHA-256 hash `num_hashes` after the previous Entry ID.
+    pub hash: Hash,
+
+    /// An ordered list of transactions that were observed before the Entry ID was
+    /// generated. They may have been observed before a previous Entry ID but were
+    /// pushed back into this list to ensure deterministic interpretation of the ledger.
+    pub transactions: Vec<UnsanitizedTransactionView<D>>,
+}
+
+// for tests only, as this is an expensive operation and not needed in production.
+#[cfg(feature = "dev-context-only-utils")]
+impl<D> PartialEq for EntryView<D>
+where
+    D: PartialEq + TransactionData,
+{
+    fn eq(&self, other: &Self) -> bool {
+        let same_num_hashes = self.num_hashes == other.num_hashes;
+        let same_hash = self.hash == other.hash;
+        let same_transactions = || {
+            let same_len = self.transactions.len() == other.transactions.len();
+
+            if !same_len {
+                return false;
+            }
+
+            self.transactions
+                .iter()
+                .zip(other.transactions.iter())
+                .all(|(tx1, tx2)| tx1.data() == tx2.data())
+        };
+
+        same_num_hashes && same_hash && same_transactions()
+    }
+}
+
+impl<D> std::fmt::Debug for EntryView<D>
+where
+    D: TransactionData,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EntryView")
+            .field("num_hashes", &self.num_hashes)
+            .field("hash", &self.hash)
+            .field("transactions", &self.transactions)
+            .finish()
+    }
+}
+
+impl<D: TransactionData> EntryView<D> {
+    pub fn is_tick(&self) -> bool {
+        self.transactions.is_empty()
+    }
+}
+
+/// Serializes `entries` and re-parses them through [`crate::block_component_parser::parse`] to
+/// get byte-backed [`EntryView`]s, reusing the same parsing path production uses rather than
+/// hand-constructing transaction views.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn entry_views_for_tests(entries: Vec<Entry>) -> Vec<EntryView<bytes::Bytes>> {
+    let component = crate::block_component::BlockComponent::new_entry_batch(entries).unwrap();
+    let bytes = wincode::serialize(&component).unwrap();
+    let crate::block_component::ParsedBlockComponent::EntryBatch(views) =
+        crate::block_component_parser::parse(bytes).unwrap()
+    else {
+        panic!("expected EntryBatch");
+    };
+    views
 }
 
 // The data needed to verify an Entry.
@@ -143,6 +151,21 @@ impl From<&Entry> for EntryVerificationData {
                 .transactions
                 .iter()
                 .flat_map(|tx| tx.signatures.iter().copied())
+                .collect(),
+        }
+    }
+}
+
+impl<D: TransactionData> From<&EntryView<D>> for EntryVerificationData {
+    fn from(entry: &EntryView<D>) -> Self {
+        Self {
+            num_hashes: entry.num_hashes,
+            hash: entry.hash,
+            num_transactions: entry.transactions.len(),
+            signatures: entry
+                .transactions
+                .iter()
+                .flat_map(|tx| tx.signatures().iter().copied())
                 .collect(),
         }
     }
@@ -171,6 +194,12 @@ pub fn entries_to_verification_data(entries: &[Entry]) -> Vec<EntryVerificationD
     entries.iter().map(Into::into).collect()
 }
 
+pub fn entry_views_to_verification_data<D: TransactionData>(
+    entries: &[EntryView<D>],
+) -> Vec<EntryVerificationData> {
+    entries.iter().map(Into::into).collect()
+}
+
 pub struct EntrySummary {
     pub num_hashes: u64,
     pub hash: Hash,
@@ -187,39 +216,81 @@ impl From<&Entry> for EntrySummary {
     }
 }
 
+impl<D: TransactionData> From<&EntryView<D>> for EntrySummary {
+    fn from(entry: &EntryView<D>) -> Self {
+        Self {
+            num_hashes: entry.num_hashes,
+            hash: entry.hash,
+            num_transactions: entry.transactions.len() as u64,
+        }
+    }
+}
+
 /// Typed entry to distinguish between transaction and tick entries
 pub enum EntryType<Tx: TransactionWithMeta> {
     Transactions(Vec<Tx>),
     Tick(Hash),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TxVerificationData {
+#[derive(Debug)]
+struct TxVerificationData<D: TransactionData> {
     is_simple_vote: bool,
     signatures: SmallVec<[Signature; 2]>,
     signer_pubkeys: SmallVec<[Address; 2]>,
-    serialized_message: Vec<u8>,
+    message_hash: Hash,
+    transaction_view: UnsanitizedTransactionView<D>,
 }
 
-pub struct UnverifiedSignatures {
-    signatures: Vec<TxVerificationData>,
+pub struct UnverifiedSignatures<D: TransactionData> {
+    signatures: Vec<TxVerificationData<D>>,
 }
 
-impl UnverifiedSignatures {
+impl<D> UnverifiedSignatures<D>
+where
+    D: TransactionData + Send + Sync,
+{
     fn with_capacity(capacity: usize) -> Self {
         Self {
             signatures: Vec::with_capacity(capacity),
         }
     }
 
+    /// Verifies all collected signatures in parallel on the current rayon
+    /// thread pool, checking each signature individually.
     pub fn verify(&self) -> Result<()> {
+        let all_valid = self
+            .signatures
+            .par_iter()
+            .flat_map_iter(|tx| {
+                let message = tx.transaction_view.message_data();
+                tx.signatures
+                    .iter()
+                    .zip(tx.signer_pubkeys.iter())
+                    .map(move |(signature, pubkey)| (signature, pubkey, message))
+            })
+            .all(|(signature, pubkey, message)| signature.verify(pubkey.as_ref(), message));
+
+        if all_valid {
+            Ok(())
+        } else {
+            Err(TransactionError::SignatureFailure)
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Per-signature verification baseline, kept only for benchmarking against
+    /// [`Self::verify`].
+    pub fn verify_single_loop_for_benches(&self) -> Result<()> {
         self.signatures.par_iter().try_for_each(|tx_signatures| {
             if tx_signatures
                 .signatures
                 .iter()
                 .zip(tx_signatures.signer_pubkeys.iter())
                 .all(|(signature, pubkey)| {
-                    signature.verify(pubkey.as_ref(), &tx_signatures.serialized_message)
+                    signature.verify(
+                        pubkey.as_ref(),
+                        tx_signatures.transaction_view.message_data(),
+                    )
                 })
             {
                 Ok(())
@@ -229,18 +300,46 @@ impl UnverifiedSignatures {
         })
     }
 
-    pub fn vote_transaction_signatures(&self) -> Vec<Signature> {
+    pub fn len(&self) -> usize {
+        self.signatures.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.signatures.is_empty()
+    }
+
+    pub fn verify_signatures(&self, index: usize) -> bool {
+        let tx_data = &self.signatures[index];
+        let message = tx_data.transaction_view.message_data();
+        tx_data
+            .signatures
+            .iter()
+            .zip(&tx_data.signer_pubkeys)
+            .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message))
+    }
+
+    pub fn vote_transaction_message_hash(&self, index: usize) -> Option<Hash> {
+        let tx_data = &self.signatures[index];
+        (tx_data.is_simple_vote && !tx_data.signatures.is_empty()).then_some(tx_data.message_hash)
+    }
+
+    pub fn vote_transaction_message_hashes(&self) -> Vec<Hash> {
         self.signatures
             .iter()
             .filter(|tx_signatures| tx_signatures.is_simple_vote)
-            .filter_map(|tx_signatures| tx_signatures.signatures.first().copied())
+            .filter_map(|tx_signatures| {
+                tx_signatures
+                    .signatures
+                    .first()
+                    .map(|_| tx_signatures.message_hash)
+            })
             .collect()
     }
 }
 
-pub struct ValidatedHashedTransactions<Tx: TransactionWithMeta> {
+pub struct ValidatedHashedTransactions<Tx: TransactionWithMeta, D: TransactionData> {
     pub entries: Vec<EntryType<Tx>>,
-    pub unverified_signatures: UnverifiedSignatures,
+    pub unverified_signatures: UnverifiedSignatures<D>,
 }
 
 impl Entry {
@@ -360,13 +459,14 @@ impl EntryVerificationState {
     }
 }
 
-fn validate_and_hash_entry_transactions<Tx: TransactionWithMeta, F>(
-    entry: Entry,
+fn validate_and_hash_entry_transactions<Tx: TransactionWithMeta, F, D>(
+    entry: EntryView<D>,
     verify: &F,
-    unverified_signatures: &mut UnverifiedSignatures,
+    unverified_signatures: &mut UnverifiedSignatures<D>,
 ) -> Result<EntryType<Tx>>
 where
-    F: Fn(VersionedTransaction, &[u8]) -> Result<Tx>,
+    F: Fn(UnsanitizedTransactionView<D>) -> Result<Tx>,
+    D: TransactionData + Clone,
 {
     if entry.transactions.is_empty() {
         return Ok(EntryType::Tick(entry.hash));
@@ -375,20 +475,21 @@ where
     let verified_transactions = entry
         .transactions
         .into_iter()
-        .map(|versioned_tx| {
-            let num_signers = usize::from(versioned_tx.message.header().num_required_signatures);
-            let static_account_keys = versioned_tx.message.static_account_keys();
+        .map(|transaction_view| {
+            let num_signers: usize = transaction_view.num_required_signatures().into();
+            let static_account_keys = transaction_view.static_account_keys();
             if static_account_keys.len() < num_signers {
                 return Err(TransactionError::SanitizeFailure);
             }
-            let signatures = versioned_tx.signatures.iter().copied().collect();
+            let signatures = transaction_view.signatures().iter().copied().collect();
             let signer_pubkeys = static_account_keys[..num_signers].iter().copied().collect();
-            let serialized_message = versioned_tx.message.serialize();
-            let verified_transaction = verify(versioned_tx, &serialized_message)?;
+            let verified_transaction = verify(transaction_view.clone())?;
+            let message_hash = *verified_transaction.message_hash();
             unverified_signatures.signatures.push(TxVerificationData {
                 is_simple_vote: verified_transaction.is_simple_vote_transaction(),
                 signatures,
-                serialized_message,
+                message_hash,
+                transaction_view,
                 signer_pubkeys,
             });
 
@@ -402,14 +503,16 @@ where
 ///
 /// The function does NOT verify transaction signatures. The caller is expected to call
 /// `UnverifiedSignatures::verify()` on the returned `unverified_signatures`.
-pub fn validate_and_hash_transactions<Tx: TransactionWithMeta + Send + Sync, F>(
-    entries: Vec<Entry>,
+pub fn validate_and_hash_transactions<Tx, F, D>(
+    entries: Vec<EntryView<D>>,
     num_txs: usize,
     thread_pool: &ThreadPool,
     verify: F,
-) -> Result<ValidatedHashedTransactions<Tx>>
+) -> Result<ValidatedHashedTransactions<Tx, D>>
 where
-    F: Fn(VersionedTransaction, &[u8]) -> Result<Tx> + Send + Sync,
+    Tx: TransactionWithMeta + Send + Sync,
+    F: Fn(UnsanitizedTransactionView<D>) -> Result<Tx> + Send + Sync,
+    D: TransactionData + Clone + Send + Sync,
 {
     const PARALLEL_VERIFY_THRESHOLD: usize = 200;
     if num_txs < PARALLEL_VERIFY_THRESHOLD {
@@ -456,20 +559,6 @@ where
     })
 }
 
-fn compare_hashes(computed_hash: Hash, ref_entry: &EntryVerificationData) -> bool {
-    let actual = if ref_entry.num_transactions != 0 {
-        let tx_hash = hash_signatures(&ref_entry.signatures);
-        let mut poh = Poh::new(computed_hash, None);
-        poh.record(tx_hash).unwrap().hash
-    } else if ref_entry.num_hashes > 0 {
-        let mut poh = Poh::new(computed_hash, None);
-        poh.tick().unwrap().hash
-    } else {
-        computed_hash
-    };
-    actual == ref_entry.hash
-}
-
 pub fn verify_entries_cpu_in_pool(
     entries: &[EntryVerificationData],
     start_hash: &Hash,
@@ -507,110 +596,11 @@ fn verify_entries_cpu_generic(
     }
 }
 
-fn verify_entries_cpu_x86_simd(
-    entries: &[EntryVerificationData],
-    start_hash: &Hash,
-    simd_len: usize,
-) -> EntryVerificationState {
-    use solana_hash::HASH_BYTES;
-    let now = Instant::now();
-    let genesis = [EntryVerificationData {
-        num_hashes: 0,
-        hash: *start_hash,
-        num_transactions: 0,
-        signatures: Vec::new(),
-    }];
-
-    let aligned_len = entries.len().div_ceil(simd_len) * simd_len;
-    let mut hashes_bytes = vec![0u8; HASH_BYTES * aligned_len];
-    genesis
-        .iter()
-        .chain(entries)
-        .enumerate()
-        .for_each(|(i, entry)| {
-            if i < entries.len() {
-                let start = i * HASH_BYTES;
-                let end = start + HASH_BYTES;
-                hashes_bytes[start..end].copy_from_slice(&entry.hash.to_bytes());
-            }
-        });
-    let mut hashes_chunked: Vec<_> = hashes_bytes.chunks_mut(simd_len * HASH_BYTES).collect();
-
-    let mut num_hashes: Vec<u64> = entries
-        .iter()
-        .map(|entry| entry.num_hashes.saturating_sub(1))
-        .collect();
-    num_hashes.resize(aligned_len, 0);
-    let num_hashes: Vec<_> = num_hashes.chunks(simd_len).collect();
-
-    let res = hashes_chunked
-        .par_iter_mut()
-        .zip(num_hashes)
-        .enumerate()
-        .all(|(i, (chunk, num_hashes))| {
-            match simd_len {
-                8 => unsafe {
-                    (api().unwrap().poh_verify_many_simd_avx2)(
-                        chunk.as_mut_ptr(),
-                        num_hashes.as_ptr(),
-                    );
-                },
-                16 => unsafe {
-                    (api().unwrap().poh_verify_many_simd_avx512skx)(
-                        chunk.as_mut_ptr(),
-                        num_hashes.as_ptr(),
-                    );
-                },
-                _ => {
-                    panic!("unsupported simd len: {simd_len}");
-                }
-            }
-            let entry_start = i * simd_len;
-            // The last chunk may produce indexes larger than what we have in the reference entries
-            // because it is aligned to simd_len.
-            let entry_end = std::cmp::min(entry_start + simd_len, entries.len());
-            entries[entry_start..entry_end]
-                .iter()
-                .enumerate()
-                .all(|(j, ref_entry)| {
-                    let start = j * HASH_BYTES;
-                    let end = start + HASH_BYTES;
-                    let hash = <[u8; HASH_BYTES]>::try_from(&chunk[start..end])
-                        .map(Hash::new_from_array)
-                        .unwrap();
-                    compare_hashes(hash, ref_entry)
-                })
-        });
-    let poh_duration_us = now.elapsed().as_micros() as u64;
-    EntryVerificationState {
-        verification_status: res,
-        poh_duration_us,
-    }
-}
-
 pub fn verify_entries_cpu(
     entries: &[EntryVerificationData],
     start_hash: &Hash,
 ) -> EntryVerificationState {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    let (has_avx2, has_avx512) = (
-        is_x86_feature_detected!("avx2"),
-        is_x86_feature_detected!("avx512f"),
-    );
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    let (has_avx2, has_avx512) = (false, false);
-
-    if api().is_some() {
-        if has_avx512 && entries.len() >= 128 {
-            verify_entries_cpu_x86_simd(entries, start_hash, 16)
-        } else if has_avx2 && entries.len() >= 48 {
-            verify_entries_cpu_x86_simd(entries, start_hash, 8)
-        } else {
-            verify_entries_cpu_generic(entries, start_hash)
-        }
-    } else {
-        verify_entries_cpu_generic(entries, start_hash)
-    }
+    verify_entries_cpu_generic(entries, start_hash)
 }
 
 // an EntrySlice is a slice of Entries
@@ -618,14 +608,7 @@ pub trait EntrySlice {
     /// Verifies the hashes and counts of a slice of transactions are all consistent.
     fn verify_cpu(&self, start_hash: &Hash) -> EntryVerificationState;
     fn verify_cpu_generic(&self, start_hash: &Hash) -> EntryVerificationState;
-    fn verify_cpu_x86_simd(&self, start_hash: &Hash, simd_len: usize) -> EntryVerificationState;
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState;
-    /// Checks that each entry tick has the correct number of hashes. Entry slices do not
-    /// necessarily end in a tick, so `tick_hash_count` is used to carry over the hash count
-    /// for the next entry slice.
-    fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool;
-    /// Counts tick entries
-    fn tick_count(&self) -> u64;
 }
 
 impl EntrySlice for [Entry] {
@@ -639,16 +622,13 @@ impl EntrySlice for [Entry] {
         verify_entries_cpu_generic(&verification_entries, start_hash)
     }
 
-    fn verify_cpu_x86_simd(&self, start_hash: &Hash, simd_len: usize) -> EntryVerificationState {
-        let verification_entries = entries_to_verification_data(self);
-        verify_entries_cpu_x86_simd(&verification_entries, start_hash, simd_len)
-    }
-
     fn verify_cpu(&self, start_hash: &Hash) -> EntryVerificationState {
         let verification_entries = entries_to_verification_data(self);
         verify_entries_cpu(&verification_entries, start_hash)
     }
+}
 
+impl EntrySliceTickCheck for [Entry] {
     fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool {
         // When hashes_per_tick is 0, hashing is disabled.
         if hashes_per_tick == 0 {
@@ -658,6 +638,49 @@ impl EntrySlice for [Entry] {
         for entry in self {
             *tick_hash_count = tick_hash_count.saturating_add(entry.num_hashes);
             if entry.is_tick() {
+                if entry.num_hashes == 0 {
+                    return false;
+                }
+                if *tick_hash_count != hashes_per_tick {
+                    warn!(
+                        "invalid tick hash count!: entry: {entry:#?}, tick_hash_count: \
+                         {tick_hash_count}, hashes_per_tick: {hashes_per_tick}"
+                    );
+                    return false;
+                }
+                *tick_hash_count = 0;
+            }
+        }
+        *tick_hash_count < hashes_per_tick
+    }
+
+    fn tick_count(&self) -> u64 {
+        self.iter().filter(|e| e.is_tick()).count() as u64
+    }
+}
+pub trait EntrySliceTickCheck {
+    /// Checks that each entry tick has the correct number of hashes. Entry slices do not
+    /// necessarily end in a tick, so `tick_hash_count` is used to carry over the hash count
+    /// for the next entry slice.
+    fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool;
+
+    /// Counts tick entries
+    fn tick_count(&self) -> u64;
+}
+
+impl<D: TransactionData> EntrySliceTickCheck for [EntryView<D>] {
+    fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool {
+        // When hashes_per_tick is 0, hashing is disabled.
+        if hashes_per_tick == 0 {
+            return true;
+        }
+
+        for entry in self {
+            *tick_hash_count = tick_hash_count.saturating_add(entry.num_hashes);
+            if entry.is_tick() {
+                if entry.num_hashes == 0 {
+                    return false;
+                }
                 if *tick_hash_count != hashes_per_tick {
                     warn!(
                         "invalid tick hash count!: entry: {entry:#?}, tick_hash_count: \
@@ -733,25 +756,60 @@ pub fn thread_pool_for_benches() -> ThreadPool {
 mod tests {
     use {
         super::*,
+        crate::block_component::{BlockComponent, ParsedBlockComponent},
         agave_reserved_account_keys::ReservedAccountKeys,
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
+        bytes::Bytes,
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_measure::measure::Measure,
-        solana_message::SimpleAddressLoader,
+        solana_message::{
+            MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction, v1,
+        },
         solana_perf::test_tx::test_tx,
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::runtime_transaction::{ReplayTransaction, RuntimeTransaction},
         solana_sha256_hasher::hash,
+        solana_signature::Signature,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        solana_transaction::{
-            sanitized::{MessageHash, SanitizedTransaction},
-            versioned::VersionedTransaction,
-        },
+        solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         solana_transaction_error::TransactionResult as Result,
     };
+
+    fn entry_view_from_entry(entry: Entry) -> EntryView<Bytes> {
+        let component = BlockComponent::new_entry_batch(vec![entry]).unwrap();
+        let bytes = wincode::serialize(&component).unwrap();
+        let ParsedBlockComponent::EntryBatch(mut views) =
+            crate::block_component_parser::parse(bytes).unwrap()
+        else {
+            panic!("expected EntryBatch");
+        };
+        views.pop().unwrap()
+    }
+
+    fn simple_v1_transaction_for_deserialization_tests() -> VersionedTransaction {
+        VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V1(v1::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                config: v1::TransactionConfig::empty(),
+                lifetime_specifier: Hash::new_unique(),
+                account_keys: vec![Pubkey::new_unique(), Pubkey::new_unique()],
+                instructions: vec![CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![0],
+                    data: vec![],
+                }],
+            }),
+        }
+    }
 
     fn create_random_ticks(num_ticks: u64, max_hashes_per_tick: u64, mut hash: Hash) -> Vec<Entry> {
         repeat_with(|| {
@@ -773,10 +831,10 @@ mod tests {
     }
 
     fn test_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static>(
-        entries: Vec<Entry>,
+        entries: Vec<EntryView<Bytes>>,
         skip_verification: bool,
         thread_pool: &ThreadPool,
-        verify: impl Fn(VersionedTransaction, &[u8]) -> Result<Tx> + Send + Sync,
+        verify: impl Fn(UnsanitizedTransactionView<Bytes>) -> Result<Tx> + Send + Sync,
     ) -> bool {
         let num_txs = entries.iter().map(|entry| entry.transactions.len()).sum();
         let txs = validate_and_hash_transactions(entries, num_txs, thread_pool, verify);
@@ -801,23 +859,25 @@ mod tests {
         let e1 = Entry::new(&zero, 0, vec![tx2, tx3]);
         assert!(e1.verify(&zero));
 
-        let es = vec![e0, e1];
+        let es = vec![entry_view_from_entry(e0), entry_view_from_entry(e1)];
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
 
         // Next, verify entry slice
         let verify_transaction = {
-            move |versioned_tx: VersionedTransaction,
-                  message_bytes: &[u8]|
-                  -> Result<RuntimeTransaction<SanitizedTransaction>> {
-                RuntimeTransaction::try_create(
-                    versioned_tx,
-                    MessageHash::Precomputed(solana_message::VersionedMessage::hash_raw_message(
-                        message_bytes,
-                    )),
+            move |unsanitized: UnsanitizedTransactionView<Bytes>| -> Result<ReplayTransaction> {
+                let sanitized = unsanitized
+                    .sanitize()
+                    .map_err(|_| TransactionError::SanitizeFailure)?;
+                let statically_loaded =
+                    RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
+                        sanitized,
+                        MessageHash::Compute,
+                        None,
+                    )?;
+                ReplayTransaction::try_new(
+                    statically_loaded,
                     None,
-                    SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
-                    true,
                 )
             }
         };
@@ -836,21 +896,23 @@ mod tests {
         let zero = Hash::default();
         let keypair = Keypair::new();
         let tx = system_transaction::transfer(&keypair, &keypair.pubkey(), 1, zero);
-        let entries = vec![Entry::new(&zero, 0, vec![tx])];
+        let entries = vec![entry_view_from_entry(Entry::new(&zero, 0, vec![tx]))];
 
         let validate_and_hash_transaction =
-            move |versioned_tx: VersionedTransaction,
-                  message_bytes: &[u8]|
-                  -> Result<RuntimeTransaction<SanitizedTransaction>> {
-                RuntimeTransaction::try_create(
-                    versioned_tx,
-                    MessageHash::Precomputed(solana_message::VersionedMessage::hash_raw_message(
-                        message_bytes,
-                    )),
+            move |unsanitized: UnsanitizedTransactionView<Bytes>| -> Result<ReplayTransaction> {
+                let sanitized = unsanitized
+                    .sanitize()
+                    .map_err(|_| TransactionError::SanitizeFailure)?;
+                let statically_loaded =
+                    RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
+                        sanitized,
+                        MessageHash::Compute,
+                        None,
+                    )?;
+                ReplayTransaction::try_new(
+                    statically_loaded,
                     None,
-                    SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
-                    true,
                 )
             };
         let txs =
@@ -861,7 +923,7 @@ mod tests {
 
         let mut tx = system_transaction::transfer(&keypair, &keypair.pubkey(), 1, zero);
         tx.signatures[0] = solana_signature::Signature::default();
-        let entries = vec![Entry::new(&zero, 0, vec![tx])];
+        let entries = vec![entry_view_from_entry(Entry::new(&zero, 0, vec![tx]))];
         let txs =
             validate_and_hash_transactions(entries, 1, &thread_pool, validate_and_hash_transaction)
                 .expect("transaction validation and hashing must not verify signatures");
@@ -1103,7 +1165,7 @@ mod tests {
 
         // empty batch should succeed if hashes_per_tick hasn't been reached
         let mut tick_hash_count = 0;
-        let mut entries = vec![];
+        let mut entries: Vec<Entry> = vec![];
         assert!(entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
         assert_eq!(tick_hash_count, 0);
 
@@ -1140,10 +1202,16 @@ mod tests {
         assert_eq!(tick_hash_count, hashes_per_tick - 1);
         tick_hash_count = 0;
 
-        // full tx entry with tick entry should succeed
-        entries = vec![full_tx_entry.clone(), no_hash_tick_entry];
-        assert!(entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
+        // no hash tick entry should fail
+        entries = vec![no_hash_tick_entry.clone()];
+        assert!(!entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
         assert_eq!(tick_hash_count, 0);
+
+        // full tx entry with no hash tick entry should still fail
+        entries = vec![full_tx_entry.clone(), no_hash_tick_entry];
+        assert!(!entries.verify_tick_hash_count(&mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick);
+        tick_hash_count = 0;
 
         // full tx entry with oversized tick entry should fail
         entries = vec![full_tx_entry.clone(), single_hash_tick_entry.clone()];
@@ -1223,5 +1291,44 @@ mod tests {
         transactions.swap(0, 1);
         let hash2 = hash_transactions(&transactions);
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_deserialize_entries_rejects_txv1_unknown_config_mask_bit() {
+        let tx = simple_v1_transaction_for_deserialization_tests();
+        let entries = vec![next_versioned_entry(&Hash::default(), 1, vec![tx.clone()])];
+        let mut serialized_entries = wincode::serialize(&entries).unwrap();
+
+        assert!(wincode::deserialize::<Vec<Entry>>(&serialized_entries).is_ok());
+
+        let serialized_tx = wincode::serialize(&tx).unwrap();
+        let tx_offset = serialized_entries
+            .windows(serialized_tx.len())
+            .position(|window| window == serialized_tx)
+            .expect("serialized transaction should be embedded in serialized entry");
+
+        // txv1 begins with the version byte and the 3-byte legacy header.
+        const TXV1_CONFIG_MASK_OFFSET: usize = 1 + 3;
+        let mask_offset = tx_offset + TXV1_CONFIG_MASK_OFFSET;
+        let mask_range = mask_offset..mask_offset + core::mem::size_of::<u32>();
+        let mask = u32::from_le_bytes(serialized_entries[mask_range.clone()].try_into().unwrap());
+        assert_eq!(mask, 0);
+
+        let unknown_config_mask_bit = 1u32
+            .checked_shl(v1::TransactionConfigMask::KNOWN_BITS.trailing_ones())
+            .expect("txv1 config mask should have at least one unknown bit");
+        assert_ne!(
+            unknown_config_mask_bit & v1::TransactionConfigMask::KNOWN_BITS,
+            unknown_config_mask_bit
+        );
+        serialized_entries[mask_range]
+            .copy_from_slice(&(mask | unknown_config_mask_bit).to_le_bytes());
+
+        assert!(matches!(
+            wincode::deserialize::<Vec<Entry>>(&serialized_entries),
+            Err(wincode::ReadError::InvalidValue(
+                "invalid transaction config mask"
+            ))
+        ));
     }
 }

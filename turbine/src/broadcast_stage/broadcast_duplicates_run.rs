@@ -1,19 +1,27 @@
 use {
     super::*,
-    crate::cluster_nodes::ClusterNodesCache,
+    crate::{broadcast_stage::broadcast_utils::BroadcastItem, cluster_nodes::ClusterNodesCache},
     agave_votor::event::VotorEventSender,
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     itertools::Itertools,
-    solana_entry::entry::Entry,
+    solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+    solana_ledger::shred::{ProcessShredsStats, ShredId, Shredder},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    std::collections::HashSet,
+    std::{borrow::Cow, collections::HashSet},
 };
+
+// Shreds in a Merkle FEC set share a signature, while duplicate variants share shred IDs.
+// The pair uniquely identifies every shred from both versions.
+type DuplicateShredKey = (Signature, ShredId);
+
+fn duplicate_shred_key(shred: &Shred) -> DuplicateShredKey {
+    (*shred.signature(), shred.id())
+}
 
 pub const MINIMUM_DUPLICATE_SLOT: Slot = 20;
 pub const DUPLICATE_RATE: usize = 10;
@@ -40,7 +48,7 @@ pub(super) struct BroadcastDuplicatesRun {
     config: BroadcastDuplicatesConfig,
     current_slot: Slot,
     chained_merkle_root: Hash,
-    carryover_entry: Option<WorkingBankEntry>,
+    carryover_message: Option<WorkingBankMessage>,
     next_shred_index: u32,
     next_code_index: u32,
     shred_version: u16,
@@ -48,9 +56,8 @@ pub(super) struct BroadcastDuplicatesRun {
     prev_entry_hash: Option<Hash>,
     num_slots_broadcasted: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
-    original_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
-    partition_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
-    reed_solomon_cache: Arc<ReedSolomonCache>,
+    original_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
+    partition_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
 }
@@ -69,7 +76,7 @@ impl BroadcastDuplicatesRun {
         Self {
             config,
             chained_merkle_root: Hash::default(),
-            carryover_entry: None,
+            carryover_message: None,
             next_shred_index: u32::MAX,
             next_code_index: 0,
             shred_version,
@@ -78,9 +85,8 @@ impl BroadcastDuplicatesRun {
             prev_entry_hash: None,
             num_slots_broadcasted: 0,
             cluster_nodes_cache,
-            original_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
-            partition_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
-            reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
+            original_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
+            partition_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
             migration_status,
             votor_event_sender,
         }
@@ -88,18 +94,23 @@ impl BroadcastDuplicatesRun {
 }
 
 impl BroadcastRun for BroadcastDuplicatesRun {
-    fn run(
+    fn run<'db>(
         &mut self,
         keypair: &Keypair,
-        blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntry>,
+        blockstore: &'db Blockstore,
+        _pinnable_slice: &mut DBPinnableSlice<'db>,
+        _write_batch: &mut WriteBatch,
+        receiver: &Receiver<WorkingBankMessage>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
         let mut stats = ProcessShredsStats::default();
-        let mut receive_results =
-            broadcast_utils::recv_slot_entries(receiver, &mut self.carryover_entry, &mut stats)?;
+        let mut receive_results = broadcast_utils::recv_slot_components(
+            receiver,
+            &mut self.carryover_message,
+            &mut stats,
+        )?;
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 
@@ -117,12 +128,18 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             self.num_slots_broadcasted += 1;
         }
 
-        if receive_results.entries.is_empty() {
+        let BroadcastItem::Component(ref mut component) = receive_results.item else {
+            // This test only TowerBFT implementation does not use block markers
             return Ok(());
-        }
-
+        };
+        let BlockComponent::EntryBatch(entries) = component else {
+            // This test only TowerBFT implementation does not use block markers
+            return Ok(());
+        };
+        // We are guarenteed by coalesce that this is not empty
+        assert!(!entries.is_empty());
         // Update the recent blockhash based on transactions in the entries
-        for entry in &receive_results.entries {
+        for entry in entries.iter() {
             if !entry.transactions.is_empty() {
                 self.recent_blockhash = Some(*entry.transactions[0].message.recent_blockhash());
                 break;
@@ -137,17 +154,17 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 && self.num_slots_broadcasted.is_multiple_of(DUPLICATE_RATE)
                 && let Some(recent_blockhash) = self.recent_blockhash
             {
-                let entry_batch_len = receive_results.entries.len();
+                let entry_batch_len = entries.len();
                 let prev_entry_hash =
                     // Try to get second-to-last entry before last tick
                     if entry_batch_len > 1 {
-                        Some(receive_results.entries[entry_batch_len - 2].hash)
+                        Some(entries[entry_batch_len - 2].hash)
                     } else {
                         self.prev_entry_hash
                     };
 
                 if let Some(prev_entry_hash) = prev_entry_hash {
-                    let original_last_entry = receive_results.entries.pop().unwrap();
+                    let original_last_entry = entries.pop().unwrap();
 
                     // Last entry has to be a tick
                     assert!(original_last_entry.is_tick());
@@ -182,7 +199,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         self.prev_entry_hash = last_entries
             .as_ref()
             .map(|(original_last_entry, _)| original_last_entry.hash)
-            .or_else(|| receive_results.entries.last().map(|e| e.hash));
+            .or_else(|| entries.last().map(|e| e.hash));
 
         let shredder = Shredder::new(
             bank.slot(),
@@ -192,21 +209,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        // Avoid generating an empty FEC set
-        let (data_shreds, coding_shreds) = if !receive_results.entries.is_empty() {
-            shredder.entries_to_merkle_shreds_for_tests(
-                keypair,
-                &receive_results.entries,
-                last_tick_height == bank.max_tick_height() && last_entries.is_none(),
-                self.chained_merkle_root,
-                self.next_shred_index,
-                self.next_code_index,
-                &self.reed_solomon_cache,
-                &mut stats,
-            )
-        } else {
-            (vec![], vec![])
-        };
+        let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
+            keypair,
+            component,
+            last_tick_height == bank.max_tick_height() && last_entries.is_none(),
+            self.chained_merkle_root,
+            self.next_shred_index,
+            self.next_code_index,
+            &mut stats,
+        );
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }
@@ -216,27 +227,25 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         }
         let last_shreds =
             last_entries.map(|(original_last_entry, duplicate_extra_last_entries)| {
-                let (original_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
+                let (original_last_data_shred, _) = shredder.component_to_merkle_shreds_for_tests(
                     keypair,
-                    &[original_last_entry],
+                    &BlockComponent::EntryBatch(vec![original_last_entry]),
                     true,
                     self.chained_merkle_root,
                     self.next_shred_index,
                     self.next_code_index,
-                    &self.reed_solomon_cache,
                     &mut stats,
                 );
                 // Don't mark the last shred as last so that validators won't
                 // know that they've gotten all the shreds, and will continue
                 // trying to repair.
-                let (partition_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
+                let (partition_last_data_shred, _) = shredder.component_to_merkle_shreds_for_tests(
                     keypair,
-                    &duplicate_extra_last_entries,
+                    &BlockComponent::EntryBatch(duplicate_extra_last_entries),
                     true,
                     self.chained_merkle_root,
                     self.next_shred_index,
                     self.next_code_index,
-                    &self.reed_solomon_cache,
                     &mut stats,
                 );
                 let sigs: Vec<_> = partition_last_data_shred
@@ -266,8 +275,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
 
         if !data_shreds.is_empty() {
             let data_shreds = Arc::new(data_shreds);
-            blockstore_sender.send((data_shreds.clone(), None))?;
-
             // 3) Start broadcast step
             info!(
                 "{} Sending good shreds for slot {} to network",
@@ -275,7 +282,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 data_shreds.first().unwrap().slot()
             );
             assert!(data_shreds.iter().all(|shred| shred.slot() == bank.slot()));
-            socket_sender.send((data_shreds, None))?;
+            dispatch_shreds(blockstore_sender, socket_sender, data_shreds, None)?;
         }
 
         // Special handling of last shred to cause partition
@@ -284,21 +291,18 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             self.original_last_data_shreds.lock().unwrap().extend(
                 original_last_data_shred.iter().map(|shred| {
                     assert!(shred.verify(&pubkey));
-                    shred.signature()
+                    duplicate_shred_key(shred)
                 }),
             );
             self.partition_last_data_shreds.lock().unwrap().extend(
                 partition_last_data_shred.iter().map(|shred| {
                     info!("adding {} to partition set", shred.signature());
                     assert!(shred.verify(&pubkey));
-                    shred.signature()
+                    duplicate_shred_key(shred)
                 }),
             );
             let original_last_data_shred = Arc::new(original_last_data_shred);
             let partition_last_data_shred = Arc::new(partition_last_data_shred);
-
-            // Store the original shreds that this node replayed
-            blockstore_sender.send((original_last_data_shred.clone(), None))?;
 
             assert!(
                 original_last_data_shred
@@ -314,7 +318,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             if let Some(duplicate_slot_sender) = &self.config.duplicate_slot_sender {
                 let _ = duplicate_slot_sender.send(bank.slot());
             }
-            socket_sender.send((original_last_data_shred, None))?;
+            // Store the original shreds that this node replayed;
+            dispatch_shreds(
+                blockstore_sender,
+                socket_sender,
+                original_last_data_shred,
+                None,
+            )?;
+            // the partition shreds go only over the wire to create the duplicate slot.
+            // blocking here is ok since this is only ever used in tests.
             socket_sender.send((partition_last_data_shred, None))?;
         }
 
@@ -378,36 +390,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         let packets: Vec<_> = shreds
             .iter()
             .filter_map(|shred| {
-                let node = cluster_nodes.get_broadcast_peer(&shred.id())?;
-                if !socket_addr_space.check(&node.tvu(Protocol::UDP)?) {
-                    return None;
-                }
                 if self
-                    .original_last_data_shreds
-                    .lock()
-                    .unwrap()
-                    .remove(shred.signature())
-                {
-                    if cluster_partition.contains(node.pubkey()) {
-                        info!(
-                            "Not broadcasting original shred index {}, slot {} to partition node \
-                             {}",
-                            shred.index(),
-                            shred.slot(),
-                            node.pubkey(),
-                        );
-                        return None;
-                    }
-                } else if self
                     .partition_last_data_shreds
                     .lock()
                     .unwrap()
-                    .remove(shred.signature())
+                    .remove(&duplicate_shred_key(shred))
                 {
-                    // If the shred is part of the partition, broadcast it directly to the
-                    // partition node. This is to account for cases when the partition stake
-                    // is small such as in `test_duplicate_shreds_broadcast_leader()`, then
-                    // the partition node is never selected by get_broadcast_peer()
+                    // Partition shreds bypass Turbine and are sent directly to the partition.
+                    // Do this before selecting a Turbine peer so that an unrelated peer with no
+                    // usable TVU address cannot cause the partition shred to be dropped.
                     return Some(
                         cluster_partition
                             .iter()
@@ -422,10 +413,32 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                                 let tvu = cluster_info.lookup_contact_info(pubkey, |node| {
                                     node.tvu(Protocol::UDP)
                                 })??;
-                                Some((shred.payload(), tvu))
+                                socket_addr_space
+                                    .check(&tvu)
+                                    .then_some((shred.payload(), tvu))
                             })
                             .collect(),
                     );
+                }
+
+                let node = cluster_nodes.get_broadcast_peer(&shred.id())?;
+                if !socket_addr_space.check(&node.tvu(Protocol::UDP)?) {
+                    return None;
+                }
+                if self
+                    .original_last_data_shreds
+                    .lock()
+                    .unwrap()
+                    .remove(&duplicate_shred_key(shred))
+                    && cluster_partition.contains(node.pubkey())
+                {
+                    info!(
+                        "Not broadcasting original shred index {}, slot {} to partition node {}",
+                        shred.index(),
+                        shred.slot(),
+                        node.pubkey(),
+                    );
+                    return None;
                 }
 
                 Some(vec![(shred.payload(), node.tvu(Protocol::UDP)?)])
@@ -439,14 +452,92 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 panic!("Xdp not supported for duplicate shreds run");
             }
         };
-        batch_send(sock, packets).map_err(|SendPktsError::IoError(err, _)| Error::Io(err))
+        batch_send(sock, packets)
+            .map(|_num_sent| ())
+            .map_err(|SendPktsError::IoError(err)| Error::Io(err))
     }
 
-    fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()> {
+    fn record<'db>(
+        &mut self,
+        receiver: &RecordReceiver,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
+    ) -> Result<()> {
         let (all_shreds, _) = receiver.recv()?;
         blockstore
-            .insert_shreds(all_shreds.to_vec(), None, true)
+            .insert_cow_shreds(
+                all_shreds.iter().map(Cow::Borrowed),
+                true,
+                pinnable_slice,
+                write_batch,
+            )
             .expect("Failed to insert shreds in blockstore");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_entry::entry::create_ticks};
+
+    #[test]
+    fn test_special_shred_key_distinguishes_shreds_with_shared_signature() {
+        let keypair = Keypair::new();
+        let shredder = Shredder::new(1, 0, 0, 0).unwrap();
+        let mut stats = ProcessShredsStats::default();
+        let (data_shreds, _) = shredder.component_to_merkle_shreds_for_tests(
+            &keypair,
+            &BlockComponent::EntryBatch(create_ticks(1, 0, Hash::default())),
+            true,
+            Hash::default(),
+            0,
+            0,
+            &mut stats,
+        );
+        let (duplicate_data_shreds, _) = shredder.component_to_merkle_shreds_for_tests(
+            &keypair,
+            &BlockComponent::EntryBatch(create_ticks(1, 0, Hash::new_unique())),
+            true,
+            Hash::default(),
+            0,
+            0,
+            &mut stats,
+        );
+
+        assert!(data_shreds.len() > 1);
+        assert_eq!(data_shreds.len(), duplicate_data_shreds.len());
+        assert_eq!(
+            data_shreds
+                .iter()
+                .map(|shred| *shred.signature())
+                .collect::<HashSet<_>>()
+                .len(),
+            1,
+        );
+        assert!(
+            data_shreds
+                .iter()
+                .zip(&duplicate_data_shreds)
+                .all(|(shred, duplicate)| {
+                    shred.id() == duplicate.id()
+                        && shred.signature() != duplicate.signature()
+                        && duplicate_shred_key(shred) != duplicate_shred_key(duplicate)
+                })
+        );
+
+        let mut tracked: HashSet<DuplicateShredKey> = data_shreds
+            .iter()
+            .chain(&duplicate_data_shreds)
+            .map(duplicate_shred_key)
+            .collect();
+        assert_eq!(
+            tracked.len(),
+            data_shreds.len() + duplicate_data_shreds.len()
+        );
+        for shred in data_shreds.iter().chain(&duplicate_data_shreds) {
+            assert!(tracked.remove(&duplicate_shred_key(shred)));
+        }
+        assert!(tracked.is_empty());
     }
 }

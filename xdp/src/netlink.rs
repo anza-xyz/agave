@@ -2,12 +2,13 @@
 
 use {
     libc::{
-        AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, NDA_DST,
-        NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP,
-        NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE,
-        RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK, SOL_SOCKET,
-        nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
+        AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, MSG_DONTWAIT,
+        MSG_TRUNC, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_GET_STRICT_CHK, NETLINK_ROUTE,
+        NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP, NLM_F_DUMP_INTR, NLM_F_MULTI, NLM_F_REQUEST,
+        NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY, RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY,
+        RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
+        RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK, SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr,
+        recv, send, setsockopt, sockaddr_nl, socket,
     },
     std::{
         collections::HashMap,
@@ -22,12 +23,28 @@ use {
 
 const NETLINK_RCVBUF_SIZE: i32 = 1 << 16;
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
+
+// MTU of the device (from include/uapi/linux/if_link.h)
+const IFLA_MTU: u16 = 4;
+
+const NDA_FLAGS_EXT: u16 = 15;
+const NLM_F_ACK: u16 = 0x4;
+const NLM_F_REPLACE: u16 = 0x100;
+const NLM_F_CREATE: u16 = 0x400;
+const NTF_EXT_LEARNED: u8 = 1 << 4;
+const NTF_EXT_MANAGED: u32 = 1;
+const NTF_EXT_VALIDATED: u32 = 1 << 2;
+const NTF_USE: u8 = 1;
 // GRE nested attributes (from include/uapi/linux/if_tunnel.h)
 const IFLA_GRE_LOCAL: u16 = 6;
 const IFLA_GRE_REMOTE: u16 = 7;
 const IFLA_GRE_TTL: u16 = 8;
 const IFLA_GRE_TOS: u16 = 9;
 const IFLA_GRE_PMTUDISC: u16 = 10;
+
+// VLAN nested attributes (from include/uapi/linux/if_link.h)
+const IFLA_VLAN_ID: u16 = 1;
+const IFLA_VLAN_PROTOCOL: u16 = 5;
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
@@ -46,7 +63,7 @@ pub struct NetlinkSocket {
 }
 
 impl NetlinkSocket {
-    fn open() -> Result<Self, io::Error> {
+    pub(crate) fn open() -> Result<Self, io::Error> {
         // Safety: libc wrapper
         let sock = unsafe { socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) };
         if sock < 0 {
@@ -56,18 +73,20 @@ impl NetlinkSocket {
         let sock = unsafe { OwnedFd::from_raw_fd(sock) };
 
         let enable = 1i32;
-        // Safety: libc wrapper
-        if unsafe {
-            setsockopt(
-                sock.as_raw_fd(),
-                SOL_NETLINK,
-                NETLINK_EXT_ACK,
-                &enable as *const _ as *const _,
-                mem::size_of::<i32>() as u32,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
+        for opt in [NETLINK_EXT_ACK, NETLINK_GET_STRICT_CHK] {
+            // Safety: libc wrapper
+            if unsafe {
+                setsockopt(
+                    sock.as_raw_fd(),
+                    SOL_NETLINK,
+                    opt,
+                    &enable as *const _ as *const _,
+                    mem::size_of::<i32>() as u32,
+                )
+            } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
         }
         Ok(Self { sock, _nl_pid: 0 })
     }
@@ -88,11 +107,27 @@ impl NetlinkSocket {
     }
 
     pub(crate) fn recv(&self) -> Result<Vec<NetlinkMessage>, io::Error> {
-        // The theoretical max size of a single netlink message (including header) is 4GiB.
-        // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/uapi/linux/netlink.h#L46
-        // However, in the kernel, the netlink message size is set to a page size.
-        // If the page size exceeds 8KiB, the netlink message size is capped to 8KiB
-        // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/linux/netlink.h#L267
+        self.recv_with_flags(0)
+    }
+
+    pub(crate) fn recv_nonblocking(&self) -> Result<Option<Vec<NetlinkMessage>>, io::Error> {
+        match self.recv_with_flags(MSG_DONTWAIT) {
+            Ok(messages) => Ok(Some(messages)),
+            Err(e)
+                if e.raw_os_error()
+                    .is_some_and(|errno| errno == libc::EAGAIN || errno == libc::EWOULDBLOCK) =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn recv_with_flags(&self, flags: i32) -> Result<Vec<NetlinkMessage>, io::Error> {
+        // The kernel returns NLMSG_GOODSIZE (8k) as the recommended max allocation for netlink
+        // responses. However that is not a hard cap, and netlink code can in theory return larger
+        // messages. Out of caution we allocate a larger buffer AND use MSG_TRUNC to detect if that
+        // is still not enough.
         let mut buf = [0u8; 8 * 1024]; // 8 KiB
         let mut messages = Vec::new();
         let mut multipart = true;
@@ -104,7 +139,7 @@ impl NetlinkSocket {
                     self.sock.as_raw_fd(),
                     buf.as_mut_ptr() as *mut _,
                     buf.len(),
-                    0,
+                    flags | MSG_TRUNC,
                 )
             };
             if len < 0 {
@@ -115,11 +150,20 @@ impl NetlinkSocket {
             }
 
             let len = len as usize;
+            if len > buf.len() {
+                return Err(io::Error::other("netlink datagram truncated"));
+            }
             let mut offset = 0;
             while offset < len {
                 let message = NetlinkMessage::read(&buf[offset..])?;
                 offset += align_to(message.header.nlmsg_len as usize, NLMSG_ALIGNTO as usize);
                 multipart = message.header.nlmsg_flags & NLM_F_MULTI as u16 != 0;
+                if message.header.nlmsg_flags & NLM_F_DUMP_INTR as u16 != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "netlink dump interrupted",
+                    ));
+                }
                 match message.header.nlmsg_type as i32 {
                     NLMSG_ERROR => {
                         let err = message.error.unwrap();
@@ -354,10 +398,19 @@ pub struct GreTunnelInfo {
     pub pmtudisc: u8,
 }
 
+/// 802.1Q VLAN sub-interface information from netlink (IFLA_LINKINFO kind "vlan").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VlanLinkInfo {
+    /// VLAN ID (IFLA_VLAN_ID), 1-4094 in practice.
+    pub vid: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceInfo {
     pub if_index: u32,
+    pub mtu: u32,
     pub gre_tunnel: Option<GreTunnelInfo>,
+    pub vlan_link: Option<VlanLinkInfo>,
 }
 
 impl InterfaceInfo {
@@ -414,12 +467,39 @@ pub(crate) fn parse_rtm_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo>
         return None;
     };
 
+    let mtu = attrs
+        .get(&IFLA_MTU)
+        .and_then(|a| u32_from_ne_bytes(a.data))?;
+
     // Parse GRE tunnel information if this is a GRE interface
     let gre_tunnel = parse_gre_tunnel_info_from_linkinfo(&attrs);
+    // Parse VLAN information if this is an 802.1Q VLAN sub-interface
+    let vlan_link = parse_vlan_link_info_from_linkinfo(&attrs);
     Some(InterfaceInfo {
         if_index: ifi.ifi_index,
+        mtu,
         gre_tunnel,
+        vlan_link,
     })
+}
+
+// Parse 802.1Q VLAN information from netlink
+fn parse_vlan_link_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<VlanLinkInfo> {
+    let vlan = parse_linkinfo_data_for_kind(attrs, b"vlan")?;
+
+    // Only 802.1Q is supported; skip 802.1ad (QinQ) sub-interfaces. The protocol attribute is a
+    // big-endian u16; kernels predating 802.1ad support omit it, which implies 802.1Q.
+    if let Some(proto) = vlan.get(&IFLA_VLAN_PROTOCOL) {
+        let proto = u16::from_be_bytes(proto.data.get(..2)?.try_into().ok()?);
+        if proto != libc::ETH_P_8021Q as u16 {
+            return None;
+        }
+    }
+
+    let vid = vlan
+        .get(&IFLA_VLAN_ID)
+        .and_then(|a| u16_from_ne_bytes(a.data))?;
+    Some(VlanLinkInfo { vid })
 }
 
 // Parse GRE tunnel information from netlink
@@ -480,6 +560,10 @@ pub struct NeighborEntry {
     pub ifindex: i32,
     // NUD_* state
     pub state: u16,
+    // NTF_* flags from ndmsg
+    pub flags: u8,
+    // NTF_EXT_* flags from NDA_FLAGS_EXT
+    pub flags_ext: u32,
 }
 
 impl NeighborEntry {
@@ -489,6 +573,13 @@ impl NeighborEntry {
             Some(IpAddr::V4(ip)) => Some((self.ifindex, ip)),
             _ => None,
         }
+    }
+
+    #[inline]
+    pub fn requires_refresh(&self) -> bool {
+        self.state & (libc::NUD_PERMANENT | libc::NUD_NOARP) == 0
+            && self.flags & NTF_EXT_LEARNED == 0
+            && self.flags_ext & (NTF_EXT_MANAGED | NTF_EXT_VALIDATED) == 0
     }
 }
 
@@ -500,7 +591,7 @@ struct ndmsg {
     _ndm_pad2: u16,
     ndm_ifindex: i32,
     ndm_state: u16,
-    _ndm_flags: u8,
+    ndm_flags: u8,
     _ndm_type: u8,
 }
 
@@ -508,6 +599,40 @@ struct ndmsg {
 struct NeighRequest {
     header: nlmsghdr,
     ndm: ndmsg,
+}
+
+pub fn netlink_use_neighbor(
+    sock: &NetlinkSocket,
+    if_index: u32,
+    ip: Ipv4Addr,
+) -> Result<(), io::Error> {
+    let req = {
+        // Safety: NeighRequest is POD.
+        let mut req = unsafe { mem::zeroed::<NeighRequest>() };
+        let nlmsg_len = mem::size_of::<nlmsghdr>() + mem::size_of::<ndmsg>();
+        req.header = nlmsghdr {
+            nlmsg_len: nlmsg_len as u32,
+            nlmsg_flags: (NLM_F_REQUEST as u16) | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE,
+            nlmsg_type: RTM_NEWNEIGH,
+            nlmsg_pid: 0,
+            nlmsg_seq: 1,
+        };
+        req.ndm.ndm_family = AF_INET as u8;
+        req.ndm.ndm_ifindex = if_index as i32;
+        req.ndm.ndm_state = 0;
+        req.ndm.ndm_flags = NTF_USE;
+
+        let mut req_buf = bytes_of(&req)[..nlmsg_len].to_vec();
+        push_nlattr(&mut req_buf, NDA_DST, &ip.octets());
+
+        let header = unsafe { &mut *(req_buf.as_mut_ptr() as *mut nlmsghdr) };
+        header.nlmsg_len = req_buf.len() as u32;
+
+        req_buf
+    };
+    sock.send(&req)?;
+    sock.recv()?;
+    Ok(())
 }
 
 /// fetch the kernel's neighbor table (ARP/NDP cache)
@@ -560,10 +685,10 @@ pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option
         return None;
     }
     let nd_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
-    if let Some(idx) = if_index {
-        if nd_msg.ndm_ifindex != idx as i32 {
-            return None;
-        }
+    if let Some(idx) = if_index
+        && nd_msg.ndm_ifindex != idx as i32
+    {
+        return None;
     }
     let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<ndmsg>()..]) else {
         return None;
@@ -573,16 +698,25 @@ pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option
         lladdr: None,
         ifindex: nd_msg.ndm_ifindex,
         state: nd_msg.ndm_state,
+        flags: nd_msg.ndm_flags,
+        flags_ext: 0,
     };
     if let Some(dst_attr) = attrs.get(&NDA_DST) {
         neighbor.destination = parse_ip_address(dst_attr.data, nd_msg.ndm_family);
     }
-    if let Some(lladdr_attr) = attrs.get(&NDA_LLADDR) {
-        if lladdr_attr.data.len() >= 6 {
-            let mut mac = [0u8; 6];
-            mac.copy_from_slice(&lladdr_attr.data[0..6]);
-            neighbor.lladdr = Some(MacAddress(mac));
-        }
+    if let Some(lladdr_attr) = attrs.get(&NDA_LLADDR)
+        && lladdr_attr.data.len() >= 6
+    {
+        let mut mac = [0u8; 6];
+        mac.copy_from_slice(&lladdr_attr.data[0..6]);
+        neighbor.lladdr = Some(MacAddress(mac));
+    }
+    if let Some(flags_ext_attr) = attrs.get(&NDA_FLAGS_EXT)
+        && flags_ext_attr.data.len() >= mem::size_of::<u32>()
+    {
+        let mut flags_ext = [0; mem::size_of::<u32>()];
+        flags_ext.copy_from_slice(&flags_ext_attr.data[..mem::size_of::<u32>()]);
+        neighbor.flags_ext = u32::from_ne_bytes(flags_ext);
     }
     Some(neighbor)
 }
@@ -668,15 +802,9 @@ pub fn netlink_get_routes(family: u8, table: u32) -> Result<Vec<RouteEntry>, io:
         if msg.header.nlmsg_type != RTM_NEWROUTE {
             continue;
         }
-
-        if msg.data.len() < mem::size_of::<rtmsg>() {
-            continue;
-        }
-
         if let Some(route) = parse_rtm_newroute(&msg) {
-            // for compatibility reasons, it turns out the kernel ignores the rtm_table filter in
-            // the request unless NETLINK_GET_STRICT_CHK is set. Filter manually for now until we
-            // add support for strict checking and do enough testing.
+            // with strict checking, the kernel should return routes for the requested table only
+            debug_assert!(route.table == Some(table));
             if route.table == Some(table) {
                 routes.push(route);
             }
@@ -690,6 +818,7 @@ pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
     if msg.data.len() < mem::size_of::<rtmsg>() {
         return None;
     }
+
     let rt_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const rtmsg) };
     let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<rtmsg>()..]) else {
         return None;
@@ -715,11 +844,6 @@ pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
     if let Some(gateway_attr) = attrs.get(&RTA_GATEWAY) {
         route.gateway = parse_ip_address(gateway_attr.data, rt_msg.rtm_family);
     }
-
-    let u32_from_ne_bytes = |data: &[u8]| -> Option<u32> {
-        data.get(..4)
-            .map(|data| u32::from_ne_bytes([data[0], data[1], data[2], data[3]]))
-    };
 
     if let Some(oif_attr) = attrs.get(&RTA_OIF) {
         route.out_if_index = u32_from_ne_bytes(oif_attr.data).map(|i| i as i32);
@@ -749,4 +873,14 @@ fn push_nlattr<T>(buf: &mut Vec<u8>, attr_type: u16, value: &T) {
     buf.extend_from_slice(bytes_of(&attr));
     buf.extend_from_slice(bytes_of(value));
     buf.resize(buf.len() + (aligned_len - attr_len), 0);
+}
+
+fn u32_from_ne_bytes(data: &[u8]) -> Option<u32> {
+    let bytes: [u8; 4] = data.get(..4)?.try_into().ok()?;
+    Some(u32::from_ne_bytes(bytes))
+}
+
+fn u16_from_ne_bytes(data: &[u8]) -> Option<u16> {
+    let bytes: [u8; 2] = data.get(..2)?.try_into().ok()?;
+    Some(u16::from_ne_bytes(bytes))
 }

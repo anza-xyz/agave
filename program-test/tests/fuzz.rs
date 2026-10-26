@@ -90,7 +90,7 @@ async fn run_fuzz_instructions(
             program_id,
         );
         instructions.push(instruction);
-        instructions.push(Instruction::new_with_bincode(*program_id, &[0], vec![]));
+        instructions.push(Instruction::new_with_wincode(*program_id, &[0], vec![]));
         signer_keypairs.push(keypair);
     }
     // Process transaction on test network

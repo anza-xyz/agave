@@ -4,13 +4,12 @@ use {
     solana_keypair::Keypair,
     solana_msg::msg,
     solana_program::{instruction::get_stack_height, program::invoke},
-    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, ProgramResult},
+    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, ProgramResult, SUCCESS},
     solana_program_test::{ProgramTest, processor},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_signer::Signer,
     solana_system_interface::{instruction as system_instruction, program as system_program},
-    solana_sysvar::Sysvar,
     solana_transaction::Transaction,
     std::slice,
 };
@@ -27,7 +26,7 @@ fn invoker_process_instruction(
     let account_info_iter = &mut accounts.iter();
     let invoked_program_info = next_account_info(account_info_iter)?;
     invoke(
-        &Instruction::new_with_bincode(
+        &Instruction::new_with_wincode(
             *invoked_program_info.key,
             &[0],
             vec![AccountMeta::new_readonly(*invoked_program_info.key, false)],
@@ -49,7 +48,7 @@ fn invoker_dupes_process_instruction(
     let account_info_iter = &mut accounts.iter();
     let invoked_program_info = next_account_info(account_info_iter)?;
     invoke(
-        &Instruction::new_with_bincode(
+        &Instruction::new_with_wincode(
             *invoked_program_info.key,
             &[0],
             vec![
@@ -93,7 +92,11 @@ fn invoke_create_account(
     let payer_info = next_account_info(account_info_iter)?;
     let create_account_info = next_account_info(account_info_iter)?;
     let system_program_info = next_account_info(account_info_iter)?;
-    let rent = Rent::get()?;
+    let mut rent = Rent::default();
+    assert_eq!(
+        solana_program_test::sol_get_rent_sysvar(&mut rent as *mut _ as *mut u8),
+        SUCCESS,
+    );
     let minimum_balance = rent.minimum_balance(MAX_PERMITTED_DATA_INCREASE);
     invoke(
         &system_instruction::create_account(
@@ -129,7 +132,7 @@ async fn cpi() {
     );
 
     let context = program_test.start_with_context().await;
-    let instructions = vec![Instruction::new_with_bincode(
+    let instructions = vec![Instruction::new_with_wincode(
         invoker_program_id,
         &[0],
         vec![AccountMeta::new_readonly(invoked_program_id, false)],
@@ -165,7 +168,7 @@ async fn cpi_dupes() {
     );
 
     let context = program_test.start_with_context().await;
-    let instructions = vec![Instruction::new_with_bincode(
+    let instructions = vec![Instruction::new_with_wincode(
         invoker_program_id,
         &[0],
         vec![
@@ -201,7 +204,7 @@ async fn cpi_create_account() {
 
     let create_account_keypair = Keypair::new();
     let context = program_test.start_with_context().await;
-    let instructions = vec![Instruction::new_with_bincode(
+    let instructions = vec![Instruction::new_with_wincode(
         create_account_program_id,
         &[0],
         vec![

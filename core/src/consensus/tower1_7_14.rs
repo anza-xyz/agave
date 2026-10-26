@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::consensus::{BlockhashStatus, Result, SwitchForkDecision, TowerError},
     serde::{Deserialize, Serialize},
@@ -9,9 +11,9 @@ use {
 };
 
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "FJeuD6UBJe9D8s6iWwianu6KcnJxSozHxDpPQMTrkNJK")
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(abi_digest = "D6KFhXxjZNqELNLwVMc1nJYoKDetqTm46U78LUCD5ZAz")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower1_7_14 {
@@ -40,9 +42,9 @@ pub struct Tower1_7_14 {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "82njBGFDS9sGdbSuqdeANPe8rmZW1zsrPRpdgnSmZkpY")
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(abi_digest = "6U5RkdsuzLHyWpjGWKCHj9AzGFreginb6cXUiXodbgRv")
 )]
 #[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct SavedTower1_7_14 {

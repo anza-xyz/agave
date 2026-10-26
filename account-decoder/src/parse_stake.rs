@@ -3,14 +3,13 @@ use {
         StringAmount,
         parse_account_data::{ParsableAccount, ParseAccountError},
     },
-    bincode::deserialize,
     serde::{Deserialize, Serialize},
     solana_clock::{Epoch, UnixTimestamp},
     solana_stake_interface::state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
 };
 
 pub fn parse_stake(data: &[u8]) -> Result<StakeAccountType, ParseAccountError> {
-    let stake_state: StakeStateV2 = deserialize(data)
+    let stake_state: StakeStateV2 = wincode::deserialize(data)
         .map_err(|_| ParseAccountError::AccountNotParsable(ParsableAccount::Stake))?;
     let parsed_account = match stake_state {
         StakeStateV2::Uninitialized => StakeAccountType::Uninitialized,
@@ -46,6 +45,11 @@ pub struct UiStakeAccount {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UiMeta {
+    #[deprecated(
+        since = "4.1.0",
+        note = "Stake account rent must be calculated via the `Rent` sysvar. This value will \
+                cease to be correct once lamports-per-byte is adjusted."
+    )]
     pub rent_exempt_reserve: StringAmount,
     pub authorized: UiAuthorized,
     pub lockup: UiLockup,
@@ -54,6 +58,7 @@ pub struct UiMeta {
 impl From<Meta> for UiMeta {
     fn from(meta: Meta) -> Self {
         Self {
+            #[expect(deprecated)]
             rent_exempt_reserve: meta.rent_exempt_reserve.to_string(),
             authorized: meta.authorized.into(),
             lockup: meta.lockup.into(),
@@ -134,7 +139,7 @@ impl From<Delegation> for UiDelegation {
 
 #[cfg(test)]
 mod test {
-    use {super::*, bincode::serialize, solana_stake_interface::stake_flags::StakeFlags};
+    use {super::*, solana_stake_interface::stake_flags::StakeFlags, wincode::serialize};
 
     #[test]
     #[allow(deprecated)]
@@ -188,7 +193,7 @@ mod test {
                 stake: 20,
                 activation_epoch: 2,
                 deactivation_epoch: u64::MAX,
-                warmup_cooldown_rate: 0.25,
+                _reserved: [0; 8],
             },
             credits_observed: 10,
         };

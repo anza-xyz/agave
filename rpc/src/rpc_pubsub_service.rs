@@ -12,7 +12,6 @@ use {
     jsonrpc_core::IoHandler,
     soketto::handshake::{Server, server},
     solana_metrics::TokenCounter,
-    solana_rayon_threadlimit::get_thread_count,
     solana_time_utils::AtomicInterval,
     std::{
         io,
@@ -31,16 +30,21 @@ use {
     tokio_util::compat::TokioAsyncReadCompatExt,
 };
 
-pub const MAX_ACTIVE_SUBSCRIPTIONS: usize = 1_000_000;
+pub const DEFAULT_MAX_ACTIVE_SUBSCRIPTIONS: usize = 1_000_000;
 pub const DEFAULT_QUEUE_CAPACITY_ITEMS: usize = 10_000_000;
-pub const DEFAULT_TEST_QUEUE_CAPACITY_ITEMS: usize = 100;
+pub const DEFAULT_TEST_QUEUE_CAPACITY_ITEMS: usize = 1000;
 pub const DEFAULT_QUEUE_CAPACITY_BYTES: usize = 256 * 1024 * 1024;
-const DEFAULT_TEST_QUEUE_CAPACITY_BYTES: usize = 16 * 1024 * 1024;
+pub const DEFAULT_TEST_QUEUE_CAPACITY_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_WORKER_THREADS: usize = 1;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PubSubConfig {
     pub enable_block_subscription: bool,
+    /// Deprecated no-op retained for source and command-line compatibility.
+    #[deprecated(
+        since = "4.5.0",
+        note = "voteSubscribe is always accepted as an empty compatibility subscription"
+    )]
     pub enable_vote_subscription: bool,
     pub max_active_subscriptions: usize,
     pub queue_capacity_items: usize,
@@ -49,26 +53,13 @@ pub struct PubSubConfig {
     pub notification_threads: Option<NonZeroUsize>,
 }
 
-impl Default for PubSubConfig {
-    fn default() -> Self {
-        Self {
-            enable_block_subscription: false,
-            enable_vote_subscription: false,
-            max_active_subscriptions: MAX_ACTIVE_SUBSCRIPTIONS,
-            queue_capacity_items: DEFAULT_QUEUE_CAPACITY_ITEMS,
-            queue_capacity_bytes: DEFAULT_QUEUE_CAPACITY_BYTES,
-            worker_threads: DEFAULT_WORKER_THREADS,
-            notification_threads: NonZeroUsize::new(get_thread_count()),
-        }
-    }
-}
-
 impl PubSubConfig {
+    #[allow(deprecated)]
     pub const fn default_for_tests() -> Self {
         Self {
             enable_block_subscription: false,
             enable_vote_subscription: false,
-            max_active_subscriptions: MAX_ACTIVE_SUBSCRIPTIONS,
+            max_active_subscriptions: DEFAULT_MAX_ACTIVE_SUBSCRIPTIONS,
             queue_capacity_items: DEFAULT_TEST_QUEUE_CAPACITY_ITEMS,
             queue_capacity_bytes: DEFAULT_TEST_QUEUE_CAPACITY_BYTES,
             worker_threads: DEFAULT_WORKER_THREADS,
@@ -135,7 +126,6 @@ struct SentNotificationStats {
     num_slot: AtomicUsize,
     num_slots_updates: AtomicUsize,
     num_root: AtomicUsize,
-    num_vote: AtomicUsize,
     num_block: AtomicUsize,
     total_creation_to_queue_time_us: AtomicU64,
     last_report: AtomicInterval,
@@ -182,11 +172,6 @@ impl SentNotificationStats {
                     i64
                 ),
                 (
-                    "num_vote",
-                    self.num_vote.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                ),
-                (
                     "num_block",
                     self.num_block.swap(0, Ordering::Relaxed) as i64,
                     i64
@@ -207,6 +192,7 @@ struct BroadcastHandler {
     sent_stats: Arc<SentNotificationStats>,
 }
 
+#[allow(deprecated)]
 fn increment_sent_notification_stats(
     params: &SubscriptionParams,
     notification: &RpcNotification,
@@ -234,9 +220,7 @@ fn increment_sent_notification_stats(
         SubscriptionParams::Root => {
             stats.num_root.fetch_add(1, Ordering::Relaxed);
         }
-        SubscriptionParams::Vote => {
-            stats.num_vote.fetch_add(1, Ordering::Relaxed);
-        }
+        SubscriptionParams::Vote => {}
         SubscriptionParams::Block(_) => {
             stats.num_block.fetch_add(1, Ordering::Relaxed);
         }
@@ -335,9 +319,7 @@ pub fn test_connection(
     let rpc_impl = RpcSolPubSubImpl::new(
         PubSubConfig {
             enable_block_subscription: true,
-            enable_vote_subscription: true,
-            queue_capacity_items: 100,
-            ..PubSubConfig::default()
+            ..PubSubConfig::default_for_tests()
         },
         subscriptions.control().clone(),
         Arc::clone(&current_subscriptions),
@@ -534,8 +516,11 @@ mod tests {
             Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
             optimistically_confirmed_bank,
         ));
-        let (_trigger, pubsub_service) =
-            PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+        let (_trigger, pubsub_service) = PubSubService::new(
+            PubSubConfig::default_for_tests(),
+            &subscriptions,
+            pubsub_addr,
+        );
         let thread = pubsub_service.thread_hdl.thread();
         assert_eq!(thread.name().unwrap(), "solRpcPubSub");
     }
@@ -561,7 +546,7 @@ mod tests {
         let (trigger, _pubsub_service) = PubSubService::new(
             PubSubConfig {
                 enable_block_subscription: true,
-                ..Default::default()
+                ..PubSubConfig::default_for_tests()
             },
             &subscriptions,
             pubsub_addr,

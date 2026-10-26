@@ -121,7 +121,7 @@ mod tests {
         super::*,
         crate::nonblocking::blockhash_query,
         serde_json::{self, json},
-        solana_account::Account,
+        solana_account::{Account, state_traits::StateMutWincode as _},
         solana_account_decoder::{UiAccountEncoding, encode_ui_account},
         solana_fee_calculator::FeeCalculator,
         solana_nonce::{self as nonce, state::DurableNonce},

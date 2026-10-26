@@ -3,7 +3,9 @@
 use {
     criterion::{Criterion, criterion_group, criterion_main},
     itertools::iproduct,
-    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
+    },
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -21,7 +23,7 @@ use {
     },
     solana_sysvar::epoch_rewards::{self, EpochRewards},
     solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-    solana_vote_program::vote_state::process_slot_vote_unchecked,
+    solana_vote_program::vote_state::{handler::VoteStateHandler, process_slot_vote_unchecked},
     std::{
         hint::black_box,
         sync::{Arc, RwLock},
@@ -34,16 +36,24 @@ use {
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 const VOTE_ACCOUNTS: [usize; 2] = [10, 1_000];
-const STAKE_ACCOUNTS: [usize; 2] = [1_000, 1_000_000];
+const STAKE_ACCOUNTS: [usize; 2] = [1_000, 1_500_000];
+const ONE_INACTIVE_ACCOUNT: usize = 1;
+const MANY_INACTIVE_ACCOUNTS: usize = 250_000;
 const DELEGATED_STAKE_LAMPORTS: u64 = 1_000 * LAMPORTS_PER_SOL;
 const VALIDATOR_STAKE_LAMPORTS: u64 = 1_000 * LAMPORTS_PER_SOL;
 const GENESIS_MINT_LAMPORTS: u64 = 1_000_000 * LAMPORTS_PER_SOL;
 const SYNTHETIC_VOTE_SLOTS: u64 = (MAX_LOCKOUT_HISTORY as u64) + 42;
+const PENDING_DELEGATOR_REWARDS: u64 = 1_000;
 
-fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Account {
+fn create_stake_account(
+    vote_pubkey: &Pubkey,
+    rent_exempt_reserve: u64,
+    deactivation_epoch: u64,
+) -> Account {
     let total_lamports = rent_exempt_reserve + DELEGATED_STAKE_LAMPORTS;
 
     let meta = Meta {
+        #[expect(deprecated)]
         rent_exempt_reserve,
         ..Meta::default()
     };
@@ -51,6 +61,7 @@ fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Accou
     let delegation = Delegation {
         voter_pubkey: *vote_pubkey,
         stake: DELEGATED_STAKE_LAMPORTS,
+        deactivation_epoch,
         ..Delegation::default()
     };
 
@@ -70,24 +81,44 @@ fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Accou
     Account::from(account)
 }
 
-fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
+fn populate_vote_accounts(
+    bank: &Bank,
+    vote_pubkeys: Vec<Pubkey>,
+    external_inflation_collector: bool,
+) {
     for vote_pubkey in vote_pubkeys.into_iter() {
         let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
 
-        let mut vote_state = VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
+        let mut v4 = VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
+        v4.pending_delegator_rewards = PENDING_DELEGATOR_REWARDS;
+        if external_inflation_collector {
+            let commission_collector = Pubkey::new_unique();
+            v4.inflation_rewards_collector = commission_collector;
+            let lamports = bank.rent_collector().rent.minimum_balance(0);
+            let account =
+                AccountSharedData::new(lamports, 0, &solana_sdk_ids::system_program::id());
+            bank.store_account(&commission_collector, &account);
+        }
+
+        let mut vote_state = VoteStateHandler::new_v4(v4);
 
         for i in 0..SYNTHETIC_VOTE_SLOTS {
             process_slot_vote_unchecked(&mut vote_state, i);
         }
 
-        let versioned = VoteStateVersions::V4(Box::new(vote_state));
+        let versioned = VoteStateVersions::V4(Box::new(vote_state.unwrap_v4()));
         vote_account.set_state(&versioned).unwrap();
 
         bank.store_account(&vote_pubkey, &vote_account);
     }
 }
 
-fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+fn setup_bank(
+    vote_accounts: usize,
+    stake_accounts: usize,
+    inactive_accounts: usize,
+    external_inflation_collector: bool,
+) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
     let validators = (0..vote_accounts)
         .map(|_| ValidatorVoteKeypairs::new_rand())
         .collect::<Vec<_>>();
@@ -109,7 +140,7 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
     let stake_rent_exempt_reserve = genesis_config.rent.minimum_balance(StakeStateV2::size_of());
 
     for vote_pubkey in vote_pubkeys.iter() {
-        let stake_account = create_stake_account(vote_pubkey, stake_rent_exempt_reserve);
+        let stake_account = create_stake_account(vote_pubkey, stake_rent_exempt_reserve, u64::MAX);
 
         for _ in 0..stakes_per_vote {
             let stake_pubkey = Pubkey::new_unique();
@@ -119,10 +150,19 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
         }
     }
 
+    let inactive_account = create_stake_account(&vote_pubkeys[0], stake_rent_exempt_reserve, 0);
+
+    for _ in 0..inactive_accounts {
+        let stake_pubkey = Pubkey::new_unique();
+        genesis_config
+            .accounts
+            .insert(stake_pubkey, inactive_account.clone());
+    }
+
     let (initial_bank, bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
-    populate_vote_accounts(&initial_bank, vote_pubkeys);
+    populate_vote_accounts(&initial_bank, vote_pubkeys, external_inflation_collector);
 
     let last_slot_in_epoch = initial_bank.get_slots_in_epoch(0).checked_sub(1).unwrap();
 
@@ -140,10 +180,37 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
 fn bench_epoch_turnover(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_epoch_turnover");
 
-    for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
-        let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
+    let mut cases = iproduct!(
+        VOTE_ACCOUNTS,
+        STAKE_ACCOUNTS,
+        [ONE_INACTIVE_ACCOUNT],
+        [false, true]
+    )
+    .collect::<Vec<_>>();
+    cases.push((
+        VOTE_ACCOUNTS[1],
+        STAKE_ACCOUNTS[1],
+        MANY_INACTIVE_ACCOUNTS,
+        false,
+    ));
 
-        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
+    for (vote_accounts, stake_accounts, inactive_accounts, external_inflation_collector) in
+        cases.into_iter()
+    {
+        let collector_type = if external_inflation_collector {
+            "external"
+        } else {
+            "vote_account"
+        };
+        let name =
+            format!("{vote_accounts}_votes_{stake_accounts}_stakes_{inactive_accounts}_inactive_{collector_type}_collector");
+
+        let (initial_bank, bank_forks) = setup_bank(
+            vote_accounts,
+            stake_accounts,
+            inactive_accounts,
+            external_inflation_collector,
+        );
         let first_epoch_slot = initial_bank.slot() + 1;
 
         group.bench_function(name.as_str(), move |b| {
@@ -168,7 +235,8 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
     for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
         let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
 
-        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
+        let (initial_bank, bank_forks) =
+            setup_bank(vote_accounts, stake_accounts, ONE_INACTIVE_ACCOUNT, false);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         let bank = Arc::new(Bank::new_from_parent(
@@ -177,11 +245,11 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
             first_epoch_slot,
         ));
 
-        let rewards_steps = bank
+        let epoch_rewards: EpochRewards = bank
             .get_account(&epoch_rewards::id())
-            .and_then(|account| bincode::deserialize::<EpochRewards>(account.data()).ok())
-            .unwrap()
-            .num_partitions;
+            .and_then(|account| account.state().ok())
+            .unwrap();
+        let rewards_steps = epoch_rewards.num_partitions;
 
         let final_rewards_slot = first_epoch_slot + rewards_steps;
 

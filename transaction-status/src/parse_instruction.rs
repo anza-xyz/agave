@@ -36,6 +36,7 @@ static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableProgram
             ),
             (spl_memo_interface::v1::id(), ParsableProgram::SplMemo),
             (spl_memo_interface::v3::id(), ParsableProgram::SplMemo),
+            (spl_memo_interface::v4::id(), ParsableProgram::SplMemo),
             (solana_sdk_ids::bpf_loader::id(), ParsableProgram::BpfLoader),
             (
                 solana_sdk_ids::bpf_loader_upgradeable::id(),
@@ -152,6 +153,23 @@ pub(crate) fn check_num_accounts(
     }
 }
 
+// Resolves the `position`th entry of an instruction's account list to its key,
+// returning a key-mismatch error instead of panicking when the position or the
+// resolved account index is out of range.
+pub(crate) fn account_key<'a>(
+    account_keys: &'a AccountKeys,
+    account_indexes: &[u8],
+    position: usize,
+    parsable_program: ParsableProgram,
+) -> Result<&'a Pubkey, ParseInstructionError> {
+    account_indexes
+        .get(position)
+        .and_then(|index| account_keys.get(*index as usize))
+        .ok_or(ParseInstructionError::InstructionKeyMismatch(
+            parsable_program,
+        ))
+}
+
 #[cfg(test)]
 mod test {
     use {super::*, serde_json::json};
@@ -194,6 +212,21 @@ mod test {
                 stack_height: Some(1),
             }
         );
+        assert_eq!(
+            parse(
+                &spl_memo_interface::v4::id(),
+                &memo_instruction,
+                &no_keys,
+                Some(1)
+            )
+            .unwrap(),
+            ParsedInstruction {
+                program: "spl-memo".to_string(),
+                program_id: spl_memo_interface::v4::id().to_string(),
+                parsed: json!("🦖"),
+                stack_height: Some(1),
+            }
+        );
 
         let non_parsable_program_id = Pubkey::from([1; 32]);
         assert!(parse(&non_parsable_program_id, &memo_instruction, &no_keys, None).is_err());
@@ -222,5 +255,36 @@ mod test {
             })
             .is_err(),
         );
+    }
+
+    #[test]
+    fn test_account_key() {
+        let keys = [Pubkey::new_unique(), Pubkey::new_unique()];
+        let account_keys = AccountKeys::new(&keys, None);
+        let account_indexes = [1u8, 0];
+
+        // position -> account index -> key
+        assert_eq!(
+            account_key(
+                &account_keys,
+                &account_indexes,
+                0,
+                ParsableProgram::SplToken
+            )
+            .unwrap(),
+            &keys[1],
+        );
+        // position past the end of the instruction's account list
+        assert!(
+            account_key(
+                &account_keys,
+                &account_indexes,
+                2,
+                ParsableProgram::SplToken
+            )
+            .is_err()
+        );
+        // account index that points past account_keys
+        assert!(account_key(&account_keys, &[9u8], 0, ParsableProgram::SplToken).is_err());
     }
 }

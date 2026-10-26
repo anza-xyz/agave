@@ -3,7 +3,6 @@ use {
         consensus::tower_storage::{SavedTowerVersions, TowerStorage},
         next_leader::upcoming_leader_tpu_vote_sockets,
     },
-    bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, Slot},
@@ -45,7 +44,7 @@ impl VoteOp {
 #[derive(Debug, Error)]
 enum SendVoteError {
     #[error(transparent)]
-    BincodeError(#[from] bincode::Error),
+    WincodeWriteError(#[from] wincode::WriteError),
     #[error("Invalid TPU address")]
     InvalidTpuAddress,
     #[error(transparent)]
@@ -65,7 +64,7 @@ fn send_vote_transaction(
                 .tpu(connection_cache.protocol())
         })
         .ok_or(SendVoteError::InvalidTpuAddress)?;
-    let buf = Arc::new(serialize(transaction)?);
+    let buf = Arc::new(wincode::serialize(transaction)?);
     let client = connection_cache.get_connection(&tpu);
 
     client.send_data_async(buf).map_err(|err| {

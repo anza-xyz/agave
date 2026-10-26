@@ -5,33 +5,26 @@ use {
     clap::{Arg, ArgMatches, value_t},
     solana_clap_utils::input_validators::is_parsable,
     solana_rayon_threadlimit::get_thread_count,
-    solana_rpc::rpc_pubsub_service::PubSubConfig,
+    solana_rpc::rpc_pubsub_service::{
+        DEFAULT_MAX_ACTIVE_SUBSCRIPTIONS, DEFAULT_QUEUE_CAPACITY_BYTES,
+        DEFAULT_QUEUE_CAPACITY_ITEMS, DEFAULT_TEST_QUEUE_CAPACITY_BYTES,
+        DEFAULT_TEST_QUEUE_CAPACITY_ITEMS, PubSubConfig,
+    },
     std::{num::NonZeroUsize, sync::LazyLock},
 };
 
 static DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS: LazyLock<String> =
-    LazyLock::new(|| PubSubConfig::default().max_active_subscriptions.to_string());
-static DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS: LazyLock<String> = LazyLock::new(|| {
-    PubSubConfig::default_for_tests()
-        .max_active_subscriptions
-        .to_string()
-});
+    LazyLock::new(|| DEFAULT_MAX_ACTIVE_SUBSCRIPTIONS.to_string());
 
 static DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> =
-    LazyLock::new(|| PubSubConfig::default().queue_capacity_items.to_string());
-static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> = LazyLock::new(|| {
-    PubSubConfig::default_for_tests()
-        .queue_capacity_items
-        .to_string()
-});
+    LazyLock::new(|| DEFAULT_QUEUE_CAPACITY_ITEMS.to_string());
+static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> =
+    LazyLock::new(|| DEFAULT_TEST_QUEUE_CAPACITY_ITEMS.to_string());
 
 static DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> =
-    LazyLock::new(|| PubSubConfig::default().queue_capacity_bytes.to_string());
-static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> = LazyLock::new(|| {
-    PubSubConfig::default_for_tests()
-        .queue_capacity_bytes
-        .to_string()
-});
+    LazyLock::new(|| DEFAULT_QUEUE_CAPACITY_BYTES.to_string());
+static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> =
+    LazyLock::new(|| DEFAULT_TEST_QUEUE_CAPACITY_BYTES.to_string());
 
 const DEFAULT_RPC_PUBSUB_WORKER_THREADS: &str = "4";
 static DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS: LazyLock<String> =
@@ -53,15 +46,13 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
         );
     let (
         rpc_pubsub_notification_threads,
-        default_rpc_pubsub_max_active_subscriptions,
         default_rpc_pubsub_queue_capacity_items,
         default_rpc_pubsub_queue_capacity_bytes,
     ) = if test_validator {
         (
             rpc_pubsub_notification_threads.default_value(&DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS),
-            &DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
             &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
-            &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
+            &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
         )
     } else {
         (
@@ -72,28 +63,37 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
                     &DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
                 )
                 .requires("full_rpc_api"),
-            &DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
             &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
-            &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
+            &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
         )
     };
 
+    let rpc_pubsub_enable_block_sub_value = Arg::with_name("rpc_pubsub_enable_block_subscription")
+        .long("rpc-pubsub-enable-block-subscription")
+        .takes_value(false)
+        .help("Enable the unstable RPC PubSub `blockSubscribe` subscription");
+
+    // enable_rpc_transaction_history is on by default in the configs
+    // for test_validator, while required by agave_validator if
+    // rpc_pubsub_enable_block_subscription is passed
+    let rpc_pubsub_enable_block_sub_value = if !test_validator {
+        rpc_pubsub_enable_block_sub_value.requires("enable_rpc_transaction_history")
+    } else {
+        rpc_pubsub_enable_block_sub_value
+    };
+
     vec![
-        Arg::with_name("rpc_pubsub_enable_block_subscription")
-            .long("rpc-pubsub-enable-block-subscription")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
+        rpc_pubsub_enable_block_sub_value,
         Arg::with_name("rpc_pubsub_enable_vote_subscription")
             .long("rpc-pubsub-enable-vote-subscription")
             .takes_value(false)
-            .help("Enable the unstable RPC PubSub `voteSubscribe` subscription"),
+            .help("Deprecated no-op retained for voteSubscribe compatibility"),
         Arg::with_name("rpc_pubsub_max_active_subscriptions")
             .long("rpc-pubsub-max-active-subscriptions")
             .takes_value(true)
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
-            .default_value(default_rpc_pubsub_max_active_subscriptions)
+            .default_value(&DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS)
             .help(
                 "The maximum number of active subscriptions that RPC PubSub will accept across \
                  all connections.",
@@ -129,6 +129,7 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
     ]
 }
 
+#[allow(deprecated)]
 impl FromClapArgMatches for PubSubConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(PubSubConfig {
@@ -184,7 +185,8 @@ mod tests {
     }
 
     #[test]
-    fn verify_args_struct_by_command_run_with_enable_vote_subscription() {
+    #[allow(deprecated)]
+    fn verify_deprecated_enable_vote_subscription_is_accepted() {
         let default_run_args = crate::commands::run::args::RunArgs::default();
         let expected_args = RunArgs {
             pub_sub_config: PubSubConfig {

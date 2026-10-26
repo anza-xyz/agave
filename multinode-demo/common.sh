@@ -5,10 +5,12 @@
 # The following directive disable complaints about unused variables in this
 # file:
 # shellcheck disable=2034
+# shellcheck shell=bash
 #
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. || exit 1; pwd)"
-# shellcheck source=net/common.sh
+# shellcheck disable=SC1091
+# shellcheck source=../net/common.sh
 source "$here"/net/common.sh
 
 prebuild=
@@ -34,7 +36,7 @@ else
     declare program="$1"
     declare crate="$program"
     declare manifest_path
-    if [[ $program == "bench-tps" || $program == "ledger-tool" ]]; then
+    if [[ $program == "ledger-tool" ]]; then
       manifest_path="--manifest-path $here/dev-bins/Cargo.toml"
     fi
     if [[ -z $program ]]; then
@@ -63,7 +65,7 @@ else
   }
 fi
 
-solana_bench_tps=$(solana_program bench-tps)
+solana_transaction_bench=${SOLANA_TRANSACTION_BENCH:-solana-transaction-bench}
 solana_faucet=$(solana_program faucet)
 agave_validator=$(solana_program validator)
 solana_genesis=$(solana_program genesis)
@@ -103,5 +105,29 @@ replace_arg() {
     if [[ $arg = "$name" ]]; then
       args[$index]="$value"
     fi
+  done
+}
+
+retry_command() {
+  declare max_attempts=$1
+  declare delay_seconds=$2
+  shift 2
+
+  declare attempt=1
+  declare status
+  while true; do
+    if "$@"; then
+      return 0
+    else
+      status=$?
+    fi
+
+    if ((attempt >= max_attempts)); then
+      return "$status"
+    fi
+
+    echo "Command failed; retrying in $delay_seconds seconds ($attempt/$max_attempts)" >&2
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
   done
 }

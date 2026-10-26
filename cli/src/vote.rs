@@ -14,7 +14,10 @@ use {
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
         stake::check_current_authority,
     },
-    agave_feature_set::{bls_pubkey_management_in_vote_account, vote_account_initialize_v2},
+    agave_feature_set::{
+        alpenglow, bls_pubkey_management_in_vote_account, commission_rate_in_basis_points,
+        custom_commission_collector, delay_commission_updates, vote_account_initialize_v2,
+    },
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{App, Arg, ArgMatches, SubCommand, value_t_or_exit},
     solana_account::Account,
@@ -30,8 +33,8 @@ use {
         offline::*,
     },
     solana_cli_output::{
-        CliEpochVotingHistory, CliLandedVote, CliVoteAccount, ReturnSignersConfig,
-        display::build_balance_message, return_signers_with_config,
+        CliVoteAccount, ReturnSignersConfig, VotesObserved, display::build_balance_message,
+        get_epoch_history, return_signers_with_config,
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
@@ -42,13 +45,13 @@ use {
     solana_rpc_client_api::config::RpcGetVoteAccountsConfig,
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_system_interface::error::SystemError,
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_vote_program::{
         vote_error::VoteError,
-        vote_instruction::{self, CreateVoteAccountConfig, withdraw},
+        vote_instruction::{self, CommissionKind, CreateVoteAccountConfig, withdraw},
         vote_state::{
-            VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4,
-            VoterWithBLSArgs, create_bls_proof_of_possession,
+            VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4, VoterWithBLSArgs,
+            create_bls_proof_of_possession,
         },
     },
     std::rc::Rc,
@@ -397,6 +400,93 @@ impl VoteSubCommands for App<'_, '_> {
                 .arg(compute_unit_price_arg()),
         )
         .subcommand(
+            SubCommand::with_name("vote-update-commission-bps")
+                .about("Update the vote account's commission in basis points")
+                .arg(pubkey!(
+                    Arg::with_name("vote_account_pubkey")
+                        .index(1)
+                        .value_name("VOTE_ACCOUNT_ADDRESS")
+                        .required(true),
+                    "Vote account to update."
+                ))
+                .arg(
+                    Arg::with_name("commission_kind")
+                        .index(2)
+                        .value_name("COMMISSION_KIND")
+                        .takes_value(true)
+                        .required(true)
+                        .possible_values(&["inflation-rewards", "block-revenue"])
+                        .help("Which commission kind to update"),
+                )
+                .arg(
+                    Arg::with_name("commission_bps")
+                        .index(3)
+                        .value_name("BASIS_POINTS")
+                        .takes_value(true)
+                        .required(true)
+                        .validator(is_valid_basis_points)
+                        .help("The new commission in basis points (0-10000)"),
+                )
+                .arg(
+                    Arg::with_name("authorized_withdrawer")
+                        .index(4)
+                        .value_name("AUTHORIZED_KEYPAIR")
+                        .takes_value(true)
+                        .required(true)
+                        .validator(is_valid_signer)
+                        .help("Authorized withdrawer keypair"),
+                )
+                .offline_args()
+                .nonce_args(false)
+                .arg(fee_payer_arg())
+                .arg(memo_arg())
+                .arg(compute_unit_price_arg()),
+        )
+        .subcommand(
+            SubCommand::with_name("vote-update-commission-collector")
+                .about(
+                    "Update the vote account's commission collector for inflation rewards or \
+                     block revenue",
+                )
+                .arg(pubkey!(
+                    Arg::with_name("vote_account_pubkey")
+                        .index(1)
+                        .value_name("VOTE_ACCOUNT_ADDRESS")
+                        .required(true),
+                    "Vote account to update."
+                ))
+                .arg(
+                    Arg::with_name("commission_kind")
+                        .index(2)
+                        .value_name("COMMISSION_KIND")
+                        .takes_value(true)
+                        .required(true)
+                        .possible_values(&["inflation-rewards", "block-revenue"])
+                        .help("Which commission collector to update"),
+                )
+                .arg(pubkey!(
+                    Arg::with_name("new_collector")
+                        .index(3)
+                        .value_name("COLLECTOR_PUBKEY")
+                        .required(true),
+                    "Account that will collect the commission."
+                ))
+                .arg(
+                    Arg::with_name("authorized_withdrawer")
+                        .index(4)
+                        .value_name("AUTHORIZED_KEYPAIR")
+                        .takes_value(true)
+                        .required(true)
+                        .validator(is_valid_signer)
+                        .help("Authorized withdrawer keypair"),
+                )
+                .offline_args()
+                .nonce_args(false)
+                .arg(fee_payer_arg())
+                .arg(memo_arg())
+                .arg(compute_unit_price_arg()),
+        )
+        .subcommand(
             SubCommand::with_name("vote-account")
                 .about("Show the contents of a vote account")
                 .alias("show-vote-account")
@@ -473,7 +563,8 @@ impl VoteSubCommands for App<'_, '_> {
                         .validator(is_amount_or_all)
                         .help(
                             "The amount to withdraw, in SOL; accepts keyword ALL, which for this \
-                             command means account balance minus rent-exempt minimum",
+                             command means account balance minus rent-exempt minimum and any \
+                             rewards pending distribution to delegators",
                         ),
                 )
                 .arg(
@@ -790,6 +881,110 @@ pub fn parse_vote_update_commission(
     })
 }
 
+pub fn parse_vote_update_commission_bps(
+    matches: &ArgMatches<'_>,
+    default_signer: &DefaultSigner,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let vote_account_pubkey =
+        pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
+    let commission_kind = match matches.value_of("commission_kind").unwrap() {
+        "inflation-rewards" => CommissionKind::InflationRewards,
+        "block-revenue" => CommissionKind::BlockRevenue,
+        kind => unreachable!("unexpected commission kind: {kind}"),
+    };
+    let commission_bps = value_t_or_exit!(matches, "commission_bps", u16);
+    let (authorized_withdrawer, authorized_withdrawer_pubkey) =
+        signer_of(matches, "authorized_withdrawer", wallet_manager)?;
+
+    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
+    let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
+    let blockhash_query = BlockhashQuery::new_from_matches(matches);
+    let nonce_account = pubkey_of(matches, NONCE_ARG.name);
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
+    let (nonce_authority, nonce_authority_pubkey) =
+        signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
+    let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
+    let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
+
+    let mut bulk_signers = vec![fee_payer, authorized_withdrawer];
+    if nonce_account.is_some() {
+        bulk_signers.push(nonce_authority);
+    }
+    let signer_info =
+        default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
+
+    Ok(CliCommandInfo {
+        command: CliCommand::VoteUpdateCommissionBps {
+            vote_account_pubkey,
+            commission_kind,
+            commission_bps,
+            withdraw_authority: signer_info.index_of(authorized_withdrawer_pubkey).unwrap(),
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority: signer_info.index_of(nonce_authority_pubkey).unwrap(),
+            memo,
+            fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
+            compute_unit_price,
+        },
+        signers: signer_info.signers,
+    })
+}
+
+pub fn parse_vote_update_commission_collector(
+    matches: &ArgMatches<'_>,
+    default_signer: &DefaultSigner,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let vote_account_pubkey =
+        pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
+    let commission_kind = match matches.value_of("commission_kind").unwrap() {
+        "inflation-rewards" => CommissionKind::InflationRewards,
+        "block-revenue" => CommissionKind::BlockRevenue,
+        kind => unreachable!("unexpected commission kind: {kind}"),
+    };
+    let new_collector = pubkey_of_signer(matches, "new_collector", wallet_manager)?.unwrap();
+    let (authorized_withdrawer, authorized_withdrawer_pubkey) =
+        signer_of(matches, "authorized_withdrawer", wallet_manager)?;
+
+    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
+    let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
+    let blockhash_query = BlockhashQuery::new_from_matches(matches);
+    let nonce_account = pubkey_of(matches, NONCE_ARG.name);
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
+    let (nonce_authority, nonce_authority_pubkey) =
+        signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
+    let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
+    let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
+
+    let mut bulk_signers = vec![fee_payer, authorized_withdrawer];
+    if nonce_account.is_some() {
+        bulk_signers.push(nonce_authority);
+    }
+    let signer_info =
+        default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
+
+    Ok(CliCommandInfo {
+        command: CliCommand::VoteUpdateCommissionCollector {
+            vote_account_pubkey,
+            commission_kind,
+            new_collector,
+            withdraw_authority: signer_info.index_of(authorized_withdrawer_pubkey).unwrap(),
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority: signer_info.index_of(nonce_authority_pubkey).unwrap(),
+            memo,
+            fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
+            compute_unit_price,
+        },
+        signers: signer_info.signers,
+    })
+}
+
 pub fn parse_vote_get_account_command(
     matches: &ArgMatches<'_>,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
@@ -1040,18 +1235,19 @@ pub async fn process_create_vote_account(
                 inflation_rewards_commission_bps: inflation_rewards_commission_bps
                     .or_else(|| commission.map(|c| (c as u16).saturating_mul(100))) // u16::MAX > u8::MAX * 100
                     .unwrap_or(10000),
-                inflation_rewards_collector: inflation_rewards_collector
-                    .copied()
-                    .unwrap_or(vote_account_address),
                 block_revenue_commission_bps: block_revenue_commission_bps.unwrap_or(10000),
-                block_revenue_collector: block_revenue_collector
-                    .copied()
-                    .unwrap_or(identity_pubkey),
             };
+            let inflation_rewards_collector_key = inflation_rewards_collector
+                .copied()
+                .unwrap_or(vote_account_address);
+            let block_revenue_collector_key =
+                block_revenue_collector.copied().unwrap_or(identity_pubkey);
             vote_instruction::create_account_with_config_v2(
                 &config.signers[0].pubkey(),
                 to,
                 &vote_init,
+                &inflation_rewards_collector_key,
+                &block_revenue_collector_key,
                 lamports,
                 create_vote_account_config,
             )
@@ -1111,17 +1307,14 @@ pub async fn process_create_vote_account(
         if let Ok(response) = rpc_client
             .get_account_with_commitment(&vote_account_address, config.commitment)
             .await
+            && let Some(vote_account) = response.value
         {
-            if let Some(vote_account) = response.value {
-                let err_msg = if vote_account.owner == solana_vote_program::id() {
-                    format!("Vote account {vote_account_address} already exists")
-                } else {
-                    format!(
-                        "Account {vote_account_address} already exists and is not a vote account"
-                    )
-                };
-                return Err(CliError::BadParameter(err_msg).into());
-            }
+            let err_msg = if vote_account.owner == solana_vote_program::id() {
+                format!("Vote account {vote_account_address} already exists")
+            } else {
+                format!("Account {vote_account_address} already exists and is not a vote account")
+            };
+            return Err(CliError::BadParameter(err_msg).into());
         }
 
         if let Some(nonce_account) = &nonce_account {
@@ -1238,14 +1431,14 @@ pub async fn process_vote_authorize(
                     &[current_authorized_voter, vote_state.authorized_withdrawer],
                     &authorized.pubkey(),
                 )?;
-                if let Some(signer) = new_authorized_signer {
-                    if signer.is_interactive() {
-                        return Err(CliError::BadParameter(format!(
-                            "invalid new authorized vote signer {new_authorized_pubkey:?}. \
-                             Interactive vote signers not supported"
-                        ))
-                        .into());
-                    }
+                if let Some(signer) = new_authorized_signer
+                    && signer.is_interactive()
+                {
+                    return Err(CliError::BadParameter(format!(
+                        "invalid new authorized vote signer {new_authorized_pubkey:?}. \
+                         Interactive vote signers not supported"
+                    ))
+                    .into());
                 }
             }
         }
@@ -1360,6 +1553,7 @@ pub async fn process_vote_authorize(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1455,6 +1649,7 @@ pub async fn process_vote_update_validator(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1543,6 +1738,220 @@ pub async fn process_vote_update_commission(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
+        check_account_for_fee_with_commitment(
+            rpc_client,
+            &config.signers[0].pubkey(),
+            &tx.message,
+            config.commitment,
+        )
+        .await?;
+        let result = rpc_client
+            .send_and_confirm_transaction_with_spinner_and_config(
+                &tx,
+                config.commitment,
+                config.send_transaction_config,
+            )
+            .await;
+        log_instruction_custom_error::<VoteError>(result, config)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn process_vote_update_commission_bps(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    vote_account_pubkey: &Pubkey,
+    commission_kind: CommissionKind,
+    commission_bps: u16,
+    withdraw_authority: SignerIndex,
+    sign_only: bool,
+    dump_transaction_message: bool,
+    blockhash_query: &BlockhashQuery,
+    nonce_account: Option<Pubkey>,
+    nonce_authority: SignerIndex,
+    memo: Option<&String>,
+    fee_payer: SignerIndex,
+    compute_unit_price: Option<u64>,
+) -> ProcessResult {
+    let authorized_withdrawer = config.signers[withdraw_authority];
+
+    if !sign_only {
+        for (feature_id, simd) in [
+            (commission_rate_in_basis_points::id(), "SIMD-0291"),
+            (delay_commission_updates::id(), "SIMD-0249"),
+        ] {
+            if !get_feature_is_active(rpc_client, &feature_id)
+                .await
+                .unwrap_or(false)
+            {
+                return Err(CliError::BadParameter(format!(
+                    "Commission rates in basis points require {simd}, which is not enabled on \
+                     this cluster"
+                ))
+                .into());
+            }
+        }
+    }
+
+    let recent_blockhash = blockhash_query
+        .get_blockhash(rpc_client, config.commitment)
+        .await?;
+    let compute_unit_limit = match blockhash_query {
+        BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
+        BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
+    };
+    let ixs = vec![vote_instruction::update_commission_bps(
+        vote_account_pubkey,
+        &authorized_withdrawer.pubkey(),
+        commission_kind,
+        commission_bps,
+    )]
+    .with_memo(memo)
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit,
+    });
+    let nonce_authority = config.signers[nonce_authority];
+    let fee_payer = config.signers[fee_payer];
+
+    let mut message = if let Some(nonce_account) = &nonce_account {
+        Message::new_with_nonce(
+            ixs,
+            Some(&fee_payer.pubkey()),
+            nonce_account,
+            &nonce_authority.pubkey(),
+        )
+    } else {
+        Message::new(&ixs, Some(&fee_payer.pubkey()))
+    };
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    let mut tx = Transaction::new_unsigned(message);
+    if sign_only {
+        tx.try_partial_sign(&config.signers, recent_blockhash)?;
+        return_signers_with_config(
+            &tx,
+            &config.output_format,
+            &ReturnSignersConfig {
+                dump_transaction_message,
+            },
+        )
+    } else {
+        tx.try_sign(&config.signers, recent_blockhash)?;
+        if let Some(nonce_account) = &nonce_account {
+            let nonce_account =
+                solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
+                    rpc_client,
+                    nonce_account,
+                    config.commitment,
+                )
+                .await?;
+            check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
+        }
+        let tx = VersionedTransaction::from(tx);
+        check_account_for_fee_with_commitment(
+            rpc_client,
+            &config.signers[0].pubkey(),
+            &tx.message,
+            config.commitment,
+        )
+        .await?;
+        let result = rpc_client
+            .send_and_confirm_transaction_with_spinner_and_config(
+                &tx,
+                config.commitment,
+                config.send_transaction_config,
+            )
+            .await;
+        log_instruction_custom_error::<VoteError>(result, config)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn process_vote_update_commission_collector(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    vote_account_pubkey: &Pubkey,
+    commission_kind: CommissionKind,
+    new_collector: &Pubkey,
+    withdraw_authority: SignerIndex,
+    sign_only: bool,
+    dump_transaction_message: bool,
+    blockhash_query: &BlockhashQuery,
+    nonce_account: Option<Pubkey>,
+    nonce_authority: SignerIndex,
+    memo: Option<&String>,
+    fee_payer: SignerIndex,
+    compute_unit_price: Option<u64>,
+) -> ProcessResult {
+    let authorized_withdrawer = config.signers[withdraw_authority];
+
+    if !sign_only
+        && !get_feature_is_active(rpc_client, &custom_commission_collector::id())
+            .await
+            .unwrap_or(false)
+    {
+        return Err(CliError::BadParameter(
+            "Custom commission collectors (SIMD-0232) are not enabled on this cluster".to_owned(),
+        )
+        .into());
+    }
+
+    let recent_blockhash = blockhash_query
+        .get_blockhash(rpc_client, config.commitment)
+        .await?;
+    let compute_unit_limit = match blockhash_query {
+        BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
+        BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
+    };
+    let ixs = vec![vote_instruction::update_commission_collector(
+        vote_account_pubkey,
+        &authorized_withdrawer.pubkey(),
+        new_collector,
+        commission_kind,
+    )]
+    .with_memo(memo)
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit,
+    });
+    let nonce_authority = config.signers[nonce_authority];
+    let fee_payer = config.signers[fee_payer];
+
+    let mut message = if let Some(nonce_account) = &nonce_account {
+        Message::new_with_nonce(
+            ixs,
+            Some(&fee_payer.pubkey()),
+            nonce_account,
+            &nonce_authority.pubkey(),
+        )
+    } else {
+        Message::new(&ixs, Some(&fee_payer.pubkey()))
+    };
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    let mut tx = Transaction::new_unsigned(message);
+    if sign_only {
+        tx.try_partial_sign(&config.signers, recent_blockhash)?;
+        return_signers_with_config(
+            &tx,
+            &config.output_format,
+            &ReturnSignersConfig {
+                dump_transaction_message,
+            },
+        )
+    } else {
+        tx.try_sign(&config.signers, recent_blockhash)?;
+        if let Some(nonce_account) = &nonce_account {
+            let nonce_account =
+                solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
+                    rpc_client,
+                    nonce_account,
+                    config.commitment,
+                )
+                .await?;
+            check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
+        }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1580,14 +1989,20 @@ pub(crate) async fn get_vote_account(
         ))
         .into());
     }
-    let vote_state =
-        VoteStateV4::deserialize(&vote_account.data, vote_account_pubkey).map_err(|_| {
-            CliError::RpcRequestError(
-                "Account data could not be deserialized to vote state".to_string(),
-            )
-        })?;
+    let vote_state = deserialize_vote_state(&vote_account, vote_account_pubkey)?;
 
     Ok((vote_account, vote_state))
+}
+
+/// Rewards held by the vote account for distribution to its stake delegators.
+///
+/// The vote program reserves these lamports on top of the rent-exempt minimum,
+/// so they are not withdrawable.
+pub(crate) fn get_pending_delegator_rewards(
+    vote_account: &Account,
+    vote_account_pubkey: &Pubkey,
+) -> Result<u64, CliError> {
+    Ok(deserialize_vote_state(vote_account, vote_account_pubkey)?.pending_delegator_rewards)
 }
 
 pub async fn process_show_vote_account(
@@ -1615,31 +2030,21 @@ pub async fn process_show_vote_account(
         .and_then(|feature| feature.activated_at);
     let tvc_activation_epoch = tvc_activation_slot.map(|s| epoch_schedule.get_epoch(s));
 
-    let mut votes: Vec<CliLandedVote> = vec![];
-    let mut epoch_voting_history: Vec<CliEpochVotingHistory> = vec![];
-    if !vote_state.votes.is_empty() {
-        for vote in &vote_state.votes {
-            votes.push(vote.into());
-        }
-        for (epoch, credits, prev_credits) in vote_state.epoch_credits.iter().copied() {
-            let credits_earned = credits.saturating_sub(prev_credits);
-            let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-            let is_tvc_active = tvc_activation_epoch.map(|e| epoch >= e).unwrap_or_default();
-            let max_credits_per_slot = if is_tvc_active {
-                VOTE_CREDITS_MAXIMUM_PER_SLOT
-            } else {
-                1
-            };
-            epoch_voting_history.push(CliEpochVotingHistory {
-                epoch,
-                slots_in_epoch,
-                credits_earned,
-                credits,
-                prev_credits,
-                max_credits_per_slot,
-            });
-        }
-    }
+    let ag_is_active = get_feature_is_active(rpc_client, &alpenglow::id())
+        .await
+        .unwrap_or(false);
+    let ag_genesis_cert = if ag_is_active {
+        rpc_client.get_ag_genesis_cert().await?
+    } else {
+        None
+    };
+    let votes_observed = VotesObserved::new(&vote_state, &ag_genesis_cert);
+    let epoch_voting_history = get_epoch_history(
+        &epoch_schedule,
+        &vote_state,
+        &ag_genesis_cert,
+        tvc_activation_epoch,
+    );
 
     let epoch_rewards = if let Some(num_epochs) = with_rewards {
         match crate::stake::fetch_epoch_rewards(
@@ -1666,10 +2071,13 @@ pub async fn process_show_vote_account(
         authorized_voters: (&vote_state.authorized_voters).into(),
         authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
         credits: vote_state.credits(),
-        commission: (vote_state.inflation_rewards_commission_bps / 100) as u8,
+        commission: vote_state
+            .inflation_rewards_commission_bps
+            .div_ceil(100)
+            .min(u8::MAX as u16) as u8,
         root_slot: vote_state.root_slot,
         recent_timestamp: vote_state.last_timestamp.clone(),
-        votes,
+        votes_observed,
         epoch_voting_history,
         use_lamports_unit,
         use_csv,
@@ -1754,22 +2162,18 @@ pub async fn process_withdraw_from_vote_account(
     )
     .await?;
 
-    if !sign_only {
-        let current_balance = rpc_client.get_balance(vote_account_pubkey).await?;
-        let minimum_balance = rpc_client
-            .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())
+    if !sign_only && let SpendAmount::Some(withdraw_amount) = withdraw_amount {
+        let (vote_account, vote_state) =
+            get_vote_account(rpc_client, vote_account_pubkey, config.commitment).await?;
+        let rent_exempt_minimum = rpc_client
+            .get_minimum_balance_for_rent_exemption(vote_account.data.len())
             .await?;
-        if let SpendAmount::Some(withdraw_amount) = withdraw_amount {
-            let balance_remaining = current_balance.saturating_sub(withdraw_amount);
-            if balance_remaining < minimum_balance && balance_remaining != 0 {
-                return Err(CliError::BadParameter(format!(
-                    "Withdraw amount too large. The vote account balance must be at least {} SOL \
-                     to remain rent exempt",
-                    build_balance_message(minimum_balance, false, false)
-                ))
-                .into());
-            }
-        }
+        check_remaining_balance(
+            vote_account.lamports,
+            withdraw_amount,
+            rent_exempt_minimum,
+            vote_state.pending_delegator_rewards,
+        )?;
     }
 
     let mut tx = Transaction::new_unsigned(message);
@@ -1795,9 +2199,10 @@ pub async fn process_withdraw_from_vote_account(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
+        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
-            &tx.message.account_keys[0],
+            &tx.message.static_account_keys()[0],
             &tx.message,
             config.commitment,
         )
@@ -1835,13 +2240,12 @@ pub async fn process_close_vote_account(
         .into_iter()
         .chain(vote_account_status.delinquent)
         .next()
+        && vote_account.activated_stake != 0
     {
-        if vote_account.activated_stake != 0 {
-            return Err(format!(
-                "Cannot close a vote account with active stake: {vote_account_pubkey}"
-            )
-            .into());
-        }
+        return Err(format!(
+            "Cannot close a vote account with active stake: {vote_account_pubkey}"
+        )
+        .into());
     }
 
     let latest_blockhash = rpc_client.get_latest_blockhash().await?;
@@ -1867,9 +2271,10 @@ pub async fn process_close_vote_account(
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
+    let tx = VersionedTransaction::from(tx);
     check_account_for_fee_with_commitment(
         rpc_client,
-        &tx.message.account_keys[0],
+        &tx.message.static_account_keys()[0],
         &tx.message,
         config.commitment,
     )
@@ -1882,6 +2287,62 @@ pub async fn process_close_vote_account(
         )
         .await;
     log_instruction_custom_error::<VoteError>(result, config)
+}
+
+fn deserialize_vote_state(
+    vote_account: &Account,
+    vote_account_pubkey: &Pubkey,
+) -> Result<VoteStateV4, CliError> {
+    VoteStateV4::deserialize(&vote_account.data, vote_account_pubkey).map_err(|_| {
+        CliError::RpcRequestError(
+            "Account data could not be deserialized to vote state".to_string(),
+        )
+    })
+}
+
+/// Mirrors the balance constraints enforced by the vote program's `Withdraw`
+/// instruction: the balance left in the vote account must either be zero with no
+/// rewards pending distribution to delegators, or cover both the rent-exempt
+/// minimum and those pending rewards.
+fn check_remaining_balance(
+    current_balance: u64,
+    withdraw_amount: u64,
+    rent_exempt_minimum: u64,
+    pending_delegator_rewards: u64,
+) -> Result<(), CliError> {
+    let balance_remaining = current_balance.saturating_sub(withdraw_amount);
+    if balance_remaining == 0 {
+        if pending_delegator_rewards > 0 {
+            return Err(CliError::BadParameter(format!(
+                "Withdraw amount too large. The vote account cannot be closed while {} SOL of \
+                 rewards are pending distribution to delegators",
+                build_balance_message(pending_delegator_rewards, false, false)
+            )));
+        }
+        return Ok(());
+    }
+
+    let minimum_balance = rent_exempt_minimum.saturating_add(pending_delegator_rewards);
+    if balance_remaining < minimum_balance {
+        let requirement = if pending_delegator_rewards > 0 {
+            format!(
+                "{} SOL to remain rent exempt, plus {} SOL of rewards pending distribution to \
+                 delegators",
+                build_balance_message(rent_exempt_minimum, false, false),
+                build_balance_message(pending_delegator_rewards, false, false)
+            )
+        } else {
+            format!(
+                "{} SOL to remain rent exempt",
+                build_balance_message(rent_exempt_minimum, false, false)
+            )
+        };
+        return Err(CliError::BadParameter(format!(
+            "Withdraw amount too large. The vote account balance must be at least {requirement}"
+        )));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2716,6 +3177,120 @@ mod tests {
             }
         );
 
+        for (kind_arg, commission_kind) in [
+            ("inflation-rewards", CommissionKind::InflationRewards),
+            ("block-revenue", CommissionKind::BlockRevenue),
+        ] {
+            let test_update_commission_bps = test_commands.clone().get_matches_from(vec![
+                "test",
+                "vote-update-commission-bps",
+                &pubkey_string,
+                kind_arg,
+                "250",
+                &keypair_file,
+            ]);
+            assert_eq!(
+                parse_command(&test_update_commission_bps, &default_signer, &mut None).unwrap(),
+                CliCommandInfo {
+                    command: CliCommand::VoteUpdateCommissionBps {
+                        vote_account_pubkey: pubkey,
+                        commission_kind: commission_kind.clone(),
+                        commission_bps: 250,
+                        withdraw_authority: 1,
+                        sign_only: false,
+                        dump_transaction_message: false,
+                        blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                        nonce_account: None,
+                        nonce_authority: 0,
+                        memo: None,
+                        fee_payer: 0,
+                        compute_unit_price: None,
+                    },
+                    signers: vec![
+                        Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                        Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    ],
+                }
+            );
+
+            let test_update_commission_collector = test_commands.clone().get_matches_from(vec![
+                "test",
+                "vote-update-commission-collector",
+                &pubkey_string,
+                kind_arg,
+                &pubkey2_string,
+                &keypair_file,
+            ]);
+            assert_eq!(
+                parse_command(
+                    &test_update_commission_collector,
+                    &default_signer,
+                    &mut None
+                )
+                .unwrap(),
+                CliCommandInfo {
+                    command: CliCommand::VoteUpdateCommissionCollector {
+                        vote_account_pubkey: pubkey,
+                        commission_kind,
+                        new_collector: pubkey2,
+                        withdraw_authority: 1,
+                        sign_only: false,
+                        dump_transaction_message: false,
+                        blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                        nonce_account: None,
+                        nonce_authority: 0,
+                        memo: None,
+                        fee_payer: 0,
+                        compute_unit_price: None,
+                    },
+                    signers: vec![
+                        Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                        Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    ],
+                }
+            );
+        }
+
+        let test_bad_commission_kind = test_commands.clone().get_matches_from_safe(vec![
+            "test",
+            "vote-update-commission-bps",
+            &pubkey_string,
+            "transaction-fees",
+            "250",
+            &keypair_file,
+        ]);
+        assert_eq!(
+            test_bad_commission_kind.unwrap_err().kind,
+            clap::ErrorKind::InvalidValue
+        );
+
+        let test_bad_commission_kind_collector = test_commands.clone().get_matches_from_safe(vec![
+            "test",
+            "vote-update-commission-collector",
+            &pubkey_string,
+            "transaction-fees",
+            &pubkey2_string,
+            &keypair_file,
+        ]);
+        assert_eq!(
+            test_bad_commission_kind_collector.unwrap_err().kind,
+            clap::ErrorKind::InvalidValue
+        );
+
+        // Basis points are capped at 10000 (100%).
+        let test_bad_commission_bps = test_commands.clone().get_matches_from_safe(vec![
+            "test",
+            "vote-update-commission-bps",
+            &pubkey_string,
+            "block-revenue",
+            "10001",
+            &keypair_file,
+        ]);
+        assert_eq!(
+            test_bad_commission_bps.unwrap_err().kind,
+            clap::ErrorKind::ValueValidation
+        );
+
         // Test WithdrawFromVoteAccount subcommand
         let test_withdraw_from_vote_account = test_commands.clone().get_matches_from(vec![
             "test",
@@ -2973,5 +3548,46 @@ mod tests {
                 ],
             }
         );
+    }
+
+    #[test]
+    fn test_check_remaining_balance() {
+        const RENT_EXEMPT_MINIMUM: u64 = 27_000_000;
+        const PENDING_DELEGATOR_REWARDS: u64 = 5_000_000;
+        const BALANCE: u64 = 33_000_000;
+        // Largest withdrawal leaving the rent-exempt minimum behind, and the
+        // largest also leaving the pending delegator rewards behind.
+        const MAX_WITHDRAWAL: u64 = BALANCE - RENT_EXEMPT_MINIMUM;
+        const MAX_WITHDRAWAL_WITH_PENDING_REWARDS: u64 = MAX_WITHDRAWAL - PENDING_DELEGATOR_REWARDS;
+
+        // Without pending rewards, only the rent-exempt minimum must remain.
+        check_remaining_balance(BALANCE, MAX_WITHDRAWAL, RENT_EXEMPT_MINIMUM, 0).unwrap();
+        check_remaining_balance(BALANCE, MAX_WITHDRAWAL + 1, RENT_EXEMPT_MINIMUM, 0).unwrap_err();
+
+        // Pending rewards must remain in the account too.
+        check_remaining_balance(
+            BALANCE,
+            MAX_WITHDRAWAL_WITH_PENDING_REWARDS,
+            RENT_EXEMPT_MINIMUM,
+            PENDING_DELEGATOR_REWARDS,
+        )
+        .unwrap();
+        check_remaining_balance(
+            BALANCE,
+            MAX_WITHDRAWAL_WITH_PENDING_REWARDS + 1,
+            RENT_EXEMPT_MINIMUM,
+            PENDING_DELEGATOR_REWARDS,
+        )
+        .unwrap_err();
+
+        // The account may only be closed once no rewards are pending.
+        check_remaining_balance(BALANCE, BALANCE, RENT_EXEMPT_MINIMUM, 0).unwrap();
+        check_remaining_balance(
+            BALANCE,
+            BALANCE,
+            RENT_EXEMPT_MINIMUM,
+            PENDING_DELEGATOR_REWARDS,
+        )
+        .unwrap_err();
     }
 }

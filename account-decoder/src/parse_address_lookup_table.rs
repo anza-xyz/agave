@@ -2,7 +2,7 @@ use {
     crate::parse_account_data::{ParsableAccount, ParseAccountError},
     serde::{Deserialize, Serialize},
     solana_address_lookup_table_interface::state::AddressLookupTable,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
 };
 
 pub fn parse_address_lookup_table(

@@ -50,7 +50,7 @@ async fn test_publish(compute_unit_price: Option<u64>) {
         &config_validator.signers[0].pubkey()
     );
 
-    config_validator.command = CliCommand::SetValidatorInfo {
+    config_validator.command = CliCommand::PublishValidatorInfo {
         validator_info: json!({ "name": "test" }),
         force_keybase: true,
         info_pubkey: None,

@@ -1,24 +1,31 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{
         crds_data::{self, MAX_SLOT, MAX_WALLCLOCK},
         protocol::MAX_CRDS_OBJECT_SIZE,
     },
-    bincode::serialized_size,
     bv::BitVec,
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
-    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     std::{borrow::Cow, cell::RefCell, sync::Arc},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Uncompressed {
     pub first_slot: Slot,
     pub num: usize,
+    // `BitVec` has no `StableAbi` impl; sample a non-empty one (see `sample_bit_vec`).
+    #[cfg_attr(
+        feature = "stable-abi",
+        stable_abi_sample(with = "std::sync::Arc::new(solana_bloom::bloom::sample_bit_vec(rng))")
+    )]
     pub slots: Arc<BitVec<u8>>,
 }
 
@@ -43,37 +50,12 @@ impl Sanitize for Uncompressed {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Flate2 {
     pub first_slot: Slot,
     pub num: usize,
-    #[serde(with = "serde_compat_bytes")]
     pub compressed: Arc<Vec<u8>>,
-}
-
-mod serde_compat_bytes {
-    use {
-        serde::{Deserialize, Deserializer, Serializer},
-        serde_bytes::ByteBuf,
-        std::sync::Arc,
-    };
-
-    pub(super) fn serialize<S: Serializer>(
-        bytes: &Arc<Vec<u8>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(bytes)
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Deserialize::deserialize(deserializer)
-            .map(ByteBuf::into_vec)
-            .map(Arc::new)
-    }
 }
 
 impl Sanitize for Flate2 {
@@ -197,8 +179,8 @@ impl Uncompressed {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum CompressedSlots {
     Flate2(Flate2),
     Uncompressed(Uncompressed),
@@ -264,8 +246,16 @@ impl CompressedSlots {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "7fXxq9nG7ywp9LhMiGTJ7MLNtghPo9mz5xQNE74RxWGj",
+        abi_serializer = ["wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct EpochSlots {
     pub from: Pubkey,
     pub slots: Vec<CompressedSlots>,
@@ -340,8 +330,8 @@ impl EpochSlots {
         Ok(())
     }
     pub fn max_compressed_slot_size(&self) -> isize {
-        let len_header = serialized_size(self).unwrap();
-        let len_slot = serialized_size(&CompressedSlots::default()).unwrap();
+        let len_header = wincode::serialized_size(self).unwrap();
+        let len_slot = wincode::serialized_size(&CompressedSlots::default()).unwrap();
         MAX_CRDS_OBJECT_SIZE as isize - (len_header + len_slot) as isize
     }
 

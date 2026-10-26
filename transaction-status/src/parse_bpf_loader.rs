@@ -3,7 +3,6 @@ use {
         ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
     base64::{Engine, prelude::BASE64_STANDARD},
-    bincode::deserialize,
     serde_json::json,
     solana_loader_v2_interface::LoaderInstruction,
     solana_loader_v3_interface::instruction::UpgradeableLoaderInstruction,
@@ -14,7 +13,7 @@ pub fn parse_bpf_loader(
     instruction: &CompiledInstruction,
     account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
-    let bpf_loader_instruction: LoaderInstruction = deserialize(&instruction.data)
+    let bpf_loader_instruction: LoaderInstruction = wincode::deserialize(&instruction.data)
         .map_err(|_| ParseInstructionError::InstructionNotParsable(ParsableProgram::BpfLoader))?;
     if instruction.accounts.is_empty() || instruction.accounts[0] as usize >= account_keys.len() {
         return Err(ParseInstructionError::InstructionKeyMismatch(
@@ -50,7 +49,7 @@ pub fn parse_bpf_upgradeable_loader(
     account_keys: &AccountKeys,
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
     let bpf_upgradeable_loader_instruction: UpgradeableLoaderInstruction =
-        deserialize(&instruction.data).map_err(|_| {
+        wincode::deserialize(&instruction.data).map_err(|_| {
             ParseInstructionError::InstructionNotParsable(ParsableProgram::BpfUpgradeableLoader)
         })?;
     match instruction.accounts.iter().max() {
@@ -181,39 +180,6 @@ pub fn parse_bpf_upgradeable_loader(
                     },
                     "payerAccount": if instruction.accounts.len() > 3 {
                         Some(account_keys[instruction.accounts[3] as usize].to_string())
-                    } else {
-                        None
-                    },
-                }),
-            })
-        }
-        UpgradeableLoaderInstruction::Migrate => {
-            check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 3)?;
-            Ok(ParsedInstructionEnum {
-                instruction_type: "migrate".to_string(),
-                info: json!({
-                    "programDataAccount": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "programAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "authority": account_keys[instruction.accounts[2] as usize].to_string(),
-                }),
-            })
-        }
-        UpgradeableLoaderInstruction::ExtendProgramChecked { additional_bytes } => {
-            check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 3)?;
-            Ok(ParsedInstructionEnum {
-                instruction_type: "extendProgramChecked".to_string(),
-                info: json!({
-                    "additionalBytes": additional_bytes,
-                    "programDataAccount": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "programAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "authority": account_keys[instruction.accounts[2] as usize].to_string(),
-                    "systemProgram": if instruction.accounts.len() > 3 {
-                        Some(account_keys[instruction.accounts[3] as usize].to_string())
-                    } else {
-                        None
-                    },
-                    "payerAccount": if instruction.accounts.len() > 4 {
-                        Some(account_keys[instruction.accounts[4] as usize].to_string())
                     } else {
                         None
                     },

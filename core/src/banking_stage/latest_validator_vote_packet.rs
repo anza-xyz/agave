@@ -1,13 +1,12 @@
 #[cfg(test)]
-use solana_perf::packet::PacketRef;
+use {crate::banking_stage::packet_bytes, solana_perf::packet::BytesPacket};
 use {
-    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
-    solana_bincode::limited_deserialize,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
+    solana_vote::vote_parser::deserialize_vote_instruction,
     solana_vote_program::vote_instruction::VoteInstruction,
     thiserror::Error,
 };
@@ -24,7 +23,7 @@ pub struct LatestValidatorVote {
     vote_source: VoteSource,
     vote_pubkey: Pubkey,
     authorized_voter_pubkey: Pubkey,
-    vote: Option<SanitizedTransactionView<SharedBytes>>,
+    vote: Option<SanitizedTransactionView<Bytes>>,
     slot: Slot,
     hash: Hash,
     timestamp: Option<UnixTimestamp>,
@@ -32,7 +31,7 @@ pub struct LatestValidatorVote {
 
 impl LatestValidatorVote {
     pub fn new_from_view(
-        vote: SanitizedTransactionView<SharedBytes>,
+        vote: SanitizedTransactionView<Bytes>,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
@@ -52,8 +51,8 @@ impl LatestValidatorVote {
             }
         };
 
-        match limited_deserialize::<VoteInstruction>(instruction.data, PACKET_DATA_SIZE as u64) {
-            Ok(vote_state_update_instruction)
+        match deserialize_vote_instruction(instruction.data) {
+            Some(vote_state_update_instruction)
                 if instruction_filter(&vote_state_update_instruction) =>
             {
                 let ix_key = |offset| {
@@ -98,7 +97,7 @@ impl LatestValidatorVote {
 
     #[cfg(test)]
     pub fn new(
-        packet: PacketRef,
+        packet: &BytesPacket,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
@@ -106,11 +105,8 @@ impl LatestValidatorVote {
             return Err(DeserializedPacketError::VoteTransaction);
         }
 
-        let vote = SanitizedTransactionView::try_new_sanitized(
-            std::sync::Arc::new(packet.data(..).unwrap().to_vec()),
-            true,
-        )
-        .unwrap();
+        let vote =
+            SanitizedTransactionView::try_new_sanitized(packet_bytes(packet).unwrap()).unwrap();
 
         Self::new_from_view(vote, vote_source, deprecate_legacy_vote_ixs)
     }
@@ -143,7 +139,7 @@ impl LatestValidatorVote {
         self.vote.is_none()
     }
 
-    pub fn take_vote(&mut self) -> Option<SanitizedTransactionView<SharedBytes>> {
+    pub fn take_vote(&mut self) -> Option<SanitizedTransactionView<Bytes>> {
         self.vote.take()
     }
 }
@@ -159,8 +155,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_packet::PacketFlags,
-        solana_perf::packet::{BytesPacket, PacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch, PacketFlags},
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_signer::Signer,
         solana_system_transaction::transfer,
@@ -182,47 +177,38 @@ mod tests {
         let keypairs = ValidatorVoteKeypairs::new_rand();
         let blockhash = Hash::new_unique();
         let switch_proof = Hash::new_unique();
-        let mut tower_sync = BytesPacket::from_data(
+        let mut tower_sync = BytesPacket::from_data(new_tower_sync_transaction(
+            TowerSync::from(vec![(0, 3), (1, 2), (2, 1)]),
+            blockhash,
+            &keypairs.node_keypair,
+            &keypairs.vote_keypair,
+            &keypairs.vote_keypair,
             None,
-            new_tower_sync_transaction(
-                TowerSync::from(vec![(0, 3), (1, 2), (2, 1)]),
-                blockhash,
-                &keypairs.node_keypair,
-                &keypairs.vote_keypair,
-                &keypairs.vote_keypair,
-                None,
-            ),
-        )
+        ))
         .unwrap();
         tower_sync
             .meta_mut()
             .flags
             .set(PacketFlags::SIMPLE_VOTE_TX, true);
-        let mut tower_sync_switch = BytesPacket::from_data(
-            None,
-            new_tower_sync_transaction(
-                TowerSync::from(vec![(0, 3), (1, 2), (3, 1)]),
-                blockhash,
-                &keypairs.node_keypair,
-                &keypairs.vote_keypair,
-                &keypairs.vote_keypair,
-                Some(switch_proof),
-            ),
-        )
+        let mut tower_sync_switch = BytesPacket::from_data(new_tower_sync_transaction(
+            TowerSync::from(vec![(0, 3), (1, 2), (3, 1)]),
+            blockhash,
+            &keypairs.node_keypair,
+            &keypairs.vote_keypair,
+            &keypairs.vote_keypair,
+            Some(switch_proof),
+        ))
         .unwrap();
         tower_sync_switch
             .meta_mut()
             .flags
             .set(PacketFlags::SIMPLE_VOTE_TX, true);
-        let random_transaction = BytesPacket::from_data(
-            None,
-            transfer(
-                &keypairs.node_keypair,
-                &Pubkey::new_unique(),
-                1000,
-                blockhash,
-            ),
-        )
+        let random_transaction = BytesPacket::from_data(transfer(
+            &keypairs.node_keypair,
+            &Pubkey::new_unique(),
+            1000,
+            blockhash,
+        ))
         .unwrap();
         let packet_batch =
             PacketBatch::from(vec![tower_sync, tower_sync_switch, random_transaction]);

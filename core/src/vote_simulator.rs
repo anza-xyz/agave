@@ -17,7 +17,8 @@ use {
         replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
-    crossbeam_channel::unbounded,
+    agave_votor_messages::consensus_message::BlockId,
+    crossbeam_channel::bounded,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -27,7 +28,8 @@ use {
         bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
         genesis_utils::{
-            GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
+            GenesisConfigInfo, ValidatorVoteKeypairs,
+            create_genesis_config_with_tower_vote_accounts,
         },
     },
     solana_signer::Signer,
@@ -109,7 +111,7 @@ impl VoteSimulator {
                 .clone_without_scheduler();
             self.progress
                 .entry(slot)
-                .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0));
+                .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None));
             for (pubkey, vote) in cluster_votes.iter() {
                 if vote.contains(&parent) {
                     let keypairs = self.validator_keypairs.get(pubkey).unwrap();
@@ -159,7 +161,7 @@ impl VoteSimulator {
 
             new_bank.fill_bank_with_ticks_for_tests();
             if !visit.node().has_no_child() || is_frozen {
-                new_bank.set_block_id(Some(Hash::new_unique()));
+                new_bank.set_block_id(Some(BlockId::new_unique()));
                 new_bank.freeze();
                 self.progress
                     .get_fork_stats_mut(new_bank.slot())
@@ -240,15 +242,16 @@ impl VoteSimulator {
 
         let new_root = tower.record_bank_vote(&vote_bank);
         if let Some(new_root) = new_root {
-            self.set_root(new_root);
+            self.set_root(my_pubkey, new_root);
         }
 
         vec![]
     }
 
-    pub fn set_root(&mut self, new_root: Slot) {
-        let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+    pub fn set_root(&mut self, my_pubkey: &Pubkey, new_root: Slot) {
+        let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
         ReplayStage::handle_new_root(
+            my_pubkey,
             new_root,
             &self.bank_forks,
             &mut self.progress,
@@ -292,7 +295,7 @@ impl VoteSimulator {
     ) {
         self.progress
             .entry(slot)
-            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
+            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None))
             .fork_stats
             .lockout_intervals
             .push(LockoutInterval {
@@ -305,7 +308,7 @@ impl VoteSimulator {
     pub fn clear_lockout_intervals(&mut self, slot: Slot) {
         self.progress
             .entry(slot)
-            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
+            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None))
             .fork_stats
             .lockout_intervals
             .clear()
@@ -412,17 +415,18 @@ pub fn initialize_state_with(
         mut genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config_with_vote_accounts(
+    } = create_genesis_config_with_tower_vote_accounts(
         1_000_000_000,
         &validator_keypairs,
         vec![stake; validator_keypairs.len()],
     );
 
     genesis_config.epoch_schedule = EpochSchedule::without_warmup();
-    genesis_config.poh_config.hashes_per_tick = Some(2);
-    let (bank0, bank_forks) = Bank::new_with_config_for_tests(&genesis_config, bank_test_config)
-        .wrap_with_bank_forks_for_tests();
-    bank0.set_block_id(Some(Hash::new_unique()));
+    genesis_config.poh_config.hashes_per_tick = Some(4);
+    let (bank0, bank_forks) =
+        Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None)
+            .wrap_with_bank_forks_for_tests();
+    bank0.set_block_id(Some(BlockId::new_unique()));
 
     for pubkey in validator_keypairs_map.keys() {
         bank0.transfer(10_000, &mint_keypair, pubkey).unwrap();
@@ -433,7 +437,15 @@ pub fn initialize_state_with(
     let mut progress = ProgressMap::default();
     progress.insert(
         0,
-        ForkProgress::new_from_bank(&bank0, bank0.leader_id(), &Pubkey::default(), None, 0, 0),
+        ForkProgress::new_from_bank(
+            &bank0,
+            bank0.leader_id(),
+            &Pubkey::default(),
+            None,
+            0,
+            0,
+            None,
+        ),
     );
     let heaviest_subtree_fork_choice =
         HeaviestSubtreeForkChoice::new_from_bank_forks(bank_forks.clone());

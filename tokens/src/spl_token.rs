@@ -1,7 +1,10 @@
 use {
     crate::{
         args::{DistributeTokensArgs, SplTokenArgs},
-        commands::{Error, FundingSource, TypedAllocation, get_fee_estimate_for_messages},
+        commands::{
+            Error, FundingSource, TypedAllocation, get_fee_estimate_for_messages,
+            token_balance_difference_string,
+        },
     },
     console::style,
     solana_account_decoder::parse_token::{real_number_string, real_number_string_trimmed},
@@ -126,7 +129,9 @@ pub(crate) fn print_token_balances(
     {
         let actual_ui_amount = real_number_string(recipient_token.amount, spl_token_args.decimals);
         let delta_string =
-            real_number_string(recipient_token.amount - expected, spl_token_args.decimals);
+            token_balance_difference_string(recipient_token.amount, expected, |diff| {
+                real_number_string(diff, spl_token_args.decimals)
+            });
         (
             style(format!("{actual_ui_amount:>24}")),
             format!("{delta_string:>24}"),
@@ -149,6 +154,8 @@ pub(crate) fn print_token_balances(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     // The following unit tests were written for v1.4 using the ProgramTest framework, passing its
     // BanksClient into the `solana-tokens` methods. With the revert to RpcClient in this module
     // (https://github.com/solana-labs/solana/pull/13623), that approach was no longer viable.
@@ -160,4 +167,20 @@ mod tests {
     // async fn test_check_spl_token_balances()
     //
     // https://github.com/solana-labs/solana/blob/5511d52c6284013a24ced10966d11d8f4585799e/tokens/src/spl_token.rs#L490-L685
+
+    #[test]
+    fn test_token_balance_difference_string() {
+        assert_eq!(
+            token_balance_difference_string(5, 3, |diff| real_number_string(diff, 0)),
+            "2"
+        );
+        assert_eq!(
+            token_balance_difference_string(3, 5, |diff| real_number_string(diff, 0)),
+            "-2"
+        );
+        assert_eq!(
+            token_balance_difference_string(7, 7, |diff| real_number_string(diff, 0)),
+            "0"
+        );
+    }
 }

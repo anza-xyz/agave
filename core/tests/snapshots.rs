@@ -6,7 +6,8 @@ use {
         SnapshotInterval, SnapshotKind, paths as snapshot_paths,
         snapshot_archive_info::FullSnapshotArchiveInfo, snapshot_config::SnapshotConfig,
     },
-    crossbeam_channel::unbounded,
+    agave_votor_messages::consensus_message::BlockId,
+    crossbeam_channel::bounded,
     itertools::Itertools,
     log::{info, trace},
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -14,15 +15,15 @@ use {
     solana_core::snapshot_packager_service::SnapshotPackagerService,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
-            PrunedBanksRequestHandler, SendDroppedBankCallback, SnapshotRequestHandler,
+            PrunedBanksRequestHandler, ROOTED_SLOTS_TO_KEEP_IN_CACHE, SendDroppedBankCallback,
+            SnapshotRequestHandler,
         },
-        bank::{Bank, BankTestConfig},
+        bank::Bank,
         bank_forks::BankForks,
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
         runtime_config::RuntimeConfig,
@@ -81,9 +82,9 @@ impl SnapshotTestConfig {
         );
         let bank0 = Bank::new_with_paths_for_tests(
             &genesis_config_info.genesis_config,
-            Arc::<RuntimeConfig>::default(),
-            BankTestConfig::default(),
+            None,
             vec![accounts_dir.clone()],
+            None,
         );
         bank0.freeze();
         let bank_forks_arc = BankForks::new_rw_arc(bank0);
@@ -132,16 +133,14 @@ fn restore_from_snapshot(
 
     let deserialized_bank = snapshot_bank_utils::bank_from_snapshot_archives(
         account_paths,
-        &snapshot_config.bank_snapshots_dir,
         &full_snapshot_archive_info,
         None,
+        snapshot_config,
         old_genesis_config,
         &RuntimeConfig::default(),
         None,
         None, // leader_for_tests
         None,
-        false,
-        false,
         false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
@@ -172,7 +171,7 @@ where
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
 
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-    let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+    let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
     let snapshot_controller = Arc::new(SnapshotController::new(
         snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
@@ -196,7 +195,7 @@ where
                 bank.fill_bank_with_ticks_for_tests();
             }
             if bank.block_id().is_none() {
-                bank.set_block_id(Some(Hash::default()));
+                bank.set_block_id(Some(BlockId::default()));
             }
             bank_forks.read().unwrap().prune_program_cache(bank.slot());
             // set_root should send a snapshot request
@@ -204,22 +203,14 @@ where
                 .write()
                 .unwrap()
                 .set_root(bank.slot(), Some(&snapshot_controller), None);
-            snapshot_request_handler.handle_snapshot_requests(0);
+            snapshot_request_handler.handle_snapshot_requests(0, bank.slot());
         }
     }
 
     // Generate a snapshot package for last bank
     let snapshot_config = snapshot_controller.snapshot_config();
     let last_bank = bank_forks.read().unwrap().get(last_slot).unwrap();
-    snapshot_bank_utils::bank_to_full_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
-        &last_bank,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
-    )
-    .unwrap();
+    snapshot_bank_utils::bank_to_full_snapshot_archive(snapshot_config, &last_bank).unwrap();
 
     // Restore bank from snapshot
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
@@ -284,7 +275,7 @@ fn test_slots_to_snapshot() {
     let num_set_roots = status_cache_max_entries * 2;
 
     for add_root_interval in &[1, 3, 9] {
-        let (snapshot_sender, _snapshot_receiver) = unbounded();
+        let (snapshot_sender, _snapshot_receiver) = bounded(1024);
         // Make sure this test never clears bank.slots_since_snapshot
         let snapshot_test_config = SnapshotTestConfig::new(
             SnapshotInterval::Slots(
@@ -413,7 +404,7 @@ fn test_bank_forks_incremental_snapshot() {
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
 
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-    let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+    let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
     let snapshot_controller = Arc::new(SnapshotController::new(
         snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
@@ -443,7 +434,7 @@ fn test_bank_forks_incremental_snapshot() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
-            bank.set_block_id(Some(Hash::default()));
+            bank.set_block_id(Some(BlockId::default()));
 
             bank_scheduler
         };
@@ -458,7 +449,7 @@ fn test_bank_forks_incremental_snapshot() {
                 .write()
                 .unwrap()
                 .set_root(bank.slot(), Some(&snapshot_controller), None);
-            snapshot_request_handler.handle_snapshot_requests(0);
+            snapshot_request_handler.handle_snapshot_requests(0, bank.slot());
         }
 
         // Since AccountsBackgroundService isn't running, manually make a full snapshot archive
@@ -510,14 +501,7 @@ fn make_full_snapshot_archive(
     );
     // The bank must have a block id set to take a snapshot.
     Bank::calculate_and_set_block_id_for_dcou(bank);
-    snapshot_bank_utils::bank_to_full_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
-        bank,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
-    )?;
+    snapshot_bank_utils::bank_to_full_snapshot_archive(snapshot_config, bank)?;
     Ok(())
 }
 
@@ -534,13 +518,9 @@ fn make_incremental_snapshot_archive(
     // The bank must have a block id set to take a snapshot.
     Bank::calculate_and_set_block_id_for_dcou(bank);
     snapshot_bank_utils::bank_to_incremental_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
+        snapshot_config,
         bank,
         incremental_snapshot_base_slot,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
     )?;
     Ok(())
 }
@@ -552,16 +532,12 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     genesis_config: &GenesisConfig,
 ) -> agave_snapshots::Result<()> {
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
-        &snapshot_config.bank_snapshots_dir,
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
         &[accounts_dir],
+        snapshot_config,
         genesis_config,
         &RuntimeConfig::default(),
         None,
         None,
-        false,
-        false,
         false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
@@ -574,8 +550,9 @@ fn restore_from_snapshots_and_check_banks_are_equal(
 }
 
 /// Spin up the background services fully then test taking & verifying snapshots
-#[test]
-fn test_snapshots_with_background_services() {
+#[test_case(false; "no_fastboot")]
+#[test_case(true; "fastboot_with_held_requests")]
+fn test_snapshots_with_background_services(request_fastboot: bool) {
     agave_logger::setup();
 
     const SET_ROOT_INTERVAL_SLOTS: Slot = 2;
@@ -585,6 +562,10 @@ fn test_snapshots_with_background_services() {
         INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS * 5;
     const LAST_SLOT: Slot =
         FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS * 3 + INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS * 2;
+    // Request fastboot while incremental snapshot requests are held behind the root. No full
+    // snapshot slot falls in the held window, so every full snapshot archive is still made.
+    const FASTBOOT_SLOT: Slot =
+        INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS * 8 + SET_ROOT_INTERVAL_SLOTS;
 
     // Maximum amount of time to wait for each snapshot archive to be created.
     // This should be enough time, but if it times-out in CI, try increasing it.
@@ -615,8 +596,8 @@ fn test_snapshots_with_background_services() {
         SocketAddrSpace::Unspecified,
     ));
 
-    let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
-    let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+    let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
+    let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
 
     let bank_forks = snapshot_test_config.bank_forks.clone();
@@ -668,8 +649,12 @@ fn test_snapshots_with_background_services() {
 
     let mut latest_full_snapshot_slot = None;
     let mut latest_incremental_snapshot_slot = None;
+    // Held past the extra roots below, which prune it from bank_forks
+    let mut last_snapshot_bank = None;
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
-    for slot in 1..=LAST_SLOT {
+    // A snapshot request is handled once the root is ROOTED_SLOTS_TO_KEEP_IN_CACHE past it, so run
+    // that many extra slots and wait for each snapshot that far behind the current slot.
+    for slot in 1..=LAST_SLOT + ROOTED_SLOTS_TO_KEEP_IN_CACHE {
         // Make a new bank and process some transactions
         {
             let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
@@ -689,7 +674,14 @@ fn test_snapshots_with_background_services() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
-            bank.set_block_id(Some(Hash::default()));
+            bank.set_block_id(Some(BlockId::default()));
+            if slot == LAST_SLOT {
+                last_snapshot_bank = Some(bank);
+            }
+        }
+
+        if request_fastboot && slot == FASTBOOT_SLOT {
+            snapshot_controller.request_fastboot_snapshot();
         }
 
         // Call `BankForks::set_root()` to cause snapshots to be taken
@@ -700,24 +692,52 @@ fn test_snapshots_with_background_services() {
                 .set_root(slot, Some(&snapshot_controller), None);
         }
 
-        // If a snapshot should be taken this slot, wait for it to complete
-        if slot % FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS == 0 {
+        // Exit waits for the fastboot bank snapshot before stopping the validator
+        if request_fastboot && slot == FASTBOOT_SLOT {
+            let timer = Instant::now();
+            while snapshot_controller.latest_bank_snapshot_slot() != slot {
+                assert!(
+                    timer.elapsed() < MAX_WAIT_DURATION,
+                    "Waiting for fastboot snapshot {slot} exceeded the {MAX_WAIT_DURATION:?} \
+                     maximum wait duration!",
+                );
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            // The held requests were dropped when the fastboot request was handled
+            assert!(snapshot_controller.request_sender().is_empty());
+        }
+
+        // ABS handles a snapshot request once the root is ROOTED_SLOTS_TO_KEEP_IN_CACHE past it, so
+        // wait for any snapshot requested that many slots ago
+        if slot <= ROOTED_SLOTS_TO_KEEP_IN_CACHE {
+            continue;
+        }
+        let snapshot_slot = slot - ROOTED_SLOTS_TO_KEEP_IN_CACHE;
+        // Any request between FASTBOOT_SLOT and ROOTED_SLOTS_TO_KEEP_IN_CACHE is dropped, so
+        // so skip
+        if request_fastboot
+            && (FASTBOOT_SLOT - ROOTED_SLOTS_TO_KEEP_IN_CACHE..FASTBOOT_SLOT)
+                .contains(&snapshot_slot)
+        {
+            continue;
+        }
+        if snapshot_slot.is_multiple_of(FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS) {
             let timer = Instant::now();
             while snapshot_paths::get_highest_full_snapshot_archive_slot(
                 &snapshot_test_config
                     .snapshot_config
                     .full_snapshot_archives_dir,
-            ) != Some(slot)
+            ) != Some(snapshot_slot)
             {
                 assert!(
                     timer.elapsed() < MAX_WAIT_DURATION,
-                    "Waiting for full snapshot {slot} exceeded the {MAX_WAIT_DURATION:?} maximum \
-                     wait duration!",
+                    "Waiting for full snapshot {snapshot_slot} exceeded the {MAX_WAIT_DURATION:?} \
+                     maximum wait duration!",
                 );
                 std::thread::sleep(Duration::from_secs(1));
             }
-            latest_full_snapshot_slot = Some(slot);
-        } else if slot % INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS == 0
+            latest_full_snapshot_slot = Some(snapshot_slot);
+        } else if snapshot_slot.is_multiple_of(INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS)
             && latest_full_snapshot_slot.is_some()
         {
             let timer = Instant::now();
@@ -726,16 +746,16 @@ fn test_snapshots_with_background_services() {
                     .snapshot_config
                     .incremental_snapshot_archives_dir,
                 latest_full_snapshot_slot.unwrap(),
-            ) != Some(slot)
+            ) != Some(snapshot_slot)
             {
                 assert!(
                     timer.elapsed() < MAX_WAIT_DURATION,
-                    "Waiting for incremental snapshot {slot} exceeded the {MAX_WAIT_DURATION:?} \
-                     maximum wait duration!",
+                    "Waiting for incremental snapshot {snapshot_slot} exceeded the \
+                     {MAX_WAIT_DURATION:?} maximum wait duration!",
                 );
                 std::thread::sleep(Duration::from_secs(1));
             }
-            latest_incremental_snapshot_slot = Some(slot);
+            latest_incremental_snapshot_slot = Some(snapshot_slot);
         }
     }
 
@@ -743,16 +763,12 @@ fn test_snapshots_with_background_services() {
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
     let snapshot_config = snapshot_controller.snapshot_config();
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
-        &snapshot_config.bank_snapshots_dir,
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
         &[temporary_accounts_dir],
+        snapshot_config,
         &snapshot_test_config.genesis_config_info.genesis_config,
         &RuntimeConfig::default(),
         None,
         None,
-        false,
-        false,
         false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
@@ -764,15 +780,7 @@ fn test_snapshots_with_background_services() {
         deserialized_bank.slot(),
         latest_incremental_snapshot_slot.unwrap()
     );
-    assert_eq!(
-        &deserialized_bank,
-        bank_forks
-            .read()
-            .unwrap()
-            .get(deserialized_bank.slot())
-            .unwrap()
-            .as_ref()
-    );
+    assert_eq!(&deserialized_bank, last_snapshot_bank.unwrap().as_ref());
 
     // Stop the background services, ignore any errors
     info!("Shutting down background services...");
@@ -800,7 +808,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         SocketAddrSpace::Unspecified,
     ));
 
-    let (snapshot_request_sender, _snapshot_request_receiver) = unbounded();
+    let (snapshot_request_sender, _snapshot_request_receiver) = bounded(1024);
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
 
     let bank_forks = snapshot_test_config.bank_forks.clone();
@@ -846,7 +854,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         assert_eq!(bank.process_transaction(&tx), Ok(()));
 
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // Inject a fastboot snapshot at a specific slot
         if slot % FASTBOOT_SNAPSHOT_INTERVAL_SLOTS == 0 {

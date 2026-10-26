@@ -1,7 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 //! Data shared between program runtime and built-in programs as well as SBF programs.
 #![deny(clippy::indexing_slicing)]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod instruction;
 pub mod instruction_accounts;
@@ -24,6 +24,7 @@ pub const MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION: i64 = MAX_ACCOUNT_DATA_LEN as
 pub const MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION: usize = 10 * 1_024;
 // Maximum cross-program invocation and instructions per transaction
 pub const MAX_INSTRUCTION_TRACE_LENGTH: usize = 64;
+pub const DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT: u32 = 200_000;
 
 #[cfg(test)]
 static_assertions::const_assert_eq!(
@@ -48,3 +49,12 @@ static_assertions::const_assert_eq!(
 
 /// Index of an account inside of the transaction or an instruction.
 pub type IndexOfAccount = u16;
+
+/// Selects if transactions can be discarded entirely
+#[derive(Clone, Copy, Debug)]
+pub enum DropOnBailOut {
+    /// As follower, in replay: Transactions failing with InstructionError::BailOut are part of consensus
+    Disabled,
+    /// As leader, in block production: Transactions failing with InstructionError::BailOut are dropped
+    Enabled,
+}

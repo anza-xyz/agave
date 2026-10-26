@@ -7,6 +7,7 @@ use {
         ops::{Deref, DerefMut},
         ptr::{self, NonNull},
         slice,
+        sync::Once,
     },
 };
 
@@ -49,19 +50,25 @@ impl From<AllocError> for io::Error {
 
 enum AllocationMethod {
     Std(Layout),
-    Mmap,
+    /// The whole mapping, which extends past the buffer on either side to align its start.
+    Mmap {
+        map: NonNull<libc::c_void>,
+        map_len: usize,
+    },
 }
+
+/// Size and alignment of a transparent huge page with 4 KiB base pages, as on x86_64.
+const HUGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
 
 /// Memory buffer whose base address is aligned to the system page size.
 ///
 /// `ptr` is always aligned to the system page size.
 /// `len` is not guaranteed to be page-aligned.
 ///
-/// On allocation:
-/// - If `len` is smaller than the system page size, only `ptr` is
-///   page-aligned.
-/// - Otherwise allocation might use huge pages and if it succeeds, both `ptr` and `len` are
-///   aligned to the system page size.
+/// Buffers of at least [`HUGE_PAGE_SIZE`] start at a huge page boundary and ask the kernel to
+/// back them with transparent huge pages (granted when THP is enabled in `always` or `madvise`
+/// mode). Huge pages cut the TLB misses of sweeps through large buffers, like copying data out of
+/// them after reads.
 pub struct PageAlignedMemory {
     ptr: NonNull<u8>,
     len: usize,
@@ -70,18 +77,13 @@ pub struct PageAlignedMemory {
 
 impl PageAlignedMemory {
     /// Allocate memory buffer optimized for io_uring operations, i.e.
-    /// using HugeTable when it is available on the host.
+    /// using huge pages when they are available on the host.
     pub fn new(size: usize) -> Result<Self, AllocError> {
-        let page_size = Self::page_size();
-        if size > page_size {
-            let size = size.next_power_of_two();
-            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size, page_size) {
-                log::info!("obtained hugetable io_uring buffer (len={size})");
-                return Ok(alloc);
-            }
+        if size >= HUGE_PAGE_SIZE {
+            return Self::new_huge_page_aligned(size);
         }
 
-        let layout = Layout::from_size_align(size, page_size)?;
+        let layout = Layout::from_size_align(size, Self::page_size())?;
         if layout.size() == 0 {
             return Err(AllocError::LayoutSize);
         }
@@ -96,19 +98,18 @@ impl PageAlignedMemory {
         })
     }
 
-    fn alloc_huge_table(memory_size: usize, page_size: usize) -> Result<Self, AllocError> {
-        debug_assert!(memory_size.is_power_of_two());
-        debug_assert!(page_size.is_power_of_two());
-        let aligned_size = memory_size.next_multiple_of(page_size);
-
+    fn new_huge_page_aligned(size: usize) -> Result<Self, AllocError> {
+        let aligned_size = size.next_multiple_of(Self::page_size());
+        // Over-map by one huge page, so the buffer can start at a huge page boundary.
+        let map_len = aligned_size.strict_add(HUGE_PAGE_SIZE);
         // Safety:
         // doing an ANONYMOUS alloc. addr=NULL is ok, fd is not used.
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
-                aligned_size,
+                map_len,
                 libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_HUGETLB,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
                 -1,
                 0,
             )
@@ -118,10 +119,39 @@ impl PageAlignedMemory {
             return Err(AllocError::MMapFailed);
         }
 
+        let map = NonNull::new(ptr).ok_or(AllocError::OutOfMemory)?;
+        // The unused head and tail stay mapped until drop, but take no memory, since nothing
+        // touches them. Unmapping them here could fail and would race with other threads' mmap.
+        let map_addr = map.addr().get();
+        let head = map_addr
+            .next_multiple_of(HUGE_PAGE_SIZE)
+            .strict_sub(map_addr);
+        // Safety:
+        // the head is shorter than the extra huge page mapped above, so the buffer stays inside
+        // the mapping.
+        let start = unsafe { map.cast::<u8>().add(head) };
+        // Safety:
+        // the buffer range lies inside the mapping above and nothing references it yet.
+        let advised =
+            unsafe { libc::madvise(start.as_ptr().cast(), aligned_size, libc::MADV_HUGEPAGE) };
+        // The advice only affects how the kernel backs the range, so the buffer stays valid in
+        // base pages when it fails.
+        if advised != 0 {
+            static WARN_ONCE: Once = Once::new();
+            let error = io::Error::last_os_error();
+            WARN_ONCE.call_once(|| {
+                log::warn!(
+                    "io_uring buffers use base pages, because madvise(MADV_HUGEPAGE) failed: \
+                     {error}; the kernel likely lacks transparent huge page support \
+                     (CONFIG_TRANSPARENT_HUGEPAGE), which slows reads out of the buffers"
+                );
+            });
+        }
+
         Ok(Self {
-            ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError::OutOfMemory)?,
-            len: aligned_size,
-            allocation_method: AllocationMethod::Mmap,
+            ptr: start,
+            len: size,
+            allocation_method: AllocationMethod::Mmap { map, map_len },
         })
     }
 
@@ -141,11 +171,16 @@ impl Drop for PageAlignedMemory {
                     std::alloc::dealloc(self.ptr.as_ptr(), layout);
                 }
             }
-            AllocationMethod::Mmap => {
+            AllocationMethod::Mmap { map, map_len } => {
                 // Safety:
-                // ptr is a valid pointer returned by mmap
-                unsafe {
-                    libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
+                // the range is the whole mapping created by `new_huge_page_aligned`
+                let unmapped = unsafe { libc::munmap(map.as_ptr(), map_len) };
+                if unmapped != 0 {
+                    // Dropping leaks the buffer rather than panicking.
+                    log::warn!(
+                        "munmap of an io_uring buffer failed, leaking {map_len} bytes: {}",
+                        io::Error::last_os_error()
+                    );
                 }
             }
         }
@@ -256,6 +291,17 @@ impl IoBufferChunk {
         }
     }
 
+    /// Copy bytes from `buf` into the buffer at the provided offset.
+    pub fn copy_from_slice(&mut self, buf: &[u8], offset: IoSize) {
+        let offset = offset as usize;
+        let end = offset.strict_add(buf.len());
+        assert!(end <= self.len() as usize);
+        // Safety: caller owns the &mut buffer indicating that it is not used by io-uring op,
+        // `end` is checked above to ensure the buffer is large enough
+        let dst = unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), end) };
+        dst[offset..].copy_from_slice(buf);
+    }
+
     /// Register provided buffer as fixed buffer in `io_uring`.
     pub unsafe fn register<S, E: RingOp<S>>(
         buffer: &mut [u8],
@@ -269,5 +315,38 @@ impl IoBufferChunk {
             })
             .collect::<Vec<_>>();
         unsafe { ring.register_buffers(&iovecs) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_small_buffer_is_page_aligned() {
+        let mut buf = PageAlignedMemory::new(HUGE_PAGE_SIZE - 1).unwrap();
+        assert!(matches!(buf.allocation_method, AllocationMethod::Std(_)));
+        assert!(
+            buf.as_ptr()
+                .addr()
+                .is_multiple_of(PageAlignedMemory::page_size())
+        );
+        assert_eq!(buf.len(), HUGE_PAGE_SIZE - 1);
+        buf.fill(1);
+    }
+
+    #[test]
+    fn test_large_buffer_starts_at_huge_page() {
+        for size in [HUGE_PAGE_SIZE, 3 * HUGE_PAGE_SIZE + 4097] {
+            let mut buf = PageAlignedMemory::new(size).unwrap();
+            assert!(matches!(
+                buf.allocation_method,
+                AllocationMethod::Mmap { .. }
+            ));
+            assert!(buf.as_ptr().addr().is_multiple_of(HUGE_PAGE_SIZE));
+            assert_eq!(buf.len(), size);
+            buf.fill(1);
+            assert!(buf.iter().all(|&b| b == 1));
+        }
     }
 }

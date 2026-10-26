@@ -1,20 +1,20 @@
 #![cfg(feature = "sbf_rust")]
 
 use {
-    agave_validator::test_validator::*,
     solana_instruction::{AccountMeta, Instruction},
-    solana_keypair::Keypair,
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, SlotLeader},
         bank_client::BankClient,
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        loader_utils::load_program_of_loader_v4,
+        loader_utils::create_program,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_sdk_ids::bpf_loader_upgradeable,
     solana_signer::Signer,
     solana_sysvar::{clock, slot_history},
+    solana_test_validator::TestValidatorGenesis,
     solana_transaction::Transaction,
     std::{thread::sleep, time::Duration},
 };
@@ -29,15 +29,15 @@ fn test_no_panic_banks_client() {
         ..
     } = create_genesis_config(50);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
-    let (bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        bank_forks.as_ref(),
-        &mint_keypair,
-        &authority_keypair,
+    let program_id = create_program(
+        &bank,
+        &bpf_loader_upgradeable::id(),
         "solana_sbf_rust_simulation",
     );
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let bank = bank_client
+        .advance_slot(1, &bank_forks, SlotLeader::default())
+        .unwrap();
     bank.freeze();
 
     let instruction = Instruction::new_with_bincode(
@@ -61,7 +61,7 @@ fn test_no_panic_rpc_client() {
     agave_logger::setup();
 
     let program_id = Pubkey::new_unique();
-    let (test_validator, payer) = TestValidatorGenesis::default()
+    let (test_validator, payer) = TestValidatorGenesis::default_for_tests()
         .add_program("solana_sbf_rust_simulation", program_id)
         .start();
     let rpc_client = test_validator.get_rpc_client();

@@ -1,15 +1,15 @@
 use {
-    serde::{Deserialize, Serialize},
     solana_short_vec as short_vec,
+    wincode::{ReadError, SchemaRead, SchemaWrite, WriteError},
 };
 
-/// Type-Length-Value encoding wrapper for bincode
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+/// Type-Length-Value encoding wrapper
+#[derive(Clone, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
 pub(crate) struct TlvRecord {
     // type
     pub(crate) typ: u8,
     // length and serialized bytes of the value
-    #[serde(with = "short_vec")]
+    #[wincode(with = "wincode::containers::Vec<u8, short_vec::ShortU16>")]
     pub(crate) bytes: Vec<u8>,
 }
 
@@ -32,14 +32,17 @@ macro_rules! define_tlv_enum {
             )*
         }
 
-        // Serialize enum by first converting into TlvRecord, and then serializing that
-        impl serde::Serialize for $enum_name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde::Serializer,
-            {
-                let tlv_rec = TlvRecord::try_from(self).map_err(|e| serde::ser::Error::custom(e))?;
-                tlv_rec.serialize(serializer)
+        unsafe impl<C: wincode::config::Config> wincode::SchemaWrite<C> for $enum_name {
+            type Src = Self;
+
+            fn size_of(value: &Self::Src) -> wincode::WriteResult<usize> {
+                let tlv_rec = TlvRecord::try_from(value).map_err(|_| wincode::WriteError::Custom("invalid as tlv_rec"))?;
+                <TlvRecord as wincode::SchemaWrite<C>>::size_of(&tlv_rec)
+            }
+
+            fn write(writer: impl wincode::io::Writer, value: &Self::Src) -> wincode::WriteResult<()> {
+                let tlv_rec = TlvRecord::try_from(value).map_err(|_| wincode::WriteError::Custom("invalid as tlv_rec"))?;
+                <TlvRecord as wincode::SchemaWrite<C>>::write(writer, &tlv_rec)
             }
         }
 
@@ -49,7 +52,7 @@ macro_rules! define_tlv_enum {
             fn try_from(value: &TlvRecord) -> Result<Self, Self::Error> {
                 match value.typ {
                     $(
-                        $typ => Ok(Self::$variant(bincode::deserialize::<$inner>(&value.bytes)?)),
+                        $typ => Ok(Self::$variant(wincode::deserialize::<$inner>(&value.bytes)?)),
                     )*
                     _ => Err(TlvDecodeError::UnknownType(value.typ)),
                 }
@@ -57,19 +60,33 @@ macro_rules! define_tlv_enum {
         }
         // define conversion into TLV wire format
         impl TryFrom<&$enum_name> for TlvRecord {
-            type Error = bincode::Error;
+            type Error = $crate::tlv::TlvEncodeError;
             fn try_from(value: &$enum_name) -> Result<Self, Self::Error> {
-                use serde::ser::Error;
                 match value {
                     $(
                         $enum_name::$variant(inner) => Ok(TlvRecord {
                             typ: $typ,
-                            bytes: bincode::serialize(inner)?,
+                            bytes: wincode::serialize(inner)?,
                         }),
                     )*
                     #[allow(unreachable_patterns)]
-                    _ => Err(bincode::Error::custom("Unsupported enum variant")),
+                    _ => Err($crate::tlv::TlvEncodeError::UnsupportedVariant),
                 }
+            }
+        }
+
+        unsafe impl<'de, C: wincode::config::Config> wincode::SchemaRead<'de, C> for $enum_name {
+            type Dst = Self;
+
+            fn read(
+                reader: impl wincode::io::Reader<'de>,
+                dst: &mut std::mem::MaybeUninit<Self::Dst>,
+            ) -> wincode::ReadResult<()> {
+                let rec = <$crate::tlv::TlvRecord as wincode::SchemaRead<'de, C>>::get(reader)?;
+                let value = Self::try_from(&rec)
+                    .map_err(|_| wincode::ReadError::Custom("TlvRecord conversion failed"))?;
+                dst.write(value);
+                Ok(())
             }
         }
     };
@@ -80,7 +97,15 @@ pub enum TlvDecodeError {
     #[error("Unknown type: {0}")]
     UnknownType(u8),
     #[error("Malformed payload: {0}")]
-    MalformedPayload(#[from] bincode::Error),
+    MalformedPayload(#[from] ReadError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TlvEncodeError {
+    #[error("Serialization failed: {0}")]
+    Wincode(#[from] WriteError),
+    #[error("Unsupported enum variant")]
+    UnsupportedVariant,
 }
 
 /// Parses a slice of serialized TLV records into a provided type. Unsupported
@@ -114,8 +139,8 @@ mod tests {
             ExtensionNew::NewString(String::from("bla")),
         ];
 
-        let new_bytes = bincode::serialize(&new_tlv_data).unwrap();
-        let tlv_vec: Vec<TlvRecord> = bincode::deserialize(&new_bytes).unwrap();
+        let new_bytes = wincode::serialize(&new_tlv_data).unwrap();
+        let tlv_vec: Vec<TlvRecord> = wincode::deserialize(&new_bytes).unwrap();
         // check that both TLV are encoded correctly
         let new: Vec<ExtensionNew> = crate::tlv::parse(&tlv_vec);
         assert!(matches!(new[0], ExtensionNew::Test(42)));
@@ -143,9 +168,9 @@ mod tests {
             ExtensionLegacy::Test(42),
             ExtensionLegacy::LegacyString(String::from("foo")),
         ];
-        let legacy_bytes = bincode::serialize(&legacy_tlv_data).unwrap();
+        let legacy_bytes = wincode::serialize(&legacy_tlv_data).unwrap();
 
-        let tlv_vec: Vec<TlvRecord> = bincode::deserialize(&legacy_bytes).unwrap();
+        let tlv_vec: Vec<TlvRecord> = wincode::deserialize(&legacy_bytes).unwrap();
         // Just in case make sure that legacy data is serialized correctly
         let legacy: Vec<ExtensionLegacy> = crate::tlv::parse(&tlv_vec);
         assert!(matches!(legacy[0], ExtensionLegacy::Test(42)));

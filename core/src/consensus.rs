@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 pub mod fork_choice;
 pub mod heaviest_subtree_fork_choice;
 pub(crate) mod latest_validator_votes_for_frozen_banks;
@@ -20,7 +22,9 @@ use {
         tower1_14_11::Tower1_14_11,
     },
     crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
-    agave_votor_messages::{fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD},
+    agave_votor_messages::{
+        consensus_message::BlockId, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD,
+    },
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -61,7 +65,7 @@ impl ThresholdDecision {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum SwitchForkDecision {
     SwitchProof(Hash),
@@ -200,7 +204,7 @@ impl TowerVersions {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(PartialEq, Eq, Debug, Default, Clone, Copy)]
 pub(crate) enum BlockhashStatus {
     /// No vote since restart
@@ -498,14 +502,14 @@ impl Tower {
                 vote_slots.insert(slot);
             }
 
-            if start_root != vote_state.root_slot {
-                if let Some(root) = start_root {
-                    // The account's prior root can be older than this fork's root; clamp to
-                    // the same range for the same reason as above.
-                    if root > root_slot {
-                        trace!("ROOT: {root}");
-                        vote_slots.insert(root);
-                    }
+            if start_root != vote_state.root_slot
+                && let Some(root) = start_root
+            {
+                // The account's prior root can be older than this fork's root; clamp to
+                // the same range for the same reason as above.
+                if root > root_slot {
+                    trace!("ROOT: {root}");
+                    vote_slots.insert(root);
                 }
             }
             if let Some(root) = vote_state.root_slot {
@@ -544,7 +548,7 @@ impl Tower {
         debug_assert!(total_stake > 0);
         let parent_is_super_oc = bank_slot == parent_slot + 1
             && Fraction::new(super_oc_stake, NonZeroU64::new(total_stake).unwrap())
-                > GENESIS_VOTE_THRESHOLD;
+                >= GENESIS_VOTE_THRESHOLD;
 
         // TODO: populate_ancestor_voted_stakes only adds zeros. Comment why
         // that is necessary (if so).
@@ -678,9 +682,9 @@ impl Tower {
             // Note: since the new shred format is yet to be rolled out to all clusters,
             // this can also happen for non-leader banks. Once rolled out we can assert
             // here that this is our leader bank.
-            Hash::default()
+            BlockId::default()
         });
-        self.record_bank_vote_and_update_lockouts(bank.slot(), bank.hash(), block_id)
+        self.record_bank_vote_and_update_lockouts(bank.slot(), bank.hash(), block_id.to_hash())
     }
 
     /// If we've recently updated the vote state by applying a new vote
@@ -703,15 +707,15 @@ impl Tower {
         vote_hash: Hash,
         block_id: Hash,
     ) -> Option<Slot> {
-        if let Some(last_voted_slot) = self.vote_state.last_voted_slot() {
-            if vote_slot <= last_voted_slot {
-                panic!(
-                    "Error while recording vote {} {} in local tower {:?}",
-                    vote_slot,
-                    vote_hash,
-                    VoteError::VoteTooOld
-                );
-            }
+        if let Some(last_voted_slot) = self.vote_state.last_voted_slot()
+            && vote_slot <= last_voted_slot
+        {
+            panic!(
+                "Error while recording vote {} {} in local tower {:?}",
+                vote_slot,
+                vote_hash,
+                VoteError::VoteTooOld
+            );
         }
 
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
@@ -807,10 +811,10 @@ impl Tower {
             if slot <= last_voted_slot {
                 return false;
             }
-        } else if let Some(root) = self.vote_state.root_slot {
-            if slot <= root {
-                return false;
-            }
+        } else if let Some(root) = self.vote_state.root_slot
+            && slot <= root
+        {
+            return false;
         }
         true
     }
@@ -841,15 +845,15 @@ impl Tower {
             }
         }
 
-        if let Some(root_slot) = vote_state.root_slot {
-            if slot != root_slot {
-                // This case should never happen because bank forks purges all
-                // non-descendants of the root every time root is set
-                assert!(
-                    ancestors.contains(&root_slot),
-                    "ancestors: {ancestors:?}, slot: {slot} root: {root_slot}"
-                );
-            }
+        if let Some(root_slot) = vote_state.root_slot
+            && slot != root_slot
+        {
+            // This case should never happen because bank forks purges all
+            // non-descendants of the root every time root is set
+            assert!(
+                ancestors.contains(&root_slot),
+                "ancestors: {ancestors:?}, slot: {slot} root: {root_slot}"
+            );
         }
 
         false
@@ -1061,9 +1065,11 @@ impl Tower {
                 .unwrap_or(true)
             {
                 // Our last vote slot was purged because it was on a duplicate fork, don't continue below
-                // where checks may panic. We allow a freebie vote here that may violate switching
-                // thresholds
-                // TODO: Properly handle this case
+                // where checks may panic. We allow a freebie vote here without checking the switch
+                // threshold as it is trivially satisfied:
+                // - Freebie can only occur because our last vote block was dumped & repaired
+                // - Dump & repair only triggers due to another version reaching duplicate confirmation (52%)
+                // - 52% > 38% so the switching threshold is implicitely satisifed
                 info!(
                     "Allowing switch vote on {:?} because last vote {:?} was rolled back",
                     (switch_slot, switch_hash),
@@ -1745,6 +1751,40 @@ impl ExternalRootSource {
     }
 }
 
+/// Verifies that the slot ancestry of a vote-history root newer than the last blockstore root
+/// descends from it. This preserves the topology sanity check previously performed as part of
+/// reconciliation; it cannot distinguish competing blocks in the same slot.
+///
+/// Unlike [`reconcile_blockstore_roots_with_external_source`], this does not mark any slots as
+/// rooted. A vote-history root alone does not identify the block for its slot, so it must not be
+/// used to mutate blockstore roots.
+pub(crate) fn verify_blockstore_root_with_vote_history(
+    vote_history_root: Slot,
+    blockstore: &Blockstore,
+    last_blockstore_root: Slot,
+) {
+    if last_blockstore_root >= vote_history_root {
+        return;
+    }
+
+    for current in AncestorIterator::new_inclusive(vote_history_root, blockstore) {
+        match current.cmp(&last_blockstore_root) {
+            Ordering::Greater => continue,
+            Ordering::Equal => return,
+            Ordering::Less => panic!(
+                "last_blockstore_root({last_blockstore_root}) is skipped while traversing \
+                 blockstore (currently at {current}) from vote history root \
+                 ({vote_history_root})!?",
+            ),
+        }
+    }
+
+    warn!(
+        "Couldn't connect vote history root ({vote_history_root}) to blockstore root \
+         ({last_blockstore_root}); blockstore pruned or vote history moved into a new ledger?",
+    );
+}
+
 // Given an untimely crash, tower may have roots that are not reflected in blockstore,
 // or the reverse of this.
 // That's because we don't impose any ordering guarantee or any kind of write barriers
@@ -1829,7 +1869,8 @@ pub mod test {
         solana_slot_history::SlotHistory,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{
-            MAX_LOCKOUT_HISTORY, Vote, VoteStateV4, VoteStateVersions, process_slot_vote_unchecked,
+            MAX_LOCKOUT_HISTORY, Vote, VoteStateV4, VoteStateVersions, handler::VoteStateHandler,
+            process_slot_vote_unchecked,
         },
         std::{
             collections::{HashMap, VecDeque},
@@ -1852,12 +1893,12 @@ pub mod test {
                     owner: solana_vote_program::id(),
                     ..Account::default()
                 });
-                let mut vote_state = VoteStateV4::default();
+                let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
                 for slot in *votes {
                     process_slot_vote_unchecked(&mut vote_state, *slot);
                 }
                 VoteStateV4::serialize(
-                    &VoteStateVersions::new_v4(vote_state),
+                    &VoteStateVersions::new_v4(vote_state.unwrap_v4()),
                     account.data_as_mut_slice(),
                 )
                 .expect("serialize state");
@@ -1995,7 +2036,7 @@ pub mod test {
 
         // Fill the BankForks according to the above fork structure
         vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
-        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+        for fork_progress in vote_simulator.progress.values_mut() {
             fork_progress.fork_stats.computed = true;
         }
 
@@ -2353,7 +2394,7 @@ pub mod test {
         // If we now set a root that causes slot 112 to be purged from BankForks, then
         // the switch proof will now fail since that validator's vote can no longer be
         // included in the switching proof
-        vote_simulator.set_root(44);
+        vote_simulator.set_root(&Pubkey::new_unique(), 44);
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
         let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         assert_eq!(
@@ -3090,7 +3131,7 @@ pub mod test {
 
         // Fill the BankForks according to the above fork structure
         vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
-        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+        for fork_progress in vote_simulator.progress.values_mut() {
             fork_progress.fork_stats.computed = true;
         }
 
@@ -3179,13 +3220,13 @@ pub mod test {
 
         // Fill the BankForks according to the above fork structure
         vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
-        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+        for fork_progress in vote_simulator.progress.values_mut() {
             fork_progress.fork_stats.computed = true;
         }
 
         // prepend tower restart!
         let mut slot_history = SlotHistory::default();
-        vote_simulator.set_root(replayed_root_slot);
+        vote_simulator.set_root(&Pubkey::new_unique(), replayed_root_slot);
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
         let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         for slot in &[0, 1, 2, 43, replayed_root_slot] {
@@ -3328,11 +3369,11 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(4, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
         assert!(!blockstore.is_root(3));
@@ -3364,11 +3405,11 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(4, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         blockstore.set_roots(std::iter::once(&3)).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
@@ -3392,9 +3433,9 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
         assert!(!blockstore.is_root(3));
@@ -3409,6 +3450,63 @@ pub mod test {
         )
         .unwrap();
         assert_eq!(blockstore.max_root(), 0);
+    }
+
+    #[test]
+    fn test_verify_blockstore_root_with_vote_history_does_not_mutate_roots() {
+        agave_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let (shreds, _) = make_slot_entries(1, 0, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        let (shreds, _) = make_slot_entries(4, 1, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        assert_eq!(blockstore.max_root(), 0);
+
+        verify_blockstore_root_with_vote_history(0, &blockstore, blockstore.max_root());
+        verify_blockstore_root_with_vote_history(4, &blockstore, blockstore.max_root());
+
+        assert_eq!(blockstore.max_root(), 0);
+        assert!(!blockstore.is_root(1));
+        assert!(!blockstore.is_root(4));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "last_blockstore_root(3) is skipped while traversing blockstore (currently at \
+                    1) from vote history root (4)!?"
+    )]
+    fn test_verify_blockstore_root_with_vote_history_panics_on_divergence() {
+        agave_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let (shreds, _) = make_slot_entries(1, 0, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        let (shreds, _) = make_slot_entries(3, 1, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        let (shreds, _) = make_slot_entries(4, 1, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        blockstore.set_roots(std::iter::once(&3)).unwrap();
+
+        verify_blockstore_root_with_vote_history(4, &blockstore, blockstore.max_root());
+    }
+
+    #[test]
+    fn test_verify_blockstore_root_with_vote_history_missing_root_does_not_mutate() {
+        agave_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let (shreds, _) = make_slot_entries(1, 0, 42);
+        blockstore.insert_shreds(shreds, false).unwrap();
+        assert_eq!(blockstore.max_root(), 0);
+
+        verify_blockstore_root_with_vote_history(4, &blockstore, blockstore.max_root());
+
+        assert_eq!(blockstore.max_root(), 0);
+        assert!(!blockstore.is_root(1));
     }
 
     #[test]
@@ -3817,7 +3915,7 @@ pub mod test {
 
         // Fill the BankForks according to the above fork structure
         vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
-        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+        for fork_progress in vote_simulator.progress.values_mut() {
             fork_progress.fork_stats.computed = true;
         }
 

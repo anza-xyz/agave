@@ -51,7 +51,7 @@ fn insert_test_shreds(ledger_path: &Path, ending_slot: u64) {
         ending_slot,
         /*entries_per_slot:*/ 10,
     );
-    blockstore.insert_shreds(shreds, None, false).unwrap();
+    blockstore.insert_shreds(shreds, false).unwrap();
 }
 
 #[test]

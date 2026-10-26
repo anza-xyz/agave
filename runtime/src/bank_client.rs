@@ -13,7 +13,7 @@ use {
     solana_signature::Signature,
     solana_signer::{Signer, signers::Signers},
     solana_system_interface::instruction as system_instruction,
-    solana_sysvar::SysvarSerialize,
+    solana_sysvar_id::SysvarId,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransportError, TransportResult as Result},
     std::{
@@ -191,10 +191,10 @@ impl SyncClient for BankClient {
         let now = Instant::now();
         loop {
             let response = self.bank.get_signature_status(signature);
-            if let Some(res) = response {
-                if res.is_ok() {
-                    break;
-                }
+            if let Some(res) = response
+                && res.is_ok()
+            {
+                break;
             }
             if now.elapsed().as_secs() > 15 {
                 return Err(TransportError::IoError(io::Error::other(format!(
@@ -274,7 +274,12 @@ impl BankClient {
         Self::new_shared(Arc::new(bank))
     }
 
-    pub fn set_sysvar_for_tests<T: SysvarSerialize>(&self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
+    {
         self.bank.set_sysvar_for_tests(sysvar);
     }
 

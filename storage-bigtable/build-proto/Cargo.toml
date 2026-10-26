@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [features]
 agave-unstable-api = []
@@ -19,3 +20,6 @@ tonic-prost-build = { workspace = true }
 # envar to point to the installed binary
 [target."cfg(not(windows))".dependencies]
 protobuf-src = { workspace = true }
+
+[lints]
+workspace = true

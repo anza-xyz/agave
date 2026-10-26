@@ -161,14 +161,12 @@ impl RpcSender for HttpSender {
                     && too_many_requests_retries > 0
                 {
                     let mut duration = Duration::from_millis(500);
-                    if let Some(retry_after) = response.headers().get(RETRY_AFTER) {
-                        if let Ok(retry_after) = retry_after.to_str() {
-                            if let Ok(retry_after) = retry_after.parse::<u64>() {
-                                if retry_after < 120 {
-                                    duration = Duration::from_secs(retry_after);
-                                }
-                            }
-                        }
+                    if let Some(retry_after) = response.headers().get(RETRY_AFTER)
+                        && let Ok(retry_after) = retry_after.to_str()
+                        && let Ok(retry_after) = retry_after.parse::<u64>()
+                        && retry_after < 120
+                    {
+                        duration = Duration::from_secs(retry_after);
                     }
 
                     too_many_requests_retries -= 1;
@@ -185,6 +183,12 @@ impl RpcSender for HttpSender {
             }
 
             let mut json = response.json::<serde_json::Value>().await?;
+            if !json.is_object() {
+                return Err(RpcError::RpcRequestError(format!(
+                    "RPC response is not a JSON object: {json}",
+                ))
+                .into());
+            }
             if json["error"].is_object() {
                 return match serde_json::from_value::<RpcErrorObject>(json["error"].clone()) {
                     Ok(rpc_error_object) => {
@@ -251,5 +255,42 @@ mod tests {
         let _ = http_sender
             .send(RpcRequest::GetVersion, serde_json::Value::Null)
             .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn http_sender_returns_error_for_non_object_json_response() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Spawn a server that returns a JSON string instead of a JSON object,
+        // simulating a misbehaving RPC proxy or load balancer.
+        tokio::task::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            stream.readable().await.unwrap();
+            let _ = stream.try_read(&mut buf);
+            let body = r#""Service Unavailable""#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body,
+            );
+            stream.writable().await.unwrap();
+            stream.try_write(response.as_bytes()).unwrap();
+        });
+
+        let http_sender = HttpSender::new(format!("http://{addr}"));
+        let result = http_sender
+            .send(RpcRequest::GetVersion, serde_json::Value::Null)
+            .await;
+
+        let err = result.unwrap_err();
+        let err_string = err.to_string();
+        assert!(
+            err_string.contains("not a JSON object"),
+            "Expected 'not a JSON object' error, got: {err_string}"
+        );
     }
 }

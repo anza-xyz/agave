@@ -122,6 +122,8 @@ async fn main() -> anyhow::Result<()> {
         sender,
         staked_nodes,
         QuicStreamerConfig {
+            stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
+            max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
             ..QuicStreamerConfig::default()
         },
         SwQosConfig {
@@ -140,14 +142,13 @@ async fn main() -> anyhow::Result<()> {
             NaiveTime::MIN,
         );
         let logfile = std::fs::File::create(&path)?;
-        info!("Logfile in {}", &path);
+        info!("Logfile in {path}");
         let mut logfile = std::io::BufWriter::new(logfile);
         let mut sum = 0;
         for batch in receiver {
             let now = Utc::now().naive_utc();
             let delta_time = (now - solana_epoch).num_microseconds().unwrap() as u64;
             for pkt in batch.iter() {
-                let pkt = pkt.to_bytes_packet();
                 if pkt.buffer().len() < 32 {
                     continue;
                 }

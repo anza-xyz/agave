@@ -4,15 +4,22 @@ use {
     solana_account_info::{AccountInfo, next_account_info},
     solana_clock::Clock,
     solana_msg::msg,
-    solana_program_error::ProgramResult,
+    solana_program_error::{ProgramError, ProgramResult},
     solana_pubkey::{Pubkey, declare_id},
-    solana_sysvar::{Sysvar, SysvarSerialize},
+    solana_sysvar::Sysvar,
     std::convert::TryInto,
 };
 
 declare_id!("Sim1jD5C35odT8mzctm8BWnjic8xW5xgeb5MbcbErTo");
 
 solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
+
+fn clock_from_account_info(account_info: &AccountInfo) -> Result<Clock, ProgramError> {
+    if !solana_sysvar::clock::check_id(account_info.unsigned_key()) {
+        return Err(ProgramError::InvalidArgument);
+    }
+    wincode::deserialize(&account_info.data.borrow()).map_err(|_| ProgramError::InvalidArgument)
+}
 
 pub fn process_instruction(
     _program_id: &Pubkey,
@@ -28,7 +35,7 @@ pub fn process_instruction(
     let slot: u64 = u64::from_le_bytes(data[data.len() - 8..].try_into().unwrap());
 
     let clock_from_cache = Clock::get().unwrap();
-    let clock_from_account = Clock::from_account_info(clock_account_info).unwrap();
+    let clock_from_account = clock_from_account_info(clock_account_info).unwrap();
 
     msg!("next_slot from slot history is {:?} ", slot);
     msg!("clock from cache is in slot {:?} ", clock_from_cache.slot);

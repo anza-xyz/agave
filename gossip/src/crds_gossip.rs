@@ -7,7 +7,7 @@
 use {
     crate::{
         cluster_info_metrics::GossipStats,
-        crds::{Crds, GossipRoute},
+        crds::{Crds, GossipRoute, NodesCursor},
         crds_data::CrdsData,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -18,6 +18,7 @@ use {
         duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         protocol::{Ping, PingCache},
     },
+    parking_lot::RwLock,
     rand::{CryptoRng, Rng},
     rayon::ThreadPool,
     solana_clock::Slot,
@@ -32,7 +33,7 @@ use {
         cmp,
         collections::{HashMap, HashSet},
         net::SocketAddr,
-        sync::{Mutex, RwLock},
+        sync::Mutex,
         time::{Duration, Instant},
     },
 };
@@ -101,7 +102,7 @@ impl CrdsGossip {
         let pubkey = keypair.pubkey();
         // Skip if there are already records of duplicate shreds for this slot.
         let shred_slot = shred.slot();
-        let mut crds = self.crds.write().unwrap();
+        let mut crds = self.crds.write();
         if crds
             .get_records(&pubkey)
             .any(|value| match value.value.data() {
@@ -229,22 +230,22 @@ impl CrdsGossip {
         )
     }
 
-    pub fn generate_pull_responses(
+    pub fn generate_pull_responses<'a>(
         &self,
-        thread_pool: &ThreadPool,
-        requests: &[PullRequest],
+        requests: impl IntoIterator<Item = &'a PullRequest>,
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
-        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
         stats: &GossipStats,
-    ) -> Vec<Vec<CrdsValue>> {
+    ) -> Vec<(SocketAddr, Vec<CrdsValue>)> {
         CrdsGossipPull::generate_pull_responses(
-            thread_pool,
             &self.crds,
             requests,
             output_size_limit,
             now,
             should_retain_crds_value,
+            try_consume_scan_budget,
             stats,
         )
     }
@@ -287,9 +288,9 @@ impl CrdsGossip {
         &self,
         self_pubkey: Pubkey,
         stakes: &'a HashMap<Pubkey, u64>,
-        epoch_duration: Duration,
+        purge_duration: Duration,
     ) -> CrdsTimeouts<'a> {
-        self.pull.make_timeouts(self_pubkey, stakes, epoch_duration)
+        self.pull.make_timeouts(self_pubkey, stakes, purge_duration)
     }
 
     pub fn purge(
@@ -304,7 +305,6 @@ impl CrdsGossip {
         let rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
         self.crds
             .write()
-            .unwrap()
             .trim_purged(now.saturating_sub(5 * self.pull.crds_timeout));
         self.pull.purge_failed_inserts(now);
         rv
@@ -333,29 +333,34 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     // Exclude nodes which have not been active for this long.
     const ACTIVE_TIMEOUT: Duration = Duration::from_secs(60);
     let active_cutoff = now.saturating_sub(ACTIVE_TIMEOUT.as_millis() as u64);
-    let crds = crds.read().unwrap();
-    crds.get_nodes()
-        .filter_map(|value| {
-            let node = value.value.contact_info()?;
-            let gossip = node.gossip().filter(|addr| socket_addr_space.check(addr))?;
-            let node_pubkey = node.pubkey();
-            if node_pubkey == pubkey
-                || !verify_shred_version(node.shred_version())
-                || gossip_validators.is_some_and(|nodes| !nodes.contains(node_pubkey))
+    // Copy out the needed fields one chunk of nodes per read lock, and apply the
+    // other filters outside the lock.
+    let nodes = NodesCursor::collect(crds, |_, value| {
+        let node = value.value.contact_info()?;
+        if !verify_shred_version(node.shred_version()) {
+            return None;
+        }
+        Some((node.gossip()?, value.local_timestamp))
+    });
+    nodes
+        .filter_map(|(node_pubkey, (gossip, local_timestamp))| {
+            if !socket_addr_space.check(&gossip)
+                || &node_pubkey == pubkey
+                || gossip_validators.is_some_and(|nodes| !nodes.contains(&node_pubkey))
             {
                 return None;
             }
 
-            let stake = stakes.get(node_pubkey).copied().unwrap_or_default();
+            let stake = stakes.get(&node_pubkey).copied().unwrap_or_default();
             // Exclude nodes which have not been active recently.
-            if value.local_timestamp < active_cutoff {
+            if local_timestamp < active_cutoff {
                 // In order to mitigate eclipse attack, for staked nodes
                 // continue retrying periodically.
                 if stake == 0u64 || !rng.random_ratio(1, 16) {
                     return None;
                 }
             }
-            Some((gossip, stake, *node_pubkey))
+            Some((gossip, stake, node_pubkey))
         })
         .collect()
 }
@@ -392,9 +397,79 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::contact_info::ContactInfo, solana_sha256_hasher::hash,
+        super::*,
+        crate::{
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
+            contact_info::ContactInfo,
+            crds::LOCK_CHUNK_SIZE,
+        },
+        solana_sha256_hasher::hash,
         solana_time_utils::timestamp,
+        std::iter::repeat_with,
     };
+
+    #[test]
+    fn test_get_gossip_nodes() {
+        let mut rng = rand::rng();
+        let now = timestamp();
+        let self_pubkey = Pubkey::new_unique();
+        let crds = RwLock::<Crds>::default();
+        {
+            let mut crds = crds.write();
+            let mut nodes = vec![ContactInfo::new_rand(&mut rng, Some(self_pubkey))];
+            nodes.extend(
+                repeat_with(|| ContactInfo::new_rand(&mut rng, None)).take(4 * LOCK_CHUNK_SIZE),
+            );
+            for (k, mut node) in nodes.into_iter().enumerate() {
+                node.set_shred_version((k as u16 + 1) % 3);
+                let value = CrdsValue::new_unsigned(CrdsData::from(node));
+                crds.insert(value, now, GossipRoute::LocalMessage).unwrap();
+            }
+            // Remove some nodes to reorder the rest.
+            let removed: Vec<_> = crds
+                .get_nodes()
+                .skip(1)
+                .step_by(7)
+                .map(|v| v.value.label())
+                .collect();
+            for key in removed {
+                crds.remove(&key, now);
+            }
+        }
+        let num_nodes = crds.read().num_nodes();
+        assert!(num_nodes > 3 * LOCK_CHUNK_SIZE, "num nodes: {num_nodes}");
+        let stakes: HashMap<Pubkey, u64> = crds
+            .read()
+            .get_nodes_contact_info()
+            .step_by(2)
+            .map(|node| (*node.pubkey(), 1))
+            .collect();
+        let nodes = get_gossip_nodes(
+            &mut rng,
+            now,
+            &self_pubkey,
+            |shred_version| shred_version == 1,
+            &crds,
+            None, // gossip_validators
+            &stakes,
+            &SocketAddrSpace::Unspecified,
+        );
+        let mut expected: Vec<GossipStakePubkey> = crds
+            .read()
+            .get_nodes_contact_info()
+            .filter(|node| node.pubkey() != &self_pubkey && node.shred_version() == 1)
+            .map(|node| {
+                let stake = stakes.get(node.pubkey()).copied().unwrap_or_default();
+                (node.gossip().unwrap(), stake, *node.pubkey())
+            })
+            .collect();
+        // Node k has shred version (k + 1) % 3 and nodes with k % 7 == 1 were
+        // removed. Of k = 1..=512, 170 have shred version 1 and 24 of those
+        // were removed.
+        assert_eq!(expected.len(), 146);
+        expected.reverse();
+        assert_eq!(nodes, expected);
+    }
 
     #[test]
     fn test_prune_errors() {
@@ -406,7 +481,6 @@ mod test {
         crds_gossip
             .crds
             .write()
-            .unwrap()
             .insert(
                 CrdsValue::new_unsigned(CrdsData::from(&ci)),
                 0,
@@ -414,11 +488,9 @@ mod test {
             )
             .unwrap();
         let ping_cache = PingCache::new(
-            &mut rand::rng(),
-            Instant::now(),
-            Duration::from_secs(20 * 60),      // ttl
-            Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            128, // capacity (small for tests)
         );
         let ping_cache = Mutex::new(ping_cache);
         crds_gossip.refresh_push_active_set(

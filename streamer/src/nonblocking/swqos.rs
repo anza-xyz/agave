@@ -1,7 +1,7 @@
 use {
     crate::{
         nonblocking::{
-            qos::{ConnectionContext, QosController},
+            qos::{ConnectionContext, QosController, has_sufficient_stake},
             quic::{
                 CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_REASON_DISALLOWED,
                 ClientConnectionTracker, ConnectionHandlerError, ConnectionPeerType,
@@ -9,7 +9,7 @@ use {
                 update_open_connections_stat,
             },
             stream_throttle::{
-                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL_MS, StakedStreamLoadEMA,
+                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL_MS, StreamLoadEMA,
                 throttle_stream,
             },
         },
@@ -20,7 +20,6 @@ use {
         },
         streamer::StakedNodes,
     },
-    percentage::Percentage,
     quinn::{Connection, VarInt},
     solana_time_utils as timing,
     std::{
@@ -88,7 +87,7 @@ impl SwQosConfig {
 
 pub struct SwQos {
     config: SwQosConfig,
-    staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
+    stream_load_ema: Arc<StreamLoadEMA>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     unstaked_connection_table: Arc<Mutex<ConnectionTable<ConnectionStreamCounter>>>,
@@ -126,7 +125,7 @@ impl SwQos {
     ) -> Self {
         Self {
             config: config.clone(),
-            staked_stream_load_ema: Arc::new(StakedStreamLoadEMA::new(
+            stream_load_ema: Arc::new(StreamLoadEMA::new(
                 stats.clone(),
                 config.max_unstaked_connections,
                 config.max_streams_per_ms,
@@ -246,10 +245,9 @@ impl SwQos {
         stats: Arc<StreamerStats>,
     ) {
         if unstaked_connection_table.total_size >= max_unstaked_connections {
-            const PRUNE_TABLE_TO_PERCENTAGE: u8 = 90;
-            let max_percentage_full = Percentage::from(PRUNE_TABLE_TO_PERCENTAGE);
-
-            let max_connections = max_percentage_full.apply_to(max_unstaked_connections);
+            // Prune the connection table down to 90% capacity
+            const PRUNE_TABLE_RATIO: f64 = 0.90;
+            let max_connections = (PRUNE_TABLE_RATIO * (max_unstaked_connections as f64)) as usize;
             let num_pruned = unstaked_connection_table.prune_oldest(max_connections);
             stats
                 .num_evictions_unstaked
@@ -292,7 +290,7 @@ impl SwQos {
     }
 
     fn max_streams_per_throttling_interval(&self, conn_context: &SwQosConnectionContext) -> u64 {
-        self.staked_stream_load_ema
+        self.stream_load_ema
             .available_load_capacity_in_throttling_duration(
                 conn_context.peer_type,
                 conn_context.total_stake,
@@ -318,7 +316,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
 
                 let peer_type = {
-                    let max_streams_per_ms = self.staked_stream_load_ema.max_streams_per_ms();
+                    let max_streams_per_ms = self.stream_load_ema.max_streams_per_ms();
                     let min_stake_ratio =
                         1_f64 / (max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS) as f64;
                     let stake_ratio = stake as f64 / total_stake as f64;
@@ -341,6 +339,10 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 }
             },
         )
+    }
+
+    fn has_sufficient_stake(&self, context: &SwQosConnectionContext) -> bool {
+        has_sufficient_stake(context, &self.staked_nodes)
     }
 
     #[allow(clippy::manual_async_fn)]
@@ -445,8 +447,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     fn on_stream_accepted(&self, conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema
-            .increment_load(conn_context.peer_type);
+        self.stream_load_ema.increment_load(conn_context.peer_type);
         conn_context
             .stream_counter
             .as_ref()
@@ -456,11 +457,11 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     fn on_stream_error(&self, _conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema.update_ema_if_needed();
+        self.stream_load_ema.update_ema_if_needed();
     }
 
     fn on_stream_closed(&self, _conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema.update_ema_if_needed();
+        self.stream_load_ema.update_ema_if_needed();
     }
 
     #[allow(clippy::manual_async_fn)]

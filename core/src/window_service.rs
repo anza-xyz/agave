@@ -5,28 +5,31 @@
 use {
     crate::{
         completed_data_sets_service::CompletedDataSetsSender,
-        repair::repair_service::{
-            OutstandingShredRepairs, RepairInfo, RepairService, RepairServiceChannels,
+        repair::{
+            block_id_repair_service::{BlockIdRepairChannels, BlockIdRepairService},
+            repair_service::{
+                OutstandingShredRepairs, RepairInfo, RepairService, RepairServiceChannels,
+            },
         },
         result::{Error, Result},
     },
-    agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     rayon::{ThreadPool, prelude::*},
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
-        blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
+        blockstore::{
+            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, handle_duplicate_shred,
+        },
+        blockstore_db::{DBPinnableSlice, WriteBatch},
         blockstore_meta::BlockLocation,
-        leader_schedule_cache::LeaderScheduleCache,
-        shred::{self, ReedSolomonCache, Shred},
+        shred::{self, Shred, filter::ShredRecoveryContext},
     },
     solana_measure::measure::Measure,
-    solana_metrics::inc_new_counter_error,
+    solana_net_utils::PinnedXdpSender,
     solana_rayon_threadlimit::get_thread_count,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
-    solana_turbine::cluster_nodes,
     std::{
         borrow::Cow,
         net::UdpSocket,
@@ -57,9 +60,11 @@ struct WindowServiceMetrics {
 }
 
 impl WindowServiceMetrics {
-    fn report_metrics(&self, metric_name: &'static str) {
+    const NAME: &str = "recv-window-insert-shreds";
+
+    fn report_metrics(&self) {
         datapoint_info!(
-            metric_name,
+            Self::NAME,
             (
                 "handle_packets_elapsed_us",
                 self.handle_packets_elapsed_us,
@@ -110,55 +115,37 @@ fn run_check_duplicate(
     duplicate_slots_sender: &DuplicateSlotSender,
     bank_forks: &RwLock<BankForks>,
 ) -> Result<()> {
-    let mut root_bank = bank_forks.read().unwrap().root_bank();
-    let mut last_updated = Instant::now();
+    let migration_status = bank_forks.read().unwrap().migration_status();
     let check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
-        if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
-            // Grabs bank forks lock once a slot
-            last_updated = Instant::now();
-            root_bank = bank_forks.read().unwrap().root_bank();
-        }
         let shred_slot = shred.slot();
-        let validate_chained_block_id = cluster_nodes::check_feature_activation(
-            &feature_set::validate_chained_block_id::id(),
-            shred_slot,
-            &root_bank,
-        );
-        let (shred1, shred2) = match shred {
-            PossibleDuplicateShred::LastIndexConflict(shred, conflict)
-            | PossibleDuplicateShred::ErasureConflict(shred, conflict)
-            | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
-            PossibleDuplicateShred::ChainedMerkleRootConflict(_shred, _conflict) => {
-                if validate_chained_block_id {
-                    // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
-                    // We still need to mark the block as dead for other client teams.
-                    blockstore.set_dead_slot(shred_slot)?;
-                }
-                return Ok(());
-            }
-            PossibleDuplicateShred::Exists(shred) => {
-                // Unlike the other cases we have to wait until here to decide to handle the duplicate and store
-                // in blockstore. This is because the duplicate could have been part of the same insert batch,
-                // so we wait until the batch has been written.
-                if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
-                    return Ok(()); // A duplicate is already recorded
-                }
-                let Some(existing_shred_payload) = blockstore.is_shred_duplicate(&shred) else {
-                    return Ok(()); // Not a duplicate
-                };
-                blockstore.store_duplicate_slot(
-                    shred_slot,
-                    existing_shred_payload.clone(),
-                    shred.clone().into_payload(),
-                )?;
-                (shred, shred::Payload::from(existing_shred_payload))
-            }
+        let duplicate = handle_duplicate_shred(blockstore, shred)?;
+
+        let should_mark_dead = migration_status
+            .genesis_block()
+            .is_some_and(|genesis| shred_slot > genesis.slot);
+        if should_mark_dead {
+            // Apart from Exists all existing cases mark dead inline in blockstore.
+            // Once Alpenglow is active we can fully remove this thread and move Exists to inline as well.
+            blockstore.set_dead_slot_if_duplicate_and_not_full(shred_slot)?;
+        }
+
+        let Some((shred1, shred2)) = duplicate else {
+            return Ok(());
         };
 
-        // Propagate duplicate proof through gossip
-        cluster_info.push_duplicate_shred(&shred1, &shred2)?;
-        // Notify duplicate consensus state machine
-        duplicate_slots_sender.send(shred_slot)?;
+        if migration_status.should_respond_to_ancestor_hashes_requests(shred_slot) {
+            // In alpenglow we store the duplicate block proofs in blockstore for the purposes of slashing,
+            // however we do not need to propagate the duplicate proof through gossip.
+            // We still propagate during the mixed migration epoch, to account for other nodes that are stuck
+            // and require a duplicate proof to proceed
+            cluster_info.push_duplicate_shred(&shred1, &shred2)?;
+        }
+
+        if !migration_status.is_alpenglow_enabled() {
+            // The state machine can be exited as soon as alpenglow is enabled.
+            // Notify duplicate consensus state machine. If channel is full we wait.
+            duplicate_slots_sender.send(shred_slot)?;
+        }
 
         Ok(())
     };
@@ -169,17 +156,17 @@ fn run_check_duplicate(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_insert<F>(
+fn run_insert<'db, F>(
     thread_pool: &ThreadPool,
-    verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
-    blockstore: &Blockstore,
-    leader_schedule_cache: &LeaderScheduleCache,
+    verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
+    blockstore: &'db Blockstore,
+    shred_recovery_context: &mut ShredRecoveryContext,
+    pinnable_slice: &mut DBPinnableSlice<'db>,
+    write_batch: &mut WriteBatch,
     handle_duplicate: F,
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
     completed_data_sets_sender: Option<&CompletedDataSetsSender>,
-    retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
-    reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<()>
 where
     F: Fn(PossibleDuplicateShred),
@@ -191,12 +178,12 @@ where
     shred_receiver_elapsed.stop();
     ws_metrics.shred_receiver_elapsed_us += shred_receiver_elapsed.as_us();
     ws_metrics.run_insert_count += 1;
-    let handle_shred = |(shred, repair): (shred::Payload, bool)| {
+    let handle_shred = |(shred, repair, block_location): (shred::Payload, bool, BlockLocation)| {
         if repair {
             ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
         }
         let shred = Shred::new_from_serialized_shred(shred).ok()?;
-        Some((Cow::Owned(shred), repair, BlockLocation::Original))
+        Some((Cow::Owned(shred), repair, block_location))
     };
     let now = Instant::now();
     let shreds: Vec<_> = thread_pool.install(|| {
@@ -210,11 +197,11 @@ where
     ws_metrics.num_shreds_received += shreds.len();
     let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
         shreds,
-        Some(leader_schedule_cache),
         false, // is_trusted
-        retransmit_sender,
+        shred_recovery_context,
+        pinnable_slice,
+        write_batch,
         &handle_duplicate,
-        reed_solomon_cache,
         metrics,
     )?;
 
@@ -226,20 +213,22 @@ where
 }
 
 pub struct WindowServiceChannels {
-    pub verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+    pub verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     pub retransmit_sender: EvictingSender<Vec<shred::Payload>>,
     pub completed_data_sets_sender: Option<CompletedDataSetsSender>,
     pub duplicate_slots_sender: DuplicateSlotSender,
     pub repair_service_channels: RepairServiceChannels,
+    pub block_id_repair_channels: BlockIdRepairChannels,
 }
 
 impl WindowServiceChannels {
     pub fn new(
-        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
         retransmit_sender: EvictingSender<Vec<shred::Payload>>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         duplicate_slots_sender: DuplicateSlotSender,
         repair_service_channels: RepairServiceChannels,
+        block_id_repair_channels: BlockIdRepairChannels,
     ) -> Self {
         Self {
             verified_receiver,
@@ -247,6 +236,7 @@ impl WindowServiceChannels {
             completed_data_sets_sender,
             duplicate_slots_sender,
             repair_service_channels,
+            block_id_repair_channels,
         }
     }
 }
@@ -255,18 +245,22 @@ pub(crate) struct WindowService {
     t_insert: JoinHandle<()>,
     t_check_duplicate: JoinHandle<()>,
     repair_service: RepairService,
+    block_id_repair_service: BlockIdRepairService,
 }
 
 impl WindowService {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         blockstore: Arc<Blockstore>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
+        block_id_repair_socket: Arc<UdpSocket>,
         exit: Arc<AtomicBool>,
         repair_info: RepairInfo,
         window_service_channels: WindowServiceChannels,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        shred_version: u16,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+        repair_xdp_sender: Option<PinnedXdpSender>,
     ) -> WindowService {
         let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
@@ -277,16 +271,28 @@ impl WindowService {
             completed_data_sets_sender,
             duplicate_slots_sender,
             repair_service_channels,
+            block_id_repair_channels,
         } = window_service_channels;
 
         let repair_service = RepairService::new(
             blockstore.clone(),
             exit.clone(),
-            repair_socket,
+            repair_socket.clone(),
             ancestor_hashes_socket,
+            repair_info.clone(),
+            outstanding_repair_requests.clone(),
+            repair_service_channels,
+            repair_xdp_sender,
+        );
+
+        let block_id_repair_service = BlockIdRepairService::new(
+            exit.clone(),
+            blockstore.clone(),
+            block_id_repair_socket,
+            repair_socket,
+            block_id_repair_channels,
             repair_info,
             outstanding_repair_requests,
-            repair_service_channels,
         );
 
         let (duplicate_sender, duplicate_receiver) = unbounded();
@@ -297,13 +303,15 @@ impl WindowService {
             blockstore.clone(),
             duplicate_receiver,
             duplicate_slots_sender,
-            bank_forks,
+            bank_forks.clone(),
         );
 
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let t_insert = Self::start_window_insert_thread(
             exit,
             blockstore,
-            leader_schedule_cache,
+            sharable_banks,
+            shred_version,
             verified_receiver,
             duplicate_sender,
             completed_data_sets_sender,
@@ -314,6 +322,7 @@ impl WindowService {
             t_insert,
             t_check_duplicate,
             repair_service,
+            block_id_repair_service,
         }
     }
 
@@ -325,9 +334,6 @@ impl WindowService {
         duplicate_slots_sender: DuplicateSlotSender,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> JoinHandle<()> {
-        let handle_error = || {
-            inc_new_counter_error!("solana-check-duplicate-error", 1, 1);
-        };
         Builder::new()
             .name("solWinCheckDup".to_string())
             .spawn(move || {
@@ -338,10 +344,9 @@ impl WindowService {
                         &duplicate_receiver,
                         &duplicate_slots_sender,
                         &bank_forks,
-                    ) {
-                        if Self::should_exit_on_error(e, &handle_error) {
-                            break;
-                        }
+                    ) && Self::should_exit_on_error(e)
+                    {
+                        break;
                     }
                 }
             })
@@ -351,16 +356,13 @@ impl WindowService {
     fn start_window_insert_thread(
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
-        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+        sharable_banks: SharableBanks,
+        shred_version: u16,
+        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         retransmit_sender: EvictingSender<Vec<shred::Payload>>,
     ) -> JoinHandle<()> {
-        let handle_error = || {
-            inc_new_counter_error!("solana-window-insert-error", 1, 1);
-        };
-        let reed_solomon_cache = ReedSolomonCache::default();
         Builder::new()
             .name("solWinInsert".to_string())
             .spawn(move || {
@@ -376,50 +378,66 @@ impl WindowService {
                 let handle_duplicate = |possible_duplicate_shred| {
                     let _ = check_duplicate_sender.send(possible_duplicate_shred);
                 };
+
+                const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(2);
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
+                let mut shred_recovery_context = ShredRecoveryContext::new(
+                    retransmit_sender,
+                    sharable_banks.root(),
+                    shred_version,
+                );
+                let mut pinnable_slice = blockstore.new_pinnable_slice();
+                let mut write_batch = blockstore.get_write_batch();
+
                 while !exit.load(Ordering::Relaxed) {
+                    shred_recovery_context.maybe_update(sharable_banks.root());
+
                     if let Err(e) = run_insert(
                         &thread_pool,
                         &verified_receiver,
                         &blockstore,
-                        &leader_schedule_cache,
+                        &mut shred_recovery_context,
+                        &mut pinnable_slice,
+                        &mut write_batch,
                         handle_duplicate,
                         &mut metrics,
                         &mut ws_metrics,
                         completed_data_sets_sender.as_ref(),
-                        &retransmit_sender,
-                        &reed_solomon_cache,
                     ) {
                         ws_metrics.record_error(&e);
-                        if Self::should_exit_on_error(e, &handle_error) {
+                        if Self::should_exit_on_error(e) {
                             break;
                         }
                     }
 
-                    if last_print.elapsed().as_secs() > 2 {
-                        metrics.report_metrics("blockstore-insert-shreds");
+                    if last_print.elapsed() > METRICS_REPORTING_INTERVAL {
+                        metrics.report_metrics();
                         metrics = BlockstoreInsertionMetrics::default();
-                        ws_metrics.report_metrics("recv-window-insert-shreds");
+                        ws_metrics.report_metrics();
                         ws_metrics = WindowServiceMetrics::default();
                         last_print = Instant::now();
                     }
+                    shred_recovery_context.maybe_submit_stats();
                 }
             })
             .unwrap()
     }
 
-    fn should_exit_on_error<H>(e: Error, handle_error: &H) -> bool
-    where
-        H: Fn(),
-    {
+    fn should_exit_on_error(e: Error) -> bool {
         match e {
             Error::RecvTimeout(RecvTimeoutError::Disconnected) => true,
             Error::RecvTimeout(RecvTimeoutError::Timeout) => false,
             Error::Send => true,
             _ => {
-                handle_error();
+                let version = solana_version::version!();
+                datapoint_error!(
+                    "error",
+                    ("thread", thread::current().name().unwrap_or("?"), String),
+                    ("message", format!("{e}"), String),
+                    ("version", version, String)
+                );
                 error!("thread {:?} error {:?}", thread::current().name(), e);
                 false
             }
@@ -429,7 +447,8 @@ impl WindowService {
     pub(crate) fn join(self) -> thread::Result<()> {
         self.t_insert.join()?;
         self.t_check_duplicate.join()?;
-        self.repair_service.join()
+        self.repair_service.join()?;
+        self.block_id_repair_service.join()
     }
 }
 
@@ -437,6 +456,7 @@ impl WindowService {
 mod test {
     use {
         super::*,
+        crossbeam_channel::bounded,
         rand::Rng,
         solana_entry::entry::{Entry, create_ticks},
         solana_gossip::contact_info::ContactInfo,
@@ -444,12 +464,17 @@ mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{Blockstore, make_many_slot_entries},
-            genesis_utils::create_genesis_config,
             get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, Shredder},
         },
         solana_net_utils::SocketAddrSpace,
-        solana_runtime::bank::Bank,
+        solana_pubkey::Pubkey,
+        solana_runtime::{
+            bank::Bank,
+            genesis_utils::{
+                bootstrap_validator_stake_lamports, create_genesis_config_with_tower_leader,
+            },
+        },
         solana_signer::Signer,
         solana_time_utils::timestamp,
     };
@@ -469,7 +494,6 @@ mod test {
             Hash::new_from_array(rand::rng().random()),
             0, // next_shred_index
             0, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         data_shreds
@@ -484,7 +508,7 @@ mod test {
         let mut shreds = local_entries_to_shred(&original_entries, 0, 0, &Keypair::new());
         shreds.reverse();
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful processing of shred");
 
         assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), original_entries);
@@ -493,15 +517,18 @@ mod test {
     #[test]
     fn test_run_check_duplicate() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let genesis_config = create_genesis_config(10_000).genesis_config;
+        let genesis_config = create_genesis_config_with_tower_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        )
+        .genesis_config;
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (sender, receiver) = unbounded();
-        let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
+        let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
         let (shreds, _) = make_many_slot_entries(5, 5, 10);
-        blockstore
-            .insert_shreds(shreds.clone(), None, false)
-            .unwrap();
+        blockstore.insert_shreds(shreds.clone(), false).unwrap();
         let duplicate_index = 0;
         let original_shred = shreds[duplicate_index].clone();
         let duplicate_shred = {
@@ -546,8 +573,8 @@ mod test {
     fn test_store_duplicate_shreds_same_batch() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (duplicate_shred_sender, duplicate_shred_receiver) = unbounded();
-        let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
+        let (duplicate_shred_sender, duplicate_shred_receiver) = bounded(1024);
+        let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let keypair = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
@@ -556,7 +583,12 @@ mod test {
             Arc::new(keypair),
             SocketAddrSpace::Unspecified,
         ));
-        let genesis_config = create_genesis_config(10_000).genesis_config;
+        let genesis_config = create_genesis_config_with_tower_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        )
+        .genesis_config;
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
 
         // Start duplicate thread receiving and inserting duplicates
@@ -566,14 +598,13 @@ mod test {
             blockstore.clone(),
             duplicate_shred_receiver,
             duplicate_slot_sender,
-            bank_forks,
+            bank_forks.clone(),
         );
 
         let handle_duplicate = |shred| {
             let _ = duplicate_shred_sender.send(shred);
         };
         let num_trials = 100;
-        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
         for slot in 0..num_trials {
             let (shreds, _) = make_many_slot_entries(slot, 1, 10);
             let duplicate_index = 0;
@@ -587,14 +618,17 @@ mod test {
             let shreds = [&original_shred, &duplicate_shred]
                 .into_iter()
                 .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
+            let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
             blockstore
                 .insert_shreds_handle_duplicate(
                     shreds,
-                    None,
                     false, // is_trusted
-                    &dummy_retransmit_sender,
+                    &mut ShredRecoveryContext::new(
+                        dummy_retransmit_sender,
+                        bank_forks.read().unwrap().root_bank(),
+                        0, // shred_version
+                    ),
                     &handle_duplicate,
-                    &ReedSolomonCache::default(),
                     &mut BlockstoreInsertionMetrics::default(),
                 )
                 .unwrap();

@@ -71,6 +71,7 @@ fi
 if [[ -e "$ledgerDir"/genesis.bin || -e "$ledgerDir"/genesis.tar.bz2 ]]; then
   echo "Use existing genesis"
 else
+  validator_bls_pubkey=$(solana-keygen bls_pubkey "$validator_identity")
   ./fetch-core-bpf.sh
   if [[ -r core-bpf-genesis-args.sh ]]; then
     CORE_BPF_GENESIS_ARGS=$(cat core-bpf-genesis-args.sh)
@@ -89,6 +90,7 @@ else
       "$validator_identity" \
       "$validator_vote_account" \
       "$validator_stake_account" \
+    --bootstrap-validator-bls-pubkey "$validator_bls_pubkey" \
     --ledger "$ledgerDir" \
     --cluster-type "$SOLANA_RUN_SH_CLUSTER_TYPE" \
     $CORE_BPF_GENESIS_ARGS \
@@ -121,6 +123,7 @@ args=(
   --require-tower
   --no-wait-for-vote-to-start-leader
   --no-os-network-limits-test
+  --no-xdp
 )
 # shellcheck disable=SC2086
 agave-validator "${args[@]}" $SOLANA_RUN_SH_VALIDATOR_ARGS &

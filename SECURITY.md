@@ -1,18 +1,30 @@
 # Security Policy
 
 1. [Reporting security problems](#reporting)
-4. [Security Bug Bounties](#bounty)
 2. [Incident Response Process](#process)
+3. [Security Bug Bounties](#bounty)
 
-<a name="reporting"></a>
+<a id="reporting"></a>
 ## Reporting security problems in the Agave Validator
 
 **DO NOT CREATE A GITHUB ISSUE** to report a security problem.
 
-Instead please use this [Report a Vulnerability](https://github.com/anza-xyz/agave/security/advisories/new) link.
-Provide a helpful title, detailed description of the vulnerability and an exploit
-proof-of-concept. Speculative submissions without proof-of-concept will be closed
-with no further consideration.
+Instead, submit findings through the submission portal at https://bounty.anza.xyz/.
+Sign in with your GitHub account, select the Agave program, and provide a helpful
+summary, detailed description of the vulnerability and an exploit proof-of-concept.
+Speculative submissions without proof-of-concept will be closed with no further
+consideration.
+
+- The portal requires a non-refundable SOL burn per submission and files each
+  finding as a GitHub Security Advisory (GHSA) on this repository, with you
+  credited as the reporter and added as a collaborator
+- Submissions received through any other channel are ineligible for bug bounties,
+  including advisories opened directly on this repository
+- Any attempt to cheat the submission system leads to disqualification
+
+Create one GHSA per finding. GHSAs reporting multiple findings will be closed as
+invalid. Such reports will not be eligible for bug bounties and will not hold a
+position in duplicate report standings.
 
 For vulnerabilities regarding SPL programs, please refer to the repositories
 and their associated security policy within the [solana-program organization](https://github.com/solana-program).
@@ -24,7 +36,7 @@ Expect a response as fast as possible in the advisory, typically within 72 hours
 --
 
 If you do not receive a response in the advisory, send an email to
-security@anza.xyz with the full URL of the advisory you have created.  DO NOT
+security@anza.xyz with the full URL of the advisory the portal created.  DO NOT
 include attachments or provide detail sufficient for exploitation regarding the
 security issue in this email. **Only provide such details in the advisory**.
 
@@ -33,18 +45,18 @@ the team directly. You can do this in the `#core-technology` channel of the
 [Solana Tech discord server](https://solana.com/discord), by pinging the `Anza`
 role in the channel and referencing the fact that you submitted a security problem.
 
-<a name="process"></a>
+<a id="process"></a>
 ## Incident Response Process
 
 In case an incident is discovered or reported, the following process will be
 followed to contain, respond and remediate:
 
 ### 1. Accept the new report
-In response a newly reported security problem, a member of the
-`anza-xyz/admins` group will accept the report to turn it into a draft
-advisory.  The `anza-xyz/security-incident-response` group should be added to
-the draft security advisory, and create a private fork of the repository (grey
-button towards the bottom of the page) if necessary.
+Reports submitted through the portal arrive as draft advisories. In response to
+a newly reported security problem, a member of the `anza-xyz/admins` group will
+review the draft advisory.  The `anza-xyz/security-incident-response` group
+should be added to the draft security advisory, and create a private fork of the
+repository (grey button towards the bottom of the page) if necessary.
 
 If the advisory is the result of an audit finding, follow the same process as above but add the auditor's github user(s) and begin the title with "[Audit]".
 
@@ -79,12 +91,13 @@ security advisory with one of the following, depending on the severity:
 - [Bounty Category: Critical: DoS Attacks]
 - [Bounty Category: Supply Chain Attacks]
 - [Bounty Category: RPC]
+- [Bounty Category: Other]
 
 Confirm with the reporter that they agree with the severity assessment, and discuss as required to reach a conclusion.
 
 We currently do not use the Github workflow to publish security advisories. Once the issue and fix have been disclosed, and a bounty category is assessed if appropriate, the GitHub security advisory is no longer needed and can be closed.
 
-<a name="bounty"></a>
+<a id="bounty"></a>
 ## Security Bug Bounties
 At its sole discretion, the Solana Foundation may offer a bounty for
 [valid reports](#reporting) of critical Solana vulnerabilities. Please see below
@@ -136,37 +149,77 @@ _Max: 65 SOL tokens. Min: 20 SOL tokens_
 
 * RPC attacks
 
+#### Other:
+_Max: None. Min: None_
+
+This category may be assigned at the sole discretion of the Solana Foundation for
+reports that fall outside the explicitly declared categories, but are deemed
+worthy of a reward nonetheless. Attempting to self-assign this category will
+almost certainly disqualify the report.
+
 ### Out of Scope:
-The following components are out of scope for the bounty program
+The following components and subjects are out of scope for the bounty program.
+Findings in these areas are urged to be reported as normal public issues against
+the repo.
 * Metrics: `/metrics` in the monorepo as well as https://metrics.solana.com
 * Any encrypted credentials, auth tokens, etc. checked into the repo
 * Bugs in dependencies. Please take them upstream!
 * Attacks that require social engineering
-* Any undeveloped automated tooling (scanners, etc) results. (OK with developed PoC)
-* Any asset whose source code does not exist in this repository (including, but not limited
-to, any and all web properties not explicitly listed on this page)
-* Programs in the Solana Program Library, such as SPL Token. Please refer to the
-[SPL security policy](https://github.com/solana-labs/solana-program-library/security/policy).
-* Alpenglow crates (votor, votor-messages, etc) and plumbing. Migration of the
-Alpenglow logic from a feature fork to agave master is currently underway. As
-such there are many paritially migrated changes isolated to a few areas. These
-are disqualified from reports and bounties. Bugs in integration logic that impact
-the no-Alpenglow code path remain in scope
-* For the RPC DoS category, the following classes of issue are out of scope
-  * Those requiring a call rate greater than once per 200ms
+* Any undeveloped automated tooling (ai, scanners, etc) results. (OK with developed PoC)
+* Any asset whose source code does not exist in this repository. Including, but
+not limited to;
+  * Any and all web properties (See domain ToC page for contact)
+  * [SPL member projects](https://github.com/solana-program) (See repo security tab)
+  * [Solana SDK crates](https://github.com/anza-xyz/solana-sdk) (See security tab)
+* Findings that require a Geyser plugin or `scheduler-bindings` external
+process to violate interface requirements. These integrations are operator-trusted
+components, and validator crashes or other instability caused by non-conforming
+implementations are out of scope.
+* Issues that have been previously disclosed in a public venue
+* Issues that affect node stability during the bootstrap phase and can be trivially
+mitigated by configuration adjustments. The bootstrap phase is defined as the time
+between process creation and completion of replay for the first block after the
+snapshot slot or genesis.
+* Issues involving maliciously crafted snapshots. Snapshots have historically been
+considered trust on first use and have many shortcomings with respect to consistency
+and verifiability as a result. An effort to improve this situation is actively underway
+* The in-built RPC service is not intended to be directly exposed to untrusted clients.
+Any environments which require features like authentication and rate-limiting _*MUST*_ be
+deployed behind a reverse proxy or similar. For the RPC DoS category, the following
+classes of issue are out of scope
+  * Those requiring a call rate greater than once per `CLUSTER_SLOT_TIME_TARGET / 2`
   * Those requiring calls from multiple clients
-  * Those impacting getProgramAccounts, et. al without secondary indexes enabled and/or
+  * Those impacting getProgramAccounts, et al. without secondary indexes enabled and/or
     unfiltered requests, which are known to be slow on clusters with large accounts sets
+* Loader V4 (the `loader-v4` crate and associated code paths). Loader V4 is
+being removed from the codebase and its feature ID has been stubbed out. Bugs
+relating to Loader V4 functionality are disqualified from reports and bounties.
+* Issues affecting the virtual machine interpreter. The interpreter performance is not
+presently suitable for production environments, so it is safe to address any security
+vulnerabilies or inconsistencies with jit behavior in public issues
 
 ### Eligibility:
+* Vulnerabilities must have been committed to the master branch for at least
+one week in order to be eligible for a bounty
+  * In the master branch, vulnerabilities that have been resolved or
+  acknowledged within one week are ineligible for bounty
+  * In the stable and beta branches, vulnerabilities are eligible for bounty
+  upon merge
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible
+  * The proof-of-concept must be included inline; no attachments or external
+  links are accepted
+* Submissions _MUST_ be made through the [submission portal](#reporting) to be
+considered eligible
+* Only reports describing a [single finding](#reporting) will be considered eligible
 * The participant submitting the bug report shall follow the process outlined within this document
 * Valid exploits can be eligible even if they are not successfully executed on a public cluster
 * Multiple submissions for the same class of exploit are still eligible for compensation, though may be compensated at a lower rate, however these will be assessed on a case-by-case basis
 * Participants must complete KYC and sign the participation agreement here when the registrations are open https://solana.foundation/kyc. Security exploits will still be assessed and open for submission at all times. This needs only be done prior to distribution of tokens.
 
 ### Duplicate Reports
-Compensation for duplicative reports will be split among reporters with first to report taking priority using the following equation
+Compensation for duplicative reports will be split among reporters with first to report
+making priority using the following equation. Shares that amount to less than one SOL
+will be deemed ineligible for payment
 ```
 R: total reports
 ri: report priority

@@ -26,7 +26,6 @@ update_solana_dependencies() {
     solana-entry
     solana-faucet
     solana-fee
-    agave-geyser-plugin-interface
     solana-geyser-plugin-manager
     solana-gossip
     solana-lattice-hash
@@ -61,8 +60,6 @@ update_solana_dependencies() {
     solana-storage-bigtable
     solana-storage-proto
     solana-streamer
-    solana-svm-rent-calculator
-    solana-svm-transaction
     solana-test-validator
     solana-tpu-client
     solana-transaction-status
@@ -112,7 +109,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-entry entry")
   crates_map+=("solana-faucet faucet")
   crates_map+=("solana-fee fee")
-  crates_map+=("agave-geyser-plugin-interface geyser-plugin-interface")
   crates_map+=("solana-geyser-plugin-manager geyser-plugin-manager")
   crates_map+=("solana-gossip gossip")
   crates_map+=("solana-lattice-hash lattice-hash")
@@ -147,8 +143,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-storage-bigtable storage-bigtable")
   crates_map+=("solana-storage-proto storage-proto")
   crates_map+=("solana-streamer streamer")
-  crates_map+=("solana-svm-rent-collector svm-rent-collector")
-  crates_map+=("solana-svm-transaction svm-transaction")
   crates_map+=("solana-test-validator test-validator")
   crates_map+=("solana-tpu-client tpu-client")
   crates_map+=("solana-transaction-status transaction-status")

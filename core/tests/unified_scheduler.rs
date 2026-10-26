@@ -1,12 +1,8 @@
 use {
-    agave_banking_stage_ingress_types::BankingPacketBatch,
-    assert_matches::assert_matches,
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     itertools::Itertools,
     log::*,
     solana_core::{
-        banking_stage::{BankingStage, unified_scheduler::ensure_banking_stage_setup},
-        banking_trace::BankingTracer,
         consensus::{
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
             progress_map::{ForkProgress, ProgressMap},
@@ -18,33 +14,26 @@ use {
         replay_stage::{ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
-    solana_entry::entry::Entry,
+    solana_cost_model::transaction_cost::TrackedCost,
     solana_hash::Hash,
     solana_leader_schedule::SlotLeader,
-    solana_ledger::{
-        blockstore::Blockstore, create_new_tmp_ledger_auto_delete,
-        genesis_utils::create_genesis_config, leader_schedule_cache::LeaderScheduleCache,
-    },
-    solana_perf::packet::to_packet_batches,
-    solana_poh::poh_recorder::create_test_recorder,
+    solana_ledger::genesis_utils::create_genesis_config,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
         installed_scheduler_pool::SchedulingContext,
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_svm_timings::ExecuteTimings,
     solana_system_transaction as system_transaction,
     solana_transaction_error::TransactionResult as Result,
-    solana_unified_scheduler_logic::{SchedulingMode, Task},
+    solana_unified_scheduler_logic::Task,
     solana_unified_scheduler_pool::{
-        DefaultSchedulerPool, DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool,
-        TaskHandler,
+        DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool, TaskHandler,
     },
     std::{
         collections::HashMap,
-        sync::{Arc, Mutex, atomic::Ordering},
-        thread::sleep,
-        time::Duration,
+        sync::{Arc, Mutex},
     },
 };
 
@@ -58,19 +47,18 @@ fn test_scheduler_waited_by_drop_bank_service() {
     struct StallingHandler;
     impl TaskHandler for StallingHandler {
         fn handle(
-            result: &mut Result<()>,
             timings: &mut ExecuteTimings,
             scheduling_context: &SchedulingContext,
             task: &Task,
             handler_context: &HandlerContext,
-        ) {
+        ) -> Result<TrackedCost> {
             info!("Stalling at StallingHandler::handle()...");
             *LOCK_TO_STALL.lock().unwrap();
             // Wait a bit for the replay stage to prune banks
             std::thread::sleep(std::time::Duration::from_secs(3));
             info!("Now entering into DefaultTaskHandler::handle()...");
 
-            DefaultTaskHandler::handle(result, timings, scheduling_context, task, handler_context);
+            DefaultTaskHandler::handle(timings, scheduling_context, task, handler_context)
         }
     }
 
@@ -104,7 +92,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let root_hash = root_bank.hash();
     bank_forks.write().unwrap().insert(root_bank);
 
-    let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+    let tx = ReplayTransaction::from(system_transaction::transfer(
         &mint_keypair,
         &solana_pubkey::new_rand(),
         2,
@@ -122,8 +110,8 @@ fn test_scheduler_waited_by_drop_bank_service() {
     drop(lock_to_stall);
 
     // Create 2 channels to check actual pruned banks
-    let (drop_bank_sender1, drop_bank_receiver1) = unbounded();
-    let (drop_bank_sender2, drop_bank_receiver2) = unbounded();
+    let (drop_bank_sender1, drop_bank_receiver1) = bounded(1024);
+    let (drop_bank_sender2, drop_bank_receiver2) = bounded(1024);
     let drop_bank_service = DropBankService::new(drop_bank_receiver2);
 
     info!("calling handle_new_root()...");
@@ -133,7 +121,10 @@ fn test_scheduler_waited_by_drop_bank_service() {
 
         let mut progress = ProgressMap::default();
         for i in genesis..=root {
-            progress.insert(i, ForkProgress::new(Hash::default(), None, None, 0, 0));
+            progress.insert(
+                i,
+                ForkProgress::new(Hash::default(), None, None, 0, 0, None),
+            );
         }
 
         let duplicate_slots_tracker: DuplicateSlotsTracker =
@@ -161,6 +152,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             epoch_slots_frozen_slots,
         };
         ReplayStage::handle_new_root(
+            &Pubkey::new_unique(),
             root,
             &bank_forks,
             &mut progress,
@@ -194,104 +186,8 @@ fn test_scheduler_waited_by_drop_bank_service() {
     drop_bank_service.join().unwrap();
     info!("finally joined the drop bank service!");
 
-    // the scheduler used by the pruned_bank have been returned now.
-    assert_eq!(pool_raw.pooled_scheduler_count(), 1);
-}
-
-#[test]
-fn test_scheduler_producing_blocks() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(10_000);
-    let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-    let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-
-    // Setup bank_forks with block-producing unified scheduler enabled
-    let genesis_bank = Bank::new_for_tests(&genesis_config);
-    let bank_forks = BankForks::new_rw_arc(genesis_bank);
-    let genesis_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
-    genesis_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
-    let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&genesis_bank));
-    let (
-        exit,
-        poh_recorder,
-        mut poh_controller,
-        transaction_recorder,
-        poh_service,
-        signal_receiver,
-    ) = create_test_recorder(
-        genesis_bank.clone(),
-        blockstore,
-        None,
-        Some(leader_schedule_cache),
-    );
-    let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
-    let channels = {
-        let banking_tracer = BankingTracer::new_disabled();
-        banking_tracer.create_channels()
-    };
-    ensure_banking_stage_setup(
-        &pool,
-        &bank_forks,
-        &channels,
-        &poh_recorder,
-        transaction_recorder,
-        BankingStage::default_num_workers(),
-    );
-    bank_forks.write().unwrap().install_scheduler_pool(pool);
-
-    // Wait until genesis_bank reaches its tick height...
-    while poh_recorder.read().unwrap().bank().is_some() {
-        sleep(Duration::from_millis(100));
-    }
-
-    // Create test tx
-    let tx = system_transaction::transfer(
-        &mint_keypair,
-        &solana_pubkey::new_rand(),
-        1,
-        genesis_config.hash(),
-    );
-    let banking_packet_batch = BankingPacketBatch::new(to_packet_batches(&vec![tx.clone(); 1], 1));
-    let tx = RuntimeTransaction::from_transaction_for_tests(tx);
-
-    // Crate tpu_bank
-    let tpu_bank = Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), 2);
-    let tpu_bank = bank_forks
-        .write()
-        .unwrap()
-        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
-    poh_controller
-        .set_bank_sync(tpu_bank.clone_with_scheduler())
-        .unwrap();
-    tpu_bank.unpause_new_block_production_scheduler();
-    let tpu_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
-    assert_eq!(tpu_bank.transaction_count(), 0);
-
-    // Now, send transaction
-    channels
-        .sender_for_unified_scheduler()
-        .send(banking_packet_batch)
-        .unwrap();
-
-    // Wait until tpu_bank reaches its tick height...
-    while poh_recorder.read().unwrap().bank().is_some() {
-        sleep(Duration::from_millis(100));
-    }
-    assert_matches!(tpu_bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-
-    // Verify transactions are committed and poh-recorded
-    assert_eq!(tpu_bank.transaction_count(), 1);
-    assert_matches!(
-        signal_receiver.into_iter().find(|(_, (entry, _))| !entry.is_tick()),
-        Some((_, (Entry {transactions, ..}, _))) if transactions == [tx.to_versioned_transaction()]
-    );
-
-    // Stop things.
-    exit.store(true, Ordering::Relaxed);
-    poh_service.join().unwrap();
+    // Quiescing the pruned bank prevents the stalled transaction from entering
+    // execution.  CommitCancelled aborts the scheduler, so it is retired instead
+    // of being returned to the reusable pool.
+    assert_eq!(pool_raw.pooled_scheduler_count(), 0);
 }

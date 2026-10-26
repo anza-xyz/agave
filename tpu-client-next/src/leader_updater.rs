@@ -3,9 +3,7 @@
 //! Currently, the main purpose of [`LeaderUpdater`] is to abstract over leader
 //! updates, hiding the details of how leaders are retrieved and which
 //! structures are used.
-
 use {
-    async_trait::async_trait,
     std::{fmt, net::SocketAddr},
     thiserror::Error,
 };
@@ -13,20 +11,18 @@ use {
 /// [`LeaderUpdater`] trait abstracts out functionality required for the
 /// [`ConnectionWorkersScheduler`](crate::ConnectionWorkersScheduler) to
 /// identify next leaders to send transactions to.
-#[async_trait]
 pub trait LeaderUpdater: Send {
-    /// Returns next leaders for the next `lookahead_leaders` starting from
-    /// current estimated slot.
+    /// Appends TPU addresses for upcoming leader windows to `leaders`.
     ///
-    /// Leaders are returned per [`NUM_CONSECUTIVE_LEADER_SLOTS`] to avoid unnecessary repetition.
+    /// `lookahead_leaders` controls how many scheduled leader windows are inspected but
+    /// implementation may append additional addresses on the leader-window boundary.
+    /// Implementations may return duplicate addresses. The scheduler is responsible for deriving
+    /// unique send and connect target sets from these ordered candidates.
     ///
     /// If the current leader estimation is incorrect and transactions are sent to
     /// only one estimated leader, there is a risk of losing all the transactions,
     /// depending on the forwarding policy.
-    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr>;
-
-    /// Stop [`LeaderUpdater`] and releases all associated resources.
-    async fn stop(&mut self);
+    fn next_leaders(&mut self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>);
 }
 
 /// Error type for [`LeaderUpdater`].
@@ -60,11 +56,8 @@ struct PinnedLeaderUpdater {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-#[async_trait]
 impl LeaderUpdater for PinnedLeaderUpdater {
-    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
-        self.address.clone()
+    fn next_leaders(&mut self, _lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
+        leaders.extend_from_slice(&self.address);
     }
-
-    async fn stop(&mut self) {}
 }

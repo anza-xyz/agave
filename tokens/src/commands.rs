@@ -20,7 +20,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_instruction::Instruction,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_native_token::sol_str_to_lamports,
     solana_program_error::ProgramError,
     solana_rpc_client::rpc_client::RpcClient,
@@ -684,10 +684,10 @@ pub fn process_allocations(
 
     let opt_confirmations = finalize_transactions(client, &mut db, args.dry_run, exit)?;
 
-    if !args.dry_run {
-        if let Some(output_path) = &args.output_path {
-            db::write_transaction_log(&db, &output_path)?;
-        }
+    if !args.dry_run
+        && let Some(output_path) = &args.output_path
+    {
+        db::write_transaction_log(&db, &output_path)?;
     }
 
     Ok(opt_confirmations)
@@ -754,8 +754,7 @@ fn update_finalized_transactions(
         statuses.extend(
             client
                 .get_signature_statuses(unconfirmed_signatures_chunk)?
-                .value
-                .into_iter(),
+                .value,
         );
     }
 
@@ -781,9 +780,8 @@ fn log_transaction_confirmations(
     confirmations: &mut Option<usize>,
 ) -> Result<(), Error> {
     let finalized_block_height = client.get_block_height()?;
-    for ((transaction, last_valid_block_height), opt_transaction_status) in unconfirmed_transactions
-        .into_iter()
-        .zip(statuses.into_iter())
+    for ((transaction, last_valid_block_height), opt_transaction_status) in
+        unconfirmed_transactions.into_iter().zip(statuses)
     {
         match db::update_finalized_transaction(
             db,
@@ -814,7 +812,7 @@ pub fn get_fee_estimate_for_messages(
     let mut message = messages.first().ok_or(Error::MissingMessages)?.clone();
     let latest_blockhash = client.get_latest_blockhash()?;
     message.recent_blockhash = latest_blockhash;
-    let fee = client.get_fee_for_message(&message)?;
+    let fee = client.get_fee_for_versioned_message(&VersionedMessage::Legacy(message))?;
     let fee_estimate = fee
         .checked_mul(messages.len() as u64)
         .ok_or(Error::FeeEstimationError)?;
@@ -937,9 +935,11 @@ pub fn process_balances(
         } else {
             let address: Pubkey = allocation.recipient;
             let expected = build_balance_message(allocation.amount, false, false);
-            let actual_amount = client.get_balance(&address).unwrap();
+            let actual_amount = client.get_balance(&address)?;
             let actual = build_balance_message(actual_amount, false, false);
-            let diff = build_balance_message(actual_amount - allocation.amount, false, false);
+            let diff = token_balance_difference_string(actual_amount, allocation.amount, |diff| {
+                build_balance_message(diff, false, false)
+            });
             println!(
                 "{:<44}  {:>24.9}  {:>24.9}  {:>24.9}",
                 allocation.recipient, expected, actual, diff,
@@ -954,6 +954,17 @@ pub fn process_transaction_log(args: &TransactionLogArgs) -> Result<(), Error> {
     let db = db::open_db(&args.transaction_db, true)?;
     db::write_transaction_log(&db, &args.output_path)?;
     Ok(())
+}
+
+pub(crate) fn token_balance_difference_string(
+    actual: u64,
+    expected: u64,
+    format: impl Fn(u64) -> String,
+) -> String {
+    match actual.checked_sub(expected) {
+        Some(delta) => format(delta),
+        None => format!("-{}", format(expected - actual)),
+    }
 }
 
 use {
@@ -1308,6 +1319,8 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
 mod tests {
     use {
         super::*,
+        serial_test::serial,
+        solana_clock::DEFAULT_MS_PER_SLOT,
         solana_instruction::AccountMeta,
         solana_keypair::{read_keypair_file, write_keypair_file},
         solana_native_token::LAMPORTS_PER_SOL,
@@ -1316,7 +1329,7 @@ mod tests {
         solana_stake_interface::instruction::StakeInstruction,
         solana_test_validator::TestValidator,
         solana_transaction_status::TransactionConfirmationStatus,
-        std::slice,
+        std::{slice, thread::sleep, time::Duration},
     };
 
     fn one_signer_message(client: &RpcClient) -> Message {
@@ -1329,46 +1342,6 @@ mod tests {
             None,
             &client.get_latest_blockhash().unwrap(),
         )
-    }
-
-    #[test]
-    fn test_process_token_allocations() {
-        let alice = Keypair::new();
-        let test_validator = simple_test_validator(alice.pubkey());
-        let url = test_validator.rpc_url();
-
-        let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_tokens_with_client(&client, alice, None);
-    }
-
-    #[test]
-    fn test_process_transfer_amount_allocations() {
-        let alice = Keypair::new();
-        let test_validator = simple_test_validator(alice.pubkey());
-        let url = test_validator.rpc_url();
-
-        let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_tokens_with_client(&client, alice, sol_str_to_lamports("1.5"));
-    }
-
-    #[test]
-    fn test_create_stake_allocations() {
-        let alice = Keypair::new();
-        let test_validator = simple_test_validator(alice.pubkey());
-        let url = test_validator.rpc_url();
-
-        let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_create_stake_with_client(&client, alice);
-    }
-
-    #[test]
-    fn test_process_stake_allocations() {
-        let alice = Keypair::new();
-        let test_validator = simple_test_validator(alice.pubkey());
-        let url = test_validator.rpc_url();
-
-        let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_stake_with_client(&client, alice);
     }
 
     #[test]
@@ -1815,7 +1788,7 @@ mod tests {
             false,
         );
         let lockup_instruction =
-            bincode::deserialize(&instructions[SET_LOCKUP_INDEX].data).unwrap();
+            wincode::deserialize(&instructions[SET_LOCKUP_INDEX].data).unwrap();
         if let StakeInstruction::SetLockup(lockup_args) = lockup_instruction {
             assert_eq!(lockup_args.unix_timestamp, Some(lockup_date.timestamp()));
             assert_eq!(lockup_args.epoch, None); // Don't change the epoch
@@ -1859,6 +1832,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_check_payer_balances_distribute_tokens_single_payer() {
         let alice = Keypair::new();
         let test_validator = simple_test_validator(alice.pubkey());
@@ -1868,9 +1842,8 @@ mod tests {
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
         write_keypair_file(&alice, &sender_keypair_file).unwrap();
 
-        let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
-            .unwrap();
+        let fee_message = VersionedMessage::Legacy(one_signer_message(&client));
+        let fees = client.get_fee_for_versioned_message(&fee_message).unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
         let allocation_amount = 1000.0;
@@ -1942,6 +1915,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_check_payer_balances_distribute_tokens_separate_payers() {
         agave_logger::setup();
         let alice = Keypair::new();
@@ -1950,9 +1924,8 @@ mod tests {
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
-        let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
-            .unwrap();
+        let fee_message = VersionedMessage::Legacy(one_signer_message(&client));
+        let fees = client.get_fee_for_versioned_message(&fee_message).unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
@@ -2062,19 +2035,31 @@ mod tests {
     }
 
     fn simple_test_validator(alice: Pubkey) -> TestValidator {
-        TestValidator::start_with_config(alice, None, SocketAddrSpace::Unspecified)
+        let test_validator =
+            TestValidator::start_with_config(alice, None, SocketAddrSpace::Unspecified);
+        // Programs deployed at genesis are not immediately available
+        let rpc_client =
+            RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+        while rpc_client
+            .get_slot_with_commitment(CommitmentConfig::processed())
+            .unwrap()
+            < 5
+        {
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
+        }
+        test_validator
     }
 
     #[test]
+    #[serial]
     fn test_check_payer_balances_distribute_stakes_single_payer() {
         let alice = Keypair::new();
         let test_validator = simple_test_validator(alice.pubkey());
         let url = test_validator.rpc_url();
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
-        let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
-            .unwrap();
+        let fee_message = VersionedMessage::Legacy(one_signer_message(&client));
+        let fees = client.get_fee_for_versioned_message(&fee_message).unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
@@ -2180,6 +2165,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_check_payer_balances_distribute_stakes_separate_payers() {
         agave_logger::setup();
         let alice = Keypair::new();
@@ -2188,9 +2174,8 @@ mod tests {
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
-        let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
-            .unwrap();
+        let fee_message = VersionedMessage::Legacy(one_signer_message(&client));
+        let fees = client.get_fee_for_versioned_message(&fee_message).unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
         let sender_keypair_file = tmp_file_path("keypair_file", &alice.pubkey());
@@ -2501,6 +2486,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_distribute_allocations_dump_db() {
         let sender_keypair = Keypair::new();
         let test_validator = simple_test_validator(sender_keypair.pubkey());
@@ -2687,5 +2673,27 @@ mod tests {
         let transaction_info = db::read_transaction_infos(&read_db);
         assert_eq!(transaction_info.len(), 1);
         assert_eq!(confs, None);
+    }
+
+    #[test]
+    fn test_balance_difference_string() {
+        assert_eq!(
+            token_balance_difference_string(500, 300, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "0.0000002"
+        );
+        assert_eq!(
+            token_balance_difference_string(300, 500, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "-0.0000002"
+        );
+        assert_eq!(
+            token_balance_difference_string(7, 7, |diff| {
+                build_balance_message(diff, false, false)
+            }),
+            "0"
+        );
     }
 }

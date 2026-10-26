@@ -1,12 +1,12 @@
 use {
-    crate::ancestors::Ancestors,
+    crate::{ancestors::Ancestors, bank_id::BankId},
     dashmap::{DashMap, mapref::entry::Entry},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
-    solana_nohash_hasher::BuildNoHashHasher,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_nohash_hasher::{BuildNoHashHasher, IntMap},
+    solana_pubkey::Pubkey,
     std::{
-        collections::BTreeSet,
+        collections::{BTreeMap, BTreeSet},
         ops::Deref,
         sync::{
             Arc, RwLock,
@@ -36,29 +36,10 @@ impl MaxFlushedRoot {
     }
 }
 
-/// Indicates whether a slot is an ancestor, an unflushed root, or a root being flushed
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SlotStatus {
-    /// Slot is in the ancestors list and not a root being flushed. Slot is guaranteed to be
-    /// the newest version of the account on this fork so the cached copy can be used without
-    /// checking storage
-    Ancestor,
-    /// Slot is in the ancestors list but is also a root being flushed. The version found in the
-    /// accounts cache may not be the newest version of the account, and the storage should be
-    /// checked for newer versions
-    AncestorBeingFlushed,
-    /// Slot is a root that has not yet been claimed for flushing. Slot is guaranteed to be the
-    /// newest version of the account so the cached copy can be used without checking storage
-    UnflushedRoot,
-    /// Slot is a root that is currently being flushed. The version found in the accounts cache
-    /// may not be the newest version of the account, and the storage should be checked for newer
-    /// versions
-    RootBeingFlushed,
-}
-
 #[derive(Debug)]
 pub struct SlotCache {
-    cache: DashMap<Pubkey, Arc<CachedAccount>, PubkeyHasherBuilder>,
+    slot: Slot,
+    cache: DashMap<Pubkey, Arc<CachedAccount>, ahash::RandomState>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
     unique_account_writes_size: AtomicU64,
@@ -163,6 +144,10 @@ impl SlotCache {
             .map(|account_ref| account_ref.value().clone())
     }
 
+    pub fn slot(&self) -> Slot {
+        self.slot
+    }
+
     pub fn mark_slot_frozen(&self) {
         self.is_frozen.store(true, Ordering::Release);
     }
@@ -178,7 +163,7 @@ impl SlotCache {
 }
 
 impl Deref for SlotCache {
-    type Target = DashMap<Pubkey, Arc<CachedAccount>, PubkeyHasherBuilder>;
+    type Target = DashMap<Pubkey, Arc<CachedAccount>, ahash::RandomState>;
     fn deref(&self) -> &Self::Target {
         &self.cache
     }
@@ -196,13 +181,13 @@ impl CachedAccount {
     }
 }
 
-/// Maps each pubkey to (max_slot, ref_count) where max_slot is the highest slot at which the
-/// pubkey has been written into the cache, and ref_count is the number of SlotCache entries that
-/// currently hold the pubkey. max_slot may be stale after a removal; callers must handle a
-/// look-up miss on max_slot by falling back to scanning all slots in the cache (see load_latest)
+/// Maps each pubkey to (max_bank_id, ref_count) where max_bank_id is the highest bank id that has
+/// written the pubkey into the cache, and ref_count is the number of SlotCache entries that
+/// currently hold the pubkey. max_bank_id may be stale after a removal; callers must handle a
+/// look-up miss on max_bank_id by falling back to scanning all slots in the cache (see load_latest)
 #[derive(Debug, Default)]
 struct AccountsCacheIndex {
-    entries: DashMap<Pubkey, (Slot, u32), PubkeyHasherBuilder>,
+    entries: DashMap<Pubkey, (BankId, u32), ahash::RandomState>,
     // The number of unique pubkeys in the index, for reporting purposes. This is to avoid having to
     // lock each shard of the entries dashmap to count unique keys on demand
     num_unique_pubkeys: AtomicU64,
@@ -210,23 +195,24 @@ struct AccountsCacheIndex {
 
 impl AccountsCacheIndex {
     /// Inserts an entry into the index. If the entry is already present, increase the ref count
-    fn insert(&self, pubkey: &Pubkey, slot: Slot) {
+    fn insert(&self, pubkey: &Pubkey, bank_id: BankId) {
         self.entries
             .entry(*pubkey)
-            .and_modify(|(stored_slot, ref_count)| {
-                *stored_slot = slot.max(*stored_slot);
+            .and_modify(|(stored_bank_id, ref_count)| {
+                *stored_bank_id = bank_id.max(*stored_bank_id);
                 *ref_count += 1;
             })
             .or_insert_with(|| {
                 self.num_unique_pubkeys.fetch_add(1, Ordering::Relaxed);
-                (slot, 1)
+                (bank_id, 1)
             });
     }
 
     /// Decrement the reference count for each pubkey in `pubkeys`. Removes an entry entirely if
-    /// the count reaches zero. `max_slot` is not updated; it will become stale if the removed slot
-    /// is the highest slot
-    fn remove(&self, pubkeys: impl IntoIterator<Item = Pubkey>) {
+    /// the count reaches zero. `max_bank_id` is not updated; it will become stale if the removed
+    /// bank is the highest. Returns a vec of pubkeys removed from the index.
+    fn remove(&self, pubkeys: impl IntoIterator<Item = Pubkey>) -> Vec<Pubkey> {
+        let mut removed_pubkeys = Vec::new();
         for pubkey in pubkeys {
             let Entry::Occupied(mut occupied_entry) = self.entries.entry(pubkey) else {
                 // If this has happened the index is corrupted
@@ -237,39 +223,42 @@ impl AccountsCacheIndex {
             if *ref_count == 0 {
                 occupied_entry.remove_entry();
                 self.num_unique_pubkeys.fetch_sub(1, Ordering::Relaxed);
+                removed_pubkeys.push(pubkey);
             }
         }
+        removed_pubkeys
     }
 
-    /// Returns the recorded max slot for `pubkey`, or `None` if the pubkey is not present in the
-    /// cache. Note: the account is not necessarily in this slot if it was removed during flush
-    /// This is just the maximum slot that it could be found in during search
-    fn max_slot_for_pubkey(&self, pubkey: &Pubkey) -> Option<Slot> {
+    /// Returns the highest bank id that stored `pubkey` in the cache, or `None` if the pubkey is
+    /// not present in the cache. That bank's slot cache may since have been flushed or purged, so
+    /// this is only an upper bound on the banks whose slot caches hold `pubkey`
+    fn max_bank_id_for_pubkey(&self, pubkey: &Pubkey) -> Option<BankId> {
         self.entries.get(pubkey).map(|entry| entry.0)
     }
 }
 
 #[derive(Debug, Default)]
 pub struct AccountsCache {
-    cache: DashMap<Slot, Arc<SlotCache>, BuildNoHashHasher<Slot>>,
-    // Index to find which slots a pubkey is stored in, to speed up lookups in load_latest
+    cache: DashMap<BankId, Arc<SlotCache>, BuildNoHashHasher<BankId>>,
+    /// Maps a slot to the id of the bank that stored accounts at it
+    bank_ids: RwLock<IntMap<Slot, BankId>>,
+    // Index to find which banks a pubkey is stored in, to speed up lookups in load_latest
     index: AccountsCacheIndex,
-    // Queue of potentially unflushed roots. Random eviction + cache too large
-    // could have triggered a flush of this slot already
-    maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
-    // Roots that have been claimed for flushing by `begin_flush_roots` but not yet
-    // cleared by `end_flush_roots`
-    roots_being_flushed: RwLock<BTreeSet<Slot>>,
+    // Rooted banks that still have accounts in the write cache, and the slot each stored at. A
+    // bank enters via `add_root` if it has a slot cache, and is dropped by `remove_slot` when its
+    // slot cache is flushed. Roots form one chain, so bank id order is slot order.
+    unflushed_roots: RwLock<BTreeMap<BankId, Slot>>,
     max_flushed_root: MaxFlushedRoot,
     /// The size of account data stored in the whole AccountsCache, in bytes
     total_size: Arc<AtomicU64>,
     /// The number of accounts stored in the whole AccountsCache
-    total_accounts_counts: Arc<AtomicU64>,
+    total_accounts_count: Arc<AtomicU64>,
 }
 
 impl AccountsCache {
-    pub fn new_inner(&self) -> Arc<SlotCache> {
+    pub fn new_inner(&self, slot: Slot) -> Arc<SlotCache> {
         Arc::new(SlotCache {
+            slot,
             cache: DashMap::default(),
             same_account_writes: AtomicU64::default(),
             same_account_writes_size: AtomicU64::default(),
@@ -278,7 +267,7 @@ impl AccountsCache {
             total_size: Arc::clone(&self.total_size),
             is_frozen: AtomicBool::default(),
             accounts_count: AtomicU64::new(0),
-            total_accounts_count: Arc::clone(&self.total_accounts_counts),
+            total_accounts_count: Arc::clone(&self.total_accounts_count),
         })
     }
     pub fn size(&self) -> u64 {
@@ -287,16 +276,12 @@ impl AccountsCache {
     pub fn report_size(&self) {
         datapoint_info!(
             "accounts_cache_size",
-            (
-                "num_roots",
-                self.maybe_unflushed_roots.read().unwrap().len(),
-                i64
-            ),
+            ("num_roots", self.unflushed_roots.read().unwrap().len(), i64),
             ("num_slots", self.cache.len(), i64),
             ("total_size", self.size(), i64),
             (
                 "total_accounts_count",
-                self.total_accounts_counts.load(Ordering::Relaxed),
+                self.total_accounts_count.load(Ordering::Relaxed),
                 i64
             ),
             (
@@ -310,159 +295,195 @@ impl AccountsCache {
     pub fn store(
         &self,
         slot: Slot,
+        bank_id: BankId,
         pubkey: &Pubkey,
         account: AccountSharedData,
     ) -> Arc<CachedAccount> {
-        let slot_cache = self.slot_cache(slot).unwrap_or_else(||
+        let slot_cache = self.bank_cache(bank_id).unwrap_or_else(|| {
+            let slot_bank_id = *self
+                .bank_ids
+                .write()
+                .unwrap()
+                .entry(slot)
+                .or_insert(bank_id);
+            debug_assert_eq!(
+                slot_bank_id, bank_id,
+                "slot {slot} already holds accounts stored by another bank"
+            );
             // DashMap entry.or_insert() returns a RefMut, essentially a write lock,
             // which is dropped after this block ends, minimizing time held by the lock.
             // However, we still want to persist the reference to the `SlotStores` behind
             // the lock, hence we clone it out, (`SlotStores` is an Arc so is cheap to clone).
-            self
-                .cache
-                .entry(slot)
-                .or_insert_with(|| self.new_inner())
-                .clone());
+            self.cache
+                .entry(bank_id)
+                .or_insert_with(|| self.new_inner(slot))
+                .clone()
+        });
+        debug_assert_eq!(slot_cache.slot, slot, "{bank_id:?} stores at another slot");
 
         let (item, is_new_key) = slot_cache.insert(pubkey, account);
         if is_new_key {
             // Only update the index when the pubkey is new to this slot. Overwrites within the
             // same slot (is_new_key = false) cannot update the index because the ref count was
             // already incremented when the pubkey was first stored in this slot
-            self.index.insert(pubkey, slot);
+            self.index.insert(pubkey, bank_id);
         }
         item
     }
 
-    pub fn load(&self, slot: Slot, pubkey: &Pubkey) -> Option<Arc<CachedAccount>> {
-        self.slot_cache(slot)
-            .and_then(|slot_cache| slot_cache.get_cloned(pubkey))
+    /// Returns `pubkey`'s account from `bank_id`'s cache, and the slot it was stored at
+    pub fn load(&self, bank_id: BankId, pubkey: &Pubkey) -> Option<(Arc<CachedAccount>, Slot)> {
+        let slot_cache = self.bank_cache(bank_id)?;
+        let account = slot_cache.get_cloned(pubkey)?;
+        Some((account, slot_cache.slot))
     }
 
-    pub fn remove_slot(&self, slot: Slot) -> Option<Arc<SlotCache>> {
-        let result = self.cache.remove(&slot).map(|(_, slot_cache)| slot_cache);
-        if let Some(slot_cache) = &result {
-            self.index.remove(slot_cache.iter().map(|item| *item.key()));
-        }
-        result
+    /// Removes a slot from the accounts cache and returns the set of pubkeys removed from the index.
+    #[must_use]
+    pub fn remove_slot(&self, slot: Slot) -> Option<Vec<Pubkey>> {
+        let slot_cache = {
+            // Held across the cache removal so a concurrent `add_root` can't re-track this bank
+            let mut unflushed_roots = self.unflushed_roots.write().unwrap();
+            let bank_id = self.bank_ids.write().unwrap().remove(&slot)?;
+            // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
+            unflushed_roots.remove(&bank_id);
+            self.cache.remove(&bank_id)?.1
+        };
+        Some(self.index.remove(slot_cache.iter().map(|item| *item.key())))
     }
 
-    /// Finds the best write-cache entry for `pubkey` visible from `ancestors`. Searches
-    /// ancestors first (highest to lowest), then unflushed roots, then roots being flushed.
-    /// Ancestors are checked exhaustively before roots, so a lower-slot ancestor wins over a
-    /// higher-slot root. Returns the account, slot, and status, or `None` if not found.
+    /// Finds the newest write-cache entry for `pubkey` visible from `ancestors`. Searches
+    /// ancestors first (highest to lowest), then roots (highest to lowest). Ancestors are
+    /// checked exhaustively before roots, so a lower-slot ancestor wins over a higher-slot
+    /// root. Returns the account and its slot, or `None` if not found.
     pub fn load_latest(
         &self,
         pubkey: &Pubkey,
         ancestors: &Ancestors,
-    ) -> Option<(Arc<CachedAccount>, Slot, SlotStatus)> {
+    ) -> Option<(Arc<CachedAccount>, Slot)> {
         // Exit early if the pubkey isn't in the cache
-        let index_max_slot = self.index.max_slot_for_pubkey(pubkey)?;
+        let index_max_bank_id = self.index.max_bank_id_for_pubkey(pubkey)?;
 
-        if let Some(ancestors_min_slot) = ancestors.min_slot() {
-            // Iterate every slot in the range in descending order
-            // Grab a read lock on flushing roots once before the loop to avoid locking/unlocking
-            // on every iteration. This lock ensures that the load call in the loop correctly
-            // identifies slots with status AncestorBeingFlushed.
-            let r_roots_being_flushed = self.roots_being_flushed.read().unwrap();
-            for slot in (ancestors_min_slot..=index_max_slot).rev() {
-                if ancestors.contains_key(&slot) {
-                    if let Some(account) = self.load(slot, pubkey) {
-                        // Need to check flush status of the slot even for ancestors, because
-                        // there could be newer version of the account that has already been
-                        // flushed
-                        let slot_status = if r_roots_being_flushed.contains(&slot) {
-                            SlotStatus::AncestorBeingFlushed
-                        } else {
-                            SlotStatus::Ancestor
-                        };
-                        return Some((account, slot, slot_status));
-                    }
-                }
-            }
-            drop(r_roots_being_flushed);
-        }
-
-        // If the slot is not found in the ancestors fall back to searching roots
-        let r_maybe_unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
-        for &slot in r_maybe_unflushed_roots.range(..=index_max_slot).rev() {
-            if let Some(account) = self.load(slot, pubkey) {
-                return Some((account, slot, SlotStatus::UnflushedRoot));
+        // Ancestors take priority over roots regardless of slot. Walk them in descending order,
+        // skipping those above the newest cached version, and return the first (highest) that has it.
+        for bank_id in ancestors
+            .iter_bank_ids()
+            .rev()
+            .skip_while(|bank_id| *bank_id > index_max_bank_id)
+        {
+            if let Some(found) = self.load(bank_id, pubkey) {
+                return Some(found);
             }
         }
-        drop(r_maybe_unflushed_roots);
 
-        let r_roots_being_flushed = self.roots_being_flushed.read().unwrap();
-        for &slot in r_roots_being_flushed.range(..=index_max_slot).rev() {
-            if let Some(account) = self.load(slot, pubkey) {
-                return Some((account, slot, SlotStatus::RootBeingFlushed));
+        // If the slot is not found in the ancestors fall back to searching roots.
+        // Bound the search to the oldest ancestor so that roots beyond the querying
+        // bank's ancestor chain are not visible. Using the oldest is more correct than
+        // the newest because a root between them that is not an ancestor belongs to a
+        // different fork and should not be returned.
+        let max_root_bank_id = ancestors
+            .iter_bank_ids()
+            .next()
+            .map_or(index_max_bank_id, |bank_id| bank_id.min(index_max_bank_id));
+
+        let r_unflushed_roots = self.unflushed_roots.read().unwrap();
+        for &bank_id in r_unflushed_roots
+            .range(..=max_root_bank_id)
+            .rev()
+            .map(|(bank_id, _slot)| bank_id)
+        {
+            if let Some(found) = self.load(bank_id, pubkey) {
+                return Some(found);
             }
         }
-        drop(r_roots_being_flushed);
+        drop(r_unflushed_roots);
 
         // Found nothing, the version of the account in the cache must be on a different fork
         None
     }
 
+    /// Returns the cache of the bank that stored accounts at `slot`
     pub fn slot_cache(&self, slot: Slot) -> Option<Arc<SlotCache>> {
-        self.cache.get(&slot).map(|result| result.value().clone())
+        let bank_id = self.bank_id(slot)?;
+        self.bank_cache(bank_id)
     }
 
-    pub fn add_root(&self, root: Slot) {
-        self.maybe_unflushed_roots.write().unwrap().insert(root);
+    /// Returns `bank_id`'s cache
+    pub fn bank_cache(&self, bank_id: BankId) -> Option<Arc<SlotCache>> {
+        self.cache
+            .get(&bank_id)
+            .map(|result| result.value().clone())
+    }
+
+    /// Returns the id of the bank that stored accounts at `slot`
+    pub fn bank_id(&self, slot: Slot) -> Option<BankId> {
+        self.bank_ids.read().unwrap().get(&slot).copied()
+    }
+
+    /// A root without a slot cache is not tracked; nothing stores into a slot once it is rooted
+    pub fn add_root(&self, bank_id: BankId) -> Option<Slot> {
+        // Held across the lookup so a concurrent `remove_slot` can't leave this root stranded
+        let mut unflushed_roots = self.unflushed_roots.write().unwrap();
+        if let Some(slot) = self.cache.get(&bank_id).map(|slot_cache| slot_cache.slot) {
+            unflushed_roots.insert(bank_id, slot);
+            Some(slot)
+        } else {
+            None
+        }
     }
 
     pub fn num_unflushed_roots(&self) -> usize {
-        self.maybe_unflushed_roots.read().unwrap().len()
+        self.unflushed_roots.read().unwrap().len()
     }
 
-    /// Atomically moves roots up to and including `max_root` (or all roots if `None`) out of
-    /// `maybe_unflushed_roots` and into `roots_being_flushed`, then returns them
-    ///
-    /// Panics if there are already roots being flushed (i.e. `end_flush_roots` was not called after
-    /// a previous `begin_flush_roots`)
-    pub fn begin_flush_roots(&self, max_root: Option<Slot>) -> BTreeSet<Slot> {
-        let mut w_maybe_unflushed_roots = self.maybe_unflushed_roots.write().unwrap();
-        let mut w_roots_being_flushed = self.roots_being_flushed.write().unwrap();
-
-        assert!(
-            w_roots_being_flushed.is_empty(),
-            "begin_flush_roots called while roots are already being flushed; end_flush_roots must \
-             be called first"
-        );
-
-        let roots_to_flush = if let Some(max_root) = max_root {
-            let remaining = w_maybe_unflushed_roots.split_off(&(max_root + 1));
-            std::mem::replace(&mut *w_maybe_unflushed_roots, remaining)
-        } else {
-            std::mem::take(&mut *w_maybe_unflushed_roots)
-        };
-
-        *w_roots_being_flushed = roots_to_flush.clone();
-        roots_to_flush
+    /// Returns whether `slot` is a root that has been added but not yet flushed to storage.
+    pub fn contains_unflushed_root(&self, slot: Slot) -> bool {
+        self.bank_id(slot)
+            .is_some_and(|bank_id| self.unflushed_roots.read().unwrap().contains_key(&bank_id))
     }
 
-    /// Signals that flushing is complete. Clears the roots that were staged by `begin_flush_roots`
-    pub fn end_flush_roots(&self) {
-        self.roots_being_flushed.write().unwrap().clear();
+    /// Returns the unflushed roots up to and including `max_root` (or all roots if `None`). The
+    /// returned roots remain tracked as unflushed until `remove_slot` drops each one when its cache
+    /// is flushed.
+    pub fn roots_to_flush(&self, max_root: Option<Slot>) -> BTreeSet<Slot> {
+        // `None` means no upper bound, i.e. every root.
+        let max_root = max_root.unwrap_or(Slot::MAX);
+        self.unflushed_roots
+            .read()
+            .unwrap()
+            .values()
+            .take_while(|slot| **slot <= max_root)
+            .copied()
+            .collect()
     }
 
     pub fn cached_frozen_slots(&self) -> Vec<Slot> {
         self.cache
             .iter()
             .filter_map(|item| {
-                let (slot, slot_cache) = item.pair();
-                slot_cache.is_frozen().then_some(*slot)
+                let slot_cache = item.value();
+                slot_cache.is_frozen().then_some(slot_cache.slot)
             })
             .collect()
     }
 
     pub fn contains(&self, slot: Slot) -> bool {
-        self.cache.contains_key(&slot)
+        self.bank_ids.read().unwrap().contains_key(&slot)
     }
 
     pub fn contains_pubkey(&self, pubkey: &Pubkey) -> bool {
         self.index.entries.contains_key(pubkey)
+    }
+
+    /// Returns a vector of all pubkeys currently in the cache index.
+    /// In iterator is not returned as the dashmap shards would be readlocked for the duration
+    /// of the iterator
+    pub(crate) fn cached_pubkeys(&self) -> Vec<Pubkey> {
+        self.index
+            .entries
+            .iter()
+            .map(|entry| *entry.key())
+            .collect()
     }
 
     pub fn num_slots(&self) -> usize {
@@ -487,13 +508,17 @@ mod tests {
         // otherwise the slot removed could still be undergoing replay!
         pub fn remove_slots_le(&self, max_root: Slot) -> Vec<(Slot, Arc<SlotCache>)> {
             let mut removed_slots = vec![];
-            self.cache.retain(|slot, slot_cache| {
-                let should_remove = *slot <= max_root;
+            self.cache.retain(|_bank_id, slot_cache| {
+                let should_remove = slot_cache.slot <= max_root;
                 if should_remove {
-                    removed_slots.push((*slot, slot_cache.clone()))
+                    removed_slots.push((slot_cache.slot, slot_cache.clone()))
                 }
                 !should_remove
             });
+            self.bank_ids
+                .write()
+                .unwrap()
+                .retain(|slot, _bank_id| *slot > max_root);
             removed_slots
         }
     }
@@ -506,6 +531,7 @@ mod tests {
         let inserted_slot = 0;
         cache.store(
             inserted_slot,
+            BankId::new(inserted_slot),
             &Pubkey::new_unique(),
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
@@ -523,6 +549,7 @@ mod tests {
         let inserted_slot = 0;
         cache.store(
             inserted_slot,
+            BankId::new(inserted_slot),
             &Pubkey::new_unique(),
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
@@ -544,6 +571,7 @@ mod tests {
 
         cache.store(
             slot,
+            BankId::new(slot),
             &pubkey,
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
@@ -552,6 +580,7 @@ mod tests {
 
         cache.store(
             slot,
+            BankId::new(slot),
             &pubkey,
             AccountSharedData::new(2, 0, &Pubkey::default()),
         );
@@ -559,6 +588,7 @@ mod tests {
 
         cache.store(
             slot,
+            BankId::new(slot),
             &other_pubkey,
             AccountSharedData::new(3, 0, &Pubkey::default()),
         );
@@ -589,24 +619,24 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_index_insert_and_max_slot() {
+    fn test_cache_index_insert_and_max_bank_id() {
         let index = AccountsCacheIndex::default();
         let pubkey = Pubkey::new_unique();
 
         // Initially empty
-        assert!(index.max_slot_for_pubkey(&pubkey).is_none());
+        assert!(index.max_bank_id_for_pubkey(&pubkey).is_none());
 
-        // Insert at slot 5
-        index.insert(&pubkey, 5);
-        assert_eq!(index.max_slot_for_pubkey(&pubkey), Some(5));
+        // Insert from bank 5
+        index.insert(&pubkey, BankId::new(5));
+        assert_eq!(index.max_bank_id_for_pubkey(&pubkey), Some(BankId::new(5)));
 
-        // Insert same pubkey at a higher slot updates max_slot
-        index.insert(&pubkey, 10);
-        assert_eq!(index.max_slot_for_pubkey(&pubkey), Some(10));
+        // Insert same pubkey from a higher bank id updates max_bank_id
+        index.insert(&pubkey, BankId::new(10));
+        assert_eq!(index.max_bank_id_for_pubkey(&pubkey), Some(BankId::new(10)));
 
-        // Insert same pubkey at a lower slot does not decrease max_slot
-        index.insert(&pubkey, 3);
-        assert_eq!(index.max_slot_for_pubkey(&pubkey), Some(10));
+        // Insert same pubkey from a lower bank id does not decrease max_bank_id
+        index.insert(&pubkey, BankId::new(3));
+        assert_eq!(index.max_bank_id_for_pubkey(&pubkey), Some(BankId::new(10)));
     }
 
     #[test]
@@ -617,10 +647,25 @@ mod tests {
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 0);
 
         // Store pubkey into 3 different slots
-        cache.store(1, &pk, AccountSharedData::new(1, 0, &Pubkey::default()));
+        cache.store(
+            1,
+            BankId::new(1),
+            &pk,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
-        cache.store(5, &pk, AccountSharedData::new(5, 0, &Pubkey::default()));
-        cache.store(3, &pk, AccountSharedData::new(3, 0, &Pubkey::default()));
+        cache.store(
+            5,
+            BankId::new(5),
+            &pk,
+            AccountSharedData::new(5, 0, &Pubkey::default()),
+        );
+        cache.store(
+            3,
+            BankId::new(3),
+            &pk,
+            AccountSharedData::new(3, 0, &Pubkey::default()),
+        );
         // Same pubkey across 3 slots — still only 1 unique pubkey
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
 
@@ -628,22 +673,25 @@ mod tests {
         let removed = cache.remove_slot(1);
         assert!(removed.is_some());
         drop(removed);
-        assert_eq!(cache.index.max_slot_for_pubkey(&pk), Some(5));
+        assert_eq!(
+            cache.index.max_bank_id_for_pubkey(&pk),
+            Some(BankId::new(5))
+        );
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
 
         // Remove and drop slot 5 — entry should still exist (count goes from 2 to 1)
-        // max_slot stays stale at 5 because the index doesn't scan for a new max on removal
+        // max_bank_id stays stale at 5 because the index doesn't scan for a new max on removal
         let removed = cache.remove_slot(5);
         assert!(removed.is_some());
         drop(removed);
-        assert!(cache.index.max_slot_for_pubkey(&pk).is_some());
+        assert!(cache.index.max_bank_id_for_pubkey(&pk).is_some());
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
 
         // Remove and drop slot 3 — last reference gone, entry removed
         let removed = cache.remove_slot(3);
         assert!(removed.is_some());
         drop(removed);
-        assert!(cache.index.max_slot_for_pubkey(&pk).is_none());
+        assert!(cache.index.max_bank_id_for_pubkey(&pk).is_none());
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 0);
     }
 
@@ -654,43 +702,63 @@ mod tests {
         let pk2 = Pubkey::new_unique();
 
         // pk1 in slots 1 and 3; pk2 only in slot 1
-        cache.store(1, &pk1, AccountSharedData::new(1, 0, &Pubkey::default()));
-        cache.store(1, &pk2, AccountSharedData::new(1, 0, &Pubkey::default()));
-        cache.store(3, &pk1, AccountSharedData::new(1, 0, &Pubkey::default()));
+        cache.store(
+            1,
+            BankId::new(1),
+            &pk1,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
+        cache.store(
+            1,
+            BankId::new(1),
+            &pk2,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
+        cache.store(
+            3,
+            BankId::new(3),
+            &pk1,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
 
         // Before removal: both pubkeys are in the index
-        assert!(cache.index.max_slot_for_pubkey(&pk1).is_some());
-        assert!(cache.index.max_slot_for_pubkey(&pk2).is_some());
+        assert!(cache.index.max_bank_id_for_pubkey(&pk1).is_some());
+        assert!(cache.index.max_bank_id_for_pubkey(&pk2).is_some());
 
         // Remove slot 1 — pk2 should disappear, pk1 still present (in slot 3)
-        cache.remove_slot(1);
-        assert!(cache.index.max_slot_for_pubkey(&pk1).is_some());
-        assert!(cache.index.max_slot_for_pubkey(&pk2).is_none());
+        let pubkeys_removed = cache.remove_slot(1);
+        assert_eq!(pubkeys_removed, Some(vec![pk2]));
+        assert!(cache.index.max_bank_id_for_pubkey(&pk1).is_some());
+        assert!(cache.index.max_bank_id_for_pubkey(&pk2).is_none());
 
         // Remove slot 3 — pk1 should also disappear
-        cache.remove_slot(3);
-        assert!(cache.index.max_slot_for_pubkey(&pk1).is_none());
+        let pubkeys_removed = cache.remove_slot(3);
+        assert_eq!(pubkeys_removed, Some(vec![pk1]));
+        assert!(cache.index.max_bank_id_for_pubkey(&pk1).is_none());
     }
 
-    /// Tests that `load_latest` returns the correct slot, status, and account value
-    /// given various combinations of ancestor slots, root slots, and flushing state.
+    /// Tests that `load_latest` returns the correct slot and account value
+    /// given various combinations of ancestor slots and root slots.
     ///
     /// Ancestors always take priority over roots regardless of slot
     // None case
+    // `uncached_ancestors` are slots added to the Ancestors set but with no account
+    // data stored in the cache. This lets us test root bounding by min_slot
+    // without the ancestor path short-circuiting the lookup.
     #[test_case(&[], &[], &[], None; "not ancestor not root")]
-    #[test_case(&[10], &[], &[], Some((10, SlotStatus::Ancestor)); "ancestor only")]
-    #[test_case(&[5, 10, 15], &[], &[], Some((15, SlotStatus::Ancestor)); "highest ancestor returned")]
-    #[test_case(&[], &[10, 20], &[], Some((20, SlotStatus::UnflushedRoot)); "rooted, with no ancestors")]
-    #[test_case(&[], &[], &[10], Some((10, SlotStatus::RootBeingFlushed)); "root being flushed")]
-    #[test_case(&[10], &[], &[10], Some((10, SlotStatus::AncestorBeingFlushed)); "ancestor being flushed")]
-    #[test_case(&[5], &[20], &[], Some((5, SlotStatus::Ancestor)); "ancestor wins over higher root")]
-    #[test_case(&[], &[20], &[10], Some((20, SlotStatus::UnflushedRoot));"unflushed root over flushing root")]
-    #[test_case(&[5], &[20], &[10], Some((5, SlotStatus::Ancestor));"ancestor over unflushed and flushing roots")]
+    #[test_case(&[10], &[], &[], Some(10); "ancestor only")]
+    #[test_case(&[5, 10, 15], &[], &[], Some(15); "highest ancestor returned")]
+    #[test_case(&[], &[10, 20], &[], Some(20); "rooted, with no ancestors")]
+    #[test_case(&[5], &[20], &[], Some(5); "ancestor wins over higher root")]
+    // Root beyond ancestors.min_slot() is excluded; older root still found
+    #[test_case(&[], &[5, 11], &[10], Some(5); "root beyond min ancestor excluded")]
+    // Root within min_slot bound is still returned
+    #[test_case(&[], &[10], &[15], Some(10); "root below min ancestor returned")]
     fn test_load_latest_slot_priority(
         ancestor_slots: &[Slot],
-        unflushed_root_slots: &[Slot],
-        flushing_root_slots: &[Slot],
-        expected: Option<(Slot, SlotStatus)>,
+        root_slots: &[Slot],
+        uncached_ancestors: &[Slot],
+        expected: Option<Slot>,
     ) {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
@@ -698,29 +766,28 @@ mod tests {
         for &slot in ancestor_slots {
             cache.store(
                 slot,
+                BankId::new(slot),
                 &pk,
                 AccountSharedData::new(slot, 0, &Pubkey::default()),
             );
         }
-        for &slot in unflushed_root_slots.iter().chain(flushing_root_slots) {
+        for &slot in root_slots {
             cache.store(
                 slot,
+                BankId::new(slot),
                 &pk,
                 AccountSharedData::new(slot, 0, &Pubkey::default()),
             );
-            cache.add_root(slot);
-        }
-        if let Some(&max) = flushing_root_slots.iter().max() {
-            cache.begin_flush_roots(Some(max));
+            cache.add_root(BankId::new(slot));
         }
 
-        let ancestors = Ancestors::from(ancestor_slots.to_vec());
-        let result = cache
-            .load_latest(&pk, &ancestors)
-            .map(|(account, slot, status)| {
-                assert_eq!(account.account.lamports(), slot);
-                (slot, status)
-            });
+        let mut all_ancestors: Vec<Slot> = ancestor_slots.to_vec();
+        all_ancestors.extend_from_slice(uncached_ancestors);
+        let ancestors = Ancestors::from(all_ancestors);
+        let result = cache.load_latest(&pk, &ancestors).map(|(account, slot)| {
+            assert_eq!(account.account.lamports(), slot);
+            slot
+        });
         assert_eq!(result, expected);
     }
 
@@ -730,7 +797,12 @@ mod tests {
         let pk = Pubkey::new_unique();
 
         // Store an account at slot 10, but don't add it as an ancestor or root.
-        cache.store(10, &pk, AccountSharedData::new(10, 0, &Pubkey::default()));
+        cache.store(
+            10,
+            BankId::new(10),
+            &pk,
+            AccountSharedData::new(10, 0, &Pubkey::default()),
+        );
 
         let ancestors = Ancestors::from(vec![5, 15]);
         let result = cache.load_latest(&pk, &ancestors);
@@ -742,117 +814,85 @@ mod tests {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
 
-        cache.store(10, &pk, AccountSharedData::new(100, 0, &Pubkey::default()));
-        cache.add_root(10);
-        cache.begin_flush_roots(None);
-        cache.end_flush_roots();
+        cache.store(
+            10,
+            BankId::new(10),
+            &pk,
+            AccountSharedData::new(100, 0, &Pubkey::default()),
+        );
+        cache.add_root(BankId::new(10));
+        // A flush finishes a slot with `remove_slot`, which drops both its cache and its
+        // unflushed-root tracking; call it directly here to stand in for that flush.
+        let _ = cache.remove_slot(10);
 
-        // After clearing flushed roots, slot is no longer visible
+        // With the slot gone from the cache and untracked as a root, it is not visible.
         let empty = Ancestors::default();
         assert!(cache.load_latest(&pk, &empty).is_none());
+        assert!(cache.unflushed_roots.read().unwrap().is_empty());
     }
 
     #[test]
-    fn test_begin_flush_roots_with_max_root() {
+    fn test_roots_to_flush_with_max_root() {
         let cache = AccountsCache::default();
-        cache.add_root(1);
-        cache.add_root(3);
-        cache.add_root(5);
-        cache.add_root(7);
+        for slot in [1, 3, 5, 7] {
+            cache.store(
+                slot,
+                BankId::new(slot),
+                &Pubkey::new_unique(),
+                AccountSharedData::new(1, 0, &Pubkey::default()),
+            );
+            cache.add_root(BankId::new(slot));
+        }
 
-        // begin_flush_roots(Some(5)) should return {1, 3, 5} and leave {7}
-        let taken = cache.begin_flush_roots(Some(5));
-        assert_eq!(taken, BTreeSet::from([1, 3, 5]));
+        // roots_to_flush(Some(5)) returns {1, 3, 5}, excluding 7.
+        let to_flush = cache.roots_to_flush(Some(5));
+        assert_eq!(to_flush, BTreeSet::from([1, 3, 5]));
 
-        // Remaining unflushed roots should only contain 7
-        assert_eq!(cache.maybe_unflushed_roots.read().unwrap().len(), 1);
-        assert!(cache.maybe_unflushed_roots.read().unwrap().contains(&7));
-
-        // Taken roots should now be in roots_being_flushed
-        assert!(cache.roots_being_flushed.read().unwrap().contains(&1));
-        assert!(cache.roots_being_flushed.read().unwrap().contains(&3));
-        assert!(cache.roots_being_flushed.read().unwrap().contains(&5));
-        assert!(!cache.roots_being_flushed.read().unwrap().contains(&7));
-
-        cache.end_flush_roots();
+        // roots_to_flush only reads: the tracked roots are unchanged.
+        assert_eq!(cache.roots_to_flush(None), BTreeSet::from([1, 3, 5, 7]));
     }
 
     #[test]
-    fn test_begin_flush_roots_none_takes_all() {
+    fn test_roots_to_flush_none_takes_all() {
         let cache = AccountsCache::default();
-        cache.add_root(2);
-        cache.add_root(4);
-        cache.add_root(6);
+        for slot in [2, 4, 6] {
+            cache.store(
+                slot,
+                BankId::new(slot),
+                &Pubkey::new_unique(),
+                AccountSharedData::new(1, 0, &Pubkey::default()),
+            );
+            cache.add_root(BankId::new(slot));
+        }
 
-        let taken = cache.begin_flush_roots(None);
-        assert_eq!(taken, BTreeSet::from([2, 4, 6]));
+        let to_flush = cache.roots_to_flush(None);
+        assert_eq!(to_flush, BTreeSet::from([2, 4, 6]));
 
-        // All unflushed roots should be drained
-        assert!(cache.maybe_unflushed_roots.read().unwrap().is_empty());
-
-        // All should be in roots_being_flushed
-        assert_eq!(
-            *cache.roots_being_flushed.read().unwrap(),
-            BTreeSet::from([2, 4, 6])
-        );
-
-        cache.end_flush_roots();
+        // roots_to_flush only reads: the tracked roots are unchanged.
+        assert_eq!(cache.roots_to_flush(None), BTreeSet::from([2, 4, 6]));
     }
 
     #[test]
-    #[should_panic(expected = "begin_flush_roots called while roots are already being flushed")]
-    fn test_begin_flush_roots_panics_if_already_flushing() {
-        let cache = AccountsCache::default();
-        cache.add_root(1);
-        cache.begin_flush_roots(None);
-        // Calling again without end_flush_roots should panic
-        cache.add_root(2);
-        cache.begin_flush_roots(None);
-    }
-
-    #[test]
-    fn test_end_flush_roots_allows_next_flush() {
-        let cache = AccountsCache::default();
-        cache.add_root(1);
-        cache.add_root(2);
-
-        // First cycle
-        let taken = cache.begin_flush_roots(None);
-        assert_eq!(taken, BTreeSet::from([1, 2]));
-
-        cache.end_flush_roots();
-
-        // After clear, roots_being_flushed is empty
-        assert!(cache.roots_being_flushed.read().unwrap().is_empty());
-
-        // Second cycle works without panic
-        cache.add_root(3);
-        let taken = cache.begin_flush_roots(None);
-        assert_eq!(taken, BTreeSet::from([3]));
-        cache.end_flush_roots();
-    }
-
-    #[test]
-    fn test_load_latest_multiple_ancestors_one_being_flushed() {
+    fn test_remove_slot_drops_unflushed_root() {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
+        cache.store(
+            1,
+            BankId::new(1),
+            &pk,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
+        cache.add_root(BankId::new(1));
+        cache.store(
+            2,
+            BankId::new(2),
+            &pk,
+            AccountSharedData::new(2, 0, &Pubkey::default()),
+        );
+        cache.add_root(BankId::new(2));
 
-        // Store at slots 5 and 10, both will be ancestors
-        cache.store(5, &pk, AccountSharedData::new(5, 0, &Pubkey::default()));
-        cache.store(10, &pk, AccountSharedData::new(10, 0, &Pubkey::default()));
-
-        // Slot 10 is also a root that gets claimed for flushing
-        cache.add_root(10);
-        cache.begin_flush_roots(None);
-
-        let ancestors = Ancestors::from(vec![5, 10]);
-        let (account, slot, status) = cache.load_latest(&pk, &ancestors).unwrap();
-
-        // Slot 10 is highest ancestor but is being flushed, so should return AncestorBeingFlushed
-        assert_eq!(slot, 10);
-        assert_eq!(status, SlotStatus::AncestorBeingFlushed);
-        assert_eq!(account.account.lamports(), 10);
-
-        cache.end_flush_roots();
+        // remove_slot drops slot 1 from both the cache and the tracked roots, leaving slot 2.
+        let _ = cache.remove_slot(1);
+        assert_eq!(cache.roots_to_flush(None), BTreeSet::from([2]));
     }
 }

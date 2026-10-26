@@ -2,7 +2,7 @@ use {
     crate::{StoredExtendedRewards, StoredTransactionError, StoredTransactionStatusMeta},
     solana_account_decoder::parse_token::{UiTokenAmount, real_number_string_trimmed},
     solana_hash::{HASH_BYTES, Hash},
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_message::{
         MessageHeader, VersionedMessage,
         compiled_instruction::CompiledInstruction,
@@ -25,6 +25,7 @@ use {
         convert::{TryFrom, TryInto},
         str::FromStr,
     },
+    wincode::ReadError,
 };
 
 pub mod generated {
@@ -43,6 +44,14 @@ pub mod tx_by_addr {
 
 pub mod entries {
     include!(concat!(env!("OUT_DIR"), "/solana.storage.entries.rs"));
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("failed to decode {bytes:?}: {source}")]
+pub struct DecodeError {
+    pub bytes: Vec<u8>,
+    #[source]
+    pub source: ReadError,
 }
 
 impl From<Vec<Reward>> for generated::Rewards {
@@ -69,14 +78,14 @@ impl From<generated::Rewards> for Vec<Reward> {
     }
 }
 
-impl From<generated::Rewards> for (Vec<Reward>, Option<u64>) {
+impl From<generated::Rewards> for RewardsAndNumPartitions {
     fn from(rewards: generated::Rewards) -> Self {
-        (
-            rewards.rewards.into_iter().map(|r| r.into()).collect(),
-            rewards
+        Self {
+            rewards: rewards.rewards.into_iter().map(|r| r.into()).collect(),
+            num_partitions: rewards
                 .num_partitions
                 .map(|generated::NumPartitions { num_partitions }| num_partitions),
-        )
+        }
     }
 }
 
@@ -108,6 +117,21 @@ impl From<generated::Rewards> for StoredExtendedRewards {
     }
 }
 
+impl From<RewardType> for generated::RewardType {
+    fn from(reward_type: RewardType) -> Self {
+        match reward_type {
+            RewardType::Fee => generated::RewardType::Fee,
+            RewardType::Rent => generated::RewardType::Rent,
+            RewardType::Staking => generated::RewardType::Staking,
+            RewardType::Voting => generated::RewardType::Voting,
+            RewardType::DeactivatedStake => generated::RewardType::DeactivatedStake,
+            RewardType::VATDebit => generated::RewardType::VatDebit,
+            RewardType::BlockRevenueSharing => generated::RewardType::BlockRevenueSharing,
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl From<Reward> for generated::Reward {
     fn from(reward: Reward) -> Self {
         Self {
@@ -116,11 +140,7 @@ impl From<Reward> for generated::Reward {
             post_balance: reward.post_balance,
             reward_type: match reward.reward_type {
                 None => generated::RewardType::Unspecified,
-                Some(RewardType::Fee) => generated::RewardType::Fee,
-                Some(RewardType::Rent) => generated::RewardType::Rent,
-                Some(RewardType::Staking) => generated::RewardType::Staking,
-                Some(RewardType::Voting) => generated::RewardType::Voting,
-                Some(RewardType::DeactivatedStake) => generated::RewardType::DeactivatedStake,
+                Some(reward_type) => reward_type.into(),
             } as i32,
             commission: reward.commission.map(|c| c.to_string()).unwrap_or_default(),
             commission_bps: reward
@@ -144,6 +164,8 @@ impl From<generated::Reward> for Reward {
                 3 => Some(RewardType::Staking),
                 4 => Some(RewardType::Voting),
                 5 => Some(RewardType::DeactivatedStake),
+                6 => Some(RewardType::VATDebit),
+                7 => Some(RewardType::BlockRevenueSharing),
                 _ => None,
             },
             commission: reward.commission.parse::<u8>().ok(),
@@ -185,7 +207,7 @@ impl From<VersionedConfirmedBlock> for generated::ConfirmedBlock {
 }
 
 impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
-    type Error = bincode::Error;
+    type Error = DecodeError;
     fn try_from(
         confirmed_block: generated::ConfirmedBlock,
     ) -> std::result::Result<Self, Self::Error> {
@@ -239,7 +261,7 @@ impl From<VersionedTransactionWithStatusMeta> for generated::ConfirmedTransactio
 }
 
 impl TryFrom<generated::ConfirmedTransaction> for TransactionWithStatusMeta {
-    type Error = bincode::Error;
+    type Error = DecodeError;
     fn try_from(value: generated::ConfirmedTransaction) -> std::result::Result<Self, Self::Error> {
         let meta = value.meta.map(|meta| meta.try_into()).transpose()?;
         let transaction = value.transaction.expect("transaction is required").into();
@@ -405,6 +427,25 @@ impl From<generated::Message> for VersionedMessage {
             .map(Hash::new_from_array)
             .unwrap();
         let instructions = value.instructions.into_iter().map(|ix| ix.into()).collect();
+
+        // `config` is written only for V1 messages, whose lifetime specifier travels in
+        // `recent_blockhash` and which have no address table lookups. It has to be checked before
+        // `versioned`, which is true for V0 *and* V1 and so cannot tell them apart on its own.
+        if let Some(config) = value.config {
+            return Self::V1(v1::Message {
+                header,
+                config: v1::TransactionConfig {
+                    priority_fee: config.priority_fee,
+                    compute_unit_limit: config.compute_unit_limit,
+                    loaded_accounts_data_size_limit: config.loaded_accounts_data_size_limit,
+                    heap_size: config.heap_size,
+                },
+                lifetime_specifier: recent_blockhash,
+                account_keys,
+                instructions,
+            });
+        }
+
         let address_table_lookups = value
             .address_table_lookups
             .into_iter()
@@ -470,7 +511,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
         let err = match status {
             Ok(()) => None,
             Err(err) => Some(generated::TransactionError {
-                err: bincode::serialize(&err).expect("transaction error to serialize to bytes"),
+                err: wincode::serialize(&err).expect("transaction error to serialize to bytes"),
             }),
         };
         let inner_instructions_none = inner_instructions.is_none();
@@ -539,7 +580,7 @@ impl From<StoredTransactionStatusMeta> for generated::TransactionStatusMeta {
 }
 
 impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
-    type Error = bincode::Error;
+    type Error = DecodeError;
 
     fn try_from(value: generated::TransactionStatusMeta) -> std::result::Result<Self, Self::Error> {
         let generated::TransactionStatusMeta {
@@ -561,9 +602,16 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             compute_units_consumed,
             cost_units,
         } = value;
-        let status = match &err {
+        let status = match err {
             None => Ok(()),
-            Some(tx_error) => Err(bincode::deserialize(&tx_error.err)?),
+            Some(tx_error) => {
+                let tx_error =
+                    wincode::deserialize(&tx_error.err).map_err(|source| DecodeError {
+                        bytes: tx_error.err,
+                        source,
+                    })?;
+                Err(tx_error)
+            }
         };
         let inner_instructions = if inner_instructions_none {
             None
@@ -598,17 +646,17 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
                 .into_iter()
                 .map(Pubkey::try_from)
                 .collect::<Result<_, _>>()
-                .map_err(|err| {
-                    let err = format!("Invalid writable address: {err:?}");
-                    Self::Error::new(bincode::ErrorKind::Custom(err))
+                .map_err(|bytes| DecodeError {
+                    bytes,
+                    source: ReadError::Custom("Invalid writable address"),
                 })?,
             readonly: loaded_readonly_addresses
                 .into_iter()
                 .map(Pubkey::try_from)
                 .collect::<Result<_, _>>()
-                .map_err(|err| {
-                    let err = format!("Invalid readonly address: {err:?}");
-                    Self::Error::new(bincode::ErrorKind::Custom(err))
+                .map_err(|bytes| DecodeError {
+                    bytes,
+                    source: ReadError::Custom("Invalid readonly address"),
                 })?,
         };
         let return_data = if return_data_none {
@@ -784,78 +832,79 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
     type Error = &'static str;
 
     fn try_from(transaction_error: tx_by_addr::TransactionError) -> Result<Self, Self::Error> {
-        if transaction_error.transaction_error == 8 {
-            if let Some(instruction_error) = transaction_error.instruction_error {
-                if let Some(custom) = instruction_error.custom {
-                    return Ok(TransactionError::InstructionError(
-                        instruction_error.index as u8,
-                        InstructionError::Custom(custom.custom),
-                    ));
-                }
-
-                let ie = match instruction_error.error {
-                    0 => InstructionError::GenericError,
-                    1 => InstructionError::InvalidArgument,
-                    2 => InstructionError::InvalidInstructionData,
-                    3 => InstructionError::InvalidAccountData,
-                    4 => InstructionError::AccountDataTooSmall,
-                    5 => InstructionError::InsufficientFunds,
-                    6 => InstructionError::IncorrectProgramId,
-                    7 => InstructionError::MissingRequiredSignature,
-                    8 => InstructionError::AccountAlreadyInitialized,
-                    9 => InstructionError::UninitializedAccount,
-                    10 => InstructionError::UnbalancedInstruction,
-                    11 => InstructionError::ModifiedProgramId,
-                    12 => InstructionError::ExternalAccountLamportSpend,
-                    13 => InstructionError::ExternalAccountDataModified,
-                    14 => InstructionError::ReadonlyLamportChange,
-                    15 => InstructionError::ReadonlyDataModified,
-                    16 => InstructionError::DuplicateAccountIndex,
-                    17 => InstructionError::ExecutableModified,
-                    18 => InstructionError::RentEpochModified,
-                    #[allow(deprecated)]
-                    19 => InstructionError::NotEnoughAccountKeys,
-                    20 => InstructionError::AccountDataSizeChanged,
-                    21 => InstructionError::AccountNotExecutable,
-                    22 => InstructionError::AccountBorrowFailed,
-                    23 => InstructionError::AccountBorrowOutstanding,
-                    24 => InstructionError::DuplicateAccountOutOfSync,
-                    26 => InstructionError::InvalidError,
-                    27 => InstructionError::ExecutableDataModified,
-                    28 => InstructionError::ExecutableLamportChange,
-                    29 => InstructionError::ExecutableAccountNotRentExempt,
-                    30 => InstructionError::UnsupportedProgramId,
-                    31 => InstructionError::CallDepth,
-                    32 => InstructionError::MissingAccount,
-                    33 => InstructionError::ReentrancyNotAllowed,
-                    34 => InstructionError::MaxSeedLengthExceeded,
-                    35 => InstructionError::InvalidSeeds,
-                    36 => InstructionError::InvalidRealloc,
-                    37 => InstructionError::ComputationalBudgetExceeded,
-                    38 => InstructionError::PrivilegeEscalation,
-                    39 => InstructionError::ProgramEnvironmentSetupFailure,
-                    40 => InstructionError::ProgramFailedToComplete,
-                    41 => InstructionError::ProgramFailedToCompile,
-                    42 => InstructionError::Immutable,
-                    43 => InstructionError::IncorrectAuthority,
-                    44 => InstructionError::BorshIoError,
-                    45 => InstructionError::AccountNotRentExempt,
-                    46 => InstructionError::InvalidAccountOwner,
-                    47 => InstructionError::ArithmeticOverflow,
-                    48 => InstructionError::UnsupportedSysvar,
-                    49 => InstructionError::IllegalOwner,
-                    50 => InstructionError::MaxAccountsDataAllocationsExceeded,
-                    51 => InstructionError::MaxAccountsExceeded,
-                    52 => InstructionError::MaxInstructionTraceLengthExceeded,
-                    53 => InstructionError::BuiltinProgramsMustConsumeComputeUnits,
-                    _ => return Err("Invalid InstructionError"),
-                };
-
+        if transaction_error.transaction_error == 8
+            && let Some(instruction_error) = transaction_error.instruction_error
+        {
+            if let Some(custom) = instruction_error.custom {
                 return Ok(TransactionError::InstructionError(
                     instruction_error.index as u8,
-                    ie,
+                    InstructionError::Custom(custom.custom),
                 ));
             }
+
+            let ie = match instruction_error.error {
+                0 => InstructionError::GenericError,
+                1 => InstructionError::InvalidArgument,
+                2 => InstructionError::InvalidInstructionData,
+                3 => InstructionError::InvalidAccountData,
+                4 => InstructionError::AccountDataTooSmall,
+                5 => InstructionError::InsufficientFunds,
+                6 => InstructionError::IncorrectProgramId,
+                7 => InstructionError::MissingRequiredSignature,
+                8 => InstructionError::AccountAlreadyInitialized,
+                9 => InstructionError::UninitializedAccount,
+                10 => InstructionError::UnbalancedInstruction,
+                11 => InstructionError::ModifiedProgramId,
+                12 => InstructionError::ExternalAccountLamportSpend,
+                13 => InstructionError::ExternalAccountDataModified,
+                14 => InstructionError::ReadonlyLamportChange,
+                15 => InstructionError::ReadonlyDataModified,
+                16 => InstructionError::DuplicateAccountIndex,
+                17 => InstructionError::ExecutableModified,
+                18 => InstructionError::RentEpochModified,
+                #[allow(deprecated)]
+                19 => InstructionError::NotEnoughAccountKeys,
+                20 => InstructionError::AccountDataSizeChanged,
+                21 => InstructionError::AccountNotExecutable,
+                22 => InstructionError::AccountBorrowFailed,
+                23 => InstructionError::AccountBorrowOutstanding,
+                24 => InstructionError::DuplicateAccountOutOfSync,
+                26 => InstructionError::InvalidError,
+                27 => InstructionError::ExecutableDataModified,
+                28 => InstructionError::ExecutableLamportChange,
+                29 => InstructionError::ExecutableAccountNotRentExempt,
+                30 => InstructionError::UnsupportedProgramId,
+                31 => InstructionError::CallDepth,
+                32 => InstructionError::MissingAccount,
+                33 => InstructionError::ReentrancyNotAllowed,
+                34 => InstructionError::MaxSeedLengthExceeded,
+                35 => InstructionError::InvalidSeeds,
+                36 => InstructionError::InvalidRealloc,
+                37 => InstructionError::ComputationalBudgetExceeded,
+                38 => InstructionError::PrivilegeEscalation,
+                39 => InstructionError::ProgramEnvironmentSetupFailure,
+                40 => InstructionError::ProgramFailedToComplete,
+                41 => InstructionError::ProgramFailedToCompile,
+                42 => InstructionError::Immutable,
+                43 => InstructionError::IncorrectAuthority,
+                44 => InstructionError::BorshIoError,
+                45 => InstructionError::AccountNotRentExempt,
+                46 => InstructionError::InvalidAccountOwner,
+                47 => InstructionError::ArithmeticOverflow,
+                48 => InstructionError::UnsupportedSysvar,
+                49 => InstructionError::IllegalOwner,
+                50 => InstructionError::MaxAccountsDataAllocationsExceeded,
+                51 => InstructionError::MaxAccountsExceeded,
+                52 => InstructionError::MaxInstructionTraceLengthExceeded,
+                53 => InstructionError::BuiltinProgramsMustConsumeComputeUnits,
+                54 => InstructionError::BailOut,
+                _ => return Err("Invalid InstructionError"),
+            };
+
+            return Ok(TransactionError::InstructionError(
+                instruction_error.index as u8,
+                ie,
+            ));
         }
 
         if let Some(transaction_details) = transaction_error.transaction_details {
@@ -916,6 +965,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
             36 => TransactionError::UnbalancedTransaction,
             37 => TransactionError::ProgramCacheHitMaxLimit,
             38 => TransactionError::CommitCancelled,
+            39 => TransactionError::BailOut,
             _ => return Err("Invalid TransactionError"),
         })
     }
@@ -1040,6 +1090,11 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 TransactionError::CommitCancelled => {
                     tx_by_addr::TransactionErrorType::CommitCancelled
                 }
+                TransactionError::BailOut => tx_by_addr::TransactionErrorType::BailOutTx,
+                // `TransactionError` is `#[non_exhaustive]`, so the match needs a
+                // wildcard. `test_error_tags` walks `VARIANTS` and fails if any variant
+                // reaches it, which is what makes this unreachable.
+                _ => unreachable!("no tx_by_addr tag for {transaction_error:?}"),
             } as i32,
             instruction_error: match transaction_error {
                 TransactionError::InstructionError(index, ref instruction_error) => {
@@ -1207,6 +1262,11 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                             InstructionError::BuiltinProgramsMustConsumeComputeUnits => {
                                 tx_by_addr::InstructionErrorType::BuiltinProgramsMustConsumeComputeUnits
                             }
+                            InstructionError::BailOut => {
+                                tx_by_addr::InstructionErrorType::BailOut
+                            }
+                            // See the `TransactionErrorType` wildcard note above.
+                            _ => unreachable!("no tx_by_addr tag for {instruction_error:?}"),
                         } as i32,
                         custom: match instruction_error {
                             InstructionError::Custom(custom) => {
@@ -1328,6 +1388,34 @@ impl From<entries::Entry> for EntrySummary {
 mod test {
     use {super::*, enum_iterator::all};
 
+    fn header() -> MessageHeader {
+        MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 1,
+        }
+    }
+
+    fn account_keys() -> Vec<Pubkey> {
+        vec![
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ]
+    }
+
+    fn instructions() -> Vec<CompiledInstruction> {
+        vec![CompiledInstruction {
+            program_id_index: 2,
+            accounts: vec![0, 1],
+            data: vec![1, 2, 3, 4],
+        }]
+    }
+
+    fn round_trip(message: VersionedMessage) -> VersionedMessage {
+        VersionedMessage::from(generated::Message::from(message))
+    }
+
     #[test]
     fn test_reward_type_encode() {
         let mut reward = Reward {
@@ -1356,6 +1444,25 @@ mod test {
         reward.reward_type = Some(RewardType::Staking);
         let gen_reward: generated::Reward = reward.clone().into();
         assert_eq!(reward, gen_reward.into());
+
+        reward.reward_type = Some(RewardType::DeactivatedStake);
+        let gen_reward: generated::Reward = reward.clone().into();
+        assert_eq!(reward, gen_reward.into());
+
+        reward.reward_type = Some(RewardType::VATDebit);
+        let gen_reward: generated::Reward = reward.clone().into();
+        assert_eq!(reward, gen_reward.into());
+
+        reward.reward_type = Some(RewardType::BlockRevenueSharing);
+        let gen_reward: generated::Reward = reward.clone().into();
+        assert_eq!(reward, gen_reward.into());
+    }
+
+    #[test]
+    fn test_reward_type_conversion_exhaustive() {
+        for reward_type in RewardType::VARIANTS {
+            let _: generated::RewardType = (*reward_type).into();
+        }
     }
 
     #[test]
@@ -1962,6 +2069,20 @@ mod test {
         );
     }
 
+    /// Every variant must reach a tag of its own rather than the `#[non_exhaustive]`
+    /// wildcard. This is what lets that wildcard be `unreachable!()`, so a variant
+    /// without a tag panics here instead of in a warehouse node.
+    #[test]
+    fn test_error_tags() {
+        for error in TransactionError::VARIANTS {
+            let _: tx_by_addr::TransactionError = error.into();
+        }
+        for ix_error in InstructionError::VARIANTS {
+            let _: tx_by_addr::TransactionError =
+                TransactionError::InstructionError(0, ix_error).into();
+        }
+    }
+
     #[test]
     fn test_error_enums() {
         let ix_index = 1;
@@ -2030,5 +2151,65 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test]
+    fn legacy_message_round_trips() {
+        let message = VersionedMessage::Legacy(LegacyMessage {
+            header: header(),
+            account_keys: account_keys(),
+            recent_blockhash: Hash::new_unique(),
+            instructions: instructions(),
+        });
+        assert_eq!(round_trip(message.clone()), message);
+    }
+
+    #[test]
+    fn v0_message_round_trips() {
+        let message = VersionedMessage::V0(v0::Message {
+            header: header(),
+            account_keys: account_keys(),
+            recent_blockhash: Hash::new_unique(),
+            instructions: instructions(),
+            address_table_lookups: vec![MessageAddressTableLookup {
+                account_key: Pubkey::new_unique(),
+                writable_indexes: vec![1, 2],
+                readonly_indexes: vec![3],
+            }],
+        });
+        assert_eq!(round_trip(message.clone()), message);
+    }
+
+    /// `versioned` is true for V0 and V1 alike, so a V1 message is only recognisable by the
+    /// presence of `config`. Reading it back as V0 would silently drop the compute-budget request
+    /// and misreport the version.
+    #[test]
+    fn v1_message_round_trips() {
+        let message = VersionedMessage::V1(v1::Message {
+            header: header(),
+            config: v1::TransactionConfig::empty()
+                .with_priority_fee(5_000)
+                .with_compute_unit_limit(30_000)
+                .with_loaded_accounts_data_size_limit(200_000)
+                .with_heap_size(65_536),
+            lifetime_specifier: Hash::new_unique(),
+            account_keys: account_keys(),
+            instructions: instructions(),
+        });
+        assert_eq!(round_trip(message.clone()), message);
+    }
+
+    /// A V1 message may request nothing at all — an empty config mask is legal, and must still be
+    /// distinguishable from V0.
+    #[test]
+    fn v1_message_with_empty_config_round_trips() {
+        let message = VersionedMessage::V1(v1::Message {
+            header: header(),
+            config: v1::TransactionConfig::empty(),
+            lifetime_specifier: Hash::new_unique(),
+            account_keys: account_keys(),
+            instructions: instructions(),
+        });
+        assert_eq!(round_trip(message.clone()), message);
     }
 }

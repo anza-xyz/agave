@@ -1,10 +1,9 @@
 pub use crate::tpu_client::Result;
 use {
     crate::tpu_client::{MAX_FANOUT_SLOTS, RecentLeaderSlots, TpuClientConfig},
-    bincode::serialize,
     futures_util::{future::join_all, stream::StreamExt},
     log::*,
-    solana_clock::{DEFAULT_MS_PER_SLOT, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_connection_cache::{
         connection_cache::{
@@ -14,6 +13,7 @@ use {
         nonblocking::client_connection::ClientConnection,
     },
     solana_epoch_schedule::EpochSchedule,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
@@ -154,8 +154,8 @@ impl LeaderTpuCache {
         // value. Take the greater of the two values to ensure we are reading from the latest
         // leader schedule.
         let current_slot = std::cmp::max(estimated_current_slot, self.first_slot);
-        for leader_slot in (current_slot..current_slot + fanout_slots)
-            .step_by(NUM_CONSECUTIVE_LEADER_SLOTS as usize)
+        for leader_slot in
+            (current_slot..current_slot + fanout_slots).step_by(NUM_CONSECUTIVE_LEADER_SLOTS.get())
         {
             if let Some(leader) = self.get_slot_leader(leader_slot) {
                 if let Some(tpu_socket) = self.leader_tpu_map.get(leader) {
@@ -396,7 +396,8 @@ where
     /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
     /// size
     pub async fn send_transaction(&self, transaction: &Transaction) -> bool {
-        let wire_transaction = serialize(transaction).expect("serialization should succeed");
+        let wire_transaction =
+            wincode::serialize(transaction).expect("serialization should succeed");
         self.send_wire_transaction(wire_transaction).await
     }
 
@@ -414,7 +415,8 @@ where
         &self,
         transaction: &VersionedTransaction,
     ) -> TransportResult<()> {
-        let wire_transaction = serialize(transaction).expect("serialization should succeed");
+        let wire_transaction =
+            wincode::serialize(transaction).expect("serialization should succeed");
         self.try_send_wire_transaction(wire_transaction).await
     }
 
@@ -540,6 +542,10 @@ where
         })
     }
 
+    #[deprecated(
+        since = "4.3.0",
+        note = "prefer solana_client::send_and_confirm_transactions_in_parallel_v3"
+    )]
     #[cfg(feature = "spinner")]
     pub async fn send_and_confirm_messages_with_spinner<T: Signers + ?Sized>(
         &self,
@@ -580,7 +586,7 @@ where
                     // Prepare futures for all transactions
                     let mut futures = vec![];
                     for (index, (_i, transaction)) in pending_transactions.values().enumerate() {
-                        let wire_transaction = serialize(transaction).unwrap();
+                        let wire_transaction = wincode::serialize(transaction).unwrap();
                         let leaders = self
                             .leader_tpu_service
                             .unique_leader_tpu_sockets(self.fanout_slots);
@@ -648,20 +654,16 @@ where
                         .await
                     {
                         let statuses = result.value;
-                        for (signature, status) in
-                            pending_signatures_chunk.iter().zip(statuses.into_iter())
-                        {
-                            if let Some(status) = status {
-                                if status.satisfies_commitment(self.rpc_client.commitment()) {
-                                    if let Some((i, _)) = pending_transactions.remove(signature) {
-                                        progress.confirmed_transactions += 1;
-                                        if status.err.is_some() {
-                                            progress_bar
-                                                .println(format!("Failed transaction: {status:?}"));
-                                        }
-                                        transaction_errors[i] = status.err;
-                                    }
+                        for (signature, status) in pending_signatures_chunk.iter().zip(statuses) {
+                            if let Some(status) = status
+                                && status.satisfies_commitment(self.rpc_client.commitment())
+                                && let Some((i, _)) = pending_transactions.remove(signature)
+                            {
+                                progress.confirmed_transactions += 1;
+                                if status.err.is_some() {
+                                    progress_bar.println(format!("Failed transaction: {status:?}"));
                                 }
+                                transaction_errors[i] = status.err;
                             }
                         }
                     }
@@ -926,9 +928,9 @@ impl LeaderTpuService {
         // 1. Notifications are an unbounded stream -- polling them will block indefinitely if not
         //    interrupted, and the exit condition will never be checked. 10ms ensures negligible
         //    CPU overhead while keeping notification checking timely.
-        // 2. The timeout must be strictly less than the slot time (DEFAULT_MS_PER_SLOT: 400) to
+        // 2. The timeout must be strictly less than the slot time (DEFAULT_MS_PER_SLOT) to
         //    avoid timeout never being reached. For example, if notifications are received every
-        //    400ms and the timeout is >= 400ms, notifications may theoretically always be available
+        //    100ms and the timeout is >= 100ms, notifications may theoretically always be available
         //    before the timeout is reached, resulting in the exit condition never being checked.
         const SLOT_UPDATE_TIMEOUT: Duration = Duration::from_millis(10);
 

@@ -13,7 +13,7 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_offchain_message::OffchainMessage,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -28,7 +28,7 @@ use {
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
-    solana_vote_program::vote_state::VoteAuthorize,
+    solana_vote_program::{vote_instruction::CommissionKind, vote_state::VoteAuthorize},
     std::{
         collections::HashMap, error, io::stdout, rc::Rc, str::FromStr, sync::Arc, time::Duration,
     },
@@ -80,6 +80,7 @@ pub enum CliCommand {
     },
     LeaderSchedule {
         epoch: Option<Epoch>,
+        key_by_vote_account: bool,
     },
     LiveSlots,
     Logs {
@@ -294,7 +295,7 @@ pub enum CliCommand {
     },
     // Validator Info Commands
     GetValidatorInfo(Option<Pubkey>),
-    SetValidatorInfo {
+    PublishValidatorInfo {
         validator_info: Value,
         force_keybase: bool,
         info_pubkey: Option<Pubkey>,
@@ -396,6 +397,34 @@ pub enum CliCommand {
         fee_payer: SignerIndex,
         compute_unit_price: Option<u64>,
     },
+    VoteUpdateCommissionBps {
+        vote_account_pubkey: Pubkey,
+        commission_kind: CommissionKind,
+        commission_bps: u16,
+        withdraw_authority: SignerIndex,
+        sign_only: bool,
+        dump_transaction_message: bool,
+        blockhash_query: BlockhashQuery,
+        nonce_account: Option<Pubkey>,
+        nonce_authority: SignerIndex,
+        memo: Option<String>,
+        fee_payer: SignerIndex,
+        compute_unit_price: Option<u64>,
+    },
+    VoteUpdateCommissionCollector {
+        vote_account_pubkey: Pubkey,
+        commission_kind: CommissionKind,
+        new_collector: Pubkey,
+        withdraw_authority: SignerIndex,
+        sign_only: bool,
+        dump_transaction_message: bool,
+        blockhash_query: BlockhashQuery,
+        nonce_account: Option<Pubkey>,
+        nonce_authority: SignerIndex,
+        memo: Option<String>,
+        fee_payer: SignerIndex,
+        compute_unit_price: Option<u64>,
+    },
     // Wallet Commands
     Address,
     Airdrop {
@@ -449,6 +478,7 @@ pub enum CliCommand {
         signature: Signature,
         message: OffchainMessage,
     },
+    GetAgGenesisInfo,
 }
 
 #[derive(Debug, PartialEq)]
@@ -490,6 +520,8 @@ pub enum CliError {
     KeypairFileNotFound(String),
     #[error("Invalid signature")]
     InvalidSignature,
+    #[error("Invalid alpenglow genesis cert")]
+    InvalidAgGenesisCert,
 }
 
 impl From<Box<dyn error::Error>> for CliError {
@@ -617,6 +649,7 @@ pub fn parse_command(
         }
         ("epoch", Some(matches)) => parse_get_epoch(matches),
         ("epoch-info", Some(matches)) => parse_get_epoch_info(matches),
+        ("alpenglow-genesis-info", Some(matches)) => parse_get_ag_genesis_info(matches),
         ("feature", Some(matches)) => {
             parse_feature_subcommand(matches, default_signer, wallet_manager)
         }
@@ -726,7 +759,7 @@ pub fn parse_command(
         // Validator Info Commands
         ("validator-info", Some(matches)) => match matches.subcommand() {
             ("publish", Some(matches)) => {
-                parse_validator_info_command(matches, default_signer, wallet_manager)
+                parse_publish_validator_info_command(matches, default_signer, wallet_manager)
             }
             ("get", Some(matches)) => parse_get_validator_info_command(matches),
             _ => unreachable!(),
@@ -740,6 +773,12 @@ pub fn parse_command(
         }
         ("vote-update-commission", Some(matches)) => {
             parse_vote_update_commission(matches, default_signer, wallet_manager)
+        }
+        ("vote-update-commission-bps", Some(matches)) => {
+            parse_vote_update_commission_bps(matches, default_signer, wallet_manager)
+        }
+        ("vote-update-commission-collector", Some(matches)) => {
+            parse_vote_update_commission_collector(matches, default_signer, wallet_manager)
         }
         ("vote-authorize-voter", Some(matches)) => parse_vote_authorize(
             matches,
@@ -826,16 +865,16 @@ pub type ProcessResult = Result<String, Box<dyn std::error::Error>>;
 
 pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
     if config.verbose && config.output_format == OutputFormat::DisplayVerbose {
-        println_name_value("RPC URL:", &config.json_rpc_url);
-        println_name_value("Default Signer Path:", &config.keypair_path);
+        println_name_value("RPC URL:", &config.json_rpc_url)?;
+        println_name_value("Default Signer Path:", &config.keypair_path)?;
         if config.keypair_path.starts_with("usb://") {
             let pubkey = config
                 .pubkey()
                 .map(|pubkey| format!("{pubkey:?}"))
                 .unwrap_or_else(|_| "Unavailable".to_string());
-            println_name_value("Pubkey:", &pubkey);
+            println_name_value("Pubkey:", &pubkey)?;
         }
-        println_name_value("Commitment:", &config.commitment.commitment.to_string());
+        println_name_value("Commitment:", &config.commitment.commitment.to_string())?;
     }
 
     let rpc_client = if let Some(rpc_client) = config.rpc_client.as_ref() {
@@ -909,9 +948,10 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
         CliCommand::Inflation(inflation_subcommand) => {
             process_inflation_subcommand(&rpc_client, config, inflation_subcommand).await
         }
-        CliCommand::LeaderSchedule { epoch } => {
-            process_leader_schedule(&rpc_client, config, *epoch).await
-        }
+        CliCommand::LeaderSchedule {
+            epoch,
+            key_by_vote_account,
+        } => process_leader_schedule(&rpc_client, config, *epoch, *key_by_vote_account).await,
         CliCommand::LiveSlots => process_live_slots(config),
         CliCommand::Logs { filter } => process_logs(config, filter),
         CliCommand::Rent {
@@ -1413,13 +1453,13 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             process_get_validator_info(&rpc_client, config, *info_pubkey).await
         }
         // Publish validator info
-        CliCommand::SetValidatorInfo {
+        CliCommand::PublishValidatorInfo {
             validator_info,
             force_keybase,
             info_pubkey,
             compute_unit_price,
         } => {
-            process_set_validator_info(
+            process_publish_validator_info(
                 &rpc_client,
                 config,
                 validator_info,
@@ -1645,6 +1685,70 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             )
             .await
         }
+        CliCommand::VoteUpdateCommissionBps {
+            vote_account_pubkey,
+            commission_kind,
+            commission_bps,
+            withdraw_authority,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority,
+            memo,
+            fee_payer,
+            compute_unit_price,
+        } => {
+            process_vote_update_commission_bps(
+                &rpc_client,
+                config,
+                vote_account_pubkey,
+                commission_kind.clone(),
+                *commission_bps,
+                *withdraw_authority,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+                *nonce_account,
+                *nonce_authority,
+                memo.as_ref(),
+                *fee_payer,
+                *compute_unit_price,
+            )
+            .await
+        }
+        CliCommand::VoteUpdateCommissionCollector {
+            vote_account_pubkey,
+            commission_kind,
+            new_collector,
+            withdraw_authority,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority,
+            memo,
+            fee_payer,
+            compute_unit_price,
+        } => {
+            process_vote_update_commission_collector(
+                &rpc_client,
+                config,
+                vote_account_pubkey,
+                commission_kind.clone(),
+                new_collector,
+                *withdraw_authority,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+                *nonce_account,
+                *nonce_authority,
+                memo.as_ref(),
+                *fee_payer,
+                *compute_unit_price,
+            )
+            .await
+        }
 
         // Wallet Commands
 
@@ -1726,6 +1830,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             signature,
             message,
         } => process_verify_offchain_signature(config, signer_pubkey, signature, message),
+        CliCommand::GetAgGenesisInfo => process_get_ag_genesis_info(&rpc_client, config).await,
     }
 }
 
@@ -1797,10 +1902,10 @@ where
     match result {
         Err(err) => {
             let maybe_tx_err = err.get_transaction_error();
-            if let Some(TransactionError::InstructionError(_, ix_error)) = maybe_tx_err {
-                if let Some(specific_error) = error_adapter(&ix_error) {
-                    return Err(specific_error.into());
-                }
+            if let Some(TransactionError::InstructionError(_, ix_error)) = maybe_tx_err
+                && let Some(specific_error) = error_adapter(&ix_error)
+            {
+                return Err(specific_error.into());
             }
             Err(err.into())
         }

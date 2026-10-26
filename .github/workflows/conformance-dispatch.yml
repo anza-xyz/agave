@@ -1,0 +1,74 @@
+name: Conformance
+
+on:
+  pull_request:
+    branches:
+      - master
+      - v[0-9]+.[0-9]+
+    paths:
+      - "**.rs"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/conformance-dispatch.yml"
+      - "ci/download-test-vectors.sh"
+      - "ci/test-conformance.sh"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: detect affected fixture sets
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ubuntu-26.04
+    outputs:
+      entries: ${{ steps.table.outputs.entries }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Setup Rust
+        shell: bash
+        run: |
+          source ci/rust-version.sh stable
+          rustup default "$rust_stable"
+
+      - id: table
+        name: Build conformance table
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          entries=$(cargo run --quiet --manifest-path ci/xtask/Cargo.toml -- \
+            conformance-table --pr-number "$PR_NUMBER")
+          echo "entries=$entries" >> "$GITHUB_OUTPUT"
+
+  run:
+    name: ${{ matrix.entry.fixtures_dir }}
+    needs: detect
+    if: needs.detect.outputs.entries != '[]'
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.detect.outputs.entries) }}
+    env:
+      FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Fetch fixtures
+        shell: bash
+        run: ci/download-test-vectors.sh "$FIXTURES_DIR"
+
+      - name: Install dependencies
+        shell: bash
+        run: source .github/scripts/install-all-deps.sh ${{ runner.os }}
+
+      - name: Run ${{ matrix.entry.bin }}
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.entry.package }}
+          BIN: ${{ matrix.entry.bin }}
+        run: ci/test-conformance.sh "$PACKAGE" "$BIN" "fd-vectors/$FIXTURES_DIR"

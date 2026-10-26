@@ -2,45 +2,56 @@
 mod serde_snapshot_tests {
     use {
         crate::{
-            bank::BankHashStats,
-            serde_snapshot::{
-                SerializableAccountsDb, SnapshotAccountsDbFields, deserialize_accounts_db_fields,
-                reconstruct_accountsdb_from_fields, remap_append_vec_file,
+            bank::{Bank, BankHashStats, BankId, test_utils as bank_test_utils},
+            epoch_stakes::{
+                EpochAuthorizedVoters, EpochStakes, NodeIdToVoteAccounts, VersionedEpochStakes,
             },
-            snapshot_utils::StorageAndNextAccountsFileId,
+            genesis_utils::{
+                GenesisConfigInfo, activate_all_features, create_genesis_config_with_leader,
+            },
+            runtime_config::RuntimeConfig,
+            serde_snapshot::{
+                self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountsDb,
+                SnapshotAccountsDbFields, SnapshotStreams, deserialize_wincode_from,
+                reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
+            },
+            snapshot_bank_utils,
+            snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
         },
-        agave_fs::FileInfo,
-        bincode::{Error, serialize_into},
-        log::info,
+        agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
+        agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::consensus_message::BlockId,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
             ObsoleteAccounts,
             account_storage::AccountStorageMap,
             account_storage_entry::AccountStorageEntry,
-            account_storage_reader::AccountStorageReader,
+            account_storage_reader::{
+                AccountStorageReader, TombstonesFilter, open_storage_files, storage_file_buf_reader,
+            },
             accounts::Accounts,
             accounts_db::{
                 ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig, AtomicAccountsFileId,
                 get_temp_accounts_paths,
             },
-            accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
+            accounts_file::{AccountsFile, AccountsFileError},
             ancestors::Ancestors,
         },
         solana_clock::Slot,
+        solana_epoch_schedule::EpochSchedule,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         std::{
             fs::File,
-            io::{self, BufReader, Cursor, Read, Write},
+            io::{self, BufReader, BufWriter, Cursor, Read, Write},
+            mem,
             ops::RangeFull,
             path::{Path, PathBuf},
-            sync::{
-                Arc,
-                atomic::{AtomicUsize, Ordering},
-            },
+            sync::{Arc, OnceLock, atomic::Ordering},
         },
         tempfile::TempDir,
-        test_case::{test_case, test_matrix},
+        test_case::test_case,
     };
 
     fn linear_ancestors(end_slot: u64) -> Ancestors {
@@ -56,17 +67,17 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> Result<AccountsDb, Error>
+    ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
         // read and deserialise the accounts database directly from the stream
-        let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
+        let accounts_db_fields: AccountsDbFields = deserialize_wincode_from(&mut *stream)?;
         let snapshot_accounts_db_fields = SnapshotAccountsDbFields {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,
         };
-        reconstruct_accountsdb_from_fields(
+        let (accounts_db, _) = reconstruct_accountsdb_from_fields(
             snapshot_accounts_db_fields,
             account_paths,
             storage_and_next_append_vec_id,
@@ -75,8 +86,8 @@ mod serde_snapshot_tests {
             accounts_db_config,
             None,
             Arc::default(),
-        )
-        .map(|(accounts_db, _)| accounts_db)
+        )?;
+        Ok(accounts_db)
     }
 
     fn accountsdb_from_stream<R>(
@@ -84,7 +95,7 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> Result<AccountsDb, Error>
+    ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
@@ -96,45 +107,47 @@ mod serde_snapshot_tests {
         )
     }
 
-    fn account_storages_to_stream<W>(
-        stream: &mut W,
-        slot: Slot,
-        account_storage_entries: &[Arc<AccountStorageEntry>],
-    ) -> Result<(), Error>
+    fn accounts_db_fields_to_stream<W>(stream: &mut W, slot: Slot) -> wincode::WriteResult<()>
     where
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        serialize_into(
-            stream,
-            &SerializableAccountsDb {
-                slot,
-                account_storage_entries,
-                bank_hash_stats,
-            },
-        )
+        serialize_into(stream, &SerializableAccountsDb::new(slot, bank_hash_stats))
     }
 
     /// Simulates the unpacking & storage reconstruction done during snapshot unpacking
     fn copy_append_vecs(
         accounts_db: &AccountsDb,
         output_dir: impl AsRef<Path>,
-        storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
-        for storage_entry in storage_entries.into_iter() {
+        const MAX_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+        let storage_files = open_storage_files(storage_entries.iter().map(|s| s.as_ref()), false)
+            .collect::<io::Result<Vec<_>>>()?;
+        let mut buf_reader =
+            storage_file_buf_reader(MAX_BUFFER_SIZE, false, &IoSetupState::default())?;
+        for (storage_entry, file) in storage_entries.iter().zip(storage_files.iter()) {
             // Copy file to new directory
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
-            let mut reader = AccountStorageReader::new(&storage_entry, None).unwrap();
+            if let Some(file) = file {
+                buf_reader.set_file(file.as_ref(), file.read_limit())?;
+            }
+            let reader = AccountStorageReader::new(
+                storage_entry,
+                None,
+                TombstonesFilter::Include,
+                &mut buf_reader,
+            )
+            .unwrap();
             let mut writer = File::create(&output_path)?;
-            io::copy(&mut reader, &mut writer)?;
+            reader.write_to(&mut writer)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, _num_accounts) =
-                AccountsFile::new_from_file(output_path, reader.len(), storage_access)?;
+            let file_info = FileInfo::new_from_path(output_path)?;
+            let accounts_file = AccountsFile::open_append_vec(file_info)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),
@@ -154,12 +167,10 @@ mod serde_snapshot_tests {
     fn reconstruct_accounts_db_via_serialization(
         accounts: &AccountsDb,
         slot: Slot,
-        storage_access: StorageAccess,
         accounts_db_config: AccountsDbConfig,
     ) -> AccountsDb {
         let mut writer = Cursor::new(vec![]);
-        let snapshot_storages = accounts.get_storages(..=slot).0;
-        account_storages_to_stream(&mut writer, slot, &snapshot_storages).unwrap();
+        accounts_db_fields_to_stream(&mut writer, slot).unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
@@ -167,7 +178,7 @@ mod serde_snapshot_tests {
 
         // Simulate obtaining a copy of the AppendVecs from a tarball
         let storage_and_next_append_vec_id =
-            copy_append_vecs(accounts, copied_accounts.path(), storage_access).unwrap();
+            copy_append_vecs(accounts, copied_accounts.path()).unwrap();
         let mut accounts_db = accountsdb_from_stream(
             &mut reader,
             &[],
@@ -191,7 +202,7 @@ mod serde_snapshot_tests {
         for _ in 1..num {
             let idx = rng().random_range(0..num - 1);
             let ancestors = Ancestors::from(vec![0]);
-            let account = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx]);
+            let account = accounts.load(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new((idx + 1) as u64, 0, AccountSharedData::default().owner()),
                 0,
@@ -200,44 +211,43 @@ mod serde_snapshot_tests {
         }
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    fn test_accounts_serialize(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_serialize() {
         agave_logger::setup();
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
-        let accounts_db = AccountsDb::new_for_tests(paths);
+        let accounts_db =
+            AccountsDb::new_for_tests_with_config(paths, ACCOUNTS_DB_CONFIG_FOR_TESTING);
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let slot = 0;
         let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
             .take(100)
             .collect();
+        let ancestors = Ancestors::from(vec![slot]);
+
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
-            accounts.store_accounts_seq((slot, [(pubkey, &account)].as_slice()), None, None);
+            accounts.store_accounts(
+                (slot, [(pubkey, &account)].as_slice()),
+                BankId::new(0),
+                None,
+                &ancestors,
+            );
         }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
         let accounts_hash = accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&Ancestors::default(), slot);
+            .calculate_accounts_lt_hash_at_startup_from_index(&Ancestors::default());
 
         let mut writer = Cursor::new(vec![]);
-        account_storages_to_stream(
-            &mut writer,
-            slot,
-            &accounts.accounts_db.get_storages(..=slot).0,
-        )
-        .unwrap();
+        accounts_db_fields_to_stream(&mut writer, slot).unwrap();
 
         let copied_accounts = TempDir::new().unwrap();
 
         // Simulate obtaining a copy of the AppendVecs from a tarball
-        let storage_and_next_append_vec_id = copy_append_vecs(
-            &accounts.accounts_db,
-            copied_accounts.path(),
-            storage_access,
-        )
-        .unwrap();
+        let storage_and_next_append_vec_id =
+            copy_append_vecs(&accounts.accounts_db, copied_accounts.path()).unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
@@ -254,17 +264,16 @@ mod serde_snapshot_tests {
         check_accounts_local(&daccounts, &pubkeys, 100);
         let daccounts_hash = accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&Ancestors::default(), slot);
+            .calculate_accounts_lt_hash_at_startup_from_index(&Ancestors::default());
         assert_eq!(accounts_hash, daccounts_hash);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_remove_unrooted_slot_snapshot(storage_access: StorageAccess) {
+    #[test]
+    fn test_remove_unrooted_slot_snapshot() {
         agave_logger::setup();
         let unrooted_slot = 9;
-        let unrooted_bank_id = 9;
-        let db = AccountsDb::new_single_for_tests();
+        let unrooted_bank_id = BankId::new(9);
+        let db = AccountsDb::default_for_tests();
         let key = solana_pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &key);
         db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
@@ -282,7 +291,6 @@ mod serde_snapshot_tests {
         let db = reconstruct_accounts_db_via_serialization(
             &db,
             new_root,
-            storage_access,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
 
@@ -293,13 +301,11 @@ mod serde_snapshot_tests {
         db.assert_not_load_account(unrooted_slot, key);
     }
 
-    #[test_matrix(
-        [StorageAccess::File, #[allow(deprecated)] StorageAccess::Mmap]
-    )]
-    fn test_accounts_db_serialize1(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_db_serialize1() {
         for pass in 0..2 {
             agave_logger::setup();
-            let accounts = AccountsDb::new_single_for_tests();
+            let accounts = AccountsDb::default_for_tests();
             let mut pubkeys: Vec<Pubkey> = vec![];
 
             // Create 100 accounts in slot 0
@@ -372,7 +378,6 @@ mod serde_snapshot_tests {
             let daccounts = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 latest_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             );
 
@@ -393,15 +398,14 @@ mod serde_snapshot_tests {
             daccounts.check_storage(2, 31, 31);
 
             assert_eq!(
-                daccounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors, latest_slot),
-                accounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors, latest_slot),
+                daccounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors),
+                accounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors),
             );
         }
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_db_serialize_zero_and_free(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_db_serialize_zero_and_free() {
         agave_logger::setup();
 
         let some_lamport = 223;
@@ -416,11 +420,11 @@ mod serde_snapshot_tests {
         let account2 = AccountSharedData::new(some_lamport + 1, no_data, &owner);
         let pubkey2 = solana_pubkey::new_rand();
 
-        let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
         let mut current_slot = 1;
         accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
-        accounts.add_root(current_slot);
+        accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
         accounts.store_for_tests((current_slot, [(&pubkey, &zero_lamport_account)].as_slice()));
@@ -428,7 +432,7 @@ mod serde_snapshot_tests {
 
         accounts.add_root_and_flush_write_cache(current_slot);
 
-        accounts.assert_load_account(current_slot, pubkey, zero_lamport);
+        accounts.assert_not_load_account(current_slot, pubkey);
 
         accounts.print_accounts_stats("accounts");
 
@@ -439,7 +443,6 @@ mod serde_snapshot_tests {
         let accounts = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
-            storage_access,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
 
@@ -470,7 +473,7 @@ mod serde_snapshot_tests {
         let dummy_account = AccountSharedData::new(dummy_lamport, no_data, &owner);
         let dummy_pubkey = Pubkey::default();
 
-        let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
         let mut current_slot = 1;
         accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
@@ -502,20 +505,22 @@ mod serde_snapshot_tests {
 
         accounts.print_accounts_stats("post_f");
 
+        // The live accounts survive the chained zero-lamport purges and snapshot round-trip.
         accounts.assert_load_account(current_slot, pubkey, some_lamport);
-        accounts.assert_load_account(current_slot, purged_pubkey1, 0);
-        accounts.assert_load_account(current_slot, purged_pubkey2, 0);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
+        // Both purged accounts were converted to tombstones at flush; with no full snapshot
+        // taken by then, their tombstone-only storages were purged and neither is in the index.
+        accounts.assert_not_load_account(current_slot, purged_pubkey1);
+        accounts.assert_not_load_account(current_slot, purged_pubkey2);
 
         let calculated_capitalization =
-            accounts.calculate_capitalization_at_startup_from_index(&Ancestors::default(), 4);
+            accounts.calculate_capitalization_at_startup_from_index(&Ancestors::default());
         let expected_capitalization = 1_222;
         assert_eq!(calculated_capitalization, expected_capitalization);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_purge_chained_purge_before_snapshot_restore(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_purge_chained_purge_before_snapshot_restore() {
         agave_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
             // If there is no latest full snapshot, zero lamport accounts can be cleaned and
@@ -526,21 +531,18 @@ mod serde_snapshot_tests {
             reconstruct_accounts_db_via_serialization(
                 &accounts,
                 current_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             )
         });
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_purge_chained_purge_after_snapshot_restore(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_purge_chained_purge_after_snapshot_restore() {
         agave_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
             let accounts = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 current_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             );
             accounts.print_accounts_stats("after_reconstruct");
@@ -549,15 +551,13 @@ mod serde_snapshot_tests {
             reconstruct_accounts_db_via_serialization(
                 &accounts,
                 current_slot,
-                storage_access,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             )
         });
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_purge_long_chained_after_snapshot_restore(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_purge_long_chained_after_snapshot_restore() {
         agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
@@ -576,7 +576,7 @@ mod serde_snapshot_tests {
         let purged_pubkey2 = solana_pubkey::new_rand();
 
         let mut current_slot = 0;
-        let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
         // create intermediate updates to purged_pubkey1 so that
         // generate_index must add slots as root last at once
@@ -616,7 +616,6 @@ mod serde_snapshot_tests {
         let accounts = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
-            storage_access,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
         accounts.set_latest_full_snapshot_slot(0);
@@ -625,13 +624,14 @@ mod serde_snapshot_tests {
         accounts.print_count_and_status("after purge zero");
 
         accounts.assert_load_account(current_slot, pubkey, old_lamport);
-        accounts.assert_load_account(current_slot, purged_pubkey1, 0);
-        accounts.assert_load_account(current_slot, purged_pubkey2, 0);
+        // Both purged accounts were converted to tombstones at flush; with no full snapshot
+        // taken by then, their tombstone-only storages were purged and neither is in the index.
+        accounts.assert_not_load_account(current_slot, purged_pubkey1);
+        accounts.assert_not_load_account(current_slot, purged_pubkey2);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_clean_after_snapshot_restore_then_old_revives(storage_access: StorageAccess) {
+    #[test]
+    fn test_accounts_clean_after_snapshot_restore_then_old_revives() {
         agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
@@ -650,7 +650,7 @@ mod serde_snapshot_tests {
         let dummy_pubkey = solana_pubkey::new_rand();
 
         let mut current_slot = 0;
-        let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
         accounts.set_latest_full_snapshot_slot(0);
 
@@ -658,61 +658,44 @@ mod serde_snapshot_tests {
         current_slot += 1;
         accounts.store_for_tests((current_slot, [(&pubkey1, &account)].as_slice()));
         accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
-        accounts.add_root(current_slot);
+        accounts.add_root_for_tests(current_slot);
 
         // B: Test multiple updates to pubkey1 in a single slot/storage
         current_slot += 1;
         assert_eq!(0, accounts.alive_account_count_in_slot(current_slot));
         accounts.add_root_and_flush_write_cache(current_slot - 1);
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        assert!(accounts.contains(&pubkey1));
         accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         assert_eq!(1, accounts.alive_account_count_in_slot(current_slot));
-        // Ref count is 1 as the older version in the previous slot was marked obsolete
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        // pubkey1 is still alive; the older version in the previous slot was marked obsolete
+        assert!(accounts.contains(&pubkey1));
 
         // C: Yet more update to trigger lazy clean of step A
         current_slot += 1;
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        assert!(accounts.contains(&pubkey1));
         accounts.store_for_tests((current_slot, [(&pubkey1, &account3)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        assert!(accounts.contains(&pubkey1));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         // D: Make pubkey1 0-lamport; also triggers clean of step B
         current_slot += 1;
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+        assert!(accounts.contains(&pubkey1));
         accounts.store_for_tests((current_slot, [(&pubkey1, &zero_lamport_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
-        // had to be a root to flush, but clean won't work as this test expects if it is a root
-        // so, remove the root from alive_roots, then restore it after clean
-        accounts
-            .accounts_index
-            .roots_tracker
-            .write()
-            .unwrap()
-            .alive_roots
-            .remove(&current_slot);
-        accounts.clean_accounts_for_tests();
-        accounts
-            .accounts_index
-            .roots_tracker
-            .write()
-            .unwrap()
-            .alive_roots
-            .insert(current_slot);
 
-        // Ref count is 1 as the older versions were marked obsolete
-        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
-        accounts.add_root(current_slot);
+        // The zero lamport account was converted to a tombstone, so pubkey1 is out of the index
+        assert!(!accounts.contains(&pubkey1));
+        accounts.add_root_for_tests(current_slot);
 
         // E: Avoid missing bank hash error
         current_slot += 1;
         accounts.store_for_tests((current_slot, [(&dummy_pubkey, &dummy_account)].as_slice()));
-        accounts.add_root(current_slot);
+        accounts.add_root_for_tests(current_slot);
 
-        accounts.assert_load_account(current_slot, pubkey1, zero_lamport);
+        accounts.assert_not_load_account(current_slot, pubkey1);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
 
@@ -722,119 +705,93 @@ mod serde_snapshot_tests {
         // So, prevent that from happening by introducing refcount
         ((current_slot - 1)..=current_slot).for_each(|slot| accounts.flush_root_write_cache(slot));
         accounts.clean_accounts_for_tests();
+
+        // Reconstruct the database from the snapshot to simulate a restore
         let accounts = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
-            storage_access,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
 
-        // Set snapshot to zero to avoid cleaning zero-lamport pubkey1
-        accounts.set_latest_full_snapshot_slot(0);
-        accounts.clean_accounts_for_tests();
-
-        info!("pubkey: {pubkey1}");
-        accounts.print_accounts_stats("pre_clean");
+        // At this point pubkey 1 has been restored as a zero lamport account
         accounts.assert_load_account(current_slot, pubkey1, zero_lamport);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
 
-        // F: Finally, make Step A cleanable
-        current_slot += 1;
-        accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
-        accounts.add_root(current_slot);
-
-        // Do clean
-        accounts.flush_root_write_cache(current_slot);
-
-        // Make zero-lamport pubkey1 cleanable by setting the latest snapshot slot
-        accounts.set_latest_full_snapshot_slot(current_slot);
+        // Regardless of the snapshot slot the zero-lamport pubkey1 is turned into a tombstone
+        // by clean
+        accounts.set_latest_full_snapshot_slot(0);
         accounts.clean_accounts_for_tests();
 
-        // 2nd clean needed to clean-up pubkey1
-        accounts.clean_accounts_for_tests();
-
-        // Ensure pubkey2 is cleaned from the index finally
         accounts.assert_not_load_account(current_slot, pubkey1);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_shrink_stale_slots_processed(storage_access: StorageAccess) {
+    #[test]
+    fn test_shrink_stale_slots_processed() {
         agave_logger::setup();
 
-        for startup in &[false, true] {
-            let accounts = AccountsDb::new_single_for_tests();
+        let accounts = AccountsDb::default_for_tests();
 
-            let pubkey_count = 100;
-            let pubkeys: Vec<_> = (0..pubkey_count)
-                .map(|_| solana_pubkey::new_rand())
-                .collect();
+        let pubkey_count = 100;
+        let pubkeys: Vec<_> = (0..pubkey_count)
+            .map(|_| solana_pubkey::new_rand())
+            .collect();
 
-            let some_lamport = 223;
-            let no_data = 0;
-            let owner = *AccountSharedData::default().owner();
+        let some_lamport = 223;
+        let no_data = 0;
+        let owner = *AccountSharedData::default().owner();
 
-            let account = AccountSharedData::new(some_lamport, no_data, &owner);
+        let account = AccountSharedData::new(some_lamport, no_data, &owner);
 
-            let mut current_slot = 0;
+        let mut current_slot = 0;
 
-            current_slot += 1;
-            for pubkey in &pubkeys {
-                accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
-            }
-            let shrink_slot = current_slot;
-            accounts.add_root_and_flush_write_cache(current_slot);
-
-            current_slot += 1;
-            let pubkey_count_after_shrink = 10;
-            let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
-
-            for pubkey in updated_pubkeys {
-                accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
-            }
-            accounts.add_root_and_flush_write_cache(current_slot);
-
-            accounts.clean_accounts_for_tests();
-
-            assert_eq!(
-                pubkey_count,
-                accounts.all_account_count_in_accounts_file(shrink_slot)
-            );
-            accounts.shrink_all_slots(*startup, None);
-            assert_eq!(
-                pubkey_count_after_shrink,
-                accounts.all_account_count_in_accounts_file(shrink_slot)
-            );
-
-            let no_ancestors = Ancestors::default();
-
-            let calculated_capitalization = accounts
-                .calculate_capitalization_at_startup_from_index(&no_ancestors, current_slot);
-            let expected_capitalization = 22_300;
-            assert_eq!(calculated_capitalization, expected_capitalization);
-
-            let accounts_lt_hash_pre = accounts
-                .calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors, current_slot);
-            let accounts = reconstruct_accounts_db_via_serialization(
-                &accounts,
-                current_slot,
-                storage_access,
-                ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            );
-            let accounts_lt_hash_post = accounts
-                .calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors, current_slot);
-            assert_eq!(accounts_lt_hash_pre, accounts_lt_hash_post);
-
-            // repeating should be no-op
-            accounts.shrink_all_slots(*startup, None);
-            assert_eq!(
-                pubkey_count_after_shrink,
-                accounts.all_account_count_in_accounts_file(shrink_slot)
-            );
+        current_slot += 1;
+        for pubkey in &pubkeys {
+            accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
         }
+        let shrink_slot = current_slot;
+        accounts.add_root_and_flush_write_cache(current_slot);
+
+        current_slot += 1;
+        let pubkey_count_after_shrink = 10;
+        let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
+
+        for pubkey in updated_pubkeys {
+            accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
+        }
+        accounts.add_root_and_flush_write_cache(current_slot);
+
+        accounts.clean_accounts_for_tests();
+
+        assert_eq!(
+            pubkey_count,
+            accounts.all_account_count_in_accounts_file(shrink_slot)
+        );
+        accounts.shrink_candidate_slots(&EpochSchedule::default());
+        assert_eq!(
+            pubkey_count_after_shrink,
+            accounts.all_account_count_in_accounts_file(shrink_slot)
+        );
+
+        let no_ancestors = Ancestors::default();
+
+        let calculated_capitalization =
+            accounts.calculate_capitalization_at_startup_from_index(&no_ancestors);
+        let expected_capitalization = 22_300;
+        assert_eq!(calculated_capitalization, expected_capitalization);
+
+        let accounts_lt_hash_pre =
+            accounts.calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors);
+        let accounts = reconstruct_accounts_db_via_serialization(
+            &accounts,
+            current_slot,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        );
+        let accounts_lt_hash_post =
+            accounts.calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors);
+        assert_eq!(accounts_lt_hash_pre, accounts_lt_hash_post);
     }
 
     // no remap needed
@@ -864,18 +821,18 @@ mod serde_snapshot_tests {
         become_ungovernable(tmp.path());
 
         let next_append_vec_id = AtomicAccountsFileId::new(next_id as u32);
-        let num_collisions = AtomicUsize::new(0);
+        let mut num_collisions = 0;
         let (remapped_id, remapped_file_info) = remap_append_vec_file(
             123,
             old_id,
             old_file_info,
             &next_append_vec_id,
-            &num_collisions,
+            &mut num_collisions,
         )
         .unwrap();
         assert_eq!(remapped_id as usize, expected_remapped_id);
         assert_eq!(&remapped_file_info.path, &expected_remapped_path);
-        assert_eq!(num_collisions.load(Ordering::Relaxed), expected_collisions);
+        assert_eq!(num_collisions, expected_collisions);
     }
 
     #[test]
@@ -893,14 +850,256 @@ mod serde_snapshot_tests {
         // In remap_append_vec_file() we want to handle EEXIST (collisions), but we want to return all
         // other errors
         let next_append_vec_id = AtomicAccountsFileId::new(457);
-        let num_collisions = AtomicUsize::new(0);
+        let mut num_collisions = 0;
         remap_append_vec_file(
             123,
             456,
             original_file_info,
             &next_append_vec_id,
-            &num_collisions,
+            &mut num_collisions,
         )
         .unwrap();
+    }
+
+    /// Test roundtrip serialize/deserialize of a bank
+    #[test]
+    fn test_serialize_bank_snapshot() {
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
+        genesis_config.epoch_schedule = EpochSchedule::custom(400, 400, false);
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let deposit_amount = bank0.get_minimum_balance_for_rent_exemption(0);
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0.clone(),
+            *bank0.leader(),
+            1,
+        );
+
+        // Create an account on a non-root fork
+        let key1 = Pubkey::new_unique();
+        bank_test_utils::deposit(&bank1, &key1, deposit_amount).unwrap();
+
+        let bank2_slot = 2;
+        let bank0_leader = *bank0.leader();
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            bank0_leader,
+            bank2_slot,
+        );
+
+        // Test new account
+        let key2 = Pubkey::new_unique();
+        bank_test_utils::deposit(&bank2, &key2, deposit_amount).unwrap();
+        assert_eq!(bank2.get_balance(&key2), deposit_amount);
+
+        let key3 = Pubkey::new_unique();
+        bank_test_utils::deposit(&bank2, &key3, 0).unwrap();
+
+        let accounts_db = &bank2.rc.accounts.accounts_db;
+
+        bank2.set_block_id(Some(BlockId::default()));
+        bank2.squash();
+        bank2.force_flush_accounts_cache();
+
+        let mut buf = Vec::new();
+        let cursor = Cursor::new(&mut buf);
+        let mut writer = BufWriter::new(cursor);
+        {
+            let mut bank_fields = bank2.get_fields_to_serialize();
+            let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
+            let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
+            let block_id = Some(bank_fields.block_id);
+            serde_snapshot::serialize_bank_snapshot_into(
+                &mut writer,
+                bank_fields,
+                bank2.get_bank_hash_stats(),
+                ExtraFieldsToSerialize {
+                    lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
+                    unused_incremental_snapshot_persistence: None,
+                    unused_epoch_accounts_hash: None,
+                    versioned_epoch_stakes,
+                    accounts_lt_hash,
+                    block_id,
+                },
+            )
+            .unwrap();
+        }
+        drop(writer);
+
+        // Now deserialize the serialized bank and ensure it matches the original bank
+
+        // Create a new set of directories for this bank's accounts
+        let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
+        // Create a directory to simulate AppendVecs unpackaged from a snapshot tar
+        let copied_accounts = TempDir::new().unwrap();
+        let storage_and_next_append_vec_id =
+            copy_append_vecs(accounts_db, copied_accounts.path()).unwrap();
+
+        let cursor = Cursor::new(buf.as_slice());
+        let mut reader = BufReader::new(cursor);
+        let mut snapshot_streams = SnapshotStreams {
+            full_snapshot_stream: &mut reader,
+            incremental_snapshot_stream: None,
+        };
+        let (dbank, _) = serde_snapshot::bank_from_streams(
+            &mut snapshot_streams,
+            &dbank_paths,
+            storage_and_next_append_vec_id,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        assert_eq!(dbank.get_balance(&key1), 0);
+        assert_eq!(dbank.get_balance(&key2), deposit_amount);
+        assert_eq!(dbank.get_balance(&key3), 0);
+        assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
+        assert_eq!(&dbank, bank2.as_ref());
+    }
+
+    #[test]
+    fn test_extra_fields_eof() {
+        agave_logger::setup();
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
+
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        bank0.squash();
+        let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
+        bank.set_block_id(Some(BlockId::default()));
+        bank.freeze();
+        bank.rc.accounts.add_root(bank.bank_id());
+        bank.force_flush_accounts_cache();
+
+        // Set extra fields
+        bank.fee_rate_governor.lamports_per_signature = 7000;
+        // Note that epoch_stakes already has two epoch stakes entries for epochs 0 and 1
+        // which will also be serialized to the versioned epoch stakes extra field, so add a
+        // third entry to exercise round-tripping the extra field.
+        bank.set_epoch_stakes_for_test(
+            42,
+            VersionedEpochStakes::Current {
+                stakes: EpochStakes::default(),
+                total_stake: 42,
+                node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
+                epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
+                bls_pubkey_to_rank_map: OnceLock::new(),
+            },
+        );
+        assert_eq!(bank.epoch_stakes_map().len(), 3);
+
+        // Serialize
+        let mut buf = vec![];
+        let mut writer = Cursor::new(&mut buf);
+
+        crate::serde_snapshot::bank_to_stream(&mut std::io::BufWriter::new(&mut writer), &bank)
+            .unwrap();
+
+        // Deserialize
+        let rdr = Cursor::new(&buf[..]);
+        let mut reader = std::io::BufReader::new(&buf[rdr.position() as usize..]);
+        let mut snapshot_streams = SnapshotStreams {
+            full_snapshot_stream: &mut reader,
+            incremental_snapshot_stream: None,
+        };
+        let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
+        let copied_accounts = TempDir::new().unwrap();
+        let storage_and_next_append_vec_id =
+            copy_append_vecs(&bank.rc.accounts.accounts_db, copied_accounts.path()).unwrap();
+        let (dbank, _) = crate::serde_snapshot::bank_from_streams(
+            &mut snapshot_streams,
+            &dbank_paths,
+            storage_and_next_append_vec_id,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        assert_eq!(bank.epoch_stakes_map(), dbank.epoch_stakes_map());
+        assert_eq!(
+            bank.fee_rate_governor.lamports_per_signature,
+            dbank.fee_rate_governor.lamports_per_signature
+        );
+    }
+
+    #[test]
+    fn test_extra_fields_full_snapshot_archive() {
+        agave_logger::setup();
+
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
+        activate_all_features(&mut genesis_config);
+
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank0_leader = *bank0.leader();
+        let mut bank = Bank::new_from_parent(bank0, bank0_leader, 1);
+        while !bank.is_complete() {
+            bank.fill_bank_with_ticks_for_tests();
+        }
+        bank.set_block_id(Some(BlockId::default()));
+
+        // Set extra field
+        bank.fee_rate_governor.lamports_per_signature = 7000;
+
+        let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+        let bank_snapshots_dir = TempDir::new().unwrap();
+        let full_snapshot_archives_dir = TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = TempDir::new().unwrap();
+
+        // Serialize
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .path()
+                .to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
+        let snapshot_archive_info =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
+
+        // Deserialize
+        let dbank = snapshot_bank_utils::bank_from_snapshot_archives(
+            &[accounts_dir],
+            &snapshot_archive_info,
+            None,
+            &snapshot_config,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None, // leader_for_tests
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            bank.fee_rate_governor.lamports_per_signature,
+            dbank.fee_rate_governor.lamports_per_signature
+        );
     }
 }

@@ -6,7 +6,7 @@ use {
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         rpc::{rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
-        rpc_cache::LargestAccountsCache,
+        rpc_cache::{LargestAccountsCache, RankMapCache},
         rpc_health::*,
     },
     agave_snapshots::{
@@ -21,7 +21,6 @@ use {
     },
     regex::Regex,
     solana_cli_output::display::build_balance_message,
-    solana_client::connection_cache::Protocol,
     solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -32,16 +31,17 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
+    solana_net_utils::Protocol,
     solana_perf::thread::renice_this_thread,
-    solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
-        transaction_client::{TpuClientNextClient, TransactionClient},
+        transaction_client::{TpuClient, TpuSender, create_client, create_leader_updater},
     },
     solana_storage_bigtable::CredentialType,
     solana_tls_utils::NotifyKeyUpdate,
@@ -56,13 +56,14 @@ use {
         },
         task::{Context, Poll},
         thread::{self, Builder, JoinHandle},
-        time::{Duration, Instant},
+        time::Duration,
     },
     tokio::runtime::{Builder as TokioBuilder, Handle as RuntimeHandle, Runtime as TokioRuntime},
     tokio_util::{
         bytes::Bytes,
         codec::{BytesCodec, FramedRead},
         sync::CancellationToken,
+        task::AbortOnDropHandle,
     },
 };
 
@@ -81,34 +82,52 @@ enum SnapshotKind {
     Incremental,
 }
 
-struct TimeoutStream<S> {
-    inner: S,
-    deadline: Instant,
+struct SnapshotStream {
+    receiver: hyper::Body,
+    _sender_task: AbortOnDropHandle<()>,
 }
 
-impl<S> TimeoutStream<S> {
-    fn new(inner: S, timeout: Duration) -> Self {
+impl SnapshotStream {
+    fn new<S>(mut stream: S, timeout: Duration) -> Self
+    where
+        S: Stream<Item = std::io::Result<Bytes>> + Unpin + Send + 'static,
+    {
+        let (mut sender, receiver) = hyper::Body::channel();
+        let deadline = tokio::time::Instant::now() + timeout;
+        // Hyper stops polling the response body while socket writes are blocked. The task must
+        // own the file stream so its deadline can release the file without another body poll.
+        let sender_task = tokio::spawn(async move {
+            let result = tokio::time::timeout_at(deadline, async {
+                while let Some(chunk) = stream.try_next().await? {
+                    if sender.send_data(chunk).await.is_err() {
+                        break;
+                    }
+                }
+                Ok::<_, std::io::Error>(())
+            })
+            .await;
+            match result {
+                Ok(Ok(())) => return,
+                Ok(Err(err)) => warn!("Snapshot transfer failed: {err}"),
+                Err(_) => warn!("Snapshot transfer deadline exceeded after {timeout:?}"),
+            }
+            // Report an incomplete response on a read error or timeout. This does not wait
+            // for the socket to become writable, so the file is dropped when this task exits.
+            sender.abort();
+        });
         Self {
-            inner,
-            deadline: Instant::now() + timeout,
+            receiver,
+            // A client disconnect must also release the file, including during a pending read.
+            _sender_task: AbortOnDropHandle::new(sender_task),
         }
     }
 }
 
-impl<S> Stream for TimeoutStream<S>
-where
-    S: Stream<Item = std::io::Result<Bytes>> + Unpin,
-{
-    type Item = std::io::Result<Bytes>;
+impl Stream for SnapshotStream {
+    type Item = Result<Bytes, hyper::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if Instant::now() >= self.deadline {
-            return Poll::Ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "snapshot transfer deadline exceeded",
-            ))));
-        }
-        Pin::new(&mut self.inner).poll_next(cx)
+        Pin::new(&mut self.receiver).poll_next(cx)
     }
 }
 
@@ -287,11 +306,17 @@ impl RpcRequestMiddleware {
                 };
                 let computed = match interval {
                     SnapshotInterval::Disabled => Duration::ZERO,
-                    SnapshotInterval::Slots(slots) => Duration::from_millis(
-                        slots
-                            .get()
-                            .saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT),
-                    ),
+                    SnapshotInterval::Slots(slots) => {
+                        let ns_per_slot = self
+                            .bank_forks
+                            .read()
+                            .unwrap()
+                            .root_bank()
+                            .ns_per_slot
+                            .try_into()
+                            .unwrap_or(solana_clock::DEFAULT_MS_PER_SLOT * 1_000_000);
+                        Duration::from_nanos(slots.get().saturating_mul(ns_per_slot))
+                    }
                 };
                 let fallback = match st {
                     SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,
@@ -314,7 +339,7 @@ impl RpcRequestMiddleware {
                         let stream =
                             FramedRead::new(file, BytesCodec::new()).map_ok(|b| b.freeze());
                         let body = if let Some(timeout) = snapshot_timeout {
-                            hyper::Body::wrap_stream(TimeoutStream::new(stream, timeout))
+                            hyper::Body::wrap_stream(SnapshotStream::new(stream, timeout))
                         } else {
                             hyper::Body::wrap_stream(stream)
                         };
@@ -343,52 +368,50 @@ impl RequestMiddleware for RpcRequestMiddleware {
     fn on_request(&self, request: hyper::Request<hyper::Body>) -> RequestMiddlewareAction {
         trace!("request uri: {}", request.uri());
 
-        if let Some(ref snapshot_config) = self.snapshot_config {
-            if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH
-                || request.uri().path() == INCREMENTAL_SNAPSHOT_REQUEST_PATH
-            {
-                // Convenience redirect to the latest snapshot
-                let full_snapshot_archive_info =
-                    snapshot_paths::get_highest_full_snapshot_archive_info(
-                        &snapshot_config.full_snapshot_archives_dir,
-                    );
-                let snapshot_archive_info =
-                    if let Some(full_snapshot_archive_info) = full_snapshot_archive_info {
-                        if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH {
-                            Some(full_snapshot_archive_info.snapshot_archive_info().clone())
-                        } else {
-                            snapshot_paths::get_highest_incremental_snapshot_archive_info(
-                                &snapshot_config.incremental_snapshot_archives_dir,
-                                full_snapshot_archive_info.slot(),
-                            )
-                            .map(|incremental_snapshot_archive_info| {
-                                incremental_snapshot_archive_info
-                                    .snapshot_archive_info()
-                                    .clone()
-                            })
-                        }
+        if let Some(ref snapshot_config) = self.snapshot_config
+            && (request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH
+                || request.uri().path() == INCREMENTAL_SNAPSHOT_REQUEST_PATH)
+        {
+            // Convenience redirect to the latest snapshot
+            let full_snapshot_archive_info = snapshot_paths::get_highest_full_snapshot_archive_info(
+                &snapshot_config.full_snapshot_archives_dir,
+            );
+            let snapshot_archive_info =
+                if let Some(full_snapshot_archive_info) = full_snapshot_archive_info {
+                    if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH {
+                        Some(full_snapshot_archive_info.snapshot_archive_info().clone())
                     } else {
-                        None
-                    };
-                return if let Some(snapshot_archive_info) = snapshot_archive_info {
-                    RpcRequestMiddleware::redirect(&format!(
-                        "/{}",
-                        snapshot_archive_info
-                            .path
-                            .file_name()
-                            .unwrap_or_else(|| std::ffi::OsStr::new(""))
-                            .to_str()
-                            .unwrap_or("")
-                    ))
+                        snapshot_paths::get_highest_incremental_snapshot_archive_info(
+                            &snapshot_config.incremental_snapshot_archives_dir,
+                            full_snapshot_archive_info.slot(),
+                        )
+                        .map(|incremental_snapshot_archive_info| {
+                            incremental_snapshot_archive_info
+                                .snapshot_archive_info()
+                                .clone()
+                        })
+                    }
                 } else {
-                    RpcRequestMiddleware::not_found()
-                }
-                .into();
+                    None
+                };
+            return if let Some(snapshot_archive_info) = snapshot_archive_info {
+                RpcRequestMiddleware::redirect(&format!(
+                    "/{}",
+                    snapshot_archive_info
+                        .path
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new(""))
+                        .to_str()
+                        .unwrap_or("")
+                ))
+            } else {
+                RpcRequestMiddleware::not_found()
             }
+            .into();
         }
 
         if let Some(path) = match_supply_path(request.uri().path()) {
-            process_rest(&self.bank_forks, path)
+            process_rest(self.bank_forks.clone(), path)
         } else if self.is_file_get_path(request.uri().path()) {
             self.process_file_get(request.uri().path())
         } else if request.uri().path() == "/health" {
@@ -427,7 +450,7 @@ async fn calculate_circulating_supply_async(bank: &Arc<Bank>) -> Result<u64, Sup
     Ok(total_supply.saturating_sub(non_circulating_supply.lamports))
 }
 
-async fn handle_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<String> {
+async fn handle_rest(bank_forks: &RwLock<BankForks>, path: &str) -> Option<String> {
     match path {
         "/v0/circulating-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
@@ -446,8 +469,7 @@ async fn handle_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<
     }
 }
 
-fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> RequestMiddlewareAction {
-    let bank_forks = bank_forks.clone();
+fn process_rest(bank_forks: Arc<RwLock<BankForks>>, path: &str) -> RequestMiddlewareAction {
     let path = path.to_string();
 
     RequestMiddlewareAction::Respond {
@@ -476,13 +498,13 @@ pub struct JsonRpcServiceConfig<'a> {
     pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     pub blockstore: Arc<Blockstore>,
     pub cluster_info: Arc<ClusterInfo>,
-    pub poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
     pub genesis_hash: Hash,
     pub ledger_path: PathBuf,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub exit: Arc<AtomicBool>,
     pub override_health_check: Arc<AtomicBool>,
     pub optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+    pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     pub send_transaction_service_config: send_transaction_service::Config,
     pub max_slots: Arc<MaxSlots>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -506,9 +528,11 @@ impl JsonRpcService {
             config.rpc_config.rpc_blocking_threads,
             config.rpc_config.rpc_niceness_adj,
         );
-        let leader_info = config
-            .poh_recorder
-            .map(|recorder| ClusterTpuInfo::new(config.cluster_info.clone(), recorder));
+        let leader_info = Some(ClusterTpuInfo::new(
+            config.cluster_info.clone(),
+            config.block_commitment_cache.clone(),
+            config.leader_schedule_cache.clone(),
+        ));
 
         let RpcTpuClientArgs(identity_keypair, tpu_client_socket, client_runtime, cancel) =
             config.rpc_tpu_client_args;
@@ -520,16 +544,19 @@ impl JsonRpcService {
                 "Invalid {:?} socket address for TPU",
                 Protocol::QUIC
             ))?;
-        let client = TpuClientNextClient::new(
-            client_runtime,
+        let leader_updater = create_leader_updater(
+            leader_info,
             my_tpu_address,
             config.send_transaction_service_config.tpu_peers.clone(),
-            leader_info,
+        );
+        let (tpu_sender, client) = create_client(
+            client_runtime,
+            leader_updater,
             config.send_transaction_service_config.leader_forward_count,
             Some(identity_keypair),
             tpu_client_socket,
             cancel,
-        );
+        )?;
 
         let json_rpc_service = Self::new(
             config.rpc_addr,
@@ -545,9 +572,11 @@ impl JsonRpcService {
             config.exit,
             config.override_health_check,
             config.optimistically_confirmed_bank,
+            config.highest_finalized,
             config.send_transaction_service_config,
             config.max_slots,
             config.leader_schedule_cache,
+            tpu_sender,
             client,
             config.max_complete_transaction_status_slot,
             config.prioritization_fee_cache,
@@ -557,14 +586,7 @@ impl JsonRpcService {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new<
-        Client: TransactionClient
-            + NotifyKeyUpdate
-            + Clone
-            + std::marker::Send
-            + std::marker::Sync
-            + 'static,
-    >(
+    fn new(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -578,10 +600,12 @@ impl JsonRpcService {
         exit: Arc<AtomicBool>,
         override_health_check: Arc<AtomicBool>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        client: Client,
+        tpu_sender: TpuSender,
+        client: TpuClient,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<TokioRuntime>,
@@ -592,7 +616,7 @@ impl JsonRpcService {
 
         let health = Arc::new(RpcHealth::new(
             Arc::clone(&optimistically_confirmed_bank),
-            Arc::clone(&blockstore),
+            highest_finalized,
             config.health_check_slot_distance,
             override_health_check,
         ));
@@ -632,7 +656,6 @@ impl JsonRpcService {
                                 runtime.clone(),
                                 bigtable_ledger_storage.clone(),
                                 blockstore.clone(),
-                                block_commitment_cache.clone(),
                                 max_complete_transaction_status_slot.clone(),
                                 ConfirmedBlockUploadConfig::default(),
                                 exit_bigtable_ledger_upload_service.clone(),
@@ -646,10 +669,9 @@ impl JsonRpcService {
                             bigtable_ledger_upload_service,
                         )
                     })
-                    .unwrap_or_else(|err| {
-                        error!("Failed to initialize BigTable ledger storage: {err:?}");
-                        (None, None)
-                    })
+                    .map_err(|err| {
+                        format!("Failed to initialize BigTable ledger storage: {err:?}")
+                    })?
             } else {
                 (None, None)
             };
@@ -671,6 +693,7 @@ impl JsonRpcService {
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
             largest_accounts_cache,
+            Arc::new(RwLock::new(RankMapCache::default())),
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
@@ -679,9 +702,9 @@ impl JsonRpcService {
         );
 
         let _send_transaction_service = Arc::new(SendTransactionService::new(
-            &bank_forks,
+            bank_forks.clone(),
             receiver,
-            client.clone(),
+            tpu_sender,
             send_transaction_service_config,
             exit,
         ));
@@ -710,7 +733,7 @@ impl JsonRpcService {
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,
                     snapshot_config,
-                    bank_forks.clone(),
+                    bank_forks,
                     health.clone(),
                 );
                 let server = ServerBuilder::with_meta_extractor(
@@ -838,8 +861,297 @@ mod tests {
             io::Write,
             net::{IpAddr, Ipv4Addr},
         },
-        tokio::runtime::Runtime,
+        tokio::{
+            io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
+            runtime::Runtime,
+            sync::oneshot,
+            time::{advance, timeout},
+        },
     };
+
+    struct DropTrackedStream<S> {
+        inner: S,
+        dropped: Option<oneshot::Sender<()>>,
+    }
+
+    impl<S> DropTrackedStream<S> {
+        fn new(inner: S) -> (Self, oneshot::Receiver<()>) {
+            let (sender, receiver) = oneshot::channel();
+            (
+                Self {
+                    inner,
+                    dropped: Some(sender),
+                },
+                receiver,
+            )
+        }
+    }
+
+    impl<S: Stream + Unpin> Stream for DropTrackedStream<S> {
+        type Item = S::Item;
+
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Pin::new(&mut self.inner).poll_next(cx)
+        }
+    }
+
+    impl<S> Drop for DropTrackedStream<S> {
+        fn drop(&mut self) {
+            let _ = self.dropped.take().unwrap().send(());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_snapshot_stream_deadline_without_body_polls() {
+        let (stream, dropped) = DropTrackedStream::new(stream::repeat_with(|| {
+            Ok(Bytes::from_static(b"snapshot data"))
+        }));
+        let body = SnapshotStream::new(stream, Duration::from_secs(1));
+        tokio::task::yield_now().await;
+        advance(Duration::from_secs(1)).await;
+
+        // Keep the response alive without ever polling it. The sender is blocked by backpressure,
+        // but the source must be released at the deadline anyway.
+        timeout(Duration::from_secs(1), dropped)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(body.try_collect::<Vec<_>>().await.is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_snapshot_stream_deadline_during_read() {
+        let (stream, dropped) = DropTrackedStream::new(stream::pending::<std::io::Result<Bytes>>());
+        let mut body = SnapshotStream::new(stream, Duration::from_secs(1));
+        tokio::task::yield_now().await;
+        advance(Duration::from_secs(1)).await;
+        timeout(Duration::from_secs(1), dropped)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(body.next().await.unwrap().is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_snapshot_stream_drop_cancels_pending_read() {
+        let (started, read_started) = oneshot::channel();
+        let mut started = Some(started);
+        let pending = stream::poll_fn(move |_| {
+            if let Some(started) = started.take() {
+                started.send(()).unwrap();
+            }
+            Poll::Pending::<Option<std::io::Result<Bytes>>>
+        });
+        let (stream, dropped) = DropTrackedStream::new(pending);
+        let body = SnapshotStream::new(stream, Duration::from_secs(3600));
+        read_started.await.unwrap();
+        drop(body);
+        // Cancellation must not wait for either the read or the transfer deadline.
+        timeout(Duration::from_secs(1), dropped)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_stream_closed_receiver_releases_source() {
+        let (stream, dropped) = DropTrackedStream::new(stream::repeat_with(|| {
+            Ok(Bytes::from_static(b"snapshot data"))
+        }));
+        let SnapshotStream {
+            receiver,
+            _sender_task: sender_task,
+        } = SnapshotStream::new(stream, Duration::from_secs(3600));
+        drop(receiver);
+
+        // Keep the task alive so it observes the closed receiver itself.
+        timeout(Duration::from_secs(1), sender_task)
+            .await
+            .unwrap()
+            .unwrap();
+        dropped.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_stream_completion_and_read_error() {
+        let chunks = vec![
+            Ok(Bytes::from_static(b"snapshot ")),
+            Ok(Bytes::from_static(b"data")),
+        ];
+        let (stream, dropped) = DropTrackedStream::new(stream::iter(chunks));
+        let body = hyper::Body::wrap_stream(SnapshotStream::new(stream, Duration::from_secs(60)));
+        assert_eq!(hyper::body::to_bytes(body).await.unwrap(), "snapshot data");
+        dropped.await.unwrap();
+
+        let (stream, dropped) = DropTrackedStream::new(stream::iter([
+            Ok(Bytes::from_static(b"partial snapshot")),
+            Err(std::io::Error::other("read failed")),
+        ]));
+        let body = hyper::Body::wrap_stream(SnapshotStream::new(stream, Duration::from_secs(60)));
+        assert!(hyper::body::to_bytes(body).await.is_err());
+        dropped.await.unwrap();
+    }
+
+    struct WriteBlockedIo {
+        inner: DuplexStream,
+        blocked: Option<oneshot::Sender<()>>,
+    }
+
+    impl AsyncRead for WriteBlockedIo {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for WriteBlockedIo {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            let result = Pin::new(&mut self.inner).poll_write(cx, buf);
+            if result.is_pending()
+                && let Some(blocked) = self.blocked.take()
+            {
+                let _ = blocked.send(());
+            }
+            result
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_flush(cx)
+        }
+
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_shutdown(cx)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_stream_completes_http_response() {
+        let (stream, dropped) =
+            DropTrackedStream::new(stream::iter([Ok(Bytes::from_static(b"snapshot data"))]));
+        let mut body = Some(SnapshotStream::new(stream, Duration::from_secs(60)));
+        let (server_io, mut client_io) = tokio::io::duplex(1024);
+        let server = tokio::spawn(async move {
+            hyper::server::conn::Http::new()
+                .serve_connection(
+                    WriteBlockedIo {
+                        inner: server_io,
+                        blocked: None,
+                    },
+                    hyper::service::service_fn(move |_| {
+                        let response = hyper::Response::builder()
+                            .header(hyper::header::CONTENT_LENGTH, 13)
+                            .header(hyper::header::CONNECTION, "close")
+                            .body(hyper::Body::wrap_stream(body.take().unwrap()))
+                            .unwrap();
+                        async { Ok::<_, std::convert::Infallible>(response) }
+                    }),
+                )
+                .await
+        });
+        client_io
+            .write_all(b"GET /snapshot.tar.zst HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        timeout(Duration::from_secs(5), client_io.read_to_end(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert!(response.ends_with(b"\r\n\r\nsnapshot data"));
+        server.await.unwrap().unwrap();
+        dropped.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_stream_releases_file_with_stalled_http_client() {
+        let directory = get_tmp_ledger_path_auto_delete!();
+        let path = directory.path().join("snapshot.tar.zst");
+        let file = std::fs::File::create(&path).unwrap();
+        let file_size = 1024 * 1024;
+        file.set_len(file_size).unwrap();
+        drop(file);
+        let file = RpcRequestMiddleware::open_no_follow(&path).await.unwrap();
+        let (stream, dropped) =
+            DropTrackedStream::new(FramedRead::new(file, BytesCodec::new()).map_ok(|b| b.freeze()));
+        let body = SnapshotStream::new(stream, Duration::from_secs(3600));
+        let body = Arc::new(std::sync::Mutex::new(Some(body)));
+
+        // A small, bounded transport makes socket backpressure deterministic without depending
+        // on platform-specific TCP buffer sizes. Hyper serves the same streaming HTTP response.
+        let (server_io, mut client_io) = tokio::io::duplex(1024);
+        let (blocked, write_blocked) = oneshot::channel();
+        let server_io = WriteBlockedIo {
+            inner: server_io,
+            blocked: Some(blocked),
+        };
+        let server = tokio::spawn(async move {
+            hyper::server::conn::Http::new()
+                .max_buf_size(8192)
+                .serve_connection(
+                    server_io,
+                    hyper::service::service_fn(move |_| {
+                        let response = hyper::Response::builder()
+                            .header(hyper::header::CONTENT_LENGTH, file_size)
+                            .header(hyper::header::CONNECTION, "close")
+                            .body(hyper::Body::wrap_stream(
+                                body.lock().unwrap().take().unwrap(),
+                            ))
+                            .unwrap();
+                        async { Ok::<_, std::convert::Infallible>(response) }
+                    }),
+                )
+                .await
+        });
+        client_io
+            .write_all(b"GET /snapshot.tar.zst HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut headers = Vec::new();
+        timeout(Duration::from_secs(5), async {
+            while !headers.ends_with(b"\r\n\r\n") {
+                headers.push(client_io.read_u8().await.unwrap());
+            }
+        })
+        .await
+        .unwrap();
+        assert!(headers.starts_with(b"HTTP/1.1 200"));
+        timeout(Duration::from_secs(5), write_blocked)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!server.is_finished());
+        std::fs::remove_file(path).unwrap();
+
+        // The client remains connected and stops reading. Advance the clock only after real
+        // file I/O has filled the transport, so it cannot auto-advance during file opening.
+        tokio::time::pause();
+        advance(Duration::from_secs(3600)).await;
+        timeout(Duration::from_secs(1), dropped)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Hyper may already have observed the body abort and closed the connection. Whether
+        // it finishes before or after reads resume, the response must be incomplete.
+        let mut received = Vec::new();
+        timeout(Duration::from_secs(5), client_io.read_to_end(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(received.len() < file_size as usize);
+        assert!(server.await.unwrap().is_err());
+    }
 
     #[test]
     fn test_rpc_new() {
@@ -877,7 +1189,7 @@ mod tests {
             ..send_transaction_service::Config::default()
         };
 
-        let client = create_client_for_tests(
+        let (tpu_sender, client) = create_client_for_tests(
             runtime.handle().clone(),
             tpu_address,
             send_transaction_service_config.tpu_peers.clone(),
@@ -897,9 +1209,11 @@ mod tests {
             exit,
             Arc::new(AtomicBool::new(false)),
             optimistically_confirmed_bank,
+            Arc::default(),
             send_transaction_service_config,
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
+            tpu_sender,
             client,
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
@@ -986,11 +1300,10 @@ mod tests {
     #[test]
     fn test_is_file_get_path() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let bank_forks = create_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank, blockstore);
+        let health = RpcHealth::stub(optimistically_confirmed_bank);
 
         let bank_forks = create_bank_forks();
         let rrm = RpcRequestMiddleware::new(
@@ -1114,16 +1427,15 @@ mod tests {
         let runtime = Runtime::new().unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let genesis_path = ledger_path.path().join(DEFAULT_GENESIS_ARCHIVE);
         let bank_forks = create_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let rrm = RpcRequestMiddleware::new(
+        let mut rrm = RpcRequestMiddleware::new(
             ledger_path.path().to_path_buf(),
             None,
             bank_forks,
-            RpcHealth::stub(optimistically_confirmed_bank, blockstore),
+            RpcHealth::stub(optimistically_confirmed_bank),
         );
 
         // File does not exist => request should fail.
@@ -1147,6 +1459,12 @@ mod tests {
             let response = runtime.block_on(response);
             let response = response.unwrap();
             assert_eq!(response.status(), 200);
+            assert_eq!(
+                runtime
+                    .block_on(hyper::body::to_bytes(response.into_body()))
+                    .unwrap(),
+                "should be ok"
+            );
         } else {
             panic!("Unexpected RequestMiddlewareAction variant");
         }
@@ -1166,6 +1484,35 @@ mod tests {
             assert_ne!(response.status(), 200);
         } else {
             panic!("Unexpected RequestMiddlewareAction variant");
+        }
+
+        rrm.snapshot_config = Some(SnapshotConfig {
+            full_snapshot_archives_dir: ledger_path.path().to_path_buf(),
+            incremental_snapshot_archives_dir: ledger_path.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        });
+        for path in [
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst",
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst",
+        ] {
+            let contents = b"snapshot contents";
+            std::fs::write(ledger_path.path().join(&path[1..]), contents).unwrap();
+            let action = rrm.process_file_get(path);
+            assert!(matches!(action, RequestMiddlewareAction::Respond { .. }));
+            if let RequestMiddlewareAction::Respond { response, .. } = action {
+                runtime.block_on(async {
+                    let response = response.await.unwrap();
+                    assert_eq!(response.status(), 200);
+                    assert_eq!(
+                        response.headers()[hyper::header::CONTENT_LENGTH],
+                        contents.len().to_string()
+                    );
+                    assert_eq!(
+                        hyper::body::to_bytes(response.into_body()).await.unwrap(),
+                        &contents[..]
+                    );
+                });
+            }
         }
     }
 }

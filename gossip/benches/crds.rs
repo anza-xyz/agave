@@ -4,11 +4,13 @@ use {
     rayon::ThreadPoolBuilder,
     solana_gossip::{
         crds::{Crds, GossipRoute},
-        crds_gossip_pull::{CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsTimeouts},
+        crds_gossip_pull::{
+            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CRDS_GOSSIP_PURGE_DURATION, CrdsTimeouts,
+        },
         crds_value::CrdsValue,
     },
     solana_pubkey::Pubkey,
-    std::{collections::HashMap, time::Duration},
+    std::collections::HashMap,
 };
 
 fn bench_find_old_labels(c: &mut Criterion) {
@@ -28,7 +30,7 @@ fn bench_find_old_labels(c: &mut Criterion) {
     let timeouts = CrdsTimeouts::new(
         Pubkey::new_unique(),
         CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, // default_timeout
-        Duration::from_secs(48 * 3600),   // epoch_duration
+        CRDS_GOSSIP_PURGE_DURATION,
         &stakes,
     );
     c.bench_function("bench_find_old_labels", |b| {

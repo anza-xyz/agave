@@ -1,4 +1,5 @@
 use {
+    crate::bank_id::BankId,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
@@ -14,6 +15,7 @@ pub trait AccountsUpdateNotifierInterface: std::fmt::Debug {
     fn notify_account_update(
         &self,
         slot: Slot,
+        bank_id: BankId,
         account: &AccountSharedData,
         txn: &Option<&SanitizedTransaction>,
         pubkey: &Pubkey,

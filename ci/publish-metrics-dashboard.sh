@@ -34,8 +34,9 @@ EOF
 fi
 
 
-ci/channel-info.sh
-eval "$(ci/channel-info.sh)"
+channel_info="$(cargo xtask channel-info --json)"
+EDGE_CHANNEL="$(jq -r '.EDGE_CHANNEL' <<<"$channel_info")"
+BETA_CHANNEL="$(jq -r '.BETA_CHANNEL' <<<"$channel_info")"
 
 case $PUBLISH_CHANNEL in
 edge)

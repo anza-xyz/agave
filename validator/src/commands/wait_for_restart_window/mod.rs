@@ -16,9 +16,13 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_api::config::RpcLeaderScheduleConfig,
+    solana_rpc_client_api::{
+        client_error::ErrorKind, config::RpcLeaderScheduleConfig,
+        custom_error::JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
+        request::RpcError as RpcClientError,
+    },
     std::{
-        collections::VecDeque,
+        collections::{HashMap, VecDeque},
         path::Path,
         time::{Duration, SystemTime},
     },
@@ -235,14 +239,29 @@ pub fn wait_for_restart_window(
                 epoch_info.epoch
             ));
             let first_slot_in_epoch = epoch_info.absolute_slot - epoch_info.slot_index;
-            leader_schedule = rpc_client
-                .get_leader_schedule_with_config(
-                    Some(first_slot_in_epoch),
-                    RpcLeaderScheduleConfig {
-                        identity: Some(identity.to_string()),
-                        ..RpcLeaderScheduleConfig::default()
-                    },
-                )?
+            let leader_schedule_response = match rpc_client.get_leader_schedule_with_config(
+                Some(first_slot_in_epoch),
+                RpcLeaderScheduleConfig {
+                    identity: Some(identity.to_string()),
+                    ..RpcLeaderScheduleConfig::default()
+                },
+            ) {
+                // Swallow just the specific leader schedule error from RPC
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        ErrorKind::RpcError(RpcClientError::RpcResponseError {
+                            code: JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
+                            ..
+                        })
+                    ) =>
+                {
+                    Ok(Some(HashMap::new()))
+                }
+                response => response,
+            }?;
+
+            leader_schedule = leader_schedule_response
                 .ok_or_else(|| {
                     format!("Unable to get leader schedule from slot {first_slot_in_epoch}")
                 })?

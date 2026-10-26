@@ -215,16 +215,16 @@ fn process_spy_results(
     pubkeys: Option<&[Pubkey]>,
 ) {
     if timeout.is_some() {
-        if let Some(num) = num_nodes {
-            if validators.len() < num {
-                let add = if num_nodes_exactly.is_some() {
-                    ""
-                } else {
-                    " or more"
-                };
-                eprintln!("Error: Insufficient validators discovered.  Expecting {num}{add}",);
-                exit(1);
-            }
+        if let Some(num) = num_nodes
+            && validators.len() < num
+        {
+            let add = if num_nodes_exactly.is_some() {
+                ""
+            } else {
+                " or more"
+            };
+            eprintln!("Error: Insufficient validators discovered.  Expecting {num}{add}",);
+            exit(1);
         }
         if let Some(nodes) = pubkeys {
             for node in nodes {
@@ -239,11 +239,11 @@ fn process_spy_results(
             }
         }
     }
-    if let Some(num_nodes_exactly) = num_nodes_exactly {
-        if validators.len() > num_nodes_exactly {
-            eprintln!("Error: Extra nodes discovered.  Expecting exactly {num_nodes_exactly}");
-            exit(1);
-        }
+    if let Some(num_nodes_exactly) = num_nodes_exactly
+        && validators.len() > num_nodes_exactly
+    {
+        eprintln!("Error: Extra nodes discovered.  Expecting exactly {num_nodes_exactly}");
+        exit(1);
     }
 }
 

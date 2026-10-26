@@ -1,24 +1,57 @@
 use {
     bytemuck::{Pod, bytes_of},
     solana_account::Account,
-    solana_instruction::error::InstructionError,
+    solana_compute_budget::compute_budget_limits::{
+        MAX_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+    },
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
+    solana_message::{
+        VersionedMessage,
+        v1::{Message, TransactionConfig},
+    },
     solana_program_test::*,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::TransactionError,
+    solana_zk_elgamal_proof_interface::{
+        self, instruction::*, proof_data::*, state::ProofContextState,
+    },
     solana_zk_sdk::{
         encryption::{
             elgamal::{ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey},
             grouped_elgamal::GroupedElGamal,
             pedersen::{Pedersen, PedersenOpening},
         },
-        zk_elgamal_proof_program::{self, instruction::*, proof_data::*, state::ProofContextState},
+        zk_elgamal_proof_program::*,
     },
     std::mem::size_of,
 };
+
+// Inline proofs plus context-account instructions can exceed the legacy size limit.
+fn proof_transaction(
+    instructions: &[Instruction],
+    payer: &Pubkey,
+    signers: &[&Keypair],
+    blockhash: Hash,
+) -> VersionedTransaction {
+    let message = Message::try_compile_with_config(
+        payer,
+        instructions,
+        blockhash,
+        TransactionConfig {
+            compute_unit_limit: Some(MAX_COMPUTE_UNIT_LIMIT),
+            loaded_accounts_data_size_limit: Some(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get()),
+            ..TransactionConfig::default()
+        },
+    )
+    .unwrap();
+    VersionedTransaction::try_new(VersionedMessage::V1(message), signers).unwrap()
+}
 
 const VERIFY_INSTRUCTION_TYPES: [ProofInstruction; 12] = [
     ProofInstruction::VerifyZeroCiphertext,
@@ -41,7 +74,7 @@ async fn test_zero_balance() {
 
     let zero_ciphertext = elgamal_keypair.pubkey().encrypt(0_u64);
     let success_proof_data =
-        ZeroCiphertextProofData::new(&elgamal_keypair, &zero_ciphertext).unwrap();
+        build_zero_ciphertext_proof_data(&elgamal_keypair, &zero_ciphertext).unwrap();
 
     let mut fail_proof_context = success_proof_data.context;
     fail_proof_context.pubkey = ElGamalPubkey::default().into();
@@ -94,7 +127,7 @@ async fn test_ciphertext_ciphertext_equality() {
         .pubkey()
         .encrypt_with(amount, &destination_opening);
 
-    let success_proof_data = CiphertextCiphertextEqualityProofData::new(
+    let success_proof_data = build_ciphertext_ciphertext_equality_proof_data(
         &source_keypair,
         destination_keypair.pubkey(),
         &source_ciphertext,
@@ -145,13 +178,13 @@ async fn test_ciphertext_ciphertext_equality() {
 async fn test_pubkey_validity() {
     let elgamal_keypair = ElGamalKeypair::new_rand();
 
-    let success_proof_data = PubkeyValidityProofData::new(&elgamal_keypair).unwrap();
+    let success_proof_data = build_pubkey_validity_proof_data(&elgamal_keypair).unwrap();
 
     let incorrect_pubkey = elgamal_keypair.pubkey();
     let incorrect_secret = ElGamalSecretKey::new_rand();
     let incorrect_keypair = ElGamalKeypair::new_for_tests(*incorrect_pubkey, incorrect_secret);
 
-    let fail_proof_data = PubkeyValidityProofData::new(&incorrect_keypair).unwrap();
+    let fail_proof_data = build_pubkey_validity_proof_data(&incorrect_keypair).unwrap();
 
     test_verify_proof_without_context(
         ProofInstruction::VerifyPubkeyValidity,
@@ -192,7 +225,7 @@ async fn test_batched_range_proof_u64() {
     let (commitment_1, opening_1) = Pedersen::new(amount_1);
     let (commitment_2, opening_2) = Pedersen::new(amount_2);
 
-    let success_proof_data = BatchedRangeProofU64Data::new(
+    let success_proof_data = build_batched_range_proof_u64_data(
         vec![&commitment_1, &commitment_2],
         vec![amount_1, amount_2],
         vec![32, 32],
@@ -201,7 +234,7 @@ async fn test_batched_range_proof_u64() {
     .unwrap();
 
     let incorrect_opening = PedersenOpening::new_rand();
-    let fail_proof_data = BatchedRangeProofU64Data::new(
+    let fail_proof_data = build_batched_range_proof_u64_data(
         vec![&commitment_1, &commitment_2],
         vec![amount_1, amount_2],
         vec![32, 32],
@@ -248,7 +281,7 @@ async fn test_batched_range_proof_u128() {
     let (commitment_1, opening_1) = Pedersen::new(amount_1);
     let (commitment_2, opening_2) = Pedersen::new(amount_2);
 
-    let success_proof_data = BatchedRangeProofU128Data::new(
+    let success_proof_data = build_batched_range_proof_u128_data(
         vec![&commitment_1, &commitment_2],
         vec![amount_1, amount_2],
         vec![64, 64],
@@ -257,7 +290,7 @@ async fn test_batched_range_proof_u128() {
     .unwrap();
 
     let incorrect_opening = PedersenOpening::new_rand();
-    let fail_proof_data = BatchedRangeProofU128Data::new(
+    let fail_proof_data = build_batched_range_proof_u128_data(
         vec![&commitment_1, &commitment_2],
         vec![amount_1, amount_2],
         vec![64, 64],
@@ -308,7 +341,7 @@ async fn test_batched_range_proof_u256() {
     let (commitment_3, opening_3) = Pedersen::new(amount_3);
     let (commitment_4, opening_4) = Pedersen::new(amount_4);
 
-    let success_proof_data = BatchedRangeProofU256Data::new(
+    let success_proof_data = build_batched_range_proof_u256_data(
         vec![&commitment_1, &commitment_2, &commitment_3, &commitment_4],
         vec![amount_1, amount_2, amount_3, amount_4],
         vec![64, 64, 64, 64],
@@ -317,7 +350,7 @@ async fn test_batched_range_proof_u256() {
     .unwrap();
 
     let incorrect_opening = PedersenOpening::new_rand();
-    let fail_proof_data = BatchedRangeProofU256Data::new(
+    let fail_proof_data = build_batched_range_proof_u256_data(
         vec![&commitment_1, &commitment_2, &commitment_3, &commitment_4],
         vec![amount_1, amount_2, amount_3, amount_4],
         vec![64, 64, 64, 64],
@@ -363,7 +396,7 @@ async fn test_ciphertext_commitment_equality() {
     let ciphertext = keypair.pubkey().encrypt(amount);
     let (commitment, opening) = Pedersen::new(amount);
 
-    let success_proof_data = CiphertextCommitmentEqualityProofData::new(
+    let success_proof_data = build_ciphertext_commitment_equality_proof_data(
         &keypair,
         &ciphertext,
         &commitment,
@@ -423,7 +456,7 @@ async fn test_grouped_ciphertext_2_handles_validity() {
     let grouped_ciphertext =
         GroupedElGamal::encrypt_with([destination_pubkey, auditor_pubkey], amount, &opening);
 
-    let success_proof_data = GroupedCiphertext2HandlesValidityProofData::new(
+    let success_proof_data = build_grouped_ciphertext_2_handles_validity_proof_data(
         destination_pubkey,
         auditor_pubkey,
         &grouped_ciphertext,
@@ -489,7 +522,7 @@ async fn test_batched_grouped_ciphertext_2_handles_validity() {
     let grouped_ciphertext_hi =
         GroupedElGamal::encrypt_with([destination_pubkey, auditor_pubkey], amount_hi, &opening_hi);
 
-    let success_proof_data = BatchedGroupedCiphertext2HandlesValidityProofData::new(
+    let success_proof_data = build_batched_grouped_ciphertext_2_handles_validity_proof_data(
         destination_pubkey,
         auditor_pubkey,
         &grouped_ciphertext_lo,
@@ -558,7 +591,7 @@ async fn test_grouped_ciphertext_3_handles_validity() {
         &opening,
     );
 
-    let success_proof_data = GroupedCiphertext3HandlesValidityProofData::new(
+    let success_proof_data = build_grouped_ciphertext_3_handles_validity_proof_data(
         source_pubkey,
         destination_pubkey,
         auditor_pubkey,
@@ -626,7 +659,7 @@ async fn test_batched_grouped_ciphertext_3_handles_validity() {
         &opening_hi,
     );
 
-    let success_proof_data = BatchedGroupedCiphertext3HandlesValidityProofData::new(
+    let success_proof_data = build_batched_grouped_ciphertext_3_handles_validity_proof_data(
         source_pubkey,
         destination_pubkey,
         auditor_pubkey,
@@ -707,9 +740,9 @@ async fn test_verify_proof_without_context<T, U>(
 
     // verify a valid proof (wihtout creating a context account)
     let instructions = vec![proof_instruction.encode_verify_proof(None, success_proof_data)];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -717,9 +750,9 @@ async fn test_verify_proof_without_context<T, U>(
 
     // try to verify an invalid proof (without creating a context account)
     let instructions = vec![proof_instruction.encode_verify_proof(None, fail_proof_data)];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -741,9 +774,9 @@ async fn test_verify_proof_without_context<T, U>(
 
         let instruction =
             vec![wrong_instruction_type.encode_verify_proof(None, success_proof_data)];
-        let transaction = Transaction::new_signed_with_payer(
-            &instruction.with_max_compute_unit_limit(),
-            Some(&payer.pubkey()),
+        let transaction = proof_transaction(
+            &instruction,
+            &payer.pubkey(),
             &[payer],
             client.get_latest_blockhash().await.unwrap(),
         );
@@ -822,13 +855,13 @@ async fn test_verify_proof_with_context<T, U>(
             &context_state_account.pubkey(),
             rent.minimum_balance(space),
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), fail_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -849,13 +882,13 @@ async fn test_verify_proof_with_context<T, U>(
             &context_state_account.pubkey(),
             rent.minimum_balance(space),
             (space.checked_sub(1).unwrap()) as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -876,13 +909,13 @@ async fn test_verify_proof_with_context<T, U>(
             &context_state_account.pubkey(),
             rent.minimum_balance(space).checked_sub(1).unwrap(),
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -908,14 +941,14 @@ async fn test_verify_proof_with_context<T, U>(
                 &context_state_account.pubkey(),
                 rent.minimum_balance(space),
                 space as u64,
-                &zk_elgamal_proof_program::id(),
+                &solana_zk_elgamal_proof_interface::id(),
             ),
             wrong_instruction_type
                 .encode_verify_proof(Some(context_state_info), success_proof_data),
         ];
-        let transaction = Transaction::new_signed_with_payer(
-            &instructions.with_max_compute_unit_limit(),
-            Some(&payer.pubkey()),
+        let transaction = proof_transaction(
+            &instructions,
+            &payer.pubkey(),
             &[payer, &context_state_account],
             client.get_latest_blockhash().await.unwrap(),
         );
@@ -937,13 +970,13 @@ async fn test_verify_proof_with_context<T, U>(
             &context_state_account.pubkey(),
             rent.minimum_balance(space),
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -952,9 +985,9 @@ async fn test_verify_proof_with_context<T, U>(
     // try overwriting the context state
     let instructions =
         vec![instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data)];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -981,13 +1014,13 @@ async fn test_verify_proof_with_context<T, U>(
             &context_state_account_and_authority.pubkey(),
             rent.minimum_balance(space),
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account_and_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1047,7 +1080,7 @@ async fn test_verify_proof_from_account_with_context<T, U>(
             &context_state_account.pubkey(),
             rent.minimum_balance(space),
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof_from_account(
             Some(context_state_info),
@@ -1078,7 +1111,7 @@ async fn test_verify_proof_from_account_with_context<T, U>(
             &context_state_account.pubkey(),
             rent.minimum_balance(space),
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof_from_account(
             Some(context_state_info),
@@ -1129,7 +1162,7 @@ async fn test_verify_proof_from_account_with_context<T, U>(
             &context_state_account_and_authority.pubkey(),
             rent.minimum_balance(space),
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof_from_account(
             Some(context_state_info),
@@ -1180,13 +1213,13 @@ async fn test_close_context_state<T, U>(
             &context_state_account.pubkey(),
             rent.minimum_balance(space),
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1201,9 +1234,9 @@ async fn test_close_context_state<T, U>(
         },
         &destination_account.pubkey(),
     );
-    let transaction = Transaction::new_signed_with_payer(
-        &vec![instruction].with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &[instruction],
+        &payer.pubkey(),
         &[payer, &incorrect_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1225,9 +1258,9 @@ async fn test_close_context_state<T, U>(
         },
         &destination_account.pubkey(),
     );
-    let transaction = Transaction::new_signed_with_payer(
-        &vec![instruction.clone()].with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &[instruction],
+        &payer.pubkey(),
         &[payer, &context_state_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1240,7 +1273,7 @@ async fn test_close_context_state<T, U>(
             &context_state_account.pubkey(),
             0_u64, // do not deposit rent
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
         close_context_state(
@@ -1251,9 +1284,9 @@ async fn test_close_context_state<T, U>(
             &destination_account.pubkey(),
         ),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account, &context_state_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1266,7 +1299,7 @@ async fn test_close_context_state<T, U>(
             &context_state_account.pubkey(),
             0_u64,
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
         close_context_state(
@@ -1277,9 +1310,9 @@ async fn test_close_context_state<T, U>(
             &context_state_authority.pubkey(),
         ),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account, &context_state_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1292,7 +1325,7 @@ async fn test_close_context_state<T, U>(
             &context_state_account.pubkey(),
             0_u64,
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
         close_context_state(
@@ -1303,9 +1336,9 @@ async fn test_close_context_state<T, U>(
             &context_state_account.pubkey(),
         ),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account, &context_state_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
@@ -1332,33 +1365,16 @@ async fn test_close_context_state<T, U>(
             &context_state_account_and_authority.pubkey(),
             0_u64,
             space as u64,
-            &zk_elgamal_proof_program::id(),
+            &solana_zk_elgamal_proof_interface::id(),
         ),
         instruction_type.encode_verify_proof(Some(context_state_info), success_proof_data),
         close_context_state(context_state_info, &context_state_account.pubkey()),
     ];
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions.with_max_compute_unit_limit(),
-        Some(&payer.pubkey()),
+    let transaction = proof_transaction(
+        &instructions,
+        &payer.pubkey(),
         &[payer, &context_state_account_and_authority],
         client.get_latest_blockhash().await.unwrap(),
     );
     client.process_transaction(transaction).await.unwrap();
-}
-
-// native programs consumes compute budget, some of ZK program consumes more than default
-// budget (eg 200_000 CUs). To simplify tests, request Max cu for test transactions.
-trait WithMaxComputeUnitLimit {
-    fn with_max_compute_unit_limit(self) -> Self;
-}
-
-impl WithMaxComputeUnitLimit for Vec<solana_instruction::Instruction> {
-    fn with_max_compute_unit_limit(mut self) -> Self {
-        self.push(
-            solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
-                solana_compute_budget::compute_budget_limits::MAX_COMPUTE_UNIT_LIMIT,
-            ),
-        );
-        self
-    }
 }

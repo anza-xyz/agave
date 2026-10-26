@@ -52,10 +52,15 @@ impl Poh {
         self.hashes_per_tick
     }
 
+    pub fn hashes_per_tick_config(&self) -> Option<u64> {
+        (self.hashes_per_tick != LOW_POWER_MODE).then_some(self.hashes_per_tick)
+    }
+
     pub fn target_poh_time(&self, target_ns_per_tick: u64) -> Instant {
         assert!(self.hashes_per_tick > 0);
         let offset_tick_ns = target_ns_per_tick * self.tick_number;
-        let offset_ns = target_ns_per_tick * self.num_hashes / self.hashes_per_tick;
+        let hashes_since_tick = self.hashes_per_tick - self.remaining_hashes_until_tick;
+        let offset_ns = target_ns_per_tick * hashes_since_tick / self.hashes_per_tick;
         self.slot_start_time + Duration::from_nanos(offset_ns + offset_tick_ns)
     }
 
@@ -88,41 +93,6 @@ impl Poh {
             num_hashes,
             hash: self.hash,
         })
-    }
-
-    /// Returns `true` if the batches were recorded successfully and `false` if the batches
-    /// were not recorded because there were not enough hashes remaining to record all `mixins`.
-    /// If `true` is returned, the `entries` vector will be populated with the `PohEntry`s for each
-    /// batch. If `false` is returned, the `entries` vector will not be modified.
-    pub fn record_batches(&mut self, mixins: &[Hash], entries: &mut Vec<PohEntry>) -> bool {
-        let num_mixins = mixins.len() as u64;
-        debug_assert_ne!(num_mixins, 0, "mixins.len() == 0");
-
-        if self.remaining_hashes_until_tick < num_mixins + 1 {
-            return false; // Not enough hashes remaining to record all mixins
-        }
-
-        entries.clear();
-        entries.reserve(mixins.len());
-
-        // The first entry will have the current number of hashes plus one.
-        // All subsequent entries will have 1.
-        let mut num_hashes = self.num_hashes + 1;
-        entries.extend(mixins.iter().map(|mixin| {
-            self.hash = hashv(&[self.hash.as_ref(), mixin.as_ref()]);
-            let entry = PohEntry {
-                num_hashes,
-                hash: self.hash,
-            };
-
-            num_hashes = 1;
-            entry
-        }));
-
-        self.num_hashes = 0;
-        self.remaining_hashes_until_tick -= num_mixins;
-
-        true
     }
 
     pub fn tick(&mut self) -> Option<PohEntry> {
@@ -220,13 +190,30 @@ mod tests {
                 poh.target_poh_time(target_ns_per_tick),
                 poh.slot_start_time + Duration::from_nanos(target_ns_per_tick * 2)
             );
-            poh.num_hashes = 3;
+            assert!(!poh.hash(3));
             assert_eq!(
                 poh.target_poh_time(target_ns_per_tick),
                 poh.slot_start_time
                     + Duration::from_nanos(target_ns_per_tick * 2 + target_ns_per_tick * 3 / 5)
             );
         }
+    }
+
+    #[test]
+    fn test_target_poh_time_after_record() {
+        let target_ns_per_tick = 100;
+        let mut poh = Poh::new(Hash::default(), Some(10));
+        assert!(!poh.hash(3));
+
+        assert_matches!(
+            poh.record(Hash::default()),
+            Some(PohEntry { num_hashes: 4, .. })
+        );
+        assert_eq!(poh.num_hashes, 0);
+        assert_eq!(
+            poh.target_poh_time(target_ns_per_tick),
+            poh.slot_start_time + Duration::from_nanos(40)
+        );
     }
 
     #[test]
@@ -380,35 +367,5 @@ mod tests {
         );
         assert_eq!(poh.remaining_hashes_until_tick, 9);
         assert_eq!(poh.remaining_hashes_in_slot(2), 9);
-    }
-
-    #[test]
-    fn test_poh_record_batches() {
-        let mut poh = Poh::new(Hash::default(), Some(10));
-        assert!(!poh.hash(4));
-
-        let mut entries = Vec::with_capacity(3);
-        let dummy_hashes = [Hash::default(); 4];
-        assert!(poh.record_batches(&dummy_hashes[..3], &mut entries,));
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].num_hashes, 5);
-        assert_eq!(entries[1].num_hashes, 1);
-        assert_eq!(entries[2].num_hashes, 1);
-        assert_eq!(poh.remaining_hashes_until_tick, 3);
-        assert_eq!(poh.remaining_hashes_in_slot(2), 13);
-
-        // Cannot record more than number of remaining hashes
-        assert!(!poh.record_batches(&dummy_hashes[..4], &mut entries,));
-
-        // Cannot record more than number of remaining hashes
-        assert!(!poh.record_batches(&dummy_hashes[..3], &mut entries,));
-
-        // Can record less than number of remaining hashes
-        assert!(poh.record_batches(&dummy_hashes[..2], &mut entries,));
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].num_hashes, 1);
-        assert_eq!(entries[1].num_hashes, 1);
-        assert_eq!(poh.remaining_hashes_until_tick, 1);
-        assert_eq!(poh.remaining_hashes_in_slot(2), 11);
     }
 }

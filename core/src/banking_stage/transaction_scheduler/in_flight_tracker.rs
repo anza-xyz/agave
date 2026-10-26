@@ -38,6 +38,11 @@ impl InFlightTracker {
         &self.cus_in_flight_per_thread
     }
 
+    /// Returns true if any batches are still in flight.
+    pub fn has_in_flight_transactions(&self) -> bool {
+        !self.batches.is_empty()
+    }
+
     /// Tracks number of transactions and CUs in-flight for the `thread_id`.
     /// Returns a `TransactionBatchId` that can be used to stop tracking the batch
     /// when it is complete.
@@ -98,9 +103,11 @@ mod tests {
     #[test]
     fn test_in_flight_tracker() {
         let mut in_flight_tracker = InFlightTracker::new(2);
+        assert!(!in_flight_tracker.has_in_flight_transactions());
 
         // Add a batch with 2 transactions, 10 kCUs to thread 0.
         let batch_id_0 = in_flight_tracker.track_batch(2, 10_000, 0);
+        assert!(in_flight_tracker.has_in_flight_transactions());
         assert_eq!(in_flight_tracker.num_in_flight_per_thread(), &[2, 0]);
         assert_eq!(in_flight_tracker.cus_in_flight_per_thread(), &[10_000, 0]);
 
@@ -117,6 +124,7 @@ mod tests {
         assert_eq!(in_flight_tracker.cus_in_flight_per_thread(), &[0, 15_000]);
 
         in_flight_tracker.complete_batch(batch_id_1);
+        assert!(!in_flight_tracker.has_in_flight_transactions());
         assert_eq!(in_flight_tracker.num_in_flight_per_thread(), &[0, 0]);
         assert_eq!(in_flight_tracker.cus_in_flight_per_thread(), &[0, 0]);
     }

@@ -640,17 +640,14 @@ fn on_epoch_slots_frozen(
     //
     // Thus if we have a duplicate confirmation, but `slot` is pruned, we continue
     // processing it as `epoch_slots_frozen`.
-    if !is_popular_pruned {
-        if let Some(duplicate_confirmed_hash) = duplicate_confirmed_hash {
-            if epoch_slots_frozen_hash != duplicate_confirmed_hash {
-                warn!(
-                    "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, \
-                     but we already saw duplicate confirmation on hash: \
-                     {duplicate_confirmed_hash:?}",
-                );
-            }
-            return vec![];
+    if !is_popular_pruned && let Some(duplicate_confirmed_hash) = duplicate_confirmed_hash {
+        if epoch_slots_frozen_hash != duplicate_confirmed_hash {
+            warn!(
+                "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, but \
+                 we already saw duplicate confirmation on hash: {duplicate_confirmed_hash:?}",
+            );
         }
+        return vec![];
     }
 
     match bank_status {
@@ -900,10 +897,10 @@ pub(crate) fn check_slot_agrees_with_cluster(
     // Avoid duplicate work from multiple of the same DuplicateConfirmed signal. This can
     // happen if we get duplicate confirmed from gossip and from local replay.
     if let SlotStateUpdate::DuplicateConfirmed(state) = &slot_state_update {
-        if let Some(bank_hash) = state.bank_status.bank_hash() {
-            if let Some(true) = fork_choice.is_duplicate_confirmed(&(slot, bank_hash)) {
-                return;
-            }
+        if let Some(bank_hash) = state.bank_status.bank_hash()
+            && let Some(true) = fork_choice.is_duplicate_confirmed(&(slot, bank_hash))
+        {
+            return;
         }
 
         datapoint_info!(
@@ -926,15 +923,13 @@ pub(crate) fn check_slot_agrees_with_cluster(
         );
     }
 
-    if let SlotStateUpdate::EpochSlotsFrozen(epoch_slots_frozen_state) = &slot_state_update {
-        if let Some(old_epoch_slots_frozen_hash) =
+    if let SlotStateUpdate::EpochSlotsFrozen(epoch_slots_frozen_state) = &slot_state_update
+        && let Some(old_epoch_slots_frozen_hash) =
             epoch_slots_frozen_slots.insert(slot, epoch_slots_frozen_state.epoch_slots_frozen_hash)
-        {
-            if old_epoch_slots_frozen_hash == epoch_slots_frozen_state.epoch_slots_frozen_hash {
-                // If EpochSlots has already told us this same hash was frozen, return
-                return;
-            }
-        }
+        && old_epoch_slots_frozen_hash == epoch_slots_frozen_state.epoch_slots_frozen_hash
+    {
+        // If EpochSlots has already told us this same hash was frozen, return
+        return;
     }
 
     let state_changes = slot_state_update.into_state_changes(slot);
@@ -954,7 +949,7 @@ mod test {
     use {
         super::*,
         crate::{consensus::progress_map::ProgressMap, replay_stage::tests::setup_forks_from_tree},
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_runtime::bank_forks::BankForks,
         std::{
             collections::{HashMap, HashSet},
@@ -1616,7 +1611,7 @@ mod test {
             .unwrap()
             .hash();
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         apply_state_changes(
             duplicate_slot,
             &mut heaviest_subtree_fork_choice,
@@ -1699,7 +1694,7 @@ mod test {
         // BankFrozen should mark it down in Blockstore.
         assert!(blockstore.get_bank_hash(duplicate_slot).is_none());
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         apply_state_changes(
             duplicate_slot,
             &mut heaviest_subtree_fork_choice,
@@ -1780,7 +1775,7 @@ mod test {
         )];
         modify_state_changes(our_duplicate_slot_hash, &mut state_changes);
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         apply_state_changes(
             duplicate_slot,
             &mut heaviest_subtree_fork_choice,
@@ -1864,7 +1859,7 @@ mod test {
             || initial_bank_hash,
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             duplicate_slot,
             root,
@@ -1976,7 +1971,7 @@ mod test {
             || Some(slot2_hash),
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             2,
             root,
@@ -2098,7 +2093,7 @@ mod test {
             || Some(slot2_hash),
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             2,
             root,
@@ -2222,7 +2217,7 @@ mod test {
             || Some(slot3_hash),
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             3,
             root,
@@ -2308,7 +2303,7 @@ mod test {
             false,
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             3,
             root,
@@ -2338,7 +2333,7 @@ mod test {
             || Some(slot3_hash),
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             3,
             root,
@@ -2402,7 +2397,7 @@ mod test {
             false,
         );
         let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
+            bounded(1024);
         check_slot_agrees_with_cluster(
             3,
             root,

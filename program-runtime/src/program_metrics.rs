@@ -1,15 +1,11 @@
 #[cfg(feature = "metrics")]
 use solana_svm_timings::ExecuteDetailsTimings;
 use {
-    crate::{
-        loaded_programs::{ForkGraph, IndexImplementation},
-        program_cache_entry::ProgramCacheEntryType,
-    },
+    crate::loaded_programs::ForkGraph,
     log::{debug, log_enabled, trace},
     solana_pubkey::Pubkey,
     std::{
         collections::HashMap,
-        fmt::Write,
         sync::atomic::{AtomicU64, Ordering},
     },
 };
@@ -46,35 +42,33 @@ pub(crate) const EMA_SCALE: u64 = 1_000;
 impl ProgramStatistics {
     fn observe_ema<const WINDOW_SIZE: u64>(counter: &AtomicU64, duration_us: u64) {
         let duration_ema = duration_us.saturating_mul(EMA_SCALE);
-        counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |ema| {
-                // Exponential moving average iteratively is computed as $ema' = alpha *
-                // observation + (1 - alpha) * ema$. This works great for floating point, but we
-                // want integers. For purposes of convenience we also want to really think in terms
-                // of simple moving average window sizes as that is easier to reason about.
-                //
-                // Exponential moving average and simple moving average of window N has a rough
-                // equivalence of `alpha ≈ 2 / (N + 1)`. Slotting this into our original iterative
-                // formula:
-                //
-                // $$ ema' = 2 / (N+1) * observation + (1 - 2/(N+1)) * ema $$
-                //
-                // we get
-                //
-                // $$ ema' = (2*observation)/(N+1) + (N+1-2)*ema/(N+1) $$
-                let (numer, denom) = const { (2, 1 + WINDOW_SIZE) };
-                Some(if ema == 0 {
-                    duration_ema
-                } else {
-                    let weighted_observation = duration_ema.saturating_mul(numer);
-                    let previous_observations = ema.saturating_mul(denom.saturating_sub(numer));
-                    weighted_observation
-                        .saturating_add(previous_observations)
-                        .checked_div(denom)
-                        .expect("unreachable: denom is >= 1")
-                })
-            })
-            .expect("unreachable: closure always returns a Some");
+        counter.update(Ordering::Relaxed, Ordering::Relaxed, |ema| {
+            // Exponential moving average iteratively is computed as $ema' = alpha *
+            // observation + (1 - alpha) * ema$. This works great for floating point, but we
+            // want integers. For purposes of convenience we also want to really think in terms
+            // of simple moving average window sizes as that is easier to reason about.
+            //
+            // Exponential moving average and simple moving average of window N has a rough
+            // equivalence of `alpha ≈ 2 / (N + 1)`. Slotting this into our original iterative
+            // formula:
+            //
+            // $$ ema' = 2 / (N+1) * observation + (1 - 2/(N+1)) * ema $$
+            //
+            // we get
+            //
+            // $$ ema' = (2*observation)/(N+1) + (N+1-2)*ema/(N+1) $$
+            let (numer, denom) = const { (2, 1 + WINDOW_SIZE) };
+            if ema == 0 {
+                duration_ema
+            } else {
+                let weighted_observation = duration_ema.saturating_mul(numer);
+                let previous_observations = ema.saturating_mul(denom.saturating_sub(numer));
+                weighted_observation
+                    .saturating_add(previous_observations)
+                    .checked_div(denom)
+                    .expect("unreachable: denom is >= 1")
+            }
+        });
     }
 
     /// Record information about JIT compilation.
@@ -116,7 +110,7 @@ impl ProgramStatistics {
         let other_interpretations = other.interpreted_invocations.load(ord);
         let this_interpretations = self
             .interpreted_invocations
-            .fetch_add(other.interpreted_invocations.load(ord), ord);
+            .fetch_add(other_interpretations, ord);
         self.total_interpretation_time_us
             .fetch_add(other.total_interpretation_time_us.load(ord), ord);
         if let Some(comp_ema) = ProgramCacheStats::combined_ema::<
@@ -172,6 +166,8 @@ pub struct ProgramCacheStats {
     pub replacements: AtomicU64,
     /// a program was only used once before being unloaded
     pub one_hit_wonders: AtomicU64,
+    /// a program got pruned because it was unloaded for too long or a tombstone
+    pub prunes_stale: AtomicU64,
     /// a program became unreachable in the fork graph because of rerooting
     pub prunes_orphan: AtomicU64,
     /// a program got pruned because it was not recompiled for the next epoch
@@ -195,6 +191,7 @@ impl ProgramCacheStats {
         let lost_insertions = self.lost_insertions.load(Ordering::Relaxed);
         let replacements = self.replacements.load(Ordering::Relaxed);
         let one_hit_wonders = self.one_hit_wonders.load(Ordering::Relaxed);
+        let prunes_stale = self.prunes_stale.load(Ordering::Relaxed);
         let prunes_orphan = self.prunes_orphan.load(Ordering::Relaxed);
         let prunes_environment = self.prunes_environment.load(Ordering::Relaxed);
         let empty_entries = self.empty_entries.load(Ordering::Relaxed);
@@ -203,8 +200,8 @@ impl ProgramCacheStats {
             "Loaded Programs Cache Stats -- Hits: {hits}, Misses: {misses}, Evictions: \
              {evictions}, Reloads: {reloads}, Insertions: {insertions}, Lost-Insertions: \
              {lost_insertions}, Replacements: {replacements}, One-Hit-Wonders: {one_hit_wonders}, \
-             Prunes-Orphan: {prunes_orphan}, Prunes-Environment: {prunes_environment}, Empty: \
-             {empty_entries}, Water-Level: {water_level}"
+             Prunes-Stale: {prunes_stale}, Prunes-Orphan: {prunes_orphan}, Prunes-Environment: \
+             {prunes_environment}, Empty: {empty_entries}, Water-Level: {water_level}"
         );
 
         if log_enabled!(log::Level::Trace) && !self.evictions.is_empty() {
@@ -273,7 +270,9 @@ impl LoadProgramMetrics {
 
 impl<FG: ForkGraph> crate::loaded_programs::ProgramCache<FG> {
     /// Log per-entry statistics for each entry in the global cache.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn output_entry_stats(&self) {
+        use {crate::program_cache_entry::ProgramCacheEntryType, std::fmt::Write};
         // The entry stats can become very verbose after some runtime. Rather than dumping them
         // to the log, we'd rather maintain a continuously updated file instead...
         static ENTRY_STAT_PATH: std::sync::LazyLock<Option<std::ffi::OsString>> =
@@ -283,49 +282,41 @@ impl<FG: ForkGraph> crate::loaded_programs::ProgramCache<FG> {
             return;
         };
         let mut output = String::new();
-        match &self.index {
-            IndexImplementation::V1 { entries, .. } => {
-                for (addr, entry_versions) in entries {
-                    for (idx, entry) in entry_versions.iter().enumerate() {
-                        let entry_ty = match &entry.program {
-                            ProgramCacheEntryType::FailedVerification(_) => "FailedVerification",
-                            ProgramCacheEntryType::Closed => "Closed",
-                            ProgramCacheEntryType::DelayVisibility => "DelayVisibility",
-                            ProgramCacheEntryType::Unloaded(_) => "Unloaded",
-                            ProgramCacheEntryType::Builtin(_) => "Builtin",
-                            #[cfg(not(all(not(target_os = "windows"), target_arch = "x86_64")))]
-                            ProgramCacheEntryType::Loaded(_) => "Loaded",
-                            #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-                            ProgramCacheEntryType::Loaded(executable) => {
-                                if executable.get_compiled_program().is_some() {
-                                    "JitCompiled"
-                                } else {
-                                    "Loaded"
-                                }
-                            }
-                        };
-                        let stats = &entry.stats;
-                        let uses = stats.uses.load(Ordering::Relaxed);
-                        let compiles = stats.compilations.load(Ordering::Relaxed);
-                        let comptime = stats.total_compilation_time_us.load(Ordering::Relaxed);
-                        let comptime_ema =
-                            stats.compilation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
-                        let invokes = stats.jit_invocations.load(Ordering::Relaxed);
-                        let jittime = stats.total_jit_execution_time_us.load(Ordering::Relaxed);
-                        let jittime_ema =
-                            stats.jit_execution_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
-                        let interps = stats.interpreted_invocations.load(Ordering::Relaxed);
-                        let interptime = stats.total_interpretation_time_us.load(Ordering::Relaxed);
-                        let interpema =
-                            stats.interpretation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
-                        let _ = writeln!(
-                            &mut output,
-                            "{addr},{idx},{entry_ty},{uses},{compiles},{comptime},{comptime_ema},\
-                             {invokes},{jittime},{jittime_ema},{interps},{interptime},{interpema}"
-                        );
+        let entries = self.get_flattened_entries_for_tests();
+        for (addr, entry) in entries {
+            let entry_ty = match &entry.program {
+                ProgramCacheEntryType::FailedVerification(_) => "FailedVerification",
+                ProgramCacheEntryType::Closed => "Closed",
+                ProgramCacheEntryType::DelayVisibility => "DelayVisibility",
+                ProgramCacheEntryType::Unloaded(_) => "Unloaded",
+                ProgramCacheEntryType::Builtin(_) => "Builtin",
+                #[cfg(not(all(not(target_os = "windows"), target_arch = "x86_64")))]
+                ProgramCacheEntryType::Loaded(_) => "Loaded",
+                #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+                ProgramCacheEntryType::Loaded(executable) => {
+                    if executable.get_compiled_program().is_some() {
+                        "JitCompiled"
+                    } else {
+                        "Loaded"
                     }
                 }
-            }
+            };
+            let stats = &entry.stats;
+            let uses = stats.uses.load(Ordering::Relaxed);
+            let compiles = stats.compilations.load(Ordering::Relaxed);
+            let comptime = stats.total_compilation_time_us.load(Ordering::Relaxed);
+            let comptime_ema = stats.compilation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+            let invokes = stats.jit_invocations.load(Ordering::Relaxed);
+            let jittime = stats.total_jit_execution_time_us.load(Ordering::Relaxed);
+            let jittime_ema = stats.jit_execution_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+            let interps = stats.interpreted_invocations.load(Ordering::Relaxed);
+            let interptime = stats.total_interpretation_time_us.load(Ordering::Relaxed);
+            let interpema = stats.interpretation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+            let _ = writeln!(
+                &mut output,
+                "{addr},{entry_ty},{uses},{compiles},{comptime},{comptime_ema},{invokes},\
+                 {jittime},{jittime_ema},{interps},{interptime},{interpema}"
+            );
         }
         if let Err(e) = std::fs::write(stat_path, output) {
             log::info!("Writing entry stats to {stat_path:?} failed: {e:?}");

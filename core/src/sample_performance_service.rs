@@ -20,12 +20,10 @@ pub struct SamplePerformanceService {
 
 impl SamplePerformanceService {
     pub fn new(
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let bank_forks = bank_forks.clone();
-
         let thread_hdl = Builder::new()
             .name("solSamplePerf".to_string())
             .spawn(move || {

@@ -206,18 +206,15 @@ impl AncestorRequestStatus {
         response_slot_hashes: Vec<(Slot, Hash)>,
         blockstore: &Blockstore,
     ) -> Option<DuplicateAncestorDecision> {
-        if let Some(did_get_response) = self.sampled_validators.get_mut(from_addr) {
-            if *did_get_response {
-                // If we've already received a response from this validator, return.
-                return None;
-            }
-            // Mark we got a response from this validator already
-            *did_get_response = true;
-            self.num_responses += 1;
-        } else {
-            // If this is not a response from one of the sampled validators, return.
+        // If this is not a response from one of the sampled validators, return.
+        let did_get_response = self.sampled_validators.get_mut(from_addr)?;
+        if *did_get_response {
+            // If we've already received a response from this validator, return.
             return None;
         }
+        // Mark we got a response from this validator already
+        *did_get_response = true;
+        self.num_responses += 1;
 
         let validators_with_same_response = self
             .ancestor_request_responses

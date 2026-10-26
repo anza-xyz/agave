@@ -34,8 +34,6 @@ pub struct ProcessShredsStats {
     num_data_shreds_hist: [usize; 5],
     // If the blockstore already has shreds for the broadcast slot.
     pub num_extant_slots: u64,
-    // When looking up chained merkle root from parent slot fails.
-    pub err_unknown_chained_merkle_root: u64,
     pub(crate) padding_bytes: usize,
     pub(crate) data_bytes: usize,
     pub(crate) num_entries: usize,
@@ -51,6 +49,12 @@ pub struct ShredFetchStats {
     pub(super) num_shreds_merkle_data_chained: usize,
     pub ping_count: usize,
     pub ping_err_verify_count: usize,
+    /// repair pings dropped because buffer is full
+    pub ping_overflow_count: usize,
+    /// repair pongs dropped because send() call failed
+    pub pong_send_error_count: usize,
+    /// repair packets no larger than a ping that failed to deserialize as one
+    pub ping_malformed_count: usize,
     pub(super) index_bad_deserialize: usize,
     pub(super) index_out_of_bounds: usize,
     pub(super) slot_bad_deserialize: usize,
@@ -65,6 +69,8 @@ pub struct ShredFetchStats {
     pub(super) shred_flags_bad_deserialize: usize,
     pub(super) misaligned_last_data_index: usize,
     pub(super) unexpected_data_complete_shred: usize,
+    pub(super) invalid_proof_size: usize,
+    pub(super) invalid_data_size: usize,
     since: Option<Instant>,
     pub overflow_shreds: usize,
 }
@@ -102,11 +108,6 @@ impl ProcessShredsStats {
             ("gen_coding_time", self.gen_coding_elapsed, i64),
             ("coding_send_time", self.coding_send_elapsed, i64),
             ("num_extant_slots", self.num_extant_slots, i64),
-            (
-                "err_unknown_chained_merkle_root",
-                self.err_unknown_chained_merkle_root,
-                i64
-            ),
             ("padding_bytes", self.padding_bytes, i64),
             ("data_bytes", self.data_bytes, i64),
             ("num_data_shreds_07", self.num_data_shreds_hist[0], i64),
@@ -174,6 +175,9 @@ impl ShredFetchStats {
             ),
             ("ping_count", self.ping_count, i64),
             ("ping_err_verify_count", self.ping_err_verify_count, i64),
+            ("ping_overflow_count", self.ping_overflow_count, i64),
+            ("pong_send_error_count", self.pong_send_error_count, i64),
+            ("ping_malformed_count", self.ping_malformed_count, i64),
             ("slot_bad_deserialize", self.slot_bad_deserialize, i64),
             ("index_bad_deserialize", self.index_bad_deserialize, i64),
             ("index_out_of_bounds", self.index_out_of_bounds, i64),
@@ -212,7 +216,9 @@ impl ShredFetchStats {
                 "unexpected_data_complete_shred",
                 self.unexpected_data_complete_shred,
                 i64
-            )
+            ),
+            ("invalid_proof_size", self.invalid_proof_size, i64),
+            ("invalid_data_size", self.invalid_data_size, i64)
         );
         *self = Self {
             since: Some(Instant::now()),
@@ -240,7 +246,6 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             coalesce_exited_rcv_timeout,
             num_data_shreds_hist,
             num_extant_slots,
-            err_unknown_chained_merkle_root,
             padding_bytes,
             data_bytes,
             num_entries,
@@ -260,7 +265,6 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.coalesce_exited_slot_ended += coalesce_exited_slot_ended;
         self.coalesce_exited_rcv_timeout += coalesce_exited_rcv_timeout;
         self.num_extant_slots += num_extant_slots;
-        self.err_unknown_chained_merkle_root += err_unknown_chained_merkle_root;
         self.padding_bytes += padding_bytes;
         self.data_bytes += data_bytes;
         self.num_entries += num_entries;

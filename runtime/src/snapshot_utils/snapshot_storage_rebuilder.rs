@@ -1,212 +1,251 @@
 //! Provides interfaces for rebuilding snapshot storages
 
 use {
-    super::{SnapshotError, SnapshotFrom},
+    super::SnapshotError,
     crate::serde_snapshot::{
-        SerdeObsoleteAccountsMap, reconstruct_single_storage, remap_and_reconstruct_single_storage,
+        SerdeObsoleteAccounts, SerializedAccountsFileId, StorageListItem, StoragesList,
+        remap_append_vec_file,
     },
     agave_fs::FileInfo,
-    crossbeam_channel::{Receiver, Sender, select, unbounded},
     log::*,
-    rayon::{
-        ThreadPool, ThreadPoolBuilder,
-        iter::{IntoParallelIterator, ParallelIterator},
-    },
     solana_accounts_db::{
+        ObsoleteAccounts,
         account_storage::AccountStorageMap,
+        account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsFileId, AtomicAccountsFileId},
-        accounts_file::StorageAccess,
+        accounts_file::AccountsFile,
     },
     solana_clock::Slot,
     std::{
         collections::HashMap,
-        path::PathBuf,
-        str::FromStr as _,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-        time::Instant,
+        sync::{Arc, atomic::Ordering},
+        time::{Duration, Instant},
     },
 };
 
-/// Stores state for rebuilding snapshot storages
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Holds state for rebuilding snapshot storages
 #[derive(Debug)]
 pub(crate) struct SnapshotStorageRebuilder {
-    /// Receiver for unpacked snapshot storage files
-    file_receiver: Receiver<FileInfo>,
-    /// Number of threads to rebuild with
-    num_threads: usize,
-    /// Snapshot storage lengths - from the snapshot file
-    snapshot_storage_lengths: HashMap<Slot, usize>,
     /// Container for storing rebuilt snapshot storages
     storage: AccountStorageMap,
     /// Tracks next append_vec_id
     next_append_vec_id: Arc<AtomicAccountsFileId>,
-    /// Tracker for number of processed slots
-    processed_slot_count: AtomicUsize,
     /// Tracks the number of collisions in AccountsFileId
-    num_collisions: AtomicUsize,
-    /// Rebuild from the snapshot files or archives
-    snapshot_from: SnapshotFrom,
-    /// specify how storages are accessed
-    storage_access: StorageAccess,
-    /// obsolete accounts for all storages
-    obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
+    num_collisions: usize,
+    /// Number of storage slots that have been rebuilt so far
+    processed_slot_count: usize,
 }
 
 impl SnapshotStorageRebuilder {
-    /// Create the SnapshotStorageRebuilder for storing state during rebuilding
-    ///     - pre-allocates data for storage file infos
-    fn new(
-        file_receiver: Receiver<FileInfo>,
-        num_threads: usize,
-        next_append_vec_id: Arc<AtomicAccountsFileId>,
-        snapshot_storage_lengths: HashMap<Slot, usize>,
-        snapshot_from: SnapshotFrom,
-        storage_access: StorageAccess,
-        obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
-    ) -> Self {
-        let storage = AccountStorageMap::with_capacity(snapshot_storage_lengths.len());
+    fn new(next_append_vec_id: Arc<AtomicAccountsFileId>) -> Self {
         Self {
-            file_receiver,
-            num_threads,
-            snapshot_storage_lengths,
-            storage,
+            storage: AccountStorageMap::default(),
             next_append_vec_id,
-            processed_slot_count: AtomicUsize::new(0),
-            num_collisions: AtomicUsize::new(0),
-            snapshot_from,
-            storage_access,
-            obsolete_accounts,
+            num_collisions: 0,
+            processed_slot_count: 0,
         }
     }
 
-    /// Synchronously spawns threads to rebuild snapshot storages returning when they complete
-    ///
-    /// Spawn threads for processing buffered append_vec_files, and then received files
-    pub(crate) fn spawn_rebuilder_threads(
-        snapshot_storage_lengths: HashMap<Slot, usize>,
-        append_vec_files: Vec<FileInfo>,
-        file_receiver: Receiver<FileInfo>,
-        num_threads: usize,
+    /// Rebuilds the account storages from a snapshot archive.
+    pub(crate) fn rebuild_storages_from_snapshot_archive(
+        files: impl IntoIterator<Item = FileInfo>,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
-        snapshot_from: SnapshotFrom,
-        storage_access: StorageAccess,
-        obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
     ) -> Result<AccountStorageMap, SnapshotError> {
-        let rebuilder = Arc::new(SnapshotStorageRebuilder::new(
-            file_receiver,
-            num_threads,
-            next_append_vec_id,
-            snapshot_storage_lengths,
-            snapshot_from,
-            storage_access,
-            obsolete_accounts,
-        ));
+        let mut rebuilder = Self::new(next_append_vec_id);
+        let mut previous_log_time = Instant::now();
 
-        let thread_pool = rebuilder.build_thread_pool();
+        for file_info in files {
+            let filename = file_info.path.file_name().unwrap().to_str().unwrap();
+            if let Some(ParsedStorageFilename {
+                slot,
+                id,
+                format: ParsedStorageFormat::AppendVec,
+            }) = parse_storage_filename(filename)
+            {
+                // A snapshot archive only contains storages in AppendVec format.
+                // And never contains separate ObsoleteAccounts information.
+                // The IDs may overlap though, if the full and incremental snapshots
+                // were generated by different nodes.
+                let (remapped_id, remapped_file_info) = remap_append_vec_file(
+                    slot,
+                    id as SerializedAccountsFileId,
+                    file_info,
+                    &rebuilder.next_append_vec_id,
+                    &mut rebuilder.num_collisions,
+                )?;
+                let accounts_file = AccountsFile::open_append_vec_for_startup(remapped_file_info)?;
+                let storage_entry = AccountStorageEntry::new_existing(
+                    slot,
+                    remapped_id,
+                    accounts_file,
+                    ObsoleteAccounts::default(),
+                );
 
-        if snapshot_from == SnapshotFrom::Archive {
-            // Synchronously process buffered append_vec_files
-            thread_pool.install(|| rebuilder.process_buffered_files(append_vec_files))?;
+                rebuilder.insert_storage(slot, Arc::new(storage_entry))?;
+                rebuilder.processed_slot_count += 1;
+            }
+            rebuilder.maybe_log_progress(&mut previous_log_time);
         }
 
-        // Asynchronously spawn threads to process received append_vec_files
-        let (exit_sender, exit_receiver) = unbounded();
-        for _ in 0..rebuilder.num_threads {
-            Self::spawn_receiver_thread(&thread_pool, exit_sender.clone(), rebuilder.clone());
-        }
-        drop(exit_sender); // drop otherwise loop below will never end
-
-        // wait for asynchronous threads to complete
-        rebuilder.wait_for_completion(exit_receiver)?;
-        Ok(Arc::try_unwrap(rebuilder).unwrap().storage)
+        Ok(rebuilder.storage)
     }
 
-    /// Processes buffered append_vec_files
-    fn process_buffered_files(&self, append_vec_files: Vec<FileInfo>) -> Result<(), SnapshotError> {
-        append_vec_files
-            .into_par_iter()
-            .map(|file_info| self.process_append_vec_file(file_info))
-            .collect::<Result<(), SnapshotError>>()
-    }
+    /// Rebuilds the account storages from local state.
+    pub(crate) fn rebuild_storages_from_local_state(
+        files: impl IntoIterator<Item = FileInfo>,
+        next_append_vec_id: Arc<AtomicAccountsFileId>,
+        mut obsolete_accounts: HashMap<Slot, SerdeObsoleteAccounts>,
+        mut expected_storages: HashMap<(Slot, AccountsFileId), StorageListItem>,
+    ) -> Result<AccountStorageMap, SnapshotError> {
+        let mut rebuilder = Self::new(next_append_vec_id);
+        let mut split_files_with_data = HashMap::new();
+        let mut previous_log_time = Instant::now();
 
-    /// Spawn a single thread to process received append_vec_files
-    fn spawn_receiver_thread(
-        thread_pool: &ThreadPool,
-        exit_sender: Sender<Result<(), SnapshotError>>,
-        rebuilder: Arc<SnapshotStorageRebuilder>,
-    ) {
-        thread_pool.spawn(move || {
-            for file_info in rebuilder.file_receiver.iter() {
-                match rebuilder.process_append_vec_file(file_info) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        exit_sender
-                            .send(Err(err))
-                            .expect("sender should be connected");
-                        return;
+        for file_info in files {
+            rebuilder.maybe_log_progress(&mut previous_log_time);
+            let filename = file_info.path.file_name().unwrap().to_str().unwrap();
+            if let Some(ParsedStorageFilename { slot, id, format }) =
+                parse_storage_filename(filename)
+            {
+                let expected_storage = expected_storages.get(&(slot, id)).ok_or_else(|| {
+                    SnapshotError::RebuildStorages(format!(
+                        "unexpected storage file '{}'",
+                        file_info.path.display(),
+                    ))
+                })?;
+
+                // verify the storage file format matches what we're expecting
+                match (expected_storage, &format) {
+                    (StorageListItem::AppendVec { .. }, ParsedStorageFormat::AppendVec) => {
+                        // all good
+                    }
+                    (StorageListItem::Split { .. }, ParsedStorageFormat::Split(..)) => {
+                        // all good
+                    }
+                    _ => {
+                        // format mismatch between expected and actual
+                        return Err(SnapshotError::RebuildStorages(format!(
+                            "storage file format mismatch! slot: {slot}, id: {id}, actual: \
+                             {format:?}, expected: {expected_storage:?}"
+                        )));
                     }
                 }
-            }
 
-            exit_sender
-                .send(Ok(()))
-                .expect("sender should be connected");
-        })
-    }
+                // Look up this `file_info` in the list of expected storages.
+                // If we have all the files to open the storage, proceed with opening.
+                // Otherwise, continue to the next item in `files`.
+                // E.g. this happens for a SplitFile with both meta and data files, but
+                // we've only seen one of the two files so far.
+                let file_infos = match expected_storage {
+                    StorageListItem::AppendVec { .. } => {
+                        // AppendVec only has one file, proceed with opening.
+                        (file_info, None)
+                    }
+                    StorageListItem::Split {
+                        has_data_file: false,
+                        ..
+                    } => {
+                        // SplitFile without data only has one file, proceed with opening.
+                        (file_info, None)
+                    }
+                    StorageListItem::Split {
+                        has_data_file: true,
+                        ..
+                    } => {
+                        // SplitFile with data has two files, so must ensure
+                        // we've seen both files before opening.
+                        let Some(other) = split_files_with_data.remove(&(slot, id)) else {
+                            // This is the first file seen for this SplitFile (with data).
+                            // Remember it for next time and then continue to the next file.
+                            split_files_with_data.insert((slot, id), file_info);
+                            continue;
+                        };
+                        // If we're here, then we have both files and can open the SplitFile.
+                        // Figure out which file is the meta and which is the data.
+                        let ParsedStorageFormat::Split(split_format) = &format else {
+                            unreachable!();
+                        };
+                        match split_format {
+                            ParsedSplit::Meta => (file_info, Some(other)),
+                            ParsedSplit::Data => (other, Some(file_info)),
+                        }
+                    }
+                };
 
-    /// Process an append_vec_file
-    fn process_append_vec_file(&self, file_info: FileInfo) -> Result<(), SnapshotError> {
-        let filename = file_info.path.file_name().unwrap().to_str().unwrap();
-        if let Ok((slot, append_vec_id)) = get_slot_and_append_vec_id(filename) {
-            if self.snapshot_from == SnapshotFrom::Dir {
+                // If we got here then `file_infos` can be used to open an AccountStorageEntry.
+                // Grab ObsoleteAccounts (if any) for this storage entry now.
+                let obsolete_accounts = obsolete_accounts
+                    .remove(&slot)
+                    .map(|accounts| accounts.into_tuple());
+                let obsolete_accounts =
+                    if let Some((obsolete_accounts, obsolete_id, _bytes)) = obsolete_accounts {
+                        if obsolete_id != id {
+                            return Err(SnapshotError::MismatchedAccountsFileId(id, obsolete_id));
+                        }
+                        obsolete_accounts
+                    } else {
+                        ObsoleteAccounts::default()
+                    };
+                let accounts_file = match expected_storage {
+                    StorageListItem::AppendVec { .. } => {
+                        AccountsFile::open_append_vec(file_infos.0)?
+                    }
+                    StorageListItem::Split { .. } => {
+                        AccountsFile::open_split(file_infos.0, file_infos.1)?
+                    }
+                };
+                let storage_entry =
+                    AccountStorageEntry::new_existing(slot, id, accounts_file, obsolete_accounts);
+
                 // Keep track of the highest append_vec_id in the system, so the future append_vecs
-                // can be assigned to unique IDs.  This is only needed when loading from a snapshot
-                // dir.  When loading from a snapshot archive, the max of the appendvec IDs is
-                // updated in remap_append_vec_file(), which is not in the from_dir route.
-                self.next_append_vec_id
-                    .fetch_max((append_vec_id + 1) as AccountsFileId, Ordering::Relaxed);
+                // can be assigned to unique IDs.  This is only needed when loading from local
+                // state.  When loading from a snapshot archive, the max of the appendvec IDs is
+                // updated in remap_append_vec_file(), which is not in the from_local_state route.
+                rebuilder
+                    .next_append_vec_id
+                    .fetch_max(id + 1, Ordering::Relaxed);
+                rebuilder.insert_storage(slot, Arc::new(storage_entry))?;
+                rebuilder.processed_slot_count += 1;
+                expected_storages.remove(&(slot, id));
             }
-            self.process_complete_slot(slot, file_info)?;
-            self.processed_slot_count.fetch_add(1, Ordering::AcqRel);
         }
-        Ok(())
+
+        if !expected_storages.is_empty() || !split_files_with_data.is_empty() {
+            // we didn't see all the files that we were told to expect, or
+            // we didn't see both meta and data files for these SplitFiles...
+            return Err(SnapshotError::RebuildStorages(format!(
+                "num expected storages that were missing files and not rebuilt: {} (e.g. {:?}), \
+                 num split storages that were missing one of their files: {} (e.g. {:?})",
+                expected_storages.len(),
+                expected_storages.iter().next(),
+                split_files_with_data.len(),
+                split_files_with_data.iter().next(),
+            )));
+        }
+
+        Ok(rebuilder.storage)
     }
 
-    /// Process a slot that has received all storage entries
-    fn process_complete_slot(&self, slot: Slot, file_info: FileInfo) -> Result<(), SnapshotError> {
-        let filename = file_info.path.file_name().unwrap().to_str().unwrap();
-        let (_, old_append_vec_id) = get_slot_and_append_vec_id(filename)?;
-        let Some(&current_len) = self.snapshot_storage_lengths.get(&slot) else {
-            return Err(SnapshotError::RebuildStorages(format!(
-                "account storage file '{filename}' for slot outside of expected range in snapshot"
-            )));
-        };
+    /// Logs the progress of rebuilding storages, if it has been
+    /// `PROGRESS_LOG_INTERVAL` since the previous log.
+    fn maybe_log_progress(&self, previous_log_time: &mut Instant) {
+        let now = Instant::now();
+        if now.duration_since(*previous_log_time) >= PROGRESS_LOG_INTERVAL {
+            info!(
+                "rebuilt storages for {} slots with {} collisions",
+                self.processed_slot_count, self.num_collisions,
+            );
+            *previous_log_time = now;
+        }
+    }
 
-        let storage_entry = match &self.snapshot_from {
-            SnapshotFrom::Archive => remap_and_reconstruct_single_storage(
-                slot,
-                old_append_vec_id,
-                current_len,
-                file_info,
-                &self.next_append_vec_id,
-                &self.num_collisions,
-                self.storage_access,
-            )?,
-            SnapshotFrom::Dir => reconstruct_single_storage(
-                &slot,
-                file_info,
-                current_len,
-                old_append_vec_id as AccountsFileId,
-                self.storage_access,
-                self.obsolete_accounts
-                    .as_ref()
-                    .and_then(|accounts| accounts.remove(&slot)),
-            )?,
-        };
-
+    fn insert_storage(
+        &mut self,
+        slot: Slot,
+        storage_entry: Arc<solana_accounts_db::account_storage_entry::AccountStorageEntry>,
+    ) -> Result<(), SnapshotError> {
         let storage_id = storage_entry.id();
         if let Some(other) = self.storage.insert(slot, storage_entry) {
             Err(SnapshotError::RebuildStorages(format!(
@@ -218,72 +257,303 @@ impl SnapshotStorageRebuilder {
             Ok(())
         }
     }
-
-    /// Wait for the completion of the rebuilding threads
-    fn wait_for_completion(
-        &self,
-        exit_receiver: Receiver<Result<(), SnapshotError>>,
-    ) -> Result<(), SnapshotError> {
-        let num_slots = self.snapshot_storage_lengths.len();
-        let mut last_log_time = Instant::now();
-        loop {
-            select! {
-                recv(exit_receiver) -> maybe_exit_signal => {
-                    match maybe_exit_signal {
-                        Ok(Ok(_)) => continue, // thread exited successfully
-                        Ok(Err(err)) => { // thread exited with error
-                            return Err(err);
-                        }
-                        Err(_) => break, // all threads have exited - channel disconnected
-                    }
-                }
-                default(std::time::Duration::from_millis(100)) => {
-                    let now = Instant::now();
-                    if now.duration_since(last_log_time).as_millis() >= 2000 {
-                        let num_processed_slots = self.processed_slot_count.load(Ordering::Relaxed);
-                        let num_collisions = self.num_collisions.load(Ordering::Relaxed);
-                        info!("rebuilt storages for {num_processed_slots}/{num_slots} slots with {num_collisions} collisions");
-                        last_log_time = now;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Builds thread pool to rebuild with
-    fn build_thread_pool(&self) -> ThreadPool {
-        ThreadPoolBuilder::default()
-            .thread_name(|i| format!("solRbuildSnap{i:02}"))
-            .num_threads(self.num_threads)
-            .build()
-            .expect("new rayon threadpool")
-    }
 }
 
-/// Get the slot and append vec id from the filename
-pub(crate) fn get_slot_and_append_vec_id(filename: &str) -> Result<(Slot, usize), SnapshotError> {
-    let mut parts = filename.splitn(2, '.');
-    let slot = parts.next().and_then(|s| Slot::from_str(s).ok());
-    let id = parts.next().and_then(|s| usize::from_str(s).ok());
+/// Creates a mapping of (Slot, Id) -> StorageListItem from `storages_list`.
+///
+/// When rebuilding storages for fastboot, we take each file on disk and
+/// check it against the expected storages list from the snapshot.
+/// The expected storages list isn't in an ideal format for doing
+/// this lookup.  Hence this fn.
+pub(super) fn storages_list_to_map(
+    storages_list: &StoragesList,
+) -> HashMap<(Slot, AccountsFileId), StorageListItem> {
+    storages_list
+        .items
+        .iter()
+        .map(|item| {
+            let key = match item {
+                StorageListItem::AppendVec { slot, id } => (*slot, *id),
+                StorageListItem::Split { slot, id, .. } => (*slot, *id),
+            };
+            (key, *item)
+        })
+        .collect()
+}
 
-    slot.zip(id)
-        .ok_or_else(|| SnapshotError::InvalidAppendVecPath(PathBuf::from(filename)))
+/// Parses a storage's filename and returns its components.
+///
+/// Returns None if the filename is not a storage.
+pub(crate) fn parse_storage_filename(filename: &str) -> Option<ParsedStorageFilename> {
+    let mut parts = filename.splitn(3, '.');
+    let slot = parts.next().and_then(|part| part.parse().ok())?;
+    let id = parts.next().and_then(|part| part.parse().ok())?;
+
+    let Some(format) = parts.next() else {
+        return Some(ParsedStorageFilename {
+            slot,
+            id,
+            format: ParsedStorageFormat::AppendVec,
+        });
+    };
+
+    let format = match format {
+        "meta" => Some(ParsedStorageFormat::Split(ParsedSplit::Meta)),
+        "data" => Some(ParsedStorageFormat::Split(ParsedSplit::Data)),
+        _ => None,
+    }?;
+
+    Some(ParsedStorageFilename { slot, id, format })
+}
+
+/// Parsed components of a storage filename
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ParsedStorageFilename {
+    pub(crate) slot: Slot,
+    pub(crate) id: AccountsFileId,
+    pub(crate) format: ParsedStorageFormat,
+}
+
+/// Parsed storage format of a storage filename
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum ParsedStorageFormat {
+    AppendVec,
+    Split(ParsedSplit),
+}
+
+/// Parsed split storage format of a storage filename
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum ParsedSplit {
+    Meta,
+    Data,
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_accounts_db::accounts_file::AccountsFile};
+    use {
+        super::*,
+        solana_account::AccountSharedData,
+        solana_accounts_db::{
+            account_storage_entry::AccountStorageEntry,
+            accounts_file::{AccountsFile, AccountsFileProvider},
+        },
+        solana_pubkey::Pubkey,
+        std::{fs, slice},
+    };
 
     #[test]
-    fn test_get_slot_and_append_vec_id() {
-        let expected_slot = 12345;
-        let expected_id = 9987;
-        let (slot, id) =
-            get_slot_and_append_vec_id(&AccountsFile::file_name(expected_slot, expected_id))
-                .unwrap();
-        assert_eq!(expected_slot, slot);
-        assert_eq!(expected_id as usize, id);
+    fn test_parse_storage_filename() {
+        assert!(parse_storage_filename("").is_none());
+        assert!(parse_storage_filename(".").is_none());
+        assert!(parse_storage_filename("..").is_none());
+        assert!(parse_storage_filename("..meta").is_none());
+        assert!(parse_storage_filename("..data").is_none());
+        assert!(parse_storage_filename("...").is_none());
+        assert!(parse_storage_filename(".0").is_none());
+        assert!(parse_storage_filename(".0.meta").is_none());
+        assert!(parse_storage_filename(".0.data").is_none());
+        assert!(parse_storage_filename("0.").is_none());
+        assert!(parse_storage_filename("0.meta").is_none());
+        assert!(parse_storage_filename("0.data").is_none());
+        assert!(parse_storage_filename("0.0.").is_none());
+        assert!(parse_storage_filename("0.0.meta.").is_none());
+        assert!(parse_storage_filename("0.0.data.").is_none());
+        assert!(parse_storage_filename("0.0.0").is_none());
+        assert!(parse_storage_filename("nan.nan").is_none());
+        assert!(parse_storage_filename("-1.-1").is_none());
+        assert!(parse_storage_filename("-1.-1.meta").is_none());
+        assert!(parse_storage_filename("-1.-1.data").is_none());
+        assert!(parse_storage_filename(&format!("{}.0", Slot::MAX as u128 + 1)).is_none());
+        assert!(parse_storage_filename(&format!("0.{}", AccountsFileId::MAX as u64 + 1)).is_none());
+
+        for (slot, id) in [(0, 0), (1, 2), (Slot::MAX, AccountsFileId::MAX)] {
+            {
+                let filename = format!("{slot}.{id}");
+                assert_eq!(
+                    parse_storage_filename(&filename).unwrap(),
+                    ParsedStorageFilename {
+                        slot,
+                        id,
+                        format: ParsedStorageFormat::AppendVec,
+                    },
+                );
+            }
+
+            {
+                let filename = format!("{slot}.{id}.meta");
+                assert_eq!(
+                    parse_storage_filename(&filename).unwrap(),
+                    ParsedStorageFilename {
+                        slot,
+                        id,
+                        format: ParsedStorageFormat::Split(ParsedSplit::Meta),
+                    },
+                );
+            }
+
+            {
+                let filename = format!("{slot}.{id}.data");
+                assert_eq!(
+                    parse_storage_filename(&filename).unwrap(),
+                    ParsedStorageFilename {
+                        slot,
+                        id,
+                        format: ParsedStorageFormat::Split(ParsedSplit::Data),
+                    },
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_rebuild_storages_from_local_state_good() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // create split file, meta-only
+        let slot1 = 101;
+        let id1 = 1;
+        let path1 = temp_dir.path().join(AccountsFile::file_name(slot1, id1));
+        let split1 =
+            AccountStorageEntry::new(temp_dir.path(), slot1, id1, 0, AccountsFileProvider::Split);
+        let split1 = Arc::new(split1);
+        split1.disable_remove_on_drop();
+        split1
+            .accounts
+            .write_accounts(&(
+                slot1,
+                slice::from_ref(&(
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(42, 0, &Pubkey::default()),
+                )),
+            ))
+            .unwrap();
+
+        // create split file, meta and data
+        let slot2 = 102;
+        let id2 = 8;
+        let path2 = temp_dir.path().join(AccountsFile::file_name(slot2, id2));
+        let split2 =
+            AccountStorageEntry::new(temp_dir.path(), slot2, id2, 0, AccountsFileProvider::Split);
+        let split2 = Arc::new(split2);
+        split2.disable_remove_on_drop();
+        split2
+            .accounts
+            .write_accounts(&(
+                slot2,
+                slice::from_ref(&(
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(42, 42_000, &Pubkey::default()),
+                )),
+            ))
+            .unwrap();
+
+        // create append vec
+        let slot3 = 103;
+        let id3 = 5;
+        let path3 = temp_dir.path().join(AccountsFile::file_name(slot3, id3));
+        let av3 = AccountStorageEntry::new(
+            temp_dir.path(),
+            slot3,
+            id3,
+            10_000,
+            AccountsFileProvider::AppendVec,
+        );
+        let av3 = Arc::new(av3);
+        av3.disable_remove_on_drop();
+        av3.accounts
+            .write_accounts(&(
+                slot3,
+                slice::from_ref(&(
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(42, 0, &Pubkey::default()),
+                )),
+            ))
+            .unwrap();
+
+        let files = [
+            path1.with_added_extension("meta"),
+            path2.with_added_extension("data"),
+            path2.with_added_extension("meta"),
+            path3,
+        ]
+        .into_iter()
+        .map(|path| FileInfo::new_from_path(path).unwrap());
+        let storages_list = StoragesList::new_from_storages(&[split1, split2, av3]);
+        let storages_map = storages_list_to_map(&storages_list);
+
+        let next_id = Arc::new(AtomicAccountsFileId::new(0));
+        let storages = SnapshotStorageRebuilder::rebuild_storages_from_local_state(
+            files,
+            next_id.clone(),
+            HashMap::new(),
+            storages_map,
+        )
+        .unwrap();
+        assert_eq!(next_id.load(Ordering::Relaxed), 9);
+        assert_eq!(storages.len(), 3);
+        assert_eq!(storages.get(&slot1).unwrap().id(), id1);
+        assert_eq!(storages.get(&slot2).unwrap().id(), id2);
+        assert_eq!(storages.get(&slot3).unwrap().id(), id3);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected storages that were missing files and not rebuilt")]
+    fn test_rebuild_storages_from_local_state_bad_no_files() {
+        SnapshotStorageRebuilder::rebuild_storages_from_local_state(
+            [],
+            Arc::new(AtomicAccountsFileId::new(0)),
+            HashMap::new(),
+            HashMap::from([(
+                (123, 456),
+                StorageListItem::AppendVec { slot: 123, id: 456 },
+            )]),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "expected storages that were missing files and not rebuilt")]
+    fn test_rebuild_storages_from_local_state_bad_missing_split_data() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("123.456.meta");
+        fs::write(&path, b"junk").unwrap();
+        let meta = FileInfo::new_from_path(&path).unwrap();
+        SnapshotStorageRebuilder::rebuild_storages_from_local_state(
+            [meta],
+            Arc::new(AtomicAccountsFileId::new(0)),
+            HashMap::new(),
+            HashMap::from([(
+                (123, 456),
+                StorageListItem::Split {
+                    slot: 123,
+                    id: 456,
+                    has_data_file: true,
+                },
+            )]),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "expected storages that were missing files and not rebuilt")]
+    fn test_rebuild_storages_from_local_state_bad_missing_split_meta() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("123.456.data");
+        fs::write(&path, b"junk").unwrap();
+        let data = FileInfo::new_from_path(&path).unwrap();
+        SnapshotStorageRebuilder::rebuild_storages_from_local_state(
+            [data],
+            Arc::new(AtomicAccountsFileId::new(0)),
+            HashMap::new(),
+            HashMap::from([(
+                (123, 456),
+                StorageListItem::Split {
+                    slot: 123,
+                    id: 456,
+                    has_data_file: true,
+                },
+            )]),
+        )
+        .unwrap();
     }
 }

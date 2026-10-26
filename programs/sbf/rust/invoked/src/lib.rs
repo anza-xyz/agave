@@ -12,7 +12,7 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
     solana_pubkey::Pubkey,
     solana_sbf_rust_invoked_dep::*,
-    solana_sdk_ids::loader_v4,
+    solana_sdk_ids::bpf_loader_upgradeable,
     solana_system_interface::instruction as system_instruction,
 };
 
@@ -66,7 +66,10 @@ fn process_instruction(
             assert!(!accounts[INVOKED_ARGUMENT_INDEX].executable);
 
             assert_eq!(accounts[INVOKED_PROGRAM_INDEX].key, program_id);
-            assert_eq!(accounts[INVOKED_PROGRAM_INDEX].owner, &loader_v4::id());
+            assert_eq!(
+                accounts[INVOKED_PROGRAM_INDEX].owner,
+                &bpf_loader_upgradeable::id()
+            );
             assert!(!accounts[INVOKED_PROGRAM_INDEX].is_signer);
             assert!(!accounts[INVOKED_PROGRAM_INDEX].is_writable);
             assert!(accounts[INVOKED_PROGRAM_INDEX].executable);

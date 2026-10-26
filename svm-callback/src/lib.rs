@@ -1,7 +1,8 @@
 #![cfg(feature = "agave-unstable-api")]
 use {
-    solana_account::AccountSharedData, solana_clock::Slot,
-    solana_precompile_error::PrecompileError, solana_pubkey::Pubkey,
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_precompile_error::PrecompileError,
+    solana_pubkey::Pubkey,
 };
 
 /// Callback used by InvokeContext in SVM
@@ -32,19 +33,20 @@ pub trait InvokeContextCallback {
     }
 }
 
-/// Runtime callbacks for transaction processing.
-pub trait TransactionProcessingCallback: InvokeContextCallback {
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
-
-    fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
-    }
+/// Account loading for SVM.
+pub trait AccountLoadCallback {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData>;
 }
 
-/// The state the account is in initially, before transaction processing
-#[derive(Debug)]
-pub enum AccountState<'a> {
-    /// This account is dead, and will be created by this transaction
-    Dead,
-    /// This account is alive, and already existed prior to this transaction
-    Alive(&'a AccountSharedData),
+/// Runtime callbacks for transaction processing.
+pub trait TransactionProcessingCallback: AccountLoadCallback {
+    fn get_account_shared_data_if(
+        &self,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        self.get_account_shared_data(pubkey).filter(|account| {
+            load_filter(account.lamports(), account.owner(), account.data().len())
+        })
+    }
 }

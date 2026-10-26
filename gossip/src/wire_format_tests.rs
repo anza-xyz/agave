@@ -4,21 +4,22 @@
 mod tests {
 
     use {
-        crate::protocol::Protocol,
-        serde::Serialize,
+        crate::protocol::{Protocol, deserialize_protocol},
         solana_net_utils::tooling_for_tests::{hexdump, validate_packet_format},
         solana_sanitize::Sanitize,
         std::path::PathBuf,
     };
 
     fn parse_gossip(bytes: &[u8]) -> anyhow::Result<Protocol> {
-        let pkt: Protocol = solana_perf::packet::deserialize_from_with_limit(bytes)?;
+        let pkt = deserialize_protocol(bytes)?;
         pkt.sanitize()?;
         Ok(pkt)
     }
 
-    fn serialize<T: Serialize>(pkt: T) -> Vec<u8> {
-        bincode::serialize(&pkt).unwrap()
+    fn serialize<T: wincode::SchemaWrite<wincode::config::DefaultConfig, Src = T>>(
+        pkt: T,
+    ) -> Vec<u8> {
+        wincode::serialize(&pkt).unwrap()
     }
 
     fn find_differences(a: &[u8], b: &[u8]) -> Option<usize> {

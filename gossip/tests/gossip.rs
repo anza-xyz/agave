@@ -8,15 +8,15 @@ use {
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
         crds::Cursor,
+        epoch_specs::{EpochSpecs, TestEpochSpecs},
         gossip_service::GossipService,
         node::Node,
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
-    solana_perf::packet::Packet,
+    solana_perf::packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
@@ -25,7 +25,7 @@ use {
     std::{
         net::UdpSocket,
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
@@ -46,6 +46,7 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
         None,
         test_node.sockets.gossip,
         None,
+        None,
         true, // should_check_duplicate_instance
         None,
         exit,
@@ -61,7 +62,7 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
 fn test_node_with_bank(
     node_keypair: Arc<Keypair>,
     exit: Arc<AtomicBool>,
-    bank_forks: Arc<RwLock<BankForks>>,
+    epoch_specs: Box<dyn EpochSpecs>,
 ) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
     let mut test_node = Node::new_localhost_with_pubkey(&node_keypair.pubkey());
     let cluster_info = Arc::new(ClusterInfo::new(
@@ -71,8 +72,9 @@ fn test_node_with_bank(
     ));
     let gossip_service = GossipService::new(
         &cluster_info,
-        Some(bank_forks),
+        Some(epoch_specs),
         test_node.sockets.gossip,
+        None,
         None,
         true, // should_check_duplicate_instance
         None,
@@ -137,16 +139,12 @@ fn retransmit_to(
             .filter(|addr| socket_addr_space.check(addr))
             .collect()
     };
-    match multi_target_send(socket, data, &dests) {
-        Ok(()) => (),
-        Err(SendPktsError::IoError(ioerr, num_failed)) => {
-            error!(
-                "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
-                ioerr,
-                num_failed,
-                dests.len(),
-            );
-        }
+    if let Err(SendPktsError::IoError(ioerr)) = multi_target_send(socket, data, &dests) {
+        error!(
+            "retransmit_to multi_target_send error: {:?}, {} destinations",
+            ioerr,
+            dests.len(),
+        );
     }
 }
 
@@ -198,7 +196,7 @@ fn gossip_star() {
             yd.set_wallclock(timestamp());
             let xv = &listen[x].0;
             xv.insert_info(yd);
-            trace!("star leader {}", &xv.id());
+            trace!("star leader {}", xv.id());
         }
     });
 }
@@ -253,13 +251,12 @@ pub fn cluster_info_retransmit() {
         sleep(Duration::from_secs(1));
     }
     assert!(done);
-    let mut p = Packet::default();
-    p.meta_mut().size = 10;
+    let data = [0u8; 10];
     let peers = c1.tvu_peers(ContactInfo::clone);
     let retransmit_peers: Vec<_> = peers.iter().collect();
     retransmit_to(
         &retransmit_peers,
-        p.data(..).unwrap(),
+        &data,
         &tn1,
         false,
         &SocketAddrSpace::Unspecified,
@@ -267,9 +264,9 @@ pub fn cluster_info_retransmit() {
     let res: Vec<_> = [tn1, tn2, tn3]
         .into_par_iter()
         .map(|s| {
-            let mut p = Packet::default();
+            let mut buffer = [0u8; PACKET_DATA_SIZE];
             s.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-            let res = s.recv_from(p.buffer_mut());
+            let res = s.recv_from(&mut buffer);
             res.is_err() //true if failed to receive the retransmit packet
         })
         .collect();
@@ -290,6 +287,7 @@ pub fn cluster_info_scale() {
         solana_perf::test_tx::test_tx,
         solana_runtime::{
             bank::Bank,
+            bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
     };
@@ -310,6 +308,14 @@ pub fn cluster_info_scale() {
     );
     let bank0 = Bank::new_for_tests(&genesis_config_info.genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    let slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
+    let epoch_specs: Box<dyn EpochSpecs> = Box::new(TestEpochSpecs {
+        slots_in_epoch,
+        staked_nodes: root_bank.current_epoch_staked_nodes(),
+        enforce_correct_proof_size: true,
+        root_slot: root_bank.slot(),
+    });
 
     let nodes: Vec<_> = vote_keypairs
         .into_iter()
@@ -317,7 +323,7 @@ pub fn cluster_info_scale() {
             test_node_with_bank(
                 Arc::new(keypairs.node_keypair),
                 exit.clone(),
-                bank_forks.clone(),
+                epoch_specs.clone_box(),
             )
         })
         .collect();

@@ -1,6 +1,7 @@
 use {
     solana_account_info::AccountInfo,
-    solana_instruction::{Instruction, error::InstructionError},
+    solana_instruction::Instruction,
+    solana_instruction_error::InstructionError,
     solana_program_error::ProgramResult,
     solana_program_test::{ProgramTest, processor},
     solana_pubkey::Pubkey,

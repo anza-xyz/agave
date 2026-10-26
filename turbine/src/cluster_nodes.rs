@@ -1,10 +1,9 @@
 use {
     crate::{broadcast_stage::BroadcastStage, retransmit_stage::RetransmitStage},
-    agave_feature_set::{self as feature_set},
     itertools::Either,
     lazy_lru::LruCache,
-    rand::{Rng, RngCore, SeedableRng, seq::SliceRandom},
-    rand_chacha::{ChaCha8Rng, ChaChaRng},
+    rand::{Rng, SeedableRng, seq::SliceRandom},
+    rand_chacha::ChaCha8Rng,
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_gossip::{
@@ -85,7 +84,6 @@ pub struct ClusterNodes<T> {
     index: HashMap<Pubkey, /*index:*/ usize>,
     // Shuffles by weights = stakes
     weighted_shuffle: WeightedShuffle,
-    use_cha_cha_8: bool,
     _phantom: PhantomData<T>,
 }
 
@@ -199,46 +197,9 @@ impl<T> ClusterNodes<T> {
     }
 }
 
-/// Encapsulates the possible RNG implementations for turbine.
-/// This was implemented for the transition from ChaCha20 to ChaCha8.
-enum TurbineRng {
-    Legacy(ChaChaRng),
-    ChaCha8(ChaCha8Rng),
-}
-
-impl TurbineRng {
-    /// Create a new seeded TurbineRng of the correct implementation
-    fn new_seeded(leader: &Pubkey, shred: &ShredId, use_cha_cha_8: bool) -> Self {
-        let seed = shred.seed(leader);
-        if use_cha_cha_8 {
-            TurbineRng::ChaCha8(ChaCha8Rng::from_seed(seed))
-        } else {
-            TurbineRng::Legacy(ChaChaRng::from_seed(seed))
-        }
-    }
-}
-
-impl RngCore for TurbineRng {
-    fn next_u32(&mut self) -> u32 {
-        match self {
-            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.next_u32(),
-            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.next_u32(),
-        }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        match self {
-            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.next_u64(),
-            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.next_u64(),
-        }
-    }
-
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        match self {
-            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.fill_bytes(dest),
-            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.fill_bytes(dest),
-        }
-    }
+/// Constructs Turbine RNG for a given shred and leader.
+fn turbine_rng(leader: &Pubkey, shred: &ShredId) -> ChaCha8Rng {
+    ChaCha8Rng::from_seed(shred.seed(leader))
 }
 
 impl ClusterNodes<BroadcastStage> {
@@ -246,13 +207,12 @@ impl ClusterNodes<BroadcastStage> {
         cluster_info: &ClusterInfo,
         cluster_type: ClusterType,
         stakes: &HashMap<Pubkey, u64>,
-        use_cha_cha_8: bool,
     ) -> Self {
-        new_cluster_nodes(cluster_info, cluster_type, stakes, use_cha_cha_8)
+        new_cluster_nodes(cluster_info, cluster_type, stakes)
     }
 
     pub(crate) fn get_broadcast_peer(&self, shred: &ShredId) -> Option<&ContactInfo> {
-        let mut rng = TurbineRng::new_seeded(&self.pubkey, shred, self.use_cha_cha_8);
+        let mut rng = turbine_rng(&self.pubkey, shred);
         let index = self.weighted_shuffle.first(&mut rng)?;
         self.nodes[index].contact_info()
     }
@@ -278,7 +238,7 @@ impl ClusterNodes<RetransmitStage> {
             if let Some(index) = self.index.get(slot_leader) {
                 weighted_shuffle.remove_index(*index);
             }
-            let mut rng = TurbineRng::new_seeded(slot_leader, shred, self.use_cha_cha_8);
+            let mut rng = turbine_rng(slot_leader, shred);
             let (index, peers) = get_retransmit_peers(
                 fanout,
                 |k| self.nodes[k].pubkey() == &self.pubkey,
@@ -296,6 +256,7 @@ impl ClusterNodes<RetransmitStage> {
 
     // Returns the parent node in the turbine broadcast tree.
     // Returns None if the node is the root of the tree or if it is not staked.
+    #[cfg(test)]
     pub(crate) fn get_retransmit_parent(
         &self,
         leader: &Pubkey,
@@ -327,7 +288,7 @@ impl ClusterNodes<RetransmitStage> {
             weighted_shuffle.remove_index(index);
         }
 
-        let mut rng = TurbineRng::new_seeded(leader, shred, self.use_cha_cha_8);
+        let mut rng = turbine_rng(leader, shred);
         // Only need shuffled nodes until this node itself.
         let nodes: Vec<_> = weighted_shuffle
             .shuffle(&mut rng)
@@ -343,7 +304,6 @@ pub fn new_cluster_nodes<T: 'static>(
     cluster_info: &ClusterInfo,
     cluster_type: ClusterType,
     stakes: &HashMap<Pubkey, u64>,
-    use_cha_cha_8: bool,
 ) -> ClusterNodes<T> {
     let self_pubkey = cluster_info.id();
     let nodes = get_nodes(cluster_info, cluster_type, stakes);
@@ -364,7 +324,6 @@ pub fn new_cluster_nodes<T: 'static>(
         index,
         weighted_shuffle,
         _phantom: PhantomData,
-        use_cha_cha_8,
     }
 }
 
@@ -529,6 +488,7 @@ fn get_retransmit_peers<T>(
 
 // Returns the parent node in the turbine broadcast tree.
 // Returns None if the node is the root of the tree.
+#[cfg(test)]
 fn get_retransmit_parent<T: Copy>(
     fanout: usize,
     index: usize, // Local node's index within the nodes slice.
@@ -582,11 +542,6 @@ impl<T: 'static> ClusterNodesCache<T> {
             let cache = self.cache.read().unwrap();
             get_epoch_entry(&cache, epoch, self.ttl)
         };
-        let use_cha_cha_8 = check_feature_activation(
-            &feature_set::switch_to_chacha8_turbine::ID,
-            shred_slot,
-            root_bank,
-        );
         // Fall back to exclusive lock if there is a cache miss or the cached
         // entry has already expired.
         let entry: Arc<OnceLock<_>> = entry.unwrap_or_else(|| {
@@ -612,12 +567,8 @@ impl<T: 'static> ClusterNodesCache<T> {
                     inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
                     Arc::<HashMap<Pubkey, /*stake:*/ u64>>::default()
                 });
-            let nodes = new_cluster_nodes::<T>(
-                cluster_info,
-                root_bank.cluster_type(),
-                &epoch_staked_nodes,
-                use_cha_cha_8,
-            );
+            let nodes =
+                new_cluster_nodes::<T>(cluster_info, root_bank.cluster_type(), &epoch_staked_nodes);
             (Instant::now(), Arc::new(nodes))
         });
         nodes.clone()
@@ -703,7 +654,7 @@ pub fn make_test_cluster<R: Rng>(
     {
         let now = timestamp();
         let keypair = Keypair::new();
-        let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
+        let mut gossip_crds = cluster_info.gossip.crds.write();
         // First node is pushed to crds table by ClusterInfo constructor.
         for node in nodes.iter().skip(1) {
             let node = CrdsData::from(node);
@@ -717,20 +668,6 @@ pub fn make_test_cluster<R: Rng>(
     (nodes, stakes, cluster_info)
 }
 
-// Returns true if the feature is effective for the shred slot.
-#[must_use]
-pub fn check_feature_activation(feature: &Pubkey, shred_slot: Slot, root_bank: &Bank) -> bool {
-    match root_bank.feature_set.activated_slot(feature) {
-        None => false,
-        Some(feature_slot) => {
-            let epoch_schedule = root_bank.epoch_schedule();
-            let feature_epoch = epoch_schedule.get_epoch(feature_slot);
-            let shred_epoch = epoch_schedule.get_epoch(shred_slot);
-            feature_epoch < shred_epoch
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -738,16 +675,15 @@ mod tests {
         itertools::Itertools,
         rand::prelude::IndexedRandom as _,
         solana_hash::Hash as SolanaHash,
-        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        solana_ledger::shred::{ProcessShredsStats, Shredder},
         std::{collections::VecDeque, fmt::Debug, hash::Hash},
         test_case::test_case,
     };
 
-    #[test_case(true /* chacha8 */)]
-    #[test_case(false /* chacha20 */)]
     /// Test that we provide a complete coverage
     /// of all the nodes with weighted shuffles
-    fn test_complete_cluster_coverage(use_cha_cha_8: bool) {
+    #[test]
+    fn test_complete_cluster_coverage() {
         let fanout = 10;
         let mut rng = rand::rng();
 
@@ -755,12 +691,8 @@ mod tests {
         let slot_leader = cluster_info.id();
 
         // create a test cluster
-        let cluster_nodes = new_cluster_nodes::<BroadcastStage>(
-            &cluster_info,
-            ClusterType::Development,
-            &stakes,
-            use_cha_cha_8,
-        );
+        let cluster_nodes =
+            new_cluster_nodes::<BroadcastStage>(&cluster_info, ClusterType::Development, &stakes);
 
         let shred = Shredder::new(2, 1, 0, 0)
             .unwrap()
@@ -771,7 +703,6 @@ mod tests {
                 SolanaHash::default(),
                 0,
                 0,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .0
@@ -779,7 +710,7 @@ mod tests {
             .unwrap();
 
         let mut weighted_shuffle = cluster_nodes.weighted_shuffle.clone();
-        let mut chacha_rng = TurbineRng::new_seeded(&slot_leader, &shred.id(), use_cha_cha_8);
+        let mut chacha_rng = turbine_rng(&slot_leader, &shred.id());
 
         let shuffled_nodes: Vec<&Node> = weighted_shuffle
             .shuffle(&mut chacha_rng)
@@ -814,7 +745,6 @@ mod tests {
                     &cluster_info,
                     ClusterType::Development,
                     &stakes,
-                    use_cha_cha_8,
                 );
                 peer_cluster_nodes.pubkey = *peer.pubkey();
                 // check that the parent computed by the child matches actual parent.
@@ -845,12 +775,8 @@ mod tests {
             cluster_info.tvu_peers(GossipContactInfo::clone).len(),
             nodes.len() - 1
         );
-        let cluster_nodes = new_cluster_nodes::<RetransmitStage>(
-            &cluster_info,
-            ClusterType::Development,
-            &stakes,
-            false,
-        );
+        let cluster_nodes =
+            new_cluster_nodes::<RetransmitStage>(&cluster_info, ClusterType::Development, &stakes);
         // All nodes with contact-info should be in the index.
         // Staked nodes with no contact-info should be included.
         assert!(cluster_nodes.nodes.len() > nodes.len());
@@ -879,9 +805,8 @@ mod tests {
         }
     }
 
-    #[test_case(true)/*ChaCha8 */]
-    #[test_case(false)/*ChaCha20 */]
-    fn test_cluster_nodes_broadcast(use_cha_cha_8: bool) {
+    #[test]
+    fn test_cluster_nodes_broadcast() {
         let mut rng = rand::rng();
         let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
         // ClusterInfo::tvu_peers excludes the node itself.
@@ -889,12 +814,8 @@ mod tests {
             cluster_info.tvu_peers(GossipContactInfo::clone).len(),
             nodes.len() - 1
         );
-        let cluster_nodes = ClusterNodes::<BroadcastStage>::new(
-            &cluster_info,
-            ClusterType::Development,
-            &stakes,
-            use_cha_cha_8,
-        );
+        let cluster_nodes =
+            ClusterNodes::<BroadcastStage>::new(&cluster_info, ClusterType::Development, &stakes);
         // All nodes with contact-info should be in the index.
         // Excluding this node itself.
         // Staked nodes with no contact-info should be included.

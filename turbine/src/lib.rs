@@ -1,8 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 
-mod addr_cache;
-
 pub mod broadcast_stage;
 
 pub mod cluster_nodes;
@@ -11,9 +9,7 @@ pub mod retransmit_stage;
 
 pub mod sigverify_shreds;
 
-pub mod xdp_sender;
-
-pub use crate::xdp_sender::XdpSender;
+pub use solana_net_utils::PinnedXdpSender as XdpSender;
 
 #[macro_use]
 extern crate log;

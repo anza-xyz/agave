@@ -8,9 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -20,9 +23,11 @@ name = "solana_merkle_tree"
 agave-unstable-api = []
 
 [dependencies]
-fast-math = { workspace = true }
 solana-hash = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
+
+[lints]
+workspace = true
