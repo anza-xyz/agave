@@ -358,13 +358,16 @@ impl AccountsCache {
         let slot_cache = {
             // Held across the cache removal so a concurrent `add_root` can't re-track this bank
             let mut unflushed_roots = self.unflushed_roots.write().unwrap();
+            // Held across the cache removal so a concurrent `store` can't map the slot in between
+            let mut bank_ids = self.bank_ids.write().unwrap();
             // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
             unflushed_roots.remove(&bank_id);
             let slot_cache = self
                 .cache
                 .remove(&bank_id)
                 .map(|(_, slot_cache)| slot_cache)?;
-            self.bank_ids.write().unwrap().remove(&slot_cache.slot);
+            let removed_bank_id = bank_ids.remove(&slot_cache.slot);
+            debug_assert_eq!(removed_bank_id, Some(bank_id));
             slot_cache
         };
 
