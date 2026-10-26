@@ -1,6 +1,7 @@
 use {
     crate::cli::{
-        CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult, sign_transaction,
+        CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+        message_into_signed_transaction,
     },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_account::state_traits::StateMutWincode as _,
@@ -598,7 +599,7 @@ async fn process_create_lookup_table(
     ));
 
     let keypairs: Vec<&dyn Signer> = vec![config.signers[0], payer_signer];
-    let tx = sign_transaction(message, &keypairs, blockhash, false)?;
+    let tx = message_into_signed_transaction(message, &keypairs, blockhash, false)?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -661,7 +662,7 @@ async fn process_freeze_lookup_table(
         Some(&config.signers[0].pubkey()),
     ));
 
-    let tx = sign_transaction(
+    let tx = message_into_signed_transaction(
         message,
         &[config.signers[0], authority_signer],
         blockhash,
@@ -730,7 +731,7 @@ async fn process_extend_lookup_table(
         Some(&config.signers[0].pubkey()),
     ));
 
-    let tx = sign_transaction(
+    let tx = message_into_signed_transaction(
         message,
         &[config.signers[0], authority_signer, payer_signer],
         blockhash,
@@ -797,7 +798,7 @@ async fn process_deactivate_lookup_table(
         Some(&config.signers[0].pubkey()),
     ));
 
-    let tx = sign_transaction(
+    let tx = message_into_signed_transaction(
         message,
         &[config.signers[0], authority_signer],
         blockhash,
@@ -864,7 +865,7 @@ async fn process_close_lookup_table(
         Some(&config.signers[0].pubkey()),
     ));
 
-    let tx = sign_transaction(
+    let tx = message_into_signed_transaction(
         message,
         &[config.signers[0], authority_signer],
         blockhash,

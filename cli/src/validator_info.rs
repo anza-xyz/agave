@@ -1,6 +1,9 @@
 use {
     crate::{
-        cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult, sign_transaction},
+        cli::{
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            message_into_signed_transaction,
+        },
         compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
@@ -430,7 +433,7 @@ pub async fn process_publish_validator_info(
         config.commitment,
     )
     .await?;
-    let tx = sign_transaction(message, &signers, latest_blockhash, false)?;
+    let tx = message_into_signed_transaction(message, &signers, latest_blockhash, false)?;
     let signature_str = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,

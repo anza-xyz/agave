@@ -42,7 +42,7 @@ pub const DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS: &str = "5";
 const CHECKED: bool = true;
 
 /// Sign a message, allowing missing signatures only for offline sign-only output.
-pub(crate) fn sign_transaction(
+pub(crate) fn message_into_signed_transaction(
     message: VersionedMessage,
     signers: &[&dyn Signer],
     blockhash: Hash,
@@ -1991,7 +1991,8 @@ mod tests {
         )];
         let blockhash = Hash::new_unique();
         let message = create_message(&instructions, &payer.pubkey());
-        let partial = sign_transaction(message.clone(), &[&from], blockhash, true).unwrap();
+        let partial =
+            message_into_signed_transaction(message.clone(), &[&from], blockhash, true).unwrap();
         let output = solana_cli_output::return_signers_data(
             &partial,
             &solana_cli_output::ReturnSignersConfig::default(),
@@ -2001,14 +2002,16 @@ mod tests {
         assert!(output.bad_sig.is_empty());
         assert_eq!(*partial.message.recent_blockhash(), blockhash);
         assert!(matches!(
-            sign_transaction(message.clone(), &[&from], blockhash, false),
+            message_into_signed_transaction(message.clone(), &[&from], blockhash, false),
             Err(SignerError::NotEnoughSigners)
         ));
         assert!(matches!(
-            sign_transaction(message.clone(), &[&Keypair::new()], blockhash, true),
+            message_into_signed_transaction(message.clone(), &[&Keypair::new()], blockhash, true),
             Err(SignerError::KeypairPubkeyMismatch)
         ));
-        let tx = sign_transaction(message, &[&from, &payer, &payer], blockhash, false).unwrap();
+        let tx =
+            message_into_signed_transaction(message, &[&from, &payer, &payer], blockhash, false)
+                .unwrap();
         tx.verify_and_hash_message().unwrap();
     }
 

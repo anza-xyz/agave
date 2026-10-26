@@ -3,7 +3,7 @@ use {
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error, sign_transaction,
+            log_instruction_custom_error, message_into_signed_transaction,
         },
         compute_budget::{
             ComputeUnitConfig, WithComputeUnitConfig, simulate_and_update_compute_unit_limit,
@@ -1533,7 +1533,8 @@ pub async fn process_create_stake_account(
         }
     }
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1661,7 +1662,8 @@ pub async fn process_stake_authorize(
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1829,7 +1831,8 @@ pub async fn process_deactivate_stake_account(
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1945,7 +1948,8 @@ pub async fn process_withdraw_stake(
     )
     .await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -2147,7 +2151,8 @@ pub async fn process_split_stake(
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -2270,7 +2275,8 @@ pub async fn process_merge_stake(
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -2379,7 +2385,8 @@ pub async fn process_stake_set_lockup(
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -2940,7 +2947,8 @@ pub async fn process_delegate_stake(
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,

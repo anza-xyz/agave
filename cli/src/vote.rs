@@ -3,7 +3,7 @@ use {
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error, sign_transaction,
+            log_instruction_custom_error, message_into_signed_transaction,
         },
         compute_budget::{
             ComputeUnitConfig, WithComputeUnitConfig, simulate_and_update_compute_unit_limit,
@@ -1328,7 +1328,8 @@ pub async fn process_create_vote_account(
         }
     }
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1528,7 +1529,8 @@ pub async fn process_vote_authorize(
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1621,7 +1623,8 @@ pub async fn process_vote_update_validator(
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1707,7 +1710,8 @@ pub async fn process_vote_update_commission(
         VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1814,7 +1818,8 @@ pub async fn process_vote_update_commission_bps(
         VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1914,7 +1919,8 @@ pub async fn process_vote_update_commission_collector(
         VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -2158,7 +2164,8 @@ pub async fn process_withdraw_from_vote_account(
         )?;
     }
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -2247,7 +2254,7 @@ pub async fn process_close_vote_account(
 
     let mut message = VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())));
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let tx = sign_transaction(message, &config.signers, latest_blockhash, false)?;
+    let tx = message_into_signed_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
         &tx.message.static_account_keys()[0],

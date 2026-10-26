@@ -3,7 +3,7 @@ use {
         checks::*,
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error, sign_transaction,
+            log_instruction_custom_error, message_into_signed_transaction,
         },
         compute_budget::{
             ComputeUnitConfig, WithComputeUnitConfig, set_compute_unit_limit,
@@ -1636,7 +1636,7 @@ async fn process_program_upgrade(
 
     let signers = &[fee_payer_signer, upgrade_authority_signer];
     if sign_only {
-        let tx = sign_transaction(message, signers, blockhash, true)?;
+        let tx = message_into_signed_transaction(message, signers, blockhash, true)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1669,7 +1669,7 @@ async fn process_program_upgrade(
             config.commitment,
         )
         .await?;
-        let tx = sign_transaction(message, signers, blockhash, false)?;
+        let tx = message_into_signed_transaction(message, signers, blockhash, false)?;
         let final_tx_sig = rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
@@ -1820,7 +1820,7 @@ async fn process_set_authority(
 
     let signers = &[config.signers[0], authority_signer];
 
-    let tx = sign_transaction(message, signers, blockhash, sign_only)?;
+    let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -1881,7 +1881,7 @@ async fn process_set_authority_checked(
     ));
 
     let signers = &[config.signers[0], authority_signer, new_authority_signer];
-    let tx = sign_transaction(message, signers, blockhash, sign_only)?;
+    let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,
@@ -2258,7 +2258,7 @@ async fn close(
         Some(&config.signers[0].pubkey()),
     ));
 
-    let tx = sign_transaction(
+    let tx = message_into_signed_transaction(
         message,
         &[config.signers[0], authority_signer],
         blockhash,
@@ -2522,7 +2522,7 @@ async fn process_extend_program(
     );
     let message = VersionedMessage::Legacy(Message::new(&[instruction], Some(&fee_payer_pubkey)));
 
-    let tx = sign_transaction(
+    let tx = message_into_signed_transaction(
         message,
         &[config.signers[0], payer_signer],
         blockhash,

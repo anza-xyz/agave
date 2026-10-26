@@ -2,7 +2,8 @@ use {
     crate::{
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error, request_and_confirm_airdrop, sign_transaction,
+            log_instruction_custom_error, message_into_signed_transaction,
+            request_and_confirm_airdrop,
         },
         compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         memo::WithMemo,
@@ -1075,7 +1076,8 @@ pub async fn process_transfer(
         check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
     }
 
-    let tx = sign_transaction(message, &config.signers, recent_blockhash, sign_only)?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
         return_signers_with_config(
             &tx,

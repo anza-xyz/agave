@@ -2,7 +2,8 @@ use {
     crate::{
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error, log_instruction_custom_error_to_str, sign_transaction,
+            log_instruction_custom_error, log_instruction_custom_error_to_str,
+            message_into_signed_transaction,
         },
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
@@ -1040,7 +1041,7 @@ async fn process_activate(
         config.commitment,
     )
     .await?;
-    let transaction = sign_transaction(message, &config.signers, blockhash, false)?;
+    let transaction = message_into_signed_transaction(message, &config.signers, blockhash, false)?;
 
     writeln_stdout(format_args!(
         "Activating {} ({})",
@@ -1096,7 +1097,7 @@ async fn process_revoke(
         config.commitment,
     )
     .await?;
-    let transaction = sign_transaction(message, &config.signers, blockhash, false)?;
+    let transaction = message_into_signed_transaction(message, &config.signers, blockhash, false)?;
 
     writeln_stdout(format_args!(
         "Revoking {} ({})",
