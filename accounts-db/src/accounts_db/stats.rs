@@ -768,12 +768,9 @@ pub struct LoadAccountsStats {
 }
 
 impl LoadAccountsStats {
-    /// `name` names the datapoint, so foreground loads and the background loads issued by
-    /// `prefetch_accounts` can be told apart. A prefetch's own `num_loaded_from_index_storage`
-    /// is the work it moved off the critical path, not a miss on it.
-    pub fn report(&self, name: &'static str) {
+    pub fn report(&self) {
         datapoint_info!(
-            name,
+            "accounts_db_load_accounts",
             (
                 "num_loaded_from_write_cache",
                 self.num_loaded_from_write_cache.swap(0, Ordering::Relaxed),
@@ -796,24 +793,27 @@ impl LoadAccountsStats {
 
 #[derive(Debug, Default)]
 pub struct PrefetchAccountsStats {
-    /// what the background loads themselves found; these never touch `LoadAccountsStats`
-    pub loads: LoadAccountsStats,
-    /// pubkeys loaded by a prefetch
-    pub num_issued: AtomicU64,
+    /// batches dropped because the dispatcher's queue was full
+    pub num_batches_dropped: AtomicU64,
     /// pubkeys dropped because a cache already held them
     pub num_skipped_cached: AtomicU64,
     /// pubkeys dropped because an earlier prefetch was still loading them
     pub num_skipped_outstanding: AtomicU64,
+    /// pubkeys with no rooted version in the index
+    pub num_not_in_index: AtomicU64,
+    /// reads queued for the readers
+    pub num_issued: AtomicU64,
+    /// accounts the completer stored in the read cache
+    pub num_stored: AtomicU64,
 }
 
 impl PrefetchAccountsStats {
     pub fn report(&self) {
-        self.loads.report("accounts_db_prefetch_accounts_loads");
         datapoint_info!(
             "accounts_db_prefetch_accounts",
             (
-                "num_issued",
-                self.num_issued.swap(0, Ordering::Relaxed),
+                "num_batches_dropped",
+                self.num_batches_dropped.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -824,6 +824,21 @@ impl PrefetchAccountsStats {
             (
                 "num_skipped_outstanding",
                 self.num_skipped_outstanding.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_not_in_index",
+                self.num_not_in_index.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_issued",
+                self.num_issued.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_stored",
+                self.num_stored.swap(0, Ordering::Relaxed),
                 i64
             ),
         );

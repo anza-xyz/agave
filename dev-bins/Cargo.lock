@@ -5883,10 +5883,13 @@ name = "solana-accounts-db"
 version = "4.5.0-alpha.2"
 dependencies = [
  "agave-fs",
+ "agave-io-uring",
  "ahash 0.8.12",
  "blake3",
  "bv",
+ "crossbeam-channel",
  "dashmap",
+ "io-uring",
  "itertools 0.15.0",
  "log",
  "modular-bitfield",

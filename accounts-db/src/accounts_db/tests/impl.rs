@@ -3781,15 +3781,15 @@ fn test_prefetch_accounts_populates_read_cache() {
 
     db.prefetch_accounts(vec![account_key]);
 
+    let stats = &db.prefetcher.stats;
     let timer = Instant::now();
-    while db.read_only_accounts_cache.cache_len() == 0 {
+    while stats.num_stored.load(Ordering::Relaxed) == 0 {
         assert!(
             timer.elapsed() < Duration::from_secs(5),
             "timed out waiting for the prefetch to land",
         );
         sleep(Duration::from_millis(1));
     }
-    let stats = &db.prefetcher.stats;
     assert_eq!(stats.num_issued.load(Ordering::Relaxed), 1);
     assert_eq!(stats.num_skipped_cached.load(Ordering::Relaxed), 0);
     assert_eq!(stats.num_skipped_outstanding.load(Ordering::Relaxed), 0);
@@ -3801,16 +3801,7 @@ fn test_prefetch_accounts_populates_read_cache() {
     assert_eq!(prefetched, account);
     assert_eq!(slot, 0);
 
-    // the storage read the prefetch performed is charged to the prefetch, so it does not show
-    // up as a miss on the load path
-    assert_eq!(
-        db.prefetcher
-            .stats
-            .loads
-            .num_loaded_from_index_storage
-            .load(Ordering::Relaxed),
-        1
-    );
+    // the prefetch's storage read does not show up as a miss on the load path
     assert_eq!(load_path_storage_loads(), load_path_storage_loads_before);
 
     // and the load path now takes the read cache instead of missing to storage
@@ -4135,7 +4126,6 @@ fn test_flush_cache_dont_clean_zero_lamport_account() {
             &zero_lamport_account_key,
             PopulateReadCache::True,
             NO_LOAD_FILTER,
-            &db.load_account_stats,
         )
         .is_none()
     );
@@ -5128,13 +5118,7 @@ fn start_load_thread(
                 }
                 // Load should never be unable to find this key
                 let loaded_account = db
-                    .do_load(
-                        &ancestors,
-                        &pubkey,
-                        PopulateReadCache::True,
-                        NO_LOAD_FILTER,
-                        &db.load_account_stats,
-                    )
+                    .do_load(&ancestors, &pubkey, PopulateReadCache::True, NO_LOAD_FILTER)
                     .unwrap();
                 // slot + 1 == account.lamports because of the account-cache-flush thread
                 assert_eq!(

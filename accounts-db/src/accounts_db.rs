@@ -2603,7 +2603,6 @@ impl AccountsDb {
                 &pubkey,
                 PopulateReadCache::False,
                 None::<fn(_, &_, _) -> _>,
-                &self.load_account_stats,
             ) {
                 scan_func(Some((&pubkey, account, slot)));
             }
@@ -2719,14 +2718,8 @@ impl AccountsDb {
         populate_read_cache: PopulateReadCache,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load(
-            ancestors,
-            pubkey,
-            populate_read_cache,
-            load_filter,
-            &self.load_account_stats,
-        )
-        .filter(|(account, _)| !account.is_zero_lamport())
+        self.do_load(ancestors, pubkey, populate_read_cache, load_filter)
+            .filter(|(account, _)| !account.is_zero_lamport())
     }
 
     fn do_load(
@@ -2735,13 +2728,12 @@ impl AccountsDb {
         pubkey: &Pubkey,
         populate_read_cache: PopulateReadCache,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
-        stats: &LoadAccountsStats,
     ) -> Option<(AccountSharedData, Slot)> {
         // Check the write cache first; a hit is the freshest version visible on this fork
         if let Some((cached_account, cached_slot)) =
             self.accounts_cache.load_latest(pubkey, ancestors)
         {
-            stats
+            self.load_account_stats
                 .num_loaded_from_write_cache
                 .fetch_add(1, Ordering::Relaxed);
 
@@ -2762,7 +2754,7 @@ impl AccountsDb {
             .read_only_accounts_cache
             .load(pubkey, |slot| ancestors.is_ancestor(slot))
         {
-            stats
+            self.load_account_stats
                 .num_loaded_from_read_cache
                 .fetch_add(1, Ordering::Relaxed);
 
@@ -2773,9 +2765,31 @@ impl AccountsDb {
             return should_load_account.then_some((account, slot));
         }
 
+        let (slot, mut account_accessor) = self.get_account_accessor_from_index(pubkey, ancestors)?;
+        self.load_account_stats
+            .num_loaded_from_index_storage
+            .fetch_add(1, Ordering::Relaxed);
+
+        let maybe_account =
+            account_accessor.check_and_get_loaded_account_shared_data(load_filter.as_ref());
+
+        if let Some(ref account) = maybe_account
+            && populate_read_cache == PopulateReadCache::True
+        {
+            self.store_in_read_cache_if_newest(pubkey, slot, account);
+        }
+        maybe_account.map(|account| (account, slot))
+    }
+
+    /// Returns the slot of `pubkey`'s version visible from `ancestors`, and its storage
+    fn get_account_accessor_from_index(
+        &self,
+        pubkey: &Pubkey,
+        ancestors: &Ancestors,
+    ) -> Option<(Slot, LoadedAccountAccessor)> {
         // Get the storage under the index entry's lock: storages are removed only after the index
         // stops referring to them, so it is present
-        let (slot, mut account_accessor) = self.accounts_index.get_with_and_then(
+        self.accounts_index.get_with_and_then(
             pubkey,
             ancestors,
             true,
@@ -2783,38 +2797,40 @@ impl AccountsDb {
                 let storage_location = account_info.storage_location();
                 (slot, self.get_account_accessor(slot, &storage_location))
             },
-        )?;
-        stats
-            .num_loaded_from_index_storage
-            .fetch_add(1, Ordering::Relaxed);
+        )
+    }
 
-        let maybe_account =
-            account_accessor.check_and_get_loaded_account_shared_data(load_filter.as_ref());
-
+    /// Stores `account` in the read cache if `slot` is the newest version of `pubkey` in the
+    /// index. Returns whether it was stored.
+    fn store_in_read_cache_if_newest(
+        &self,
+        pubkey: &Pubkey,
+        slot: Slot,
+        account: &AccountSharedData,
+    ) -> bool {
         // Skip zero lamport accounts; a cached one would still be returned after clean removes it
-        if let Some(ref account) = maybe_account
-            && populate_read_cache == PopulateReadCache::True
-            && !account.is_zero_lamport()
-        {
-            // Store only while `slot` is the newest version in the index, under the entry's lock;
-            // the read cache removals in `store_accounts_for_flush`, `store_accounts_for_squash`
-            // and `purge_slots_for_snapshot_minimizer` rely on this.
-            self.accounts_index.get_and_then(pubkey, |entry| {
-                if let Some(entry) = entry {
-                    let slot_list = entry.slot_list_read_lock();
-                    if self
-                        .accounts_index
-                        .latest_slot(None, &slot_list, None)
-                        .is_some_and(|newest| slot_list[newest].0 == slot)
-                    {
-                        self.read_only_accounts_cache
-                            .store(*pubkey, slot, account.clone());
-                    }
-                }
-                (false, ())
-            });
+        if account.is_zero_lamport() {
+            return false;
         }
-        maybe_account.map(|account| (account, slot))
+        // Store only while `slot` is the newest version in the index, under the entry's lock;
+        // the read cache removals in `store_accounts_for_flush`, `store_accounts_for_squash`
+        // and `purge_slots_for_snapshot_minimizer` rely on this.
+        self.accounts_index.get_and_then(pubkey, |entry| {
+            let mut stored = false;
+            if let Some(entry) = entry {
+                let slot_list = entry.slot_list_read_lock();
+                if self
+                    .accounts_index
+                    .latest_slot(None, &slot_list, None)
+                    .is_some_and(|newest| slot_list[newest].0 == slot)
+                {
+                    self.read_only_accounts_cache
+                        .store(*pubkey, slot, account.clone());
+                    stored = true;
+                }
+            }
+            (false, stored)
+        })
     }
 
     #[cfg_attr(test, qualifiers(pub(crate)))]
@@ -4494,7 +4510,7 @@ impl AccountsDb {
                 ),
             );
 
-            self.load_account_stats.report("accounts_db_load_accounts");
+            self.load_account_stats.report();
             self.prefetcher.stats.report();
         }
     }
@@ -5357,7 +5373,6 @@ impl AccountsDb {
             pubkey,
             PopulateReadCache::True,
             None::<fn(_, &_, _) -> _>,
-            &self.load_account_stats,
         )
     }
 

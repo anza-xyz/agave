@@ -46,6 +46,7 @@ agave-fs = { workspace = true }
 ahash = { workspace = true }
 blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
+crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -110,6 +111,10 @@ static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 test-case = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+agave-io-uring = { workspace = true }
+io-uring = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }

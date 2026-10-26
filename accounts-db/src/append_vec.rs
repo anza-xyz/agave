@@ -6,6 +6,7 @@
 
 mod meta;
 
+pub(crate) use meta::AccountMeta;
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::StoredAccountMeta;
 #[cfg(not(feature = "dev-context-only-utils"))]
@@ -26,7 +27,7 @@ use {
         file_io::read_into_buffer,
     },
     log::*,
-    meta::{AccountMeta, StoredAccountNoData, StoredMeta},
+    meta::{StoredAccountNoData, StoredMeta},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -184,7 +185,7 @@ pub struct AppendVec {
     is_dirty: AtomicBool,
 }
 
-const PAGE_SIZE: usize = 4 * 1024;
+pub(crate) const PAGE_SIZE: usize = 4 * 1024;
 
 pub struct AppendVecStat {
     pub files_open: AtomicU64,
@@ -565,13 +566,42 @@ impl AppendVec {
         })
         .ok()?;
         // SAFETY: we only read the initialized portion.
-        let valid_bytes =
-            ValidSlice(unsafe { slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read) });
+        let page = unsafe { slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read) };
+        match Self::account_from_page(offset, page)? {
+            AccountFromPage::Complete(account) => Some(account),
+            AccountFromPage::Partial {
+                account_meta,
+                data_len,
+                data_offset,
+            } => {
+                let mut data = Vec::with_capacity(data_len);
+                let slice = data.spare_capacity_mut();
+                // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+                let bytes_read =
+                    read_into_buffer(&self.file, self.len() as FileSize, data_offset, unsafe {
+                        slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len)
+                    })
+                    .ok()?;
+                if bytes_read < data_len {
+                    // eof or otherwise couldn't read all the data
+                    return None;
+                }
+                // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
+                unsafe { data.set_len(data_len) };
+                Some(Self::account_from_data(&account_meta, data))
+            }
+        }
+    }
+
+    /// Parses the account at file `offset` from `page`, the bytes read there: up to a page, or
+    /// fewer at the end of the file
+    pub(crate) fn account_from_page(offset: FileOffset, page: &[u8]) -> Option<AccountFromPage> {
+        let valid_bytes = ValidSlice(page);
         let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
         let (account_meta, next) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
         let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(valid_bytes, next)?;
         let data_len = meta.data_len;
-        let remaining_bytes_for_data = bytes_read - next;
+        let remaining_bytes_for_data = page.len() - next;
         Some(if remaining_bytes_for_data >= data_len as usize {
             // we already read enough data to load this account
             let (data, next) = Self::get_slice(valid_bytes, next, meta.data_len as usize)?;
@@ -583,38 +613,32 @@ impl AppendVec {
                 offset,
                 stored_size,
             };
-            // data is within `buf`, so just allocate a new vec for data
-            create_account_shared_data(&account)
+            // data is within `page`, so just allocate a new vec for data
+            AccountFromPage::Complete(create_account_shared_data(&account))
         } else {
             // not enough was read from file to get `data`
             assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
-            let mut data = Vec::with_capacity(data_len as usize);
-            let slice = data.spare_capacity_mut();
-            // Note here `next` is a 0-based offset from the beginning of this account.
-            // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-            let bytes_read = read_into_buffer(
-                &self.file,
-                self.len() as FileSize,
-                offset + next as FileOffset,
-                unsafe {
-                    slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len as usize)
-                },
-            )
-            .ok()?;
-            if bytes_read < data_len as usize {
-                // eof or otherwise couldn't read all the data
-                return None;
+            AccountFromPage::Partial {
+                account_meta: account_meta.clone(),
+                data_len: data_len as usize,
+                // `next` is a 0-based offset from the beginning of this account
+                data_offset: offset + next as FileOffset,
             }
-            // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
-            unsafe { data.set_len(data_len as usize) };
-            AccountSharedData::create_from_existing_shared_data(
-                account_meta.lamports,
-                Arc::new(data),
-                account_meta.owner,
-                account_meta.executable,
-                account_meta.rent_epoch,
-            )
         })
+    }
+
+    /// Builds an account from its meta and its data, read separately
+    pub(crate) fn account_from_data(
+        account_meta: &AccountMeta,
+        data: Vec<u8>,
+    ) -> AccountSharedData {
+        AccountSharedData::create_from_existing_shared_data(
+            account_meta.lamports,
+            Arc::new(data),
+            account_meta.owner,
+            account_meta.executable,
+            account_meta.rent_epoch,
+        )
     }
 
     /// Returns the path to the file where the data is stored
@@ -983,6 +1007,18 @@ impl AppendVec {
     pub(crate) fn file(&self) -> &File {
         &self.file
     }
+}
+
+/// What reading up to a page at an account's offset yields
+pub(crate) enum AccountFromPage {
+    /// the page held the whole account
+    Complete(AccountSharedData),
+    /// the account's data continues past the page: `data_len` bytes at file offset `data_offset`
+    Partial {
+        account_meta: AccountMeta,
+        data_len: usize,
+        data_offset: FileOffset,
+    },
 }
 
 /// Returns FileOffset from logical `offset`.
