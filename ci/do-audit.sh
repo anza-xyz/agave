@@ -134,6 +134,48 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=1.0.10
   # Agave Ok:  only a wasm32 dependency of rustls-platform-verifier; not built for Agave
   --ignore RUSTSEC-2026-0383
+
+  # Crate:     zstd
+  # Version:   0.14.0
+  # Title:     Data from an abandoned stream leaks into the next stream on a reused context
+  # Date:      2026-10-16
+  # ID:        RUSTSEC-2026-0391
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0391
+  # Solution:  Upgrade to >=0.14.3
+  # Agave Ok:  only the stream `with_context` constructors are affected; Agave never uses them.
+  --ignore RUSTSEC-2026-0391
+
+  # Crate:     zstd-safe
+  # Version:   8.0.0
+  # Title:     Uninitialized memory exposed when streaming decompression of a legacy frame fails
+  # Date:      2026-10-16
+  # ID:        RUSTSEC-2026-0403
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0403
+  # Solution:  Upgrade to >=8.2.0
+  # Agave Ok:  only reachable through zstd::stream::write::Decoder; Agave decompresses with
+  # read::Decoder and the bulk API, which the advisory lists as unaffected.
+  --ignore RUSTSEC-2026-0403
+
+  # Crate:     zstd-safe
+  # Version:   8.0.0
+  # Title:     `Seekable::decompress` sets a `Vec` length beyond its capacity for offsets
+  #            past the end
+  # Date:      2026-10-16
+  # ID:        RUSTSEC-2026-0398
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0398
+  # Solution:  Upgrade to >=8.2.0
+  # Agave Ok:  the zstd-safe `seekable` feature is not enabled.
+  --ignore RUSTSEC-2026-0398
+
+  # Crate:     zstd-sys
+  # Version:   2.1.0+zstd.1.5.7
+  # Title:     WebAssembly allocator shim corrupts memory on allocation failure
+  # Date:      2026-10-16
+  # ID:        RUSTSEC-2026-0410
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0410
+  # Solution:  Upgrade to >=2.1.2
+  # Agave Ok:  wasm32 only; Agave does not build for wasm32.
+  --ignore RUSTSEC-2026-0410
 )
 
 xtask_cargo_audit_extra_args=(
