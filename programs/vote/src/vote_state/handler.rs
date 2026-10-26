@@ -657,11 +657,29 @@ impl VoteStateHandler {
         }
     }
 
+    /// Serializes `self` into a new buffer of `len` bytes, zero-filling the bytes past the
+    /// encoding.
+    ///
+    /// Returns `Err(InstructionError::InvalidAccountData)` if the encoding exceeds `len` bytes.
+    pub fn serialize_padded(&self, len: usize) -> Result<Vec<u8>, InstructionError> {
+        let mut data = Vec::with_capacity(len);
+        match &self.target_state {
+            TargetVoteState::V4(v4) => {
+                let versioned = VoteStateVersionsRef::V4(v4);
+                wincode::serialize_into(&mut data, &versioned)
+                    .map_err(|_e| InstructionError::InvalidAccountData)?;
+            }
+        }
+        if data.len() > len {
+            return Err(InstructionError::InvalidAccountData);
+        }
+        data.resize(len, 0);
+        Ok(data)
+    }
+
     #[cfg(test)]
     pub fn serialize(self) -> Vec<u8> {
-        let mut data = vec![0; VoteStateV4::size_of()];
-        self.serialize_into(&mut data).unwrap();
-        data
+        self.serialize_padded(VoteStateV4::size_of()).unwrap()
     }
 }
 
@@ -809,6 +827,16 @@ mod tests {
         let mut undersized_data = vec![0; expected.len() - 1];
         assert_eq!(
             handler.serialize_into(&mut undersized_data),
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        assert_eq!(handler.serialize_padded(data.len()), Ok(data));
+        assert_eq!(
+            handler.serialize_padded(expected.len()).as_ref(),
+            Ok(&expected)
+        );
+        assert_eq!(
+            handler.serialize_padded(expected.len() - 1),
             Err(InstructionError::InvalidAccountData),
         );
     }
