@@ -793,7 +793,7 @@ impl LoadAccountsStats {
 
 #[derive(Debug, Default)]
 pub struct PrefetchAccountsStats {
-    /// batches dropped because the dispatcher's queue was full
+    /// batches dropped because the prefetch thread's queue was full
     pub num_batches_dropped: AtomicU64,
     /// pubkeys dropped because a cache already held them
     pub num_skipped_cached: AtomicU64,
@@ -801,9 +801,9 @@ pub struct PrefetchAccountsStats {
     pub num_skipped_outstanding: AtomicU64,
     /// pubkeys with no rooted version in the index
     pub num_not_in_index: AtomicU64,
-    /// reads queued for the readers
+    /// reads issued to storage
     pub num_issued: AtomicU64,
-    /// accounts the completer stored in the read cache
+    /// accounts stored in the read cache
     pub num_stored: AtomicU64,
 }
 
