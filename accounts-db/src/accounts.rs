@@ -202,8 +202,8 @@ impl Accounts {
 
     /// Warms the read cache with `pubkeys` in the background; see
     /// [`AccountsDb::prefetch_accounts`].
-    pub fn prefetch_accounts(&self, slot: Slot, pubkeys: impl IntoIterator<Item = Pubkey>) {
-        self.accounts_db.prefetch_accounts(slot, pubkeys)
+    pub fn prefetch_accounts(&self, pubkeys: Vec<Pubkey>) {
+        self.accounts_db.prefetch_accounts(pubkeys)
     }
 
     /// scans underlying accounts_db for this delta (slot) with a map function

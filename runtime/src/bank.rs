@@ -5321,8 +5321,8 @@ impl Bank {
 
     /// Warms the read cache with `pubkeys` in the background, for accounts this bank is about
     /// to load. See [`solana_accounts_db::accounts_db::AccountsDb::prefetch_accounts`].
-    pub fn prefetch_accounts(&self, pubkeys: impl IntoIterator<Item = Pubkey>) {
-        self.rc.accounts.prefetch_accounts(self.slot(), pubkeys)
+    pub fn prefetch_accounts(&self, pubkeys: Vec<Pubkey>) {
+        self.rc.accounts.prefetch_accounts(pubkeys)
     }
 
     pub fn get_program_accounts(

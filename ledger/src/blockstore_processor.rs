@@ -61,7 +61,7 @@ use {
     solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_shred_version::compute_shred_version,
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_transaction::TransactionVerificationMode,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
@@ -220,7 +220,7 @@ fn process_entries(
     // by `prefetch_accounts`, so this only reaches storage for the ones a handler thread would
     // otherwise block on.
     let entries: Vec<_> = entries.into_iter().collect();
-    bank.prefetch_accounts(
+    let transactions = || {
         entries
             .iter()
             .filter_map(|replay_entry| match replay_entry {
@@ -231,8 +231,25 @@ fn process_entries(
                 _ => None,
             })
             .flatten()
-            .flat_map(|transaction| transaction.account_keys().iter().copied()),
+    };
+    let mut pubkeys = Vec::with_capacity(
+        transactions()
+            .map(|transaction| transaction.account_keys().len())
+            .sum(),
     );
+    for transaction in transactions() {
+        // the static keys are one slice; only address lookup table keys need the iterator
+        let static_account_keys = transaction.static_account_keys();
+        pubkeys.extend_from_slice(static_account_keys);
+        pubkeys.extend(
+            transaction
+                .account_keys()
+                .iter()
+                .skip(static_account_keys.len())
+                .copied(),
+        );
+    }
+    bank.prefetch_accounts(pubkeys);
 
     for entry in entries {
         let ReplayEntry {

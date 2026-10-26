@@ -3779,7 +3779,7 @@ fn test_prefetch_accounts_populates_read_cache() {
     };
     let load_path_storage_loads_before = load_path_storage_loads();
 
-    db.prefetch_accounts(0, [account_key]);
+    db.prefetch_accounts(vec![account_key]);
 
     let timer = Instant::now();
     while db.read_only_accounts_cache.cache_len() == 0 {
@@ -3860,7 +3860,7 @@ fn test_prefetch_accounts_skips_cached() {
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
     assert!(db.accounts_cache.contains_pubkey(&write_cached_key));
 
-    db.prefetch_accounts(1, [read_cached_key, write_cached_key]);
+    db.prefetch_accounts(vec![read_cached_key, write_cached_key]);
 
     let stats = &db.prefetcher.stats;
     let timer = Instant::now();

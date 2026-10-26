@@ -4,7 +4,6 @@ use {
     super::{AccountsDb, PopulateReadCache, stats::PrefetchAccountsStats},
     crate::ancestors::Ancestors,
     rayon::prelude::*,
-    solana_clock::Slot,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         collections::HashSet,
@@ -43,14 +42,12 @@ impl AccountsDb {
     /// Loads `pubkeys` from storage off this thread and stores them in the read cache, so that
     /// a later load on the caller's critical path finds them there.
     ///
+    /// `pubkeys` is in the caller's order, which is the order the accounts are about to be used.
+    /// The caller's only cost is handing it to the background pool, where everything else runs.
     /// Pubkeys that either cache already holds are dropped: a write-cache version shadows
     /// storage, and a read-cache version is already warm. So are pubkeys an earlier prefetch
     /// is still loading. The rest go through `do_load`, whose `PopulateReadCache::True` path
     /// stores a version only while it is still the newest in the index.
-    ///
-    /// Where that filtering runs alternates by `slot` so one run measures both hand-off points:
-    /// even slots filter on the caller's thread and dispatch only what survives, odd slots
-    /// dispatch at once and filter on the background pool.
     ///
     /// The loads run against the rooted view rather than any fork's. The read cache only ever
     /// holds the newest version in storage, so a fork's ancestors would not change what gets
@@ -61,18 +58,7 @@ impl AccountsDb {
     /// Fire and forget. The caller is not told when, or whether, a load lands: a prefetch that
     /// finds nothing, races a flush, or is evicted before the account is used is wasted work
     /// and nothing worse.
-    pub fn prefetch_accounts(
-        self: &Arc<Self>,
-        slot: Slot,
-        pubkeys: impl IntoIterator<Item = Pubkey>,
-    ) {
-        let filter_on_caller = slot % 2 == 0;
-        // in the caller's order, which is the order the accounts are about to be used
-        let pubkeys = if filter_on_caller {
-            self.filter_prefetch(pubkeys)
-        } else {
-            pubkeys.into_iter().collect()
-        };
+    pub fn prefetch_accounts(self: &Arc<Self>, pubkeys: Vec<Pubkey>) {
         if pubkeys.is_empty() {
             return;
         }
@@ -80,18 +66,14 @@ impl AccountsDb {
         // clean is the only other user of this pool and it rarely runs; a prefetch that does
         // queue behind it just lands too late to help, which is where it started
         self.thread_pool_background.spawn(move || {
-            let to_load = if filter_on_caller {
-                pubkeys
-            } else {
-                accounts_db.filter_prefetch(pubkeys)
-            };
+            let to_load = accounts_db.filter_prefetch(pubkeys);
             accounts_db.load_prefetch(&to_load);
         });
     }
 
     /// Drops the pubkeys a cache holds or an earlier prefetch is loading, and marks the rest
     /// outstanding
-    fn filter_prefetch(&self, pubkeys: impl IntoIterator<Item = Pubkey>) -> Vec<Pubkey> {
+    fn filter_prefetch(&self, pubkeys: Vec<Pubkey>) -> Vec<Pubkey> {
         let prefetcher = &self.prefetcher;
         let mut num_cached = 0;
         let uncached: Vec<_> = pubkeys
