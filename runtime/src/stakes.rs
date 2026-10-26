@@ -533,6 +533,7 @@ impl Stakes<StakeAccount> {
         }
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     fn calculate_delegated_stakes(
         stake_delegations: &ImblHashMap<Pubkey, StakeAccount>,
         epoch: Epoch,
