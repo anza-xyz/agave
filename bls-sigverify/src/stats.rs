@@ -319,7 +319,7 @@ impl Default for SigVerifyCertStats {
     }
 }
 
-/// Stats for optional reward certificate verification, on its own thread.
+/// Stats for reward certificate verification, on its own thread.
 pub(super) struct RewardCertVerifierStats {
     last_report: Instant,
     /// Number of consensus certificates recorded for reward coverage.

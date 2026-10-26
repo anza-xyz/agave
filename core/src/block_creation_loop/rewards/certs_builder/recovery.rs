@@ -2,10 +2,9 @@
 //!
 //! The leader of slot S+8 publishes reward certificates for slot S, built from the votes it
 //! received directly: the *baseline*. A vote can miss the leader yet reach other validators,
-//! whose certificates then contain it. With `--enable-reward-recovery`, the leader uses those
-//! certificates to include such validators. Replay rejects the leader's whole block over one
-//! invalid reward certificate, so nothing is published unless it verified exactly as replay
-//! verifies it.
+//! whose certificates then contain it. The leader uses those certificates to include such
+//! validators. Replay rejects the leader's whole block over one invalid reward certificate, so
+//! nothing is published unless it verified exactly as replay verifies it.
 //!
 //! # Terms
 //!
@@ -41,7 +40,7 @@
 //! and bitmap as replay will. The immutable checked candidate also pins its source epoch rank map
 //! and shred version. Builds select only matching checked candidates and never verify signatures.
 //!
-//! In production a separate controller owns optional admission, worker coordination and selection.
+//! In production a separate controller owns recovery admission, worker coordination and selection.
 //! The baseline service publishes its direct response first, with a bounded channel for an optional
 //! upgrade. The requestor takes that upgrade only if it is already available, so slow or saturated
 //! recovery cannot withhold the baseline. Each request fixes a cutoff before assembling its direct
@@ -61,8 +60,8 @@
 //!
 //! # Metrics and benchmarks
 //!
-//! When recovery is enabled, `reward-certs-recovery` reports checks, failures, evictions,
-//! fallbacks, late inputs, recovered stake, and worker time. `unverified_outputs` counts admitted
+//! `reward-certs-recovery` reports checks, failures, evictions, fallbacks, late inputs, recovered
+//! stake, and worker time. `unverified_outputs` counts admitted
 //! seeds rejected by their replay recheck, before publication; it should stay zero because ingress
 //! verified those seeds. The `reward_recovery` criterion benches measure builds and jobs at 1,024
 //! and 2,000 validators.

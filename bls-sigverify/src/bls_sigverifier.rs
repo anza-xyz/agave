@@ -95,9 +95,6 @@ pub struct SigVerifierContext {
     pub leader_schedule: Arc<LeaderScheduleCache>,
     pub num_threads: usize,
     pub generated_cert_types: Arc<GeneratedCertTypes>,
-    /// Whether certificates and raw vote signatures are verified and forwarded so this node can
-    /// recover missed reward votes. Without it, only directly received votes reach rewards.
-    pub enable_reward_recovery: bool,
 }
 
 pub struct SigVerifierChannels {
@@ -153,9 +150,8 @@ struct SigVerifier {
     stats: SigVerifierStats,
     /// Set of recently verified certs to avoid duplicate work.
     verified_certs: HashSet<CertificateType>,
-    /// Verifies optional reward evidence without blocking this loop. Absent when reward recovery
-    /// is disabled.
-    reward_verifier: Option<RewardCertificateVerifier>,
+    /// Verifies reward evidence without blocking this loop.
+    reward_verifier: RewardCertificateVerifier,
     /// Tracks when the cache was last pruned.
     last_checked_root_slot: Slot,
     cluster_info: Arc<ClusterInfo>,
@@ -178,22 +174,19 @@ impl SigVerifier {
             leader_schedule,
             num_threads,
             generated_cert_types,
-            enable_reward_recovery,
         } = context;
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .thread_name(|i| format!("solSigVerBLS{i:02}"))
             .build()
             .unwrap();
-        let reward_verifier = enable_reward_recovery.then(|| {
-            RewardCertificateVerifier::new(
-                sharable_banks.clone(),
-                cluster_info.clone(),
-                leader_schedule.clone(),
-                channels.channel_to_reward.clone(),
-                ban_sender.clone(),
-            )
-        });
+        let reward_verifier = RewardCertificateVerifier::new(
+            sharable_banks.clone(),
+            cluster_info.clone(),
+            leader_schedule.clone(),
+            channels.channel_to_reward.clone(),
+            ban_sender.clone(),
+        );
         Self {
             migration_status,
             ban_sender,
@@ -275,7 +268,6 @@ impl SigVerifier {
             .extract_filter_msgs_us
             .add_sample(extract_msgs_us);
 
-        let enable_reward_recovery = self.reward_verifier.is_some();
         let (votes_result, certs_result) = self.thread_pool.join(
             || {
                 verify_and_send_votes(
@@ -283,7 +275,6 @@ impl SigVerifier {
                     &root_bank,
                     my_pubkey,
                     &self.leader_schedule,
-                    enable_reward_recovery,
                     &self.ban_sender,
                     &self.thread_pool,
                     &self.channels,
@@ -295,7 +286,7 @@ impl SigVerifier {
                     &mut self.verified_certs,
                     certs,
                     &root_bank,
-                    self.reward_verifier.as_mut(),
+                    &mut self.reward_verifier,
                     &self.channels.channel_to_pool,
                     &self.ban_sender,
                     &self.thread_pool,
@@ -359,11 +350,11 @@ impl SigVerifier {
         // repeats of a batched certificate must not use up the per-type limit. A forged copy of a
         // batched certificate is kept, so it cannot shadow the genuine one. The reward verifier
         // judges whether the remaining candidates improve coverage, on its own thread.
-        if self.reward_verifier.as_ref().is_some_and(|verifier| {
-            verifier
-                .retained()
-                .contains(&cert_type, &payload.cert.bitmap)
-        }) {
+        if self
+            .reward_verifier
+            .retained()
+            .contains(&cert_type, &payload.cert.bitmap)
+        {
             self.stats.cert_stats.reward_candidates_filtered += 1;
             return;
         }
@@ -388,18 +379,16 @@ impl SigVerifier {
         root_bank: &Bank,
         cert: &UnverifiedCertificate,
     ) -> bool {
-        self.reward_verifier.is_some()
-            && rewards_wants_certificate(
-                my_pubkey,
-                &self.leader_schedule,
-                root_bank.slot(),
-                &cert.cert_type,
-            )
-            && root_bank
-                .get_rank_map(cert.cert_type.slot())
-                .is_some_and(|map| {
-                    certificate_reward_vote(&cert.cert_type, &cert.bitmap, map.len()).is_some()
-                })
+        rewards_wants_certificate(
+            my_pubkey,
+            &self.leader_schedule,
+            root_bank.slot(),
+            &cert.cert_type,
+        ) && root_bank
+            .get_rank_map(cert.cert_type.slot())
+            .is_some_and(|map| {
+                certificate_reward_vote(&cert.cert_type, &cert.bitmap, map.len()).is_some()
+            })
     }
 
     fn extract_and_filter_msgs(
@@ -724,7 +713,6 @@ mod tests {
     /// keypairs.
     fn new_test_verifier(
         leader_slot: Slot,
-        enable_reward_recovery: bool,
     ) -> (SigVerifier, Arc<RwLock<BankForks>>, Vec<BLSKeypair>) {
         let validators = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -759,7 +747,6 @@ mod tests {
             leader_schedule,
             num_threads: 1,
             generated_cert_types: Arc::default(),
-            enable_reward_recovery,
         };
         // These tests only filter inputs, so the channels stay unused.
         let (_packet_sender, packet_receiver) = bounded(1);
@@ -790,8 +777,7 @@ mod tests {
     fn test_reward_admission_drops_exact_copies_before_the_per_type_limit() {
         let slot = 10;
         // This node publishes the rewards for `slot`.
-        let (mut verifier, _bank_forks, keypairs) =
-            new_test_verifier(slot + NUM_SLOTS_FOR_REWARD, true);
+        let (mut verifier, _bank_forks, keypairs) = new_test_verifier(slot + NUM_SLOTS_FOR_REWARD);
         let my_pubkey = verifier.cluster_info.id();
         let shred_version = verifier.cluster_info.my_shred_version();
         let root_bank = verifier.sharable_banks.root();
@@ -809,8 +795,6 @@ mod tests {
         let retained = certificate(&(0..7).collect::<Vec<_>>());
         verifier
             .reward_verifier
-            .as_ref()
-            .unwrap()
             .retained()
             .publish(cert_type, std::slice::from_ref(&retained.bitmap));
         let alternative = certificate(&(1..8).collect::<Vec<_>>());
@@ -861,7 +845,7 @@ mod tests {
     #[test]
     fn test_old_carrier_adds_only_old_certificates_for_rewards() {
         // The leader of slots 20 to 23 publishes the rewards for slots 12 to 15.
-        let (mut verifier, bank_forks, keypairs) = new_test_verifier(20, true);
+        let (mut verifier, bank_forks, keypairs) = new_test_verifier(20);
         let my_pubkey = verifier.cluster_info.id();
         let shred_version = verifier.cluster_info.my_shred_version();
         let (carrier_slot, root_slot) = (13, 14);
@@ -908,94 +892,81 @@ mod tests {
     }
 
     #[test]
-    fn test_disabled_reward_recovery_admits_certificates_as_before() {
-        for enable_reward_recovery in [true, false] {
-            // The leader of slots 20 to 23 publishes the rewards for slots 12 to 15.
-            let (mut verifier, bank_forks, keypairs) =
-                new_test_verifier(20, enable_reward_recovery);
-            assert_eq!(verifier.reward_verifier.is_some(), enable_reward_recovery);
-            let my_pubkey = verifier.cluster_info.id();
-            let shred_version = verifier.cluster_info.my_shred_version();
-            let (old_slot, root_slot, later_slot) = (13, 14, 15);
-            for slot in [old_slot, later_slot] {
-                let leader = verifier
-                    .leader_schedule
-                    .slot_leader_at(slot + NUM_SLOTS_FOR_REWARD, None);
-                assert_eq!(leader.unwrap().id, my_pubkey);
-            }
-            let root = Bank::new_from_parent(
-                verifier.sharable_banks.root(),
-                SlotLeader::default(),
-                root_slot,
-            );
-            {
-                let mut bank_forks = bank_forks.write().unwrap();
-                bank_forks.insert(root);
-                bank_forks.set_root(root_slot, None, None);
-            }
-            let root_bank = verifier.sharable_banks.root();
-            let certificate = |cert_type| {
-                test_create_base2_unverified_certificate(
-                    &keypairs,
-                    shred_version,
-                    cert_type,
-                    &(0..7).collect::<Vec<_>>(),
-                )
-            };
-            // Only rewards could use these: two are below the root, and consensus never needs a
-            // locally generated type. Each path gets its own pair.
-            let reward_only_pair = || {
-                let generated = CertificateType::new_unique_notar(later_slot);
-                verifier.generated_cert_types.insert_cert(generated);
-                (
-                    certificate(CertificateType::new_unique_notar(old_slot)),
-                    certificate(generated),
-                )
-            };
-            let (old, reward_only) = reward_only_pair();
-            let (old_datagram, reward_only_datagram) = reward_only_pair();
-            let consensus = certificate(CertificateType::new_unique_notar(later_slot));
-            let groups = verifier.extract_and_filter_msgs(
-                &my_pubkey,
-                &[
-                    certificate_datagram(&old_datagram),
-                    certificate_datagram(&reward_only_datagram),
-                ],
-                &mut HashMap::new(),
-                vec![
-                    (old_slot, old.clone()),
-                    (later_slot, reward_only.clone()),
-                    (later_slot, consensus.clone()),
-                ],
-                &root_bank,
-            );
-            let rewards = groups.rewards.keys().copied().collect::<HashSet<_>>();
-            let stats = &verifier.stats;
-            if enable_reward_recovery {
-                assert_eq!(
-                    rewards,
-                    HashSet::from([
-                        old.cert_type,
-                        reward_only.cert_type,
-                        old_datagram.cert_type,
-                        reward_only_datagram.cert_type,
-                    ])
-                );
-                assert_eq!(stats.num_old_certs_received.0, 0);
-                assert_eq!(stats.num_generated_certs_received.0, 0);
-            } else {
-                // As at HEAD: the old datagram is counted as old, and both locally generated
-                // types as generated. An old blockstore carrier is dropped without a count.
-                assert!(rewards.is_empty());
-                assert_eq!(stats.num_old_certs_received.0, 1);
-                assert_eq!(stats.num_generated_certs_received.0, 2);
-            }
-            // The first consensus proof is admitted either way, but only marked as reward
-            // evidence when recovery is enabled.
-            assert_eq!(groups.consensus.len(), 1);
-            let candidates = &groups.consensus[&consensus.cert_type];
-            assert_eq!(candidates.len(), 1);
-            assert_eq!(candidates[0].wants_rewards, enable_reward_recovery);
+    fn test_reward_recovery_admits_evidence_without_changing_consensus_admission() {
+        // The leader of slots 20 to 23 publishes the rewards for slots 12 to 15.
+        let (mut verifier, bank_forks, keypairs) = new_test_verifier(20);
+        let my_pubkey = verifier.cluster_info.id();
+        let shred_version = verifier.cluster_info.my_shred_version();
+        let (old_slot, root_slot, later_slot) = (13, 14, 15);
+        for slot in [old_slot, later_slot] {
+            let leader = verifier
+                .leader_schedule
+                .slot_leader_at(slot + NUM_SLOTS_FOR_REWARD, None);
+            assert_eq!(leader.unwrap().id, my_pubkey);
         }
+        let root = Bank::new_from_parent(
+            verifier.sharable_banks.root(),
+            SlotLeader::default(),
+            root_slot,
+        );
+        {
+            let mut bank_forks = bank_forks.write().unwrap();
+            bank_forks.insert(root);
+            bank_forks.set_root(root_slot, None, None);
+        }
+        let root_bank = verifier.sharable_banks.root();
+        let certificate = |cert_type| {
+            test_create_base2_unverified_certificate(
+                &keypairs,
+                shred_version,
+                cert_type,
+                &(0..7).collect::<Vec<_>>(),
+            )
+        };
+        // Only rewards could use these: two are below the root, and consensus never needs a
+        // locally generated type. Each path gets its own pair.
+        let reward_only_pair = || {
+            let generated = CertificateType::new_unique_notar(later_slot);
+            verifier.generated_cert_types.insert_cert(generated);
+            (
+                certificate(CertificateType::new_unique_notar(old_slot)),
+                certificate(generated),
+            )
+        };
+        let (old, reward_only) = reward_only_pair();
+        let (old_datagram, reward_only_datagram) = reward_only_pair();
+        let consensus = certificate(CertificateType::new_unique_notar(later_slot));
+        let groups = verifier.extract_and_filter_msgs(
+            &my_pubkey,
+            &[
+                certificate_datagram(&old_datagram),
+                certificate_datagram(&reward_only_datagram),
+            ],
+            &mut HashMap::new(),
+            vec![
+                (old_slot, old.clone()),
+                (later_slot, reward_only.clone()),
+                (later_slot, consensus.clone()),
+            ],
+            &root_bank,
+        );
+        let rewards = groups.rewards.keys().copied().collect::<HashSet<_>>();
+        let stats = &verifier.stats;
+        assert_eq!(
+            rewards,
+            HashSet::from([
+                old.cert_type,
+                reward_only.cert_type,
+                old_datagram.cert_type,
+                reward_only_datagram.cert_type,
+            ])
+        );
+        assert_eq!(stats.num_old_certs_received.0, 0);
+        assert_eq!(stats.num_generated_certs_received.0, 0);
+        // The first consensus proof is admitted and also marked as reward evidence.
+        assert_eq!(groups.consensus.len(), 1);
+        let candidates = &groups.consensus[&consensus.cert_type];
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].wants_rewards);
     }
 }

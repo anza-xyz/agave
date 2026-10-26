@@ -196,7 +196,6 @@ impl Verifier {
             leader_schedule,
             num_threads: 1,
             generated_cert_types: Arc::new(GeneratedCertTypes::default()),
-            enable_reward_recovery: true,
         };
         let channels = SigVerifierChannels::new(
             node.ingress.clone(),
@@ -263,7 +262,7 @@ impl Rewards {
         let exit = Arc::new(AtomicBool::new(false));
         let (input, input_receiver) = bounded(0);
         let (requests, request_receiver) = bounded(1);
-        let mut builder = CertsBuilder::new(cluster_info.clone(), true);
+        let mut builder = CertsBuilder::new(cluster_info.clone());
         let prepared = builder.observe_recovery_completions();
         let context = Context::new(
             exit.clone(),
@@ -537,7 +536,7 @@ impl Drop for ReleaseRecoveryGate {
 fn test_blocked_recovery_admission_and_full_build_queue_preserve_direct_baselines() {
     let fixture = ServiceFixture::new();
     let cluster_info = cluster_info(&fixture.keys[2]);
-    let mut builder = CertsBuilder::new(cluster_info.clone(), true);
+    let mut builder = CertsBuilder::new(cluster_info.clone());
     // Fill the actual source-slot seed cap before moving Recovery to its controller. The gated
     // incoming proof is a broader signer set, so release resumes real admission scoring at the cap.
     for block in std::iter::once(fixture.block).chain((0..3).map(|_| Block::new_unique(FIRST_SLOT)))
@@ -659,7 +658,7 @@ fn test_blocked_recovery_admission_and_full_build_queue_preserve_direct_baseline
 fn test_blocked_recovery_selection_preserves_direct_baseline_at_requestor_cutoff() {
     let fixture = ServiceFixture::new();
     let cluster_info = cluster_info(&fixture.keys[2]);
-    let mut builder = CertsBuilder::new(cluster_info.clone(), true);
+    let mut builder = CertsBuilder::new(cluster_info.clone());
     let prepared = builder.observe_recovery_completions();
     builder.handle_input(
         &fixture.root,
@@ -706,10 +705,10 @@ fn test_blocked_recovery_selection_preserves_direct_baseline_at_requestor_cutoff
 }
 
 #[test]
-fn test_disabled_recovery_publishes_direct_baseline_without_optional_receiver() {
+fn test_direct_votes_publish_baseline_with_recovery_running() {
     let fixture = ServiceFixture::new();
     let cluster_info = cluster_info(&fixture.keys[2]);
-    let builder = CertsBuilder::new(cluster_info.clone(), false);
+    let builder = CertsBuilder::new(cluster_info.clone());
     let (input, input_receiver) = bounded(1);
     let (requests, request_receiver) = bounded(1);
     let mut context = Context::new(
@@ -732,7 +731,7 @@ fn test_disabled_recovery_publishes_direct_baseline_without_optional_receiver() 
         .unwrap();
     context.process_next_input().unwrap();
     let response = reply_receiver.try_recv().unwrap();
-    assert!(response.recovery.is_none());
+    assert!(response.recovery.is_some());
     fixture.assert_direct_reward(&response.result.unwrap(), fixture.block);
     context.shutdown_recovery();
 }
@@ -776,7 +775,7 @@ fn test_certificate_batch_yields_to_build_requests_and_drops_sealed_remainder() 
     let initial = certificate(&[&keys[0], &keys[1]]);
     let broader = certificate(&[&keys[0], &keys[1], &keys[2]]);
     let cluster_info = cluster_info(&keys[2]);
-    let mut builder = CertsBuilder::new(cluster_info.clone(), true);
+    let mut builder = CertsBuilder::new(cluster_info.clone());
     let prepared = builder.observe_recovery_completions();
     let (input, input_receiver) = bounded(1);
     let (requests, request_receiver) = bounded(1);

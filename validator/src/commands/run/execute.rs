@@ -817,7 +817,6 @@ pub fn execute(
         tvu_bls_sigverify_threads,
         delay_leader_block_for_pending_fork: !matches
             .is_present("no_delay_leader_block_for_pending_fork"),
-        enable_reward_recovery: matches.is_present("enable_reward_recovery"),
         turbine_mode: TurbineMode::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(

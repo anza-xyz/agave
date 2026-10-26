@@ -1,9 +1,9 @@
 //! Optimized, explicitly invoked measurements of the real service and production requestor.
 //! Prepared historical frontiers are verified before timing; background bisection runs while cap
-//! admissions are queued alongside the measured requests. The first request in each enabled round
-//! arrives while the optional controller has already dispatched a cap admission. Baseline readiness
-//! is timed separately from the block footer's fixed observation window. Shared-host timings are observations,
-//! not hard production latency guarantees.
+//! admissions are queued alongside the measured requests. With certificate evidence, the first
+//! request arrives while the recovery controller has already dispatched a cap admission. Baseline
+//! readiness is timed separately from the block footer's fixed observation window. Shared-host
+//! timings are observations, not hard production latency guarantees.
 use {
     super::*,
     crate::block_creation_loop::rewards::reward_certs_service::run_with_builder_and_admission_gate_for_tests,
@@ -162,9 +162,9 @@ fn prepare(fixture: &Fixture) -> Vec<Source> {
 fn service_builder(
     fixture: &Fixture,
     sources: &[Source],
-    enabled: bool,
+    with_certificate_evidence: bool,
 ) -> (CertsBuilder, JobMeasurements, Option<Receiver<()>>) {
-    let mut builder = builder_with_recovery(enabled);
+    let mut builder = builder();
     for source in sources {
         builder.handle_input(
             &fixture.bank,
@@ -172,7 +172,7 @@ fn service_builder(
         );
     }
     let measurements = Arc::new(Mutex::new(Vec::new()));
-    if enabled {
+    if with_certificate_evidence {
         let (jobs, job_receiver) = bounded::<Job>(1);
         let (result_sender, results) = bounded(1);
         let (started_sender, started) = bounded(1);
@@ -239,7 +239,7 @@ fn reward_recovery_production_deadline_load() {
         Duration::from_millis(10),
         Duration::from_millis(50),
     ] {
-        for enabled in [false, true] {
+        for with_certificate_evidence in [false, true] {
             let mut latencies = Vec::new();
             let mut misses = 0;
             let mut checked_outputs = 0;
@@ -249,7 +249,8 @@ fn reward_recovery_production_deadline_load() {
             let mut completed_jobs = 0;
             let mut failed_checks = 0;
             for _ in 0..ROUNDS {
-                let (builder, jobs, started) = service_builder(&fixture, &sources, enabled);
+                let (builder, jobs, started) =
+                    service_builder(&fixture, &sources, with_certificate_evidence);
                 let cluster_info = builder.cluster_info.clone();
                 let my_pubkey = cluster_info.id();
                 let banks = fixture.bank_forks.read().unwrap().sharable_banks();
@@ -267,7 +268,8 @@ fn reward_recovery_production_deadline_load() {
                         requests,
                         banks,
                         builder,
-                        enabled.then_some((admission_started_sender, admission_release)),
+                        with_certificate_evidence
+                            .then_some((admission_started_sender, admission_release)),
                     )
                 });
                 if let Some(started) = started {
@@ -275,14 +277,14 @@ fn reward_recovery_production_deadline_load() {
                 }
                 // Queue a full fifth-payload batch, then wait until one certificate is dispatched.
                 // The first request is queued while the service is committed to that admission.
-                input
-                    .send(RewardInput::Certificates(
-                        (0..32)
-                            .map(|index| sources[index % SOURCES].cap.clone())
-                            .collect(),
-                    ))
-                    .unwrap();
-                if enabled {
+                if with_certificate_evidence {
+                    input
+                        .send(RewardInput::Certificates(
+                            (0..32)
+                                .map(|index| sources[index % SOURCES].cap.clone())
+                                .collect(),
+                        ))
+                        .unwrap();
                     admission_started
                         .recv_timeout(Duration::from_secs(10))
                         .unwrap();
@@ -299,7 +301,7 @@ fn reward_recovery_production_deadline_load() {
                         )
                         .unwrap()
                         .unwrap();
-                    if enabled && source.slot == sources[0].slot {
+                    if with_certificate_evidence && source.slot == sources[0].slot {
                         release_admission.send(()).unwrap();
                     }
                     let mut select = Select::new();
@@ -331,7 +333,7 @@ fn reward_recovery_production_deadline_load() {
                 // Validate exact signer metadata and signatures after timing, for every response
                 // that the production try_recv actually accepted before its observation deadline.
                 for (slot, response) in outputs {
-                    if enabled {
+                    if with_certificate_evidence {
                         let skip = response.skip.as_ref().map(|cert| {
                             match decode(cert.to_bitmap(), fixture.rank_map.len()).unwrap() {
                                 Decoded::Base2(ranks) => ranks.iter_ones().collect::<Vec<_>>(),
@@ -387,19 +389,21 @@ fn reward_recovery_production_deadline_load() {
             println!(
                 "production_deadline_load validators={} sources={SOURCES} payloads=4 \
                  ready_per_payload=8 seeds_per_source=4 omitted_rank={OMITTED_RANK} \
-                 queued_cap_certificates=32 first_request_dispatched_cap=1 enabled={enabled} \
-                 budget_us={} requests={} misses={misses} baseline_ready_median_us={} \
-                 baseline_ready_max_us={} verified_outputs={checked_outputs} \
-                 recovered_outputs={recovered_outputs} baseline_outputs={baseline_outputs} \
-                 pending_upgrades={pending_upgrades} completed_jobs={completed_jobs} \
-                 failed_checks={failed_checks}",
+                 queued_cap_certificates={} first_request_dispatched_cap={} \
+                 with_certificate_evidence={with_certificate_evidence} budget_us={} requests={} \
+                 misses={misses} baseline_ready_median_us={} baseline_ready_max_us={} \
+                 verified_outputs={checked_outputs} recovered_outputs={recovered_outputs} \
+                 baseline_outputs={baseline_outputs} pending_upgrades={pending_upgrades} \
+                 completed_jobs={completed_jobs} failed_checks={failed_checks}",
                 fixture.rank_map.len(),
+                if with_certificate_evidence { 32 } else { 0 },
+                usize::from(with_certificate_evidence),
                 budget.as_micros(),
                 latencies.len(),
                 latencies[latencies.len() / 2],
                 latencies.last().unwrap()
             );
-            if enabled {
+            if with_certificate_evidence {
                 assert!(
                     failed_checks > 0,
                     "background bisection load did not execute"
@@ -410,7 +414,7 @@ fn reward_recovery_production_deadline_load() {
                     misses, 0,
                     "representative request budget missed on this host"
                 );
-                if enabled {
+                if with_certificate_evidence {
                     assert_eq!(
                         recovered_outputs,
                         ROUNDS * SOURCES,

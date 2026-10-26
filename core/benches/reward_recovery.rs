@@ -187,13 +187,8 @@ impl Fixture {
     }
 
     /// A builder that holds `direct` votes and certificates for `seeds`, before raw signatures.
-    fn builder(
-        &self,
-        enable_reward_recovery: bool,
-        direct: Range<usize>,
-        seeds: &[Range<usize>],
-    ) -> CertsBuilder {
-        let mut builder = CertsBuilder::new(self.cluster_info.clone(), enable_reward_recovery);
+    fn builder(&self, direct: Range<usize>, seeds: &[Range<usize>]) -> CertsBuilder {
+        let mut builder = CertsBuilder::new(self.cluster_info.clone());
         builder.handle_input(&self.bank, self.direct_votes(direct));
         builder.handle_input(
             &self.bank,
@@ -258,7 +253,7 @@ fn bench_job(
         bencher.iter_custom(|iterations| {
             let mut elapsed = Duration::ZERO;
             for _ in 0..iterations {
-                let mut builder = fixture.builder(true, direct.clone(), seeds);
+                let mut builder = fixture.builder(direct.clone(), seeds);
                 // Keep this metric about extending already prepared seeds. Certificate admission
                 // now performs its own replay checks on the same bounded worker.
                 wait_until_idle(&mut builder);
@@ -296,8 +291,7 @@ fn bench_bisection(c: &mut Criterion, fixture: &Fixture, direct: Range<usize>, s
             bencher.iter_custom(|iterations| {
                 let mut worker = Duration::ZERO;
                 for _ in 0..iterations {
-                    let mut builder =
-                        fixture.builder(true, direct.clone(), std::slice::from_ref(&seed));
+                    let mut builder = fixture.builder(direct.clone(), std::slice::from_ref(&seed));
                     wait_until_idle(&mut builder);
                     builder.handle_input(
                         &fixture.bank,
@@ -326,13 +320,13 @@ fn bench_reward_recovery(c: &mut Criterion) {
 
         let mut group = c.benchmark_group("reward_recovery");
         group.sample_size(20);
-        // Publishing the direct votes alone, as without recovery.
+        // Publishing direct votes when no certificate evidence arrived.
         bench_build(&mut group, "direct_build", n, n / 2, || {
-            fixture.builder(false, direct.clone(), std::slice::from_ref(&seed))
+            fixture.builder(direct.clone(), &[])
         });
         // Selecting and wrapping prepared, replay-checked evidence; builds perform no pairings.
         bench_build(&mut group, "recovered_build", n, n, || {
-            let mut builder = fixture.builder(true, direct.clone(), std::slice::from_ref(&seed));
+            let mut builder = fixture.builder(direct.clone(), std::slice::from_ref(&seed));
             builder.handle_input(&fixture.bank, fixture.raw_signatures(direct.clone()));
             wait_until_idle(&mut builder);
             builder

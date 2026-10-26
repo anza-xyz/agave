@@ -105,7 +105,7 @@ fn source_evidence_reached_collector(
     })
 }
 
-fn run_direct_vote_loss(enable_reward_recovery: bool) {
+fn run_direct_vote_loss() {
     agave_logger::setup_with_default(&format!("{AG_DEBUG_LOG_FILTER},agave_bls_sigverify=info"));
     let keys: Vec<_> = (0..3).map(|_| ValidatorKeys::new()).collect();
     let [a, b, c] = keys
@@ -151,9 +151,6 @@ fn run_direct_vote_loss(enable_reward_recovery: bool) {
         c,
         Some(blackhole.local_addr().unwrap()),
     )])));
-    validator_configs[2].enable_reward_recovery = enable_reward_recovery;
-    assert!(!validator_configs[0].enable_reward_recovery);
-    assert!(!validator_configs[1].enable_reward_recovery);
     assert!(
         !validator_configs[1]
             .votor_peer_overrides
@@ -185,8 +182,8 @@ fn run_direct_vote_loss(enable_reward_recovery: bool) {
     let startup_tip = startup_tips.values().map(|(_, tip)| *tip).max().unwrap();
     let collector_first_slot = (startup_tip / SLOTS_PER_EPOCH + 1) * SLOTS_PER_EPOCH + 16;
     info!(
-        "Canonical reward fixture: enabled={enable_reward_recovery}, A={a}, B={b}, C={c}, first C \
-         slot={collector_first_slot}, startup (root, tip)={startup_tips:?}"
+        "Canonical reward fixture: A={a}, B={b}, C={c}, first C slot={collector_first_slot}, \
+         startup (root, tip)={startup_tips:?}"
     );
     let started = Instant::now();
     let mut captured = HashMap::<Slot, (Arc<Bank>, Arc<Bank>)>::new();
@@ -260,16 +257,7 @@ fn run_direct_vote_loss(enable_reward_recovery: bool) {
                     bitmap_has_vote_account(skip.to_bitmap(), bank, source_slot, a_vote)
                 });
             let earned = vote_credits(bank, &a_vote) - vote_credits(parent, &a_vote);
-            if !enable_reward_recovery {
-                assert!(
-                    !includes_a,
-                    "disabled collector unexpectedly recovered A at {slot}"
-                );
-                assert_eq!(
-                    earned, 0,
-                    "A cannot earn credits through the missing direct path"
-                );
-            } else if includes_a
+            if includes_a
                 && source_evidence_reached_collector(blockstore, bank, source_slot, a_vote, b)
             {
                 assert!(
@@ -283,17 +271,14 @@ fn run_direct_vote_loss(enable_reward_recovery: bool) {
         }
         captured.retain(|slot, _| !checked.contains(slot));
 
-        if canonical_reward_blocks >= 2
-            && (!enable_reward_recovery || recovered)
-            && blackholed_packets > 0
-        {
+        if canonical_reward_blocks >= 2 && recovered && blackholed_packets > 0 {
             break;
         }
         if last_reported_epoch != Some(root / SLOTS_PER_EPOCH) {
             info!(
-                "Canonical reward observation: enabled={enable_reward_recovery}, B root={root}, \
-                 tip={tip}, checked={checked:?}, pending={:?}, reward \
-                 blocks={canonical_reward_blocks}, recovered={recovered}, cluster (root, tip)={:?}",
+                "Canonical reward observation: B root={root}, tip={tip}, checked={checked:?}, \
+                 pending={:?}, reward blocks={canonical_reward_blocks}, recovered={recovered}, \
+                 cluster (root, tip)={:?}",
                 captured.keys().collect::<Vec<_>>(),
                 cluster_tips(&cluster),
             );
@@ -301,11 +286,11 @@ fn run_direct_vote_loss(enable_reward_recovery: bool) {
         }
         assert!(
             started.elapsed() < TEST_TIMEOUT,
-            "canonical reward observation timed out: enabled={enable_reward_recovery}, B \
-             root={root}, tip={tip}, first C slot={collector_first_slot}, checked={checked:?}, \
-             pending={:?}, reward blocks={canonical_reward_blocks}, recovered={recovered}, \
-             blackholed packets={blackholed_packets}, startup (root, tip)={startup_tips:?}, \
-             current (root, tip)={:?}",
+            "canonical reward observation timed out: B root={root}, tip={tip}, first C \
+             slot={collector_first_slot}, checked={checked:?}, pending={:?}, reward \
+             blocks={canonical_reward_blocks}, recovered={recovered}, blackholed \
+             packets={blackholed_packets}, startup (root, tip)={startup_tips:?}, current (root, \
+             tip)={:?}",
             captured.keys().collect::<Vec<_>>(),
             cluster_tips(&cluster),
         );
@@ -316,14 +301,9 @@ fn run_direct_vote_loss(enable_reward_recovery: bool) {
     assert_ne!(a, c);
 }
 
-#[test]
-#[serial]
-fn test_alpenglow_reward_recovery_disabled_loses_canonical_rewards_on_direct_vote_loss() {
-    run_direct_vote_loss(false);
-}
-
+/// Default validator configuration recovers rewards despite a missing direct vote path.
 #[test]
 #[serial]
 fn test_alpenglow_reward_recovery_recovers_canonical_rewards_on_direct_vote_loss() {
-    run_direct_vote_loss(true);
+    run_direct_vote_loss();
 }

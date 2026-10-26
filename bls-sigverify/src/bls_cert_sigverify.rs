@@ -1,11 +1,11 @@
-//! Verifies consensus certificates and, with reward recovery enabled, reward evidence.
+//! Verifies consensus certificates and reward evidence.
 //!
 //! The consensus path is unchanged: candidates of each certificate type are verified until the
 //! first valid one, which is sent to the consensus pool and remembered.
 //!
 //! Certificates that can carry reward signers are handed to a dedicated reward verifier thread
 //! after the pool send, through a nonblocking queue in which unverified candidates may use only
-//! half of the space, so consensus never waits for optional work. Block footer certificates
+//! half of the space, so consensus never waits for reward verification. Block footer certificates
 //! arrive the same way, from blockstore. The reward verifier forwards certificates that verified
 //! to rewards, and retains up to four signer sets per type. It verifies an unverified candidate
 //! only if its signer set is not inside a retained one and, once four are retained, only if it
@@ -65,7 +65,7 @@ const MAX_REWARD_CERTIFICATES_PER_TYPE: usize = 4;
 /// Bound additional reward candidates once consensus already has a certificate,
 /// or when an old certificate is needed only for rewards.
 pub(super) const MAX_CERTIFICATE_CANDIDATES_PER_TYPE: usize = 8;
-/// Optional reward verification has its own thread, but its total work must
+/// Reward verification has its own thread, but its total work must
 /// remain bounded even when a peer advertises many certificate types.
 const MAX_REWARD_VERIFICATIONS_PER_INTERVAL: usize = 8;
 const REWARD_VERIFICATION_BUDGET_INTERVAL: Duration = Duration::from_millis(250);
@@ -346,13 +346,13 @@ struct CertVerifyOutcome {
 /// [`verified_certs_set`] and grouped certs with the same [`CertificateType`]. Each group is
 /// verified until the first valid candidate is found. Reward evidence, including later candidates
 /// of a verified type, is handed to the reward verifier after the consensus pool send. Consensus
-/// never waits for optional verification, and reward-only certificates never reach the pool.
+/// never waits for reward-only verification, and reward-only certificates never reach the pool.
 pub(super) fn verify_and_send_certificates(
     my_pubkey: &Pubkey,
     verified_certs_set: &mut HashSet<CertificateType>,
     cert_groups: CertGroups,
     root_bank: &Bank,
-    reward_verifier: Option<&mut RewardCertificateVerifier>,
+    reward_verifier: &mut RewardCertificateVerifier,
     channel_to_pool: &Sender<SigVerifiedBatch>,
     ban_sender: &BanSender,
     thread_pool: &ThreadPool,
@@ -403,11 +403,8 @@ pub(super) fn verify_and_send_certificates(
             RewardCertificateInput::Candidates(cert_type, candidates)
         }),
     );
-    // Without reward recovery, admission marks nothing as wanted for rewards.
-    if let Some(reward_verifier) = reward_verifier {
-        for input in reward_inputs {
-            reward_verifier.send(input, &mut stats);
-        }
+    for input in reward_inputs {
+        reward_verifier.send(input, &mut stats);
     }
 
     measure.stop();
@@ -549,7 +546,7 @@ pub(super) enum RewardCertificateInput {
     Candidates(CertificateType, Vec<CertPayload>),
 }
 
-/// Verifies optional reward evidence on its own thread, so the consensus loop only enqueues it.
+/// Verifies reward evidence on its own thread, so the consensus loop only enqueues it.
 pub(super) struct RewardCertificateVerifier {
     sender: Option<Sender<RewardCertificateInput>>,
     worker: Option<JoinHandle<()>>,
@@ -1168,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn test_consensus_proof_defers_optional_verification() {
+    fn test_consensus_proof_defers_reward_only_verification() {
         let (bank, keypairs, thread_pool) = fixture();
         let (ban_sender, _ban_receiver) = stub_ban_channel_for_tests(1_024);
         let cert_type = CertificateType::new_unique_notar(10);
@@ -1343,7 +1340,7 @@ mod tests {
                 rewards: HashMap::new(),
             },
             &bank,
-            Some(&mut reward_verifier),
+            &mut reward_verifier,
             &channel_to_pool,
             &ban_sender,
             &thread_pool,
@@ -1486,7 +1483,7 @@ mod tests {
             &mut verified_certs,
             cert_groups,
             &bank,
-            Some(&mut reward_verifier),
+            &mut reward_verifier,
             &channel_to_pool,
             &ban_sender,
             &thread_pool,

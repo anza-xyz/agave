@@ -50,7 +50,7 @@ impl Default for Metrics {
 }
 
 impl Metrics {
-    fn maybe_report(&mut self, recovery_enabled: bool) {
+    fn maybe_report(&mut self, owns_recovery: bool) {
         let Self {
             last_report,
             build_us,
@@ -71,7 +71,7 @@ impl Metrics {
                 ("purged_state", *purged_state, i64),
                 ("late_vote_aggregates", *late_vote_aggregates, i64),
             );
-            if recovery_enabled {
+            if owns_recovery {
                 recovery.report();
             }
             *self = Self::default();
@@ -87,7 +87,7 @@ pub(super) struct CertsBuilder {
     /// Stores the latest pubkey for the current node.
     cluster_info: Arc<ClusterInfo>,
     metrics: Metrics,
-    /// Absent when reward recovery is disabled, so only direct votes are published.
+    /// Owned here until transferred to the background recovery service at startup.
     recovery: Option<Recovery>,
     /// A sealed slot must not be recreated by a late vote or worker completion.
     sealed_through: Option<Slot>,
@@ -96,20 +96,19 @@ pub(super) struct CertsBuilder {
 impl CertsBuilder {
     /// Constructs a new instance of [`CertsBuilder`].
     #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-    pub(super) fn new(cluster_info: Arc<ClusterInfo>, enable_reward_recovery: bool) -> Self {
+    pub(super) fn new(cluster_info: Arc<ClusterInfo>) -> Self {
         Self {
             aggregates: BTreeMap::default(),
             cluster_info,
             metrics: Metrics::default(),
-            recovery: enable_reward_recovery.then(Recovery::new),
+            recovery: Some(Recovery::new()),
             sealed_through: None,
         }
     }
 
-    pub(super) fn start_recovery_service(&mut self) -> Option<RecoveryService> {
-        self.recovery
-            .take()
-            .map(|recovery| RecoveryService::new(recovery, self.cluster_info.my_shred_version()))
+    pub(super) fn start_recovery_service(&mut self) -> RecoveryService {
+        let recovery = self.recovery.take().expect("recovery service starts once");
+        RecoveryService::new(recovery, self.cluster_info.my_shred_version())
     }
 
     #[cfg(test)]
@@ -123,15 +122,14 @@ impl CertsBuilder {
             crossbeam_channel::Sender<()>,
             crossbeam_channel::Receiver<()>,
         )>,
-    ) -> Option<RecoveryService> {
-        self.recovery.take().map(|recovery| {
-            RecoveryService::new_with_gates(
-                recovery,
-                self.cluster_info.my_shred_version(),
-                admission_gate,
-                selection_gate,
-            )
-        })
+    ) -> RecoveryService {
+        let recovery = self.recovery.take().expect("recovery service starts once");
+        RecoveryService::new_with_gates(
+            recovery,
+            self.cluster_info.my_shred_version(),
+            admission_gate,
+            selection_gate,
+        )
     }
 
     #[cfg(test)]
@@ -170,7 +168,7 @@ impl CertsBuilder {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
     pub(super) fn poll_interval(&self) -> Duration {
-        // Without recovery, nothing waits for a background job.
+        // Once the service owns recovery, this builder has no background job to poll.
         self.recovery
             .as_ref()
             .map_or(Duration::from_secs(1), Recovery::poll_interval)
@@ -374,8 +372,7 @@ impl CertsBuilder {
                     }
                 }
             }
-            // Only reward recovery uses raw signatures and certificates; when it is disabled, their
-            // senders are too.
+            // The background service handles these inputs after recovery ownership transfers.
             RewardInput::VoteSignatures { vote, signatures } => {
                 if let Some(recovery) = &mut self.recovery {
                     if vote.slot() < minimum_slot {
@@ -405,10 +402,10 @@ impl CertsBuilder {
 
 #[cfg(test)]
 impl CertsBuilder {
-    /// Tests build with reward recovery enabled.
+    /// Accesses recovery while the test builder owns it.
     fn recovery_mut(&mut self) -> &mut Recovery {
         self.recovery
             .as_mut()
-            .expect("tests enable reward recovery")
+            .expect("the test builder owns recovery")
     }
 }

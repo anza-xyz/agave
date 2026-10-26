@@ -106,7 +106,6 @@ impl BlockCreationLoop {
                 config.cluster_info.clone(),
                 config.sharable_banks.clone(),
                 config.exit.clone(),
-                config.enable_reward_recovery,
             );
         let t_block_creation_loop = Builder::new()
             .name("solBlkCreatLoop".to_string())
@@ -164,9 +163,6 @@ pub struct BlockCreationLoopConfig {
 
     /// Sender for packets to banking stage (used to re-inject transactions after sad leader handover).
     pub banking_stage_sender: BankingPacketSender,
-
-    /// Whether reward certificates may include votes recovered from certificates.
-    pub enable_reward_recovery: bool,
 }
 
 struct LeaderContext {
@@ -287,8 +283,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         banking_stage_sender,
         sharable_banks,
         alpenglow_slot_clock,
-        // Read when the reward service is created.
-        enable_reward_recovery: _,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator

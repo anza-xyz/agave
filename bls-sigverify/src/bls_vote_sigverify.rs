@@ -30,7 +30,6 @@ pub(super) fn verify_and_send_votes(
     root_bank: &Bank,
     my_pubkey: &Pubkey,
     leader_schedule: &LeaderScheduleCache,
-    enable_reward_recovery: bool,
     ban_sender: &BanSender,
     thread_pool: &ThreadPool,
     channels: &SigVerifierChannels,
@@ -51,13 +50,12 @@ pub(super) fn verify_and_send_votes(
                 || (Saturating(0), VoteVerificationStats::default()),
                 |(mut total_votes_to_verify, mut vote_verification_stats), (payload, batch)| {
                     // Raw signatures are only useful for reward recovery.
-                    let retain_reward_signatures = enable_reward_recovery
-                        && rewards_wants_vote(
-                            my_pubkey,
-                            leader_schedule,
-                            root_bank.slot(),
-                            &Vote::from(*payload),
-                        );
+                    let retain_reward_signatures = rewards_wants_vote(
+                        my_pubkey,
+                        leader_schedule,
+                        root_bank.slot(),
+                        &Vote::from(*payload),
+                    );
                     let (votes_to_verify, stats) =
                         batch.verify(retain_reward_signatures, ban_sender, thread_pool);
                     total_votes_to_verify += votes_to_verify;

@@ -1,4 +1,4 @@
-//! Keeps all optional admission, verification coordination and selection off the baseline service.
+//! Keeps recovery admission, verification coordination and selection off the baseline service.
 
 use {
     super::*,
@@ -121,7 +121,7 @@ impl RecoveryService {
         let handler = thread::Builder::new()
             .name("solConsRewCtl".into())
             .spawn(move || controller.run())
-            .expect("spawn the optional reward recovery controller");
+            .expect("spawn the reward recovery controller");
         Self {
             inputs: Some(inputs),
             finishes: Some(finishes),

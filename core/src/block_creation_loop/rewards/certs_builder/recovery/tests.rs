@@ -268,21 +268,14 @@ fn wait_until_prepared_with_shred_version(recovery: &mut Recovery, shred_version
 }
 
 fn builder() -> CertsBuilder {
-    builder_with_recovery(true)
-}
-
-fn builder_with_recovery(enable_reward_recovery: bool) -> CertsBuilder {
     let keypair = Arc::new(Keypair::new());
     let mut contact = ContactInfo::new_localhost(&keypair.pubkey(), 0);
     contact.set_shred_version(SHRED_VERSION);
-    CertsBuilder::new(
-        Arc::new(ClusterInfo::new(
-            contact,
-            keypair,
-            SocketAddrSpace::Unspecified,
-        )),
-        enable_reward_recovery,
-    )
+    CertsBuilder::new(Arc::new(ClusterInfo::new(
+        contact,
+        keypair,
+        SocketAddrSpace::Unspecified,
+    )))
 }
 
 #[test]
@@ -395,7 +388,7 @@ fn test_service_loop_schedules_and_collects_jobs_without_further_input() {
 }
 
 #[test]
-fn test_disabled_recovery_publishes_only_direct_votes() {
+fn test_default_builder_recovers_missing_reward_votes() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
     let direct = |rank: usize| {
@@ -409,32 +402,22 @@ fn test_disabled_recovery_publishes_only_direct_votes() {
             },
         )
     };
-    // The certificate covers both direct votes, so recovery would publish it.
-    for (enable_reward_recovery, expected) in [(true, &[0, 1, 2, 3][..]), (false, &[0, 1][..])] {
-        let mut builder = builder_with_recovery(enable_reward_recovery);
-        // Without recovery there is no worker, and nothing to poll for.
-        assert_eq!(builder.recovery.is_some(), enable_reward_recovery);
-        if !enable_reward_recovery {
-            assert_eq!(builder.poll_interval(), Duration::from_secs(1));
-        }
-        for input in [
-            RewardInput::External(vec![direct(0), direct(1)]),
-            RewardInput::VoteSignatures {
-                vote,
-                signatures: fixture.signatures(vote, &[0, 1]),
-            },
-            RewardInput::Certificates(vec![fixture.certificate(vote, &[0, 1, 2, 3])]),
-        ] {
-            builder.handle_input(&fixture.bank, input);
-        }
-        if let Some(recovery) = &mut builder.recovery {
-            wait_until_prepared(recovery);
-        }
-        let response = builder
-            .build_certs(SLOT.saturating_add(NUM_SLOTS_FOR_REWARD))
-            .unwrap();
-        fixture.assert_response(&response, Some(expected), None);
+    let mut builder = builder();
+    for input in [
+        RewardInput::External(vec![direct(0), direct(1)]),
+        RewardInput::VoteSignatures {
+            vote,
+            signatures: fixture.signatures(vote, &[0, 1]),
+        },
+        RewardInput::Certificates(vec![fixture.certificate(vote, &[0, 1, 2, 3])]),
+    ] {
+        builder.handle_input(&fixture.bank, input);
     }
+    wait_until_prepared(builder.recovery_mut());
+    let response = builder
+        .build_certs(SLOT.saturating_add(NUM_SLOTS_FOR_REWARD))
+        .unwrap();
+    fixture.assert_response(&response, Some(&[0, 1, 2, 3]), None);
 }
 
 #[test]

@@ -409,9 +409,6 @@ pub struct ValidatorConfig {
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub tvu_bls_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
-    /// Whether this node, as leader, uses certificates to recover reward votes it missed.
-    /// Off unless `--enable-reward-recovery` is given.
-    pub enable_reward_recovery: bool,
     pub repair_handler_type: RepairHandlerType,
     // Thread niceness adjustment for snapshot packager service
     pub snapshot_packager_niceness_adj: i8,
@@ -496,7 +493,6 @@ impl ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_bls_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             delay_leader_block_for_pending_fork: true,
-            enable_reward_recovery: false,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
         }
@@ -1660,7 +1656,6 @@ impl Validator {
             highest_finalized: highest_finalized.clone(),
             banking_stage_sender: banking_stage_sender_for_bcl,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
-            enable_reward_recovery: config.enable_reward_recovery,
         };
         let (block_creation_loop, reward_aggregates_sender) =
             BlockCreationLoop::new(block_creation_loop_config);
@@ -1763,7 +1758,6 @@ impl Validator {
                 turbine_xdp_sender: turbine_xdp_sender.clone(),
                 repair_xdp_sender,
                 replay_arena,
-                enable_reward_recovery: config.enable_reward_recovery,
             },
             &max_slots,
             block_metadata_notifier,

@@ -192,7 +192,6 @@ impl TestContext {
             leader_schedule,
             num_threads: 4,
             generated_cert_types: generated_cert_types.clone(),
-            enable_reward_recovery: true,
         };
         let channels = SigVerifierChannels::new(
             packet_receiver,
@@ -1702,7 +1701,7 @@ fn test_certificate_for_another_reward_leader_is_not_forwarded() {
 }
 
 #[test]
-fn test_disabled_reward_recovery_forwards_only_direct_votes() {
+fn test_direct_reward_vote_includes_recovery_signatures() {
     let slot = 10;
     let mut ctx = TestContext::new_unstarted(
         1024,
@@ -1710,7 +1709,6 @@ fn test_disabled_reward_recovery_forwards_only_direct_votes() {
         Some(slot + 8),
         1024,
     );
-    ctx.unstarted.as_mut().unwrap().0.enable_reward_recovery = false;
     ctx.start();
     let rank = ctx
         .validator_keypairs
@@ -1732,11 +1730,15 @@ fn test_disabled_reward_recovery_forwards_only_direct_votes() {
         ctx.cluster_info.my_shred_version(),
     ));
     receive_messages(&ctx.pool_receiver, 1, 0);
-    // Reward inputs are sent before the pool batch: the direct vote, but not its raw signature,
-    // which only recovery uses.
+    // Reward inputs are sent before the pool batch: both the direct vote and its raw signature
+    // for recovering reward certificates.
     assert!(matches!(
         ctx.reward_receiver.try_recv(),
         Ok(RewardInput::External(_))
+    ));
+    assert!(matches!(
+        ctx.reward_receiver.try_recv(),
+        Ok(RewardInput::VoteSignatures { .. })
     ));
     assert!(ctx.reward_receiver.is_empty());
 }
@@ -1941,7 +1943,7 @@ fn test_first_reward_consensus_certificate_after_many_invalid_candidates() {
 }
 
 #[test]
-fn test_first_consensus_proof_reaches_pool_and_optional_candidates_are_verified() {
+fn test_first_consensus_proof_reaches_pool_and_reward_only_candidates_are_verified() {
     let slot = 10;
     let mut ctx = TestContext::new_unstarted(
         1024,
@@ -1960,16 +1962,19 @@ fn test_first_consensus_proof_reaches_pool_and_optional_candidates_are_verified(
     let deferred_sender = Pubkey::new_unique();
     let mut deferred = create(cert_type, (1..8).collect());
     deferred.signature = keypairs[0].sign(b"invalid deferred proof").into();
-    let optional_type = CertificateType::new_unique_notar(slot);
-    ctx.generated_cert_types.insert_cert(optional_type);
-    let optional_sender = Pubkey::new_unique();
-    let mut optional = create(optional_type, (0..7).collect());
-    optional.signature = keypairs[0].sign(b"invalid optional proof").into();
+    let reward_only_type = CertificateType::new_unique_notar(slot);
+    ctx.generated_cert_types.insert_cert(reward_only_type);
+    let reward_only_sender = Pubkey::new_unique();
+    let mut reward_only = create(reward_only_type, (0..7).collect());
+    reward_only.signature = keypairs[0].sign(b"invalid reward-only proof").into();
     // Queued before the verifier starts, `deferred` is a later candidate in the group of the
-    // required proof, and `optional` is a reward-only candidate in its own group.
+    // required proof, and `reward_only` is a reward-only candidate in its own group.
     ctx.send_datagrams(messages_to_datagrams(
         &[
-            (ConsensusMessage::Certificate(optional), optional_sender),
+            (
+                ConsensusMessage::Certificate(reward_only),
+                reward_only_sender,
+            ),
             (
                 ConsensusMessage::Certificate(required.clone()),
                 Pubkey::new_unique(),
@@ -1987,18 +1992,18 @@ fn test_first_consensus_proof_reaches_pool_and_optional_candidates_are_verified(
         receive_reward_certificates(&ctx.reward_receiver, 1),
         vec![required],
     );
-    // The reward verifier still checks both optional candidates and bans their senders.
+    // The reward verifier still checks both reward-only candidates and bans their senders.
     let deadline = Instant::now() + RECEIVE_TIMEOUT;
     let mut banned = HashSet::new();
     while banned.len() < 2 {
         assert!(
             Instant::now() < deadline,
-            "optional candidates were not verified"
+            "reward-only candidates were not verified"
         );
         std::thread::sleep(Duration::from_millis(10));
         banned.extend(ctx.banned_pubkeys());
     }
-    assert_eq!(banned, HashSet::from([deferred_sender, optional_sender]));
+    assert_eq!(banned, HashSet::from([deferred_sender, reward_only_sender]));
     expect_no_receive(&ctx.pool_receiver);
 }
 

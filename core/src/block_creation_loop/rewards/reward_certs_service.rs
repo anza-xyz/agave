@@ -30,12 +30,11 @@ impl RewardCertsService {
         cluster_info: Arc<ClusterInfo>,
         sharable_banks: SharableBanks,
         exit: Arc<AtomicBool>,
-        enable_reward_recovery: bool,
     ) -> (Self, CertsRequestor, Sender<RewardInput>) {
         let (reward_aggregates_sender, reward_aggregates_receiver) =
             bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (certs_requestor, req_receiver) = CertsRequestor::new();
-        let builder = CertsBuilder::new(cluster_info.clone(), enable_reward_recovery);
+        let builder = CertsBuilder::new(cluster_info.clone());
         let ctx = Context::new(
             exit,
             cluster_info,
@@ -65,6 +64,7 @@ struct Context {
     req_receiver: Receiver<RewardRequest>,
     sharable_banks: SharableBanks,
     builder: CertsBuilder,
+    /// Present until test shutdown returns recovery ownership to the builder.
     recovery: Option<RecoveryService>,
     pending_certificates: std::vec::IntoIter<Certificate>,
 }
@@ -86,7 +86,7 @@ impl Context {
             req_receiver,
             sharable_banks,
             builder,
-            recovery,
+            recovery: Some(recovery),
             pending_certificates: Vec::new().into_iter(),
         }
     }
@@ -111,7 +111,7 @@ impl Context {
             req_receiver,
             sharable_banks,
             builder,
-            recovery,
+            recovery: Some(recovery),
             pending_certificates: Vec::new().into_iter(),
         }
     }
