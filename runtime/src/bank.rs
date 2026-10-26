@@ -111,7 +111,9 @@ use {
         state_traits::StateMutWincode as _,
     },
     solana_accounts_db::{
-        account_locks::{DEFAULT_TX_ACCOUNT_LOCKS, validate_account_locks},
+        account_locks::{
+            DEFAULT_TX_ACCOUNT_LOCKS, TransactionAccountLockLimits, validate_account_locks,
+        },
         account_storage_entry::AccountStorageEntry,
         accounts::{AccountAddressFilter, Accounts},
         accounts_db::{AccountsDb, AccountsDbConfig},
@@ -3843,10 +3845,16 @@ impl Bank {
         tick_height == self.max_tick_height
     }
 
-    /// Get the max number of accounts that a transaction may lock in this block
-    pub fn get_transaction_account_lock_limit(&self) -> usize {
-        self.transaction_account_lock_limit
-            .unwrap_or(DEFAULT_TX_ACCOUNT_LOCKS)
+    /// Get the account lock limits for each transaction format in this block.
+    pub fn get_transaction_account_lock_limits(&self) -> TransactionAccountLockLimits {
+        let limit = self
+            .transaction_account_lock_limit
+            .unwrap_or(DEFAULT_TX_ACCOUNT_LOCKS);
+        TransactionAccountLockLimits {
+            legacy: limit,
+            v0: limit,
+            v1: limit,
+        }
     }
 
     /// Prepare a transaction batch from a list of versioned transactions from
@@ -3886,7 +3894,7 @@ impl Bank {
         txs: &[impl TransactionWithMeta],
         tx_results: impl Iterator<Item = Result<()>>,
     ) -> Vec<Result<()>> {
-        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
+        let tx_account_lock_limits = self.get_transaction_account_lock_limits();
 
         // we must fail transactions that duplicate a prior message hash
         let mut batch_message_hashes = AHashSet::with_capacity(txs.len());
@@ -3906,7 +3914,7 @@ impl Bank {
 
         self.rc
             .accounts
-            .lock_accounts(txs.iter(), tx_results, tx_account_lock_limit)
+            .lock_accounts(txs.iter(), tx_results, tx_account_lock_limits)
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.
@@ -3937,8 +3945,10 @@ impl Bank {
         &'a self,
         transaction: &'a Tx,
     ) -> TransactionBatch<'a, 'a, Tx> {
-        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let lock_result = validate_account_locks(transaction.account_keys(), tx_account_lock_limit);
+        let tx_account_lock_limits = self.get_transaction_account_lock_limits();
+        let limit = tx_account_lock_limits.for_version(transaction.version());
+        let lock_result =
+            limit.and_then(|limit| validate_account_locks(transaction.account_keys(), limit));
         let mut batch = TransactionBatch::new(
             vec![lock_result],
             self,

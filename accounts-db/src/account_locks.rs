@@ -4,6 +4,7 @@ use {
     ahash::{AHashMap, AHashSet},
     solana_message::AccountKeys,
     solana_pubkey::Pubkey,
+    solana_transaction::versioned::TransactionVersion,
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{cell::RefCell, collections::hash_map},
 };
@@ -11,6 +12,25 @@ use {
 /// Default maximum number of accounts a transaction may lock.
 /// The runtime configuration may override this limit.
 pub const DEFAULT_TX_ACCOUNT_LOCKS: usize = 64;
+
+/// Account lock limits selected by transaction format.
+#[derive(Clone, Copy)]
+pub struct TransactionAccountLockLimits {
+    pub legacy: usize,
+    pub v0: usize,
+    pub v1: usize,
+}
+
+impl TransactionAccountLockLimits {
+    pub fn for_version(self, version: TransactionVersion) -> TransactionResult<usize> {
+        match version {
+            TransactionVersion::Legacy(_) => Ok(self.legacy),
+            TransactionVersion::Number(0) => Ok(self.v0),
+            TransactionVersion::Number(1) => Ok(self.v1),
+            _ => Err(TransactionError::UnsupportedVersion),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct AccountLocks {
@@ -187,6 +207,22 @@ fn has_duplicates(account_keys: AccountKeys) -> bool {
 #[cfg(test)]
 mod tests {
     use {super::*, solana_message::v0::LoadedAddresses};
+
+    #[test]
+    fn test_transaction_account_lock_limits_for_version() {
+        let limits = TransactionAccountLockLimits {
+            legacy: 64,
+            v0: 32,
+            v1: 96,
+        };
+        assert_eq!(limits.for_version(TransactionVersion::LEGACY), Ok(64));
+        assert_eq!(limits.for_version(TransactionVersion::Number(0)), Ok(32));
+        assert_eq!(limits.for_version(TransactionVersion::Number(1)), Ok(96));
+        assert_eq!(
+            limits.for_version(TransactionVersion::Number(2)),
+            Err(TransactionError::UnsupportedVersion)
+        );
+    }
 
     #[test]
     fn test_validate_account_locks_valid_no_dynamic() {

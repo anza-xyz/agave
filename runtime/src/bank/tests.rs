@@ -5139,10 +5139,16 @@ fn test_transaction_account_lock_limit(configured_limit: Option<usize>, expected
         None,
         None,
     );
-    assert_eq!(bank.get_transaction_account_lock_limit(), expected_limit);
+    let limits = bank.get_transaction_account_lock_limits();
+    assert_eq!(limits.legacy, expected_limit);
+    assert_eq!(limits.v0, expected_limit);
+    assert_eq!(limits.v1, expected_limit);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let child = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
-    assert_eq!(child.get_transaction_account_lock_limit(), expected_limit);
+    let limits = child.get_transaction_account_lock_limits();
+    assert_eq!(limits.legacy, expected_limit);
+    assert_eq!(limits.v0, expected_limit);
+    assert_eq!(limits.v1, expected_limit);
 }
 
 #[test]
@@ -5171,7 +5177,7 @@ fn test_process_transaction_with_too_many_account_locks() {
         bank.last_blockhash(),
     );
 
-    let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
+    let transaction_account_lock_limit = bank.get_transaction_account_lock_limits().legacy;
     while tx.message.account_keys.len() <= transaction_account_lock_limit {
         tx.message.account_keys.push(solana_pubkey::new_rand());
     }
