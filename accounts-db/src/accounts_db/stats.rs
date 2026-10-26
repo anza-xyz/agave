@@ -805,6 +805,14 @@ pub struct PrefetchAccountsStats {
     pub num_issued: AtomicU64,
     /// accounts stored in the read cache
     pub num_stored: AtomicU64,
+    /// reads that completed during their own submission: their data was in the page cache
+    pub num_page_cache_reads: AtomicU64,
+    /// reads that completed later, nearly all from disk
+    pub num_disk_reads: AtomicU64,
+    /// time from pushing each read to its completion, summed
+    pub read_us: AtomicU64,
+    /// the slowest of them
+    pub max_read_us: AtomicU64,
 }
 
 impl PrefetchAccountsStats {
@@ -839,6 +847,22 @@ impl PrefetchAccountsStats {
             (
                 "num_stored",
                 self.num_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_page_cache_reads",
+                self.num_page_cache_reads.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_disk_reads",
+                self.num_disk_reads.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            ("read_us", self.read_us.swap(0, Ordering::Relaxed), i64),
+            (
+                "max_read_us",
+                self.max_read_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );

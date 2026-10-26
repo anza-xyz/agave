@@ -8,7 +8,7 @@
 //! every account fits.
 
 use {
-    super::{DispatchCounts, Outstanding, Read},
+    super::{DispatchCounts, Outstanding, PrefetchAccountsStats, Read},
     crate::{
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsDb, LoadedAccountAccessor},
@@ -23,10 +23,10 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
-        io,
+        io, mem,
         os::fd::AsRawFd,
-        sync::{Arc, Weak},
-        time::Duration,
+        sync::{Arc, Weak, atomic::Ordering},
+        time::{Duration, Instant},
     },
 };
 
@@ -50,6 +50,33 @@ struct PrefetchState {
     outstanding: Outstanding,
     /// accounts whose reads have been pushed and not finished
     num_in_flight: u32,
+    /// set while handling the completions posted during their own submission
+    reaping_submitted: bool,
+    read_counts: ReadCounts,
+}
+
+/// What reads took, added to the stats once per pass rather than per read
+#[derive(Default)]
+struct ReadCounts {
+    num_page_cache_reads: u64,
+    num_disk_reads: u64,
+    read_us: u64,
+    max_read_us: u64,
+}
+
+impl ReadCounts {
+    fn add_to(self, stats: &PrefetchAccountsStats) {
+        stats
+            .num_page_cache_reads
+            .fetch_add(self.num_page_cache_reads, Ordering::Relaxed);
+        stats
+            .num_disk_reads
+            .fetch_add(self.num_disk_reads, Ordering::Relaxed);
+        stats.read_us.fetch_add(self.read_us, Ordering::Relaxed);
+        stats
+            .max_read_us
+            .fetch_max(self.max_read_us, Ordering::Relaxed);
+    }
 }
 
 impl PrefetchState {
@@ -73,6 +100,7 @@ struct ReadOp {
     /// read into its spare capacity, which holds `len` bytes
     buf: Vec<u8>,
     len: usize,
+    pushed: Instant,
 }
 
 impl ReadOp {
@@ -97,6 +125,16 @@ impl RingOp<PrefetchState> for ReadOp {
         completion: &mut Completion<PrefetchState, Self>,
         res: io::Result<i32>,
     ) -> io::Result<()> {
+        let state = completion.context_mut();
+        let read_us = self.pushed.elapsed().as_micros() as u64;
+        if state.reaping_submitted {
+            state.read_counts.num_page_cache_reads += 1;
+        } else {
+            state.read_counts.num_disk_reads += 1;
+        }
+        state.read_counts.read_us += read_us;
+        state.read_counts.max_read_us = state.read_counts.max_read_us.max(read_us);
+
         let account = match res {
             Err(_) => None,
             Ok(bytes_read) => {
@@ -119,6 +157,7 @@ impl RingOp<PrefetchState> for ReadOp {
                                 offset: self.offset,
                                 buf: Vec::with_capacity(len),
                                 len,
+                                pushed: Instant::now(),
                             });
                         }
                         // data past the end of the file
@@ -147,6 +186,8 @@ impl RingPrefetcher {
             accounts_db,
             outstanding: Outstanding::default(),
             num_in_flight: 0,
+            reaping_submitted: false,
+            read_counts: ReadCounts::default(),
         };
         Ok(Self {
             ring: Ring::new(ring, state),
@@ -179,6 +220,11 @@ impl RingPrefetcher {
                 return Ok(());
             }
             self.reap()?;
+            let state = self.ring.context_mut();
+            let read_counts = mem::take(&mut state.read_counts);
+            if let Some(accounts_db) = state.accounts_db.upgrade() {
+                read_counts.add_to(&accounts_db.prefetcher.stats);
+            }
         }
     }
 
@@ -216,7 +262,18 @@ impl RingPrefetcher {
         self.ring.submit_and_wait(1, Some(COMPLETION_WAIT))?;
         self.ring.process_completions()?;
         // submit the whole-account reads completions queued, rather than after the next dispatch
-        self.ring.submit()
+        self.submit()
+    }
+
+    /// Submits queued reads, then handles the ones that completed during submission: their data
+    /// was in the page cache, and handling them now stores their accounts without waiting for
+    /// the next reap
+    fn submit(&mut self) -> io::Result<()> {
+        self.ring.submit()?;
+        self.ring.context_mut().reaping_submitted = true;
+        let result = self.ring.process_completions();
+        self.ring.context_mut().reaping_submitted = false;
+        result
     }
 
     fn push_read(&mut self, read: Read) -> io::Result<()> {
@@ -256,9 +313,10 @@ impl RingPrefetcher {
             offset,
             buf: Vec::with_capacity(len),
             len,
+            pushed: Instant::now(),
         })?;
         // `push` only queues the read; submit it now rather than after the whole batch is
         // dispatched, which can be too late for the account's use
-        self.ring.submit()
+        self.submit()
     }
 }
