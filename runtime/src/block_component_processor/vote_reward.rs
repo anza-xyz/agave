@@ -113,20 +113,6 @@ impl VoteState {
     }
 
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
-<<<<<<< HEAD
-        let mut updated_account = AccountSharedData::new_rent_epoch(
-            self.lamports,
-            0,
-            &self.owner,
-            RENT_EXEMPT_RENT_EPOCH,
-        );
-        updated_account.resize(self.space, 0);
-        match self
-            .handler
-            .serialize_into(updated_account.data_as_mut_slice())
-        {
-            Ok(()) => Some((self.vote_pubkey, updated_account)),
-=======
         match self.handler.serialize_padded(self.space) {
             Ok(data) => {
                 let mut updated_account =
@@ -134,7 +120,6 @@ impl VoteState {
                 updated_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
                 Some((self.vote_pubkey, updated_account))
             }
->>>>>>> 8c3e45f (vote_reward: build vote accounts from a padded vote state encoding (#16381))
             Err(e) => {
                 info!(
                     "serializing account vote_pubkey={} failed with {e}",
