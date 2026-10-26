@@ -77,6 +77,7 @@ wincode = { workspace = true, features = ["alloc"] }
 agave-votor = { path = ".", features = ["dev-context-only-utils"] }
 agave-votor-transport = { path = "../votor-transport", features = ["agave-unstable-api", "dev-context-only-utils"] }
 rand = { workspace = true }
+solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }

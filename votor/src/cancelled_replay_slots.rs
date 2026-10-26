@@ -2,6 +2,7 @@ use {
     solana_clock::Slot,
     std::{
         collections::BTreeMap,
+        ops::RangeInclusive,
         sync::{Arc, Mutex},
         time::Instant,
     },
@@ -42,6 +43,14 @@ impl CancelledReplaySlots {
         self.0.lock().unwrap().get(&slot).copied()
     }
 
+    /// Returns whether replay of any slot in `slots` is cancelled.
+    pub fn contains_any_in(&self, slots: RangeInclusive<Slot>) -> bool {
+        if slots.is_empty() {
+            return false;
+        }
+        self.0.lock().unwrap().range(slots).next().is_some()
+    }
+
     /// Forgets every cancelled slot at or below `root`.
     pub fn prune_through(&self, root: Slot) {
         let mut cancelled_slots = self.0.lock().unwrap();
@@ -74,6 +83,13 @@ mod tests {
         for slot in [3, 4, 6] {
             cancelled_replay_slots.insert(slot);
         }
+        assert!(shared.contains_any_in(5..=6));
+        assert!(shared.contains_any_in(4..=4));
+        assert!(!shared.contains_any_in(5..=5));
+        assert!(!shared.contains_any_in(7..=10));
+        #[allow(clippy::reversed_empty_ranges)]
+        let empty = 6..=5;
+        assert!(!shared.contains_any_in(empty));
         cancelled_replay_slots.prune_through(4);
         assert!(!shared.contains(3));
         assert!(!shared.contains(4));
