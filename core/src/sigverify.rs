@@ -7,7 +7,8 @@ use {
         banking_channels::BankingPacketSender, transaction_priority::calculate_priority_from_bytes,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
+    agave_wake_channel::{Receiver, RecvError},
+    crossbeam_channel::{Sender, TrySendError},
     solana_measure::measure_us,
     solana_perf::{
         deduper::{self, Deduper},
@@ -19,10 +20,9 @@ use {
         num::NonZeroUsize,
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
         thread::JoinHandle,
-        time::Duration,
     },
 };
 
@@ -79,13 +79,11 @@ struct WorkerPoolChannels {
 }
 
 pub(crate) struct SigVerifyWorkerPool {
-    exit: Arc<AtomicBool>,
     worker_hdls: Vec<JoinHandle<()>>,
 }
 
 impl Drop for SigVerifyWorkerPool {
     fn drop(&mut self) {
-        self.exit.store(true, Ordering::Relaxed);
         self.worker_hdls.drain(..).for_each(|hdl| {
             if let Err(err) = hdl.join() {
                 error!("sigverify worker encountered unexpected error: {err:?}");
@@ -109,35 +107,26 @@ impl SigVerifyWorkerPool {
             sharable_banks,
             non_vote_state,
         };
-        let exit = Arc::new(AtomicBool::new(false));
         let worker_hdls = (0..num_workers.get())
             .map(|idx| {
-                let exit = exit.clone();
                 let channels = channels.clone();
 
                 std::thread::Builder::new()
                     .name(format!("solSigVerify{idx:02}"))
-                    .spawn(move || Self::worker(exit, channels, forward_non_votes))
+                    .spawn(move || Self::worker(channels, forward_non_votes))
                     .expect("failed to spawn sigverify worker thread")
             })
             .collect();
-        Self { exit, worker_hdls }
+        Self { worker_hdls }
     }
 
-    fn worker(exit: Arc<AtomicBool>, channels: WorkerPoolChannels, forward_non_votes: bool) {
-        while !exit.load(Ordering::Relaxed) {
-            if !Self::worker_iteration(&channels, forward_non_votes) {
-                break;
-            }
-        }
+    fn worker(channels: WorkerPoolChannels, forward_non_votes: bool) {
+        while Self::worker_iteration(&channels, forward_non_votes) {}
     }
 
     /// Returns false if some channel connection is disconnected.
     fn worker_iteration(channels: &WorkerPoolChannels, forward_non_votes: bool) -> bool {
-        match channels
-            .non_vote_receiver
-            .recv_timeout(Duration::from_millis(10))
-        {
+        match channels.non_vote_receiver.recv() {
             Ok(batch) => Self::run_transaction_task(
                 batch,
                 false,
@@ -147,8 +136,7 @@ impl SigVerifyWorkerPool {
                 &channels.sharable_banks,
                 &channels.non_vote_state,
             ),
-            Err(RecvTimeoutError::Timeout) => true,
-            Err(RecvTimeoutError::Disconnected) => false,
+            Err(RecvError) => false,
         }
     }
 

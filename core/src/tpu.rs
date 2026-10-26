@@ -174,7 +174,7 @@ impl Tpu {
             vote_forwarding_client: vote_forwarding_client_socket,
         } = sockets;
 
-        let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
+        let (packet_sender, packet_receiver) = agave_wake_channel::bounded(TPU_CHANNEL_SIZE);
         let (vote_packet_sender, vote_packet_receiver) = bounded(0); // TPU votes are not ingested
         let evicting_vote_sender =
             EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());

@@ -9,8 +9,9 @@ use {
         sigverify::{SigVerifyWorkerPool, SigVerifyWorkerState, SigVerifyWorkerStats},
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
+    agave_wake_channel::Receiver,
     core::time::Duration,
-    crossbeam_channel::{Receiver, Sender},
+    crossbeam_channel::Sender,
     solana_perf::{deduper::Deduper, packet::PacketBatch},
     solana_runtime::bank_forks::SharableBanks,
     std::{
@@ -31,7 +32,7 @@ const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 pub struct SigVerifyStage {
     exit: Arc<AtomicBool>,
     servicer_thread_hdl: Option<JoinHandle<()>>,
-    // pool held so workers stay alive. If dropped, workers in pool shut down.
+    // Joins the workers on drop.
     _worker_pool: SigVerifyWorkerPool,
 }
 
@@ -130,6 +131,7 @@ impl SigVerifierStats {
 }
 
 impl SigVerifyStage {
+    /// Joining or dropping the stage blocks until all senders of `packet_receiver` are dropped.
     pub fn new(
         packet_receiver: Receiver<PacketBatch>,
         non_vote_sender: BankingPacketSender,
@@ -298,7 +300,7 @@ mod tests {
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = bounded(1024);
+        let (packet_s, packet_r) = agave_wake_channel::bounded(1024);
         let (verified_s, verified_r) = banking_channels::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
         let stage = SigVerifyStage::new(
@@ -358,7 +360,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = bounded(1024);
+        let (packet_s, packet_r) = agave_wake_channel::bounded(1024);
         let (verified_s, verified_r) = banking_channels::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
         let stage = SigVerifyStage::new(
