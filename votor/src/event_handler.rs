@@ -353,6 +353,7 @@ impl EventHandler {
             // Block has received a notarization certificate
             VotorEvent::BlockNotarized(block) => {
                 info!("{}: Block Notarized {block:?}", local_context.my_pubkey);
+                Self::resume_replay(&local_context.my_pubkey, block, ctx);
                 vctx.vote_history.add_block_notarized(block);
                 Self::try_final(&local_context.my_pubkey, block, vctx, &mut votes)?;
                 request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
@@ -363,6 +364,7 @@ impl EventHandler {
                     "{}: Block notar-fallback {block:?}",
                     local_context.my_pubkey
                 );
+                Self::resume_replay(&local_context.my_pubkey, block, ctx);
                 request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
             }
 
@@ -494,6 +496,7 @@ impl EventHandler {
                     "{}: Finalized {block:?} fast: {is_fast_finalization}",
                     local_context.my_pubkey
                 );
+                Self::resume_replay(&local_context.my_pubkey, block, ctx);
                 local_context.finalized_blocks.insert(block);
                 request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
 
@@ -946,6 +949,19 @@ impl EventHandler {
         }
     }
 
+    /// Resumes replay of `block`'s slot if it was cancelled, because `block` has a
+    /// NotarizeFallback-or-stronger certificate and may therefore end up finalized.
+    ///
+    /// Replay then recreates the slot's bank and replays it from the start.
+    fn resume_replay(my_pubkey: &Pubkey, block: Block, ctx: &SharedContext) {
+        if ctx.cancelled_replay_slots.remove(block.slot) {
+            info!(
+                "{my_pubkey}: Resuming cancelled replay of slot {} for {block:?}",
+                block.slot
+            );
+        }
+    }
+
     /// Refresh all votes cast for slots > highest_finalized_slot
     fn refresh_votes(
         my_pubkey: &Pubkey,
@@ -1377,6 +1393,19 @@ mod tests {
         fn send_block_notarized_event(&mut self, block: Block) {
             let mut new_ops = EventHandler::handle_event(
                 VotorEvent::BlockNotarized(block),
+                &self.timer_manager,
+                &self.shared_context,
+                &mut self.voting_context,
+                &self.root_context,
+                &mut self.local_context,
+            )
+            .unwrap();
+            self.bls_ops.append(&mut new_ops);
+        }
+
+        fn send_block_notar_fallback_event(&mut self, block: Block) {
+            let mut new_ops = EventHandler::handle_event(
+                VotorEvent::BlockNotarFallback(block),
                 &self.timer_manager,
                 &self.shared_context,
                 &mut self.voting_context,
@@ -2164,25 +2193,88 @@ mod tests {
     fn test_set_root_prunes_cancelled_replay_slots() {
         let mut test_context = setup();
         let cancelled_replay_slots = test_context.shared_context.cancelled_replay_slots.clone();
-        for slot in [1, 2, 5] {
+        for slot in [1, 2, 3, 5] {
             cancelled_replay_slots.insert(slot);
         }
 
-        // Root slot 1
+        // Root slot 2 through finalizing it, which also resumes replay of slot 2 itself, but
+        // not of its ancestor 1
         let root_bank = test_context.bank_forks.read().unwrap().root_bank();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
+        let bank2 = test_context.create_block_and_send_block_event(2, bank1.clone());
         let block_1 = Block {
             slot: 1,
             block_id: bank1.block_id().unwrap(),
         };
+        let block_2 = Block {
+            slot: 2,
+            block_id: bank2.block_id().unwrap(),
+        };
         test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
-        test_context.check_for_vote(&Vote::new_notarization_vote(block_1));
-        test_context.send_finalized_event(block_1, true);
-        assert_eq!(test_context.bank_forks.read().unwrap().root(), 1);
+        test_context.check_for_votes(&[
+            Vote::new_notarization_vote(block_1),
+            Vote::new_notarization_vote(block_2),
+        ]);
+        test_context.send_finalized_event(block_2, true);
+        assert_eq!(test_context.bank_forks.read().unwrap().root(), 2);
 
         assert!(!cancelled_replay_slots.contains(1));
-        assert!(cancelled_replay_slots.contains(2));
+        assert!(!cancelled_replay_slots.contains(2));
+        assert!(cancelled_replay_slots.contains(3));
         assert!(cancelled_replay_slots.contains(5));
+    }
+
+    #[test]
+    fn test_notar_fallback_or_stronger_resumes_cancelled_replay() {
+        let mut test_context = setup();
+        let cancelled_replay_slots = test_context.shared_context.cancelled_replay_slots.clone();
+        let [
+            notar_fallback_slot,
+            notarized_slot,
+            finalized_slot,
+            other_slot,
+        ] = {
+            let root_bank = test_context.bank_forks.read().unwrap().root_bank();
+            let leader_schedule = &test_context.voting_context.leader_schedule;
+            let my_pubkey = test_context.local_context.my_pubkey;
+            let slots: Vec<Slot> = (1..)
+                .filter(|slot| {
+                    leader_schedule
+                        .slot_leader_at(*slot, Some(&root_bank))
+                        .unwrap()
+                        .id
+                        != my_pubkey
+                })
+                .take(4)
+                .collect();
+            slots.try_into().unwrap()
+        };
+        for slot in [
+            notar_fallback_slot,
+            notarized_slot,
+            finalized_slot,
+            other_slot,
+        ] {
+            test_context.send_skip_certified_without_notar_event(slot);
+            assert!(cancelled_replay_slots.contains(slot));
+        }
+
+        // Each NotarizeFallback-or-stronger certificate resumes replay of its block's slot only
+        test_context.send_block_notar_fallback_event(Block::new_unique(notar_fallback_slot));
+        assert!(!cancelled_replay_slots.contains(notar_fallback_slot));
+        assert!(cancelled_replay_slots.contains(notarized_slot));
+
+        test_context.send_block_notarized_event(Block::new_unique(notarized_slot));
+        assert!(!cancelled_replay_slots.contains(notarized_slot));
+        assert!(cancelled_replay_slots.contains(finalized_slot));
+
+        // The finalized block has no bank yet, so it isn't rooted
+        test_context.send_finalized_event(Block::new_unique(finalized_slot), false);
+        assert!(!cancelled_replay_slots.contains(finalized_slot));
+        assert_eq!(test_context.bank_forks.read().unwrap().root(), 0);
+
+        assert!(cancelled_replay_slots.contains(other_slot));
+        test_context.check_no_vote_or_commitment();
     }
 
     #[test]
