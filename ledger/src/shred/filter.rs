@@ -4,7 +4,8 @@
 use {
     super::{
         DATA_SHREDS_PER_FEC_BLOCK, Error, Payload, Shred, ShredFetchStats, ShredFlags, ShredType,
-        ShredVariant, layout, merkle,
+        ShredVariant, layout,
+        merkle::{self, ErasureBatch},
     },
     crate::blockstore,
     agave_feature_set as feature_set,
@@ -532,46 +533,88 @@ impl ShredRecoveryContext {
     }
 
     /// Recover shreds and apply filtering to the recovered shreds
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn recover<T: IntoIterator<Item = Shred>>(
         &mut self,
         shreds: T,
         recovered_shreds: &mut Vec<Payload>,
         recovered_data_shreds: &mut Vec<Shred>,
     ) -> Result<(), Error> {
+        let batch = self.rebuild_erasure_batch(shreds)?;
+        let shreds = self.check_recovered_shreds(batch);
+        Self::collect_recovered_shreds(shreds, recovered_shreds, recovered_data_shreds);
+        Ok(())
+    }
+
+    /// Rebuild the whole erasure batch from the given shreds, after applying
+    /// filtering to them.
+    ///
+    /// The leader signs the Merkle root of the erasure batch, so the same signature
+    /// is valid for every shred. For recovered shreds the signature is copied from shreds
+    /// which were received from turbine (or repair) and are already sig-verified. It
+    /// verifies for recovered shreds too, because rebuilding checks that the Merkle tree
+    /// of the erasure batch yields the same Merkle root.
+    pub(crate) fn rebuild_erasure_batch<T: IntoIterator<Item = Shred>>(
+        &mut self,
+        shreds: T,
+    ) -> Result<ErasureBatch, Error> {
         let shreds: Vec<_> = shreds
             .into_iter()
             .filter(|shred| !self.shred_filter_ctx.should_discard_shred(shred.payload()))
             .collect();
 
-        // With Merkle shreds, leader signs the Merkle root of the erasure batch
-        // and all shreds within the same erasure batch have the same signature.
-        // For recovered shreds, the (unique) signature is copied from shreds which
-        // were received from turbine (or repair) and are already sig-verified.
-        // The same signature also verifies for recovered shreds because when
-        // reconstructing the Merkle tree for the erasure batch, we will obtain the
-        // same Merkle root.
-        let shreds = merkle::recover(shreds)?;
-        shreds
-            .filter_map(|shred| shred.ok())
-            .filter(|shred| !self.should_discard_shred(shred))
-            .for_each(|shred| {
-                // All shreds should be retransmitted, but because there are no
-                // more missing data shreds in the erasure batch, coding shreds
-                // are not stored in blockstore.
-                match shred.shred_type() {
-                    ShredType::Code => {
-                        // Don't need Arc overhead here!
-                        recovered_shreds.push(shred.into_payload());
-                    }
-                    ShredType::Data => {
-                        // Verify that the cloning is cheap here.
-                        recovered_shreds.push(shred.payload().clone());
-                        recovered_data_shreds.push(shred);
-                    }
-                }
-            });
-        Ok(())
+        merkle::rebuild_erasure_batch(shreds)
     }
+
+    /// Checks the reconstructed shreds of the erasure batch.
+    ///
+    /// Yields `Err(())` in place of each reconstructed shred which fails filtering.
+    pub(crate) fn check_recovered_shreds(
+        &mut self,
+        batch: ErasureBatch,
+    ) -> impl Iterator<Item = Result<Shred, ()>> + '_ {
+        batch.into_recovered().map(|shred| {
+            if self.should_discard_shred(&shred) {
+                Err(())
+            } else {
+                Ok(shred)
+            }
+        })
+    }
+
+    /// Collect checked reconstructed shreds for retransmit and blockstore
+    /// insertion, skipping the ones which failed the checks.
+    ///
+    /// Returns true if any of the shreds failed the checks.
+    pub(crate) fn collect_recovered_shreds(
+        shreds: impl IntoIterator<Item = Result<Shred, ()>>,
+        recovered_shreds: &mut Vec<Payload>,
+        recovered_data_shreds: &mut Vec<Shred>,
+    ) -> bool {
+        let mut invalid_shreds_found = false;
+        for shred in shreds {
+            let Ok(shred) = shred else {
+                invalid_shreds_found = true;
+                continue;
+            };
+            // All shreds should be retransmitted, but because there are no
+            // more missing data shreds in the erasure batch, coding shreds
+            // are not stored in blockstore.
+            match shred.shred_type() {
+                ShredType::Code => {
+                    // Don't need Arc overhead here!
+                    recovered_shreds.push(shred.into_payload());
+                }
+                ShredType::Data => {
+                    // Verify that the cloning is cheap here.
+                    recovered_shreds.push(shred.payload().clone());
+                    recovered_data_shreds.push(shred);
+                }
+            }
+        }
+        invalid_shreds_found
+    }
+
     /// Send recovered shreds for retransmit
     pub fn try_retransmit_shreds(&self, recovered_shreds: Vec<Payload>) {
         if !recovered_shreds.is_empty() {
@@ -601,6 +644,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         itertools::Itertools,
+        solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_leader_schedule::SlotLeader,
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::{
@@ -646,7 +690,9 @@ mod tests {
         activate: impl IntoIterator<Item = Pubkey>,
         deactivate: impl IntoIterator<Item = Pubkey>,
     ) -> Arc<Bank> {
-        let genesis_config = create_genesis_config(1).genesis_config;
+        let mut genesis_config = create_genesis_config(1).genesis_config;
+        genesis_config.poh_config.target_tick_duration =
+            Duration::from_nanos(DEFAULT_NS_PER_TICK_400_MS);
         let mut root_bank = Bank::new_for_tests(&genesis_config);
         deactivate_slot_time_features(&mut root_bank);
         for feature_id in activate {

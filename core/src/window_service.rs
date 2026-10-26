@@ -13,7 +13,6 @@ use {
         },
         result::{Error, Result},
     },
-    agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
@@ -116,25 +115,10 @@ fn run_check_duplicate(
     duplicate_slots_sender: &DuplicateSlotSender,
     bank_forks: &RwLock<BankForks>,
 ) -> Result<()> {
-    let (mut root_bank, migration_status) = {
-        let bank_forks_r = bank_forks.read().unwrap();
-        (bank_forks_r.root_bank(), bank_forks_r.migration_status())
-    };
-    let mut last_updated = Instant::now();
+    let migration_status = bank_forks.read().unwrap().migration_status();
     let check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
-        if last_updated.elapsed().as_nanos() > root_bank.ns_per_slot {
-            // Grabs bank forks lock once a slot
-            last_updated = Instant::now();
-            root_bank = bank_forks.read().unwrap().root_bank();
-        }
         let shred_slot = shred.slot();
-        let no_verify_chained_merkle_root = shred::filter::check_feature_activation_from_bank(
-            &feature_set::alpenglow::id(),
-            shred_slot,
-            &root_bank,
-        );
-
-        let duplicate = handle_duplicate_shred(blockstore, shred, no_verify_chained_merkle_root)?;
+        let duplicate = handle_duplicate_shred(blockstore, shred)?;
 
         let should_mark_dead = migration_status
             .genesis_block()

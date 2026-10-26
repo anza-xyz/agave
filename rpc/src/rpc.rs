@@ -507,7 +507,6 @@ impl JsonRpcRequestProcessor {
         let slot = bank.slot();
         let optimistically_confirmed_bank =
             Arc::new(RwLock::new(OptimisticallyConfirmedBank { bank }));
-        let migration_status = bank_forks.read().unwrap().migration_status();
         Self {
             config,
             snapshot_config: None,
@@ -521,9 +520,7 @@ impl JsonRpcRequestProcessor {
             validator_exit: create_validator_exit(exit.clone()),
             health: Arc::new(RpcHealth::new(
                 Arc::clone(&optimistically_confirmed_bank),
-                blockstore,
                 Arc::default(),
-                migration_status,
                 0,
                 exit,
             )),
@@ -2533,9 +2530,7 @@ impl JsonRpcRequestProcessor {
 
     fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
-        let stake_minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
-        );
+        let stake_minimum_delegation = stake_utils::get_minimum_delegation();
         Ok(new_response(&bank, stake_minimum_delegation))
     }
 
@@ -3675,7 +3670,9 @@ pub mod rpc_full {
     use {
         super::*,
         solana_message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::{UiLoadedAddresses, parse_ui_inner_instructions},
+        solana_transaction_status::{
+            UiInnerInstructions, UiLoadedAddresses, parse_ui_inner_instructions,
+        },
     };
     #[rpc]
     pub trait Full {
@@ -3889,9 +3886,6 @@ pub mod rpc_full {
                             tpu_forwards: None,
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_vote: contact_info
-                                .tpu_vote(Protocol::UDP)
                                 .filter(|addr| socket_addr_space.check(addr)),
                             serve_repair: contact_info
                                 .serve_repair(Protocol::UDP)
@@ -4168,7 +4162,19 @@ pub mod rpc_full {
                 accounts: config_accounts,
                 min_context_slot,
                 inner_instructions: enable_cpi_recording,
+                inner_instructions_encoding,
             } = config.unwrap_or_default();
+            let inner_instructions_encoding =
+                inner_instructions_encoding.unwrap_or(UiTransactionEncoding::JsonParsed);
+            if !matches!(
+                inner_instructions_encoding,
+                UiTransactionEncoding::Json | UiTransactionEncoding::JsonParsed
+            ) {
+                return Err(Error::invalid_params(format!(
+                    "unsupported inner instructions encoding: {inner_instructions_encoding}. \
+                     Supported encodings: json, jsonParsed"
+                )));
+            }
             let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
             let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
                 Error::invalid_params(format!(
@@ -4283,7 +4289,10 @@ pub mod rpc_full {
 
             let inner_instructions = inner_instructions.map(|info| {
                 map_inner_instructions(info)
-                    .map(|converted| parse_ui_inner_instructions(converted, &account_keys))
+                    .map(|converted| match inner_instructions_encoding {
+                        UiTransactionEncoding::Json => UiInnerInstructions::from(converted),
+                        _ => parse_ui_inner_instructions(converted, &account_keys),
+                    })
                     .collect()
             });
 
@@ -5072,7 +5081,7 @@ pub mod tests {
                 block_commitment_cache.clone(),
                 blockstore.clone(),
                 validator_exit,
-                RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone()),
+                RpcHealth::stub(optimistically_confirmed_bank.clone()),
                 cluster_info,
                 Hash::default(),
                 None,
@@ -5656,7 +5665,6 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:8009",
             "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:8010",
-            "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
             "rpc": "127.0.0.1:8899",
             "pubsub": "127.0.0.1:8900",
@@ -5672,7 +5680,6 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:1240",
             "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:1245",
-            "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
             "rpc": "127.0.0.1:8899",
             "pubsub": "127.0.0.1:8900",
@@ -7277,6 +7284,79 @@ pub mod tests {
         let result: Response = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
         assert_eq!(result, expected);
+
+        // `innerInstructionsEncoding` provided as `json`, should have compiled inner instructions
+        let req = format!(
+            r#"{{"jsonrpc":"2.0",
+                 "id":1,
+                 "method":"simulateTransaction",
+                 "params":[
+                   "{tx_serialized_encoded}",
+                   {{ "innerInstructions": true, "innerInstructionsEncoding": "json", "encoding": "base64" }}
+                 ]
+            }}"#,
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let account_index = |pubkey: &Pubkey| {
+            tx.message
+                .account_keys
+                .iter()
+                .position(|key| key == pubkey)
+                .unwrap()
+        };
+        let create_account_ix = system_instruction::create_account(
+            &from_pubkey,
+            &to_pubkey,
+            lamports,
+            space as u64,
+            &owner_pubkey,
+        );
+        let expected_inner_instructions = json!([
+            {
+            "index": 0,
+            "instructions": [
+                {
+                "programIdIndex": account_index(&system_program::id()),
+                "accounts": [account_index(&from_pubkey), account_index(&to_pubkey)],
+                "data": bs58::encode(&create_account_ix.data).into_string(),
+                "stackHeight": 2
+                }
+            ]
+            }
+        ]);
+        let result: Response = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let Response::Single(Output::Success(success)) = result else {
+            panic!("expected success response, got {result:?}");
+        };
+        assert_eq!(
+            success.result["value"]["innerInstructions"],
+            expected_inner_instructions
+        );
+
+        // Unsupported `innerInstructionsEncoding` should return an error
+        let req = format!(
+            r#"{{"jsonrpc":"2.0",
+                 "id":1,
+                 "method":"simulateTransaction",
+                 "params":[
+                   "{tx_serialized_encoded}",
+                   {{ "innerInstructions": true, "innerInstructionsEncoding": "base64", "encoding": "base64" }}
+                 ]
+            }}"#,
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let result: Response = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let Response::Single(Output::Failure(failure)) = result else {
+            panic!("expected failure response, got {result:?}");
+        };
+        assert_eq!(failure.error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            failure.error.message,
+            "unsupported inner instructions encoding: base64. Supported encodings: json, \
+             jsonParsed"
+        );
     }
 
     #[test]
@@ -7455,7 +7535,7 @@ pub mod tests {
         let (bank_forks, mint_keypair, ..) = new_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone());
+        let health = RpcHealth::stub(optimistically_confirmed_bank.clone());
         // Mark the node as healthy to start
         health.stub_set_health_status(Some(RpcHealthStatus::Ok));
 
@@ -7811,7 +7891,7 @@ pub mod tests {
             block_commitment_cache,
             blockstore.clone(),
             validator_exit,
-            RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore),
+            RpcHealth::stub(optimistically_confirmed_bank.clone()),
             cluster_info,
             Hash::default(),
             None,
@@ -9670,7 +9750,7 @@ pub mod tests {
             block_commitment_cache,
             blockstore.clone(),
             validator_exit,
-            RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone()),
+            RpcHealth::stub(optimistically_confirmed_bank.clone()),
             cluster_info,
             Hash::default(),
             None,
@@ -10030,10 +10110,7 @@ pub mod tests {
     #[test]
     fn test_rpc_get_stake_minimum_delegation() {
         let rpc = RpcHandler::start();
-        let bank = rpc.working_bank();
-        let expected_stake_minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
-        );
+        let expected_stake_minimum_delegation = stake_utils::get_minimum_delegation();
 
         let request = create_test_request("getStakeMinimumDelegation", None);
         let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));

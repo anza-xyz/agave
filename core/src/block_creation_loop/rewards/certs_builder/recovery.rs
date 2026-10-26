@@ -1364,7 +1364,7 @@ impl Recovery {
         if let Some(notar) = &baseline.notar {
             let vote = Vote::new_notarization_vote(Block {
                 slot,
-                block_id: notar.block_id.into(),
+                block_id: notar.block_id,
             });
             direct.push((vote, notar.signature, notar.bitmap()));
         }
@@ -1583,7 +1583,7 @@ fn reward_response(
             };
             NotarRewardCertificate::try_new(
                 slot,
-                notar.block.block_id.to_hash(),
+                notar.block.block_id,
                 c.signature,
                 c.bitmap.clone(),
             )

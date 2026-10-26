@@ -51,10 +51,17 @@ pub enum SubscriptionParams {
     Slot,
     SlotsUpdates,
     Root,
+    /// Deprecated TowerBFT compatibility subscription. No notifications are produced.
+    #[deprecated(
+        since = "4.5.0",
+        note = "TowerBFT vote notifications are no longer produced; this compatibility API will \
+                be removed in the next major release"
+    )]
     Vote,
 }
 
 impl SubscriptionParams {
+    #[allow(deprecated)]
     fn method(&self) -> &'static str {
         match self {
             SubscriptionParams::Account(_) => "accountNotification",
@@ -69,6 +76,7 @@ impl SubscriptionParams {
         }
     }
 
+    #[allow(deprecated)]
     fn commitment(&self) -> Option<CommitmentConfig> {
         match self {
             SubscriptionParams::Account(params) => Some(params.commitment),
@@ -83,6 +91,7 @@ impl SubscriptionParams {
         }
     }
 
+    #[allow(deprecated)]
     fn is_commitment_watcher(&self) -> bool {
         let commitment = match self {
             SubscriptionParams::Account(params) => &params.commitment,
@@ -98,6 +107,7 @@ impl SubscriptionParams {
         !commitment.is_confirmed()
     }
 
+    #[allow(deprecated)]
     fn is_gossip_watcher(&self) -> bool {
         let commitment = match self {
             SubscriptionParams::Account(params) => &params.commitment,
@@ -116,10 +126,7 @@ impl SubscriptionParams {
     fn is_node_progress_watcher(&self) -> bool {
         matches!(
             self,
-            SubscriptionParams::Slot
-                | SubscriptionParams::SlotsUpdates
-                | SubscriptionParams::Root
-                | SubscriptionParams::Vote
+            SubscriptionParams::Slot | SubscriptionParams::SlotsUpdates | SubscriptionParams::Root
         )
     }
 }
@@ -443,7 +450,7 @@ pub struct SubscriptionsTracker {
     commitment_watchers: HashMap<SubscriptionId, Arc<SubscriptionInfo>>,
     // Accounts, logs, programs, signatures (gossip)
     gossip_watchers: HashMap<SubscriptionId, Arc<SubscriptionInfo>>,
-    // Slots, slots updates, roots, votes.
+    // Slots, slot updates, and roots.
     node_progress_watchers: HashMap<SubscriptionParams, Arc<SubscriptionInfo>>,
 }
 
@@ -841,6 +848,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn subscription_indexes() {
         fn counts(tracker: &SubscriptionsTracker) -> (usize, usize, usize, usize) {
             (
@@ -891,6 +899,13 @@ mod tests {
         tracker.subscribe(signature_params.clone(), 3.into(), || 0);
         assert_eq!(counts(&tracker), (1, 1, 0, 0));
         tracker.unsubscribe(signature_params, 3.into());
+        assert_eq!(counts(&tracker), (0, 0, 0, 0));
+
+        // Deprecated vote subscriptions retain a token for unsubscribe
+        // compatibility, but are deliberately absent from all notification indexes.
+        tracker.subscribe(SubscriptionParams::Vote, 4.into(), || 0);
+        assert_eq!(counts(&tracker), (0, 0, 0, 0));
+        tracker.unsubscribe(SubscriptionParams::Vote, 4.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
     }
 }

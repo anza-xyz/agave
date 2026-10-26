@@ -33,7 +33,6 @@ use {
         epoch_stakes::VersionedEpochStakes,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteReceiver},
     },
-    solana_signature::Signature,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_time_utils::AtomicInterval,
     solana_transaction::Transaction,
@@ -74,7 +73,6 @@ const MAX_VOTE_HASHES_PER_PUBKEY_PER_SLOT: u8 = 2;
 struct ConfirmationNotifiers {
     gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
     verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
-    rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     bank_notification_sender: Option<BankNotificationSenderConfig>,
     duplicate_confirmed_slot_sender: Option<DuplicateConfirmedSlotsSender>,
     migration_status: Arc<MigrationStatus>,
@@ -452,7 +450,7 @@ impl ClusterInfoVoteListener {
         verified_packets_sender: BankingPacketSender,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
-        subscriptions: Option<Arc<RpcSubscriptions>>,
+        _subscriptions: Option<Arc<RpcSubscriptions>>, // Retained for API compatibility.
         verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_votes_receiver: ReplayVoteReceiver,
@@ -489,7 +487,6 @@ impl ClusterInfoVoteListener {
                 let notifiers = ConfirmationNotifiers {
                     gossip_verified_vote_hash_sender,
                     verified_voter_slots_sender,
-                    rpc_subscriptions: subscriptions,
                     bank_notification_sender,
                     duplicate_confirmed_slot_sender: Some(duplicate_confirmed_slot_sender),
                     migration_status,
@@ -861,7 +858,6 @@ impl ClusterInfoVoteListener {
     fn track_new_votes_and_notify_confirmations(
         vote: VoteTransaction,
         vote_pubkey: &Pubkey,
-        vote_transaction_signature: Signature,
         vote_tracker: &VoteTracker,
         root_bank: &Bank,
         notifiers: &ConfirmationNotifiers,
@@ -919,9 +915,6 @@ impl ClusterInfoVoteListener {
         }
 
         if is_new_vote {
-            if let Some(ref rpc_subscriptions) = notifiers.rpc_subscriptions {
-                rpc_subscriptions.notify_vote(*vote_pubkey, vote, vote_transaction_signature);
-            }
             for slot in vote_slots.iter().cloned() {
                 let _ = notifiers
                     .verified_voter_slots_sender
@@ -976,11 +969,10 @@ impl ClusterInfoVoteListener {
             .filter_map(vote_parser::parse_vote_transaction)
             .zip(repeat(/*is_gossip:*/ true))
             .chain(replayed_votes.into_iter().zip(repeat(/*is_gossip:*/ false)));
-        for ((vote_pubkey, vote, _switch_proof, signature), is_gossip) in votes {
+        for ((vote_pubkey, vote, _switch_proof, _), is_gossip) in votes {
             Self::track_new_votes_and_notify_confirmations(
                 vote,
                 &vote_pubkey,
-                signature,
                 vote_tracker,
                 root_bank,
                 notifiers,
@@ -1090,10 +1082,8 @@ mod tests {
         solana_leader_schedule::SlotLeader,
         solana_perf::{packet, sigverify},
         solana_pubkey::Pubkey,
-        solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
             bank::Bank,
-            commitment::BlockCommitmentCache,
             genesis_utils::{
                 self, GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config,
             },
@@ -1103,11 +1093,7 @@ mod tests {
         solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, Vote},
-        std::{
-            collections::BTreeSet,
-            iter::repeat_with,
-            sync::{Arc, atomic::AtomicU64},
-        },
+        std::{collections::BTreeSet, iter::repeat_with, sync::Arc},
     };
 
     fn pre_send_for_tests(
@@ -1244,7 +1230,6 @@ mod tests {
         let SetupComponents {
             vote_tracker,
             validator_voting_keypairs,
-            subscriptions,
             ..
         } = setup();
         let (votes_sender, votes_receiver) = bounded(1024);
@@ -1277,7 +1262,6 @@ mod tests {
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
-            rpc_subscriptions: Some(subscriptions.clone()),
             bank_notification_sender: None,
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
@@ -1372,7 +1356,6 @@ mod tests {
         let SetupComponents {
             vote_tracker,
             validator_voting_keypairs,
-            subscriptions,
             bank: bank0,
             ..
         } = setup();
@@ -1398,7 +1381,6 @@ mod tests {
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
-            rpc_subscriptions: Some(subscriptions.clone()),
             bank_notification_sender: None,
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
@@ -1520,7 +1502,6 @@ mod tests {
             bank,
             bank_forks,
             validator_voting_keypairs,
-            subscriptions,
         } = setup_with_tower();
         let migration_status = bank_forks.read().unwrap().migration_status();
         let (votes_sender, votes_receiver) = bounded(1024);
@@ -1532,7 +1513,6 @@ mod tests {
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender,
             verified_voter_slots_sender,
-            rpc_subscriptions: Some(subscriptions),
             bank_notification_sender: None,
             duplicate_confirmed_slot_sender: Some(duplicate_confirmed_slot_sender),
             migration_status: migration_status.clone(),
@@ -1616,7 +1596,6 @@ mod tests {
         let SetupComponents {
             vote_tracker,
             validator_voting_keypairs,
-            subscriptions,
             bank: bank0,
             ..
         } = setup();
@@ -1664,7 +1643,6 @@ mod tests {
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
-            rpc_subscriptions: Some(subscriptions.clone()),
             bank_notification_sender: None,
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
@@ -1748,7 +1726,6 @@ mod tests {
                 vote_tracker,
                 bank,
                 validator_voting_keypairs,
-                subscriptions,
                 ..
             } = setup();
             let node_keypair = &validator_voting_keypairs[0].node_keypair;
@@ -1756,7 +1733,6 @@ mod tests {
             let notifiers = ConfirmationNotifiers {
                 gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
                 verified_voter_slots_sender: verified_voter_slots_sender.clone(),
-                rpc_subscriptions: Some(subscriptions.clone()),
                 bank_notification_sender: None,
                 duplicate_confirmed_slot_sender: None,
                 migration_status: Arc::new(MigrationStatus::default()),
@@ -2094,19 +2070,8 @@ mod tests {
                 vec![100; validator_keypairs.len()],
             );
         let bank = Bank::new_for_tests(&genesis_config);
-        let exit = Arc::new(AtomicBool::new(false));
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let vote_tracker = VoteTracker::default();
-        let optimistically_confirmed_bank =
-            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-            exit,
-            max_complete_transaction_status_slot,
-            bank_forks.clone(),
-            Arc::new(RwLock::new(BlockCommitmentCache::default())),
-            optimistically_confirmed_bank,
-        ));
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         // Send a vote to process, should add a reference to the pubkey for that voter
@@ -2129,7 +2094,6 @@ mod tests {
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
-            rpc_subscriptions: Some(subscriptions.clone()),
             bank_notification_sender: None,
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
@@ -2181,7 +2145,6 @@ mod tests {
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
-            rpc_subscriptions: Some(subscriptions.clone()),
             bank_notification_sender: None,
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
@@ -2207,7 +2170,6 @@ mod tests {
         bank: Arc<Bank>,
         bank_forks: Arc<RwLock<BankForks>>,
         validator_voting_keypairs: Vec<ValidatorVoteKeypairs>,
-        subscriptions: Arc<RpcSubscriptions>,
     }
 
     fn setup() -> SetupComponents {
@@ -2236,25 +2198,13 @@ mod tests {
         };
         let bank = Bank::new_for_tests(&genesis_config);
         let vote_tracker = VoteTracker::default();
-        let exit = Arc::new(AtomicBool::new(false));
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let optimistically_confirmed_bank =
-            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-            exit,
-            max_complete_transaction_status_slot,
-            bank_forks.clone(),
-            Arc::new(RwLock::new(BlockCommitmentCache::default())),
-            optimistically_confirmed_bank,
-        ));
 
         SetupComponents {
             vote_tracker: Arc::new(vote_tracker),
             bank,
             bank_forks,
             validator_voting_keypairs,
-            subscriptions,
         }
     }
 
@@ -2374,19 +2324,8 @@ mod tests {
                 vec![100; validator_keypairs.len()],
             );
         let bank = Bank::new_for_tests(&genesis_config);
-        let exit = Arc::new(AtomicBool::new(false));
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let vote_tracker = VoteTracker::default();
-        let optimistically_confirmed_bank =
-            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-            exit,
-            max_complete_transaction_status_slot,
-            bank_forks.clone(),
-            Arc::new(RwLock::new(BlockCommitmentCache::default())),
-            optimistically_confirmed_bank,
-        ));
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let (verified_voter_slots_sender, _verified_voter_slots_receiver) =
@@ -2396,7 +2335,7 @@ mod tests {
         let mut new_optimistic_confirmed_slots = vec![];
 
         let validator0_keypairs = &validator_keypairs[0];
-        let (vote_pubkey, vote, _, signature) =
+        let (vote_pubkey, vote, _, _) =
             vote_parser::parse_vote_transaction(&vote_transaction::new_tower_sync_transaction(
                 TowerSync::from(vec![(1, 3), (2, 2), (6, 1)]),
                 Hash::default(),
@@ -2410,7 +2349,6 @@ mod tests {
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
-            rpc_subscriptions: Some(subscriptions.clone()),
             bank_notification_sender: None,
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
@@ -2418,7 +2356,6 @@ mod tests {
         ClusterInfoVoteListener::track_new_votes_and_notify_confirmations(
             vote,
             &vote_pubkey,
-            signature,
             &vote_tracker,
             &bank,
             &notifiers,
@@ -2431,7 +2368,7 @@ mod tests {
 
         // Vote on a new slot, only those later than 6 should show up. 4 is skipped.
         diff.clear();
-        let (vote_pubkey, vote, _, signature) =
+        let (vote_pubkey, vote, _, _) =
             vote_parser::parse_vote_transaction(&vote_transaction::new_tower_sync_transaction(
                 TowerSync::from(vec![(1, 6), (2, 5), (3, 4), (4, 3), (7, 2), (8, 1)]),
                 Hash::default(),
@@ -2445,7 +2382,6 @@ mod tests {
         ClusterInfoVoteListener::track_new_votes_and_notify_confirmations(
             vote,
             &vote_pubkey,
-            signature,
             &vote_tracker,
             &bank,
             &notifiers,

@@ -107,7 +107,7 @@ fn source_evidence_reached_collector(
 
 fn run_direct_vote_loss() {
     agave_logger::setup_with_default(&format!("{AG_DEBUG_LOG_FILTER},agave_bls_sigverify=info"));
-    let keys: Vec<_> = (0..3).map(|_| ValidatorKeys::new()).collect();
+    let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(&[0, 16, 16]);
     let [a, b, c] = keys
         .iter()
         .map(|keys| keys.node_keypair.pubkey())
@@ -124,13 +124,6 @@ fn run_direct_vote_loss() {
         .into_iter()
         .map(|weight| weight * DEFAULT_NODE_STAKE)
         .collect::<Vec<_>>();
-    let leader_schedule = create_custom_leader_schedule(
-        [
-            (SlotLeader::from(&keys[1]), 16),
-            (SlotLeader::from(&keys[2]), 16),
-        ]
-        .into_iter(),
-    );
     let mut validator_configs = make_identical_validator_configs(
         &ValidatorConfig {
             fixed_leader_schedule: Some(FixedSchedule {

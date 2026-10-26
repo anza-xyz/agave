@@ -408,7 +408,7 @@ fn assert_rewards(
     assert!(response.skip.is_none());
     let notar = response.notar.as_ref().unwrap();
     assert_eq!(notar.slot, block.slot);
-    assert_eq!(notar.block_id, block.block_id.to_hash());
+    assert_eq!(notar.block_id, block.block_id);
     let rank_map = root.get_rank_map(block.slot).unwrap();
     let Decoded::Base2(ranks) = decode(notar.bitmap(), rank_map.len()).unwrap() else {
         panic!("reward output must use base2");

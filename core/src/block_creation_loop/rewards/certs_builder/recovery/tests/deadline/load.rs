@@ -342,10 +342,9 @@ fn reward_recovery_production_deadline_load() {
                         });
                         let notar = response.notar.as_ref().map(|cert| {
                             match decode(cert.bitmap(), fixture.rank_map.len()).unwrap() {
-                                Decoded::Base2(ranks) => (
-                                    BlockId::from(cert.block_id),
-                                    ranks.iter_ones().collect::<Vec<_>>(),
-                                ),
+                                Decoded::Base2(ranks) => {
+                                    (cert.block_id, ranks.iter_ones().collect::<Vec<_>>())
+                                }
                                 _ => unreachable!(),
                             }
                         });

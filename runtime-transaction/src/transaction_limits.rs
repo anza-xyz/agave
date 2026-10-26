@@ -94,7 +94,7 @@ fn validate_heap_size(requested_heap_size: Option<u32>) -> TransactionResult<()>
 mod tests {
     use {
         super::*,
-        crate::{runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config},
+        crate::runtime_transaction::RuntimeTransaction,
         agave_transaction_view::{
             resolved_transaction_view::ResolvedTransactionView,
             transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
@@ -212,8 +212,7 @@ mod tests {
                 );
             }
 
-            let view = SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
-                .unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
             let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
@@ -267,8 +266,7 @@ mod tests {
             Some(TransactionError::AccountLoadedTwice),
         );
 
-        let view =
-            SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config()).unwrap();
+        let view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
         let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             view,
             MessageHash::Compute,
@@ -288,10 +286,6 @@ mod tests {
 
     #[test]
     fn test_instruction_limit_boundaries() {
-        let mut config = sanitize_config();
-        config.max_instructions += 1;
-        config.max_accounts_per_instruction += 1;
-
         for version in [
             TransactionVersion::Legacy,
             TransactionVersion::V0,
@@ -310,7 +304,7 @@ mod tests {
                     TransactionVersion::Legacy
                     | TransactionVersion::V0
                     | TransactionVersion::V1 => {
-                        assert_view_constructors(&wincode::serialize(&tx).unwrap(), &config, valid);
+                        assert_view_constructors(&wincode::serialize(&tx).unwrap(), valid);
                     }
                 }
                 assert_sdk_constructor(tx, valid);
@@ -380,18 +374,14 @@ mod tests {
                 assert_eq!(bytes.len(), max_size + excess);
                 assert_sdk_constructor(tx, excess == 0);
                 if excess == 0 {
-                    assert_view_constructors(&bytes, &sanitize_config(), true);
+                    assert_view_constructors(&bytes, true);
                 }
             }
         }
     }
 
-    fn assert_view_constructors(
-        bytes: &[u8],
-        config: &agave_transaction_view::sanitize::SanitizeConfig,
-        valid: bool,
-    ) {
-        let view = SanitizedTransactionView::try_new_sanitized(bytes, config).unwrap();
+    fn assert_view_constructors(bytes: &[u8], valid: bool) {
+        let view = SanitizedTransactionView::try_new_sanitized(bytes).unwrap();
         let borrowed = RuntimeTransaction::<&SanitizedTransactionView<_>>::try_new(
             &view,
             MessageHash::Compute,
@@ -414,17 +404,13 @@ mod tests {
 
     #[test]
     fn test_view_constructors_reject_invalid_heap() {
-        let mut config = sanitize_config();
-        config.min_requested_heap_size = 0;
-        config.max_requested_heap_size = u32::MAX;
-
         for heap in [MIN_HEAP_FRAME_BYTES - 1024, MAX_HEAP_FRAME_BYTES + 1024] {
             let mut tx = transaction(TransactionVersion::V1, vec![]);
             let VersionedMessage::V1(message) = &mut tx.message else {
                 unreachable!()
             };
             message.config.heap_size = Some(heap);
-            assert_view_constructors(&wincode::serialize(&tx).unwrap(), &config, false);
+            assert_view_constructors(&wincode::serialize(&tx).unwrap(), false);
         }
     }
 }

@@ -110,7 +110,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         None,
         &Ancestors::default(),
     );
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(bank_id);
 
     // Dummy epoch stakes with the provided total stake at the current and next epoch.
     let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();

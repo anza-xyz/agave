@@ -235,10 +235,12 @@ pub(crate) mod external {
             bank_forks::{BankPair, SharableBanks},
         },
         solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-            transaction_meta::TransactionMeta,
+            runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
         },
-        solana_svm::transaction_error_metrics::TransactionErrorMetrics,
+        solana_svm::{
+            account_loader::fee_payer_load_filter,
+            transaction_error_metrics::TransactionErrorMetrics,
+        },
         solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_transaction::TransactionError,
         std::{
@@ -359,13 +361,11 @@ pub(crate) mod external {
                 core::iter::repeat_n(Self::initial_check_response(message.flags), batch.len())
                     .collect();
 
-            let sanitize_config = sanitize_config();
             let mut status_transactions = ArrayVec::<_, MAX_TRANSACTIONS_PER_MESSAGE>::new();
             for (index, ((transaction_ptr, _), response)) in
                 batch.iter().zip(responses.iter_mut()).enumerate()
             {
-                let Ok(transaction) =
-                    SanitizedTransactionView::try_new_sanitized(transaction_ptr, &sanitize_config)
+                let Ok(transaction) = SanitizedTransactionView::try_new_sanitized(transaction_ptr)
                 else {
                     response.parsing_and_sanitization_flags |=
                         parsing_and_sanitization_flags::FAILED;
@@ -591,7 +591,7 @@ pub(crate) mod external {
         ) {
             response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
             response.fee_payer_balance = working_bank
-                .get_account_with_fixed_root(transaction.fee_payer())
+                .get_account_if(transaction.fee_payer(), fee_payer_load_filter)
                 .map(|account| account.lamports())
                 .unwrap_or(0);
             response.balance_slot = working_bank.slot();

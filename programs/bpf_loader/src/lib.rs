@@ -669,6 +669,11 @@ fn process_loader_upgradeable_instruction(
                         && let Ok(sbpf_version) = get_sbpf_version(program)
                         && sbpf_version < SBPFVersion::V3
                     {
+                        ic_logger_msg!(
+                            log_collector,
+                            "Program targets SBPF {:?}, but finalizing requires SBPF V3 or newer",
+                            sbpf_version
+                        );
                         return Err(InstructionError::InvalidAccountData);
                     }
                     account.set_state(&UpgradeableLoaderState::ProgramData {

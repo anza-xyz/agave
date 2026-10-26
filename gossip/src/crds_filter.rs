@@ -45,8 +45,6 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::SnapshotHashes(_) => true,
         // Disabled once Alpenglow is active.
         CrdsData::DuplicateShred(_, _) => !is_full_alpenglow_epoch && retain_if_staked(),
-        // Consensus related messages only allowed for staked nodes
-        CrdsData::LowestSlot(0, _) => retain_if_staked(),
         CrdsData::EpochSlots(_, _) if is_full_alpenglow_epoch => false,
         // Unstaked nodes can technically send EpochSlots, but we do not want them
         // eating gossip bandwidth.
@@ -63,6 +61,10 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::Vote(_, _) => match direction {
             Ingress | EgressPush => true,
             EgressPullResponse => retain_if_staked(),
+        },
+        CrdsData::LowestSlot(0, _) => match direction {
+            Ingress => retain_if_staked(),
+            EgressPush | EgressPullResponse => false,
         },
         // Fully deprecated messages
         CrdsData::AccountsHashes(_) => false,

@@ -1,6 +1,8 @@
 ARG BASE_IMAGE=
 FROM ${BASE_IMAGE}
 
+COPY --from=koalaman/shellcheck:v0.8.0 /bin/shellcheck /usr/local/bin/shellcheck
+
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \

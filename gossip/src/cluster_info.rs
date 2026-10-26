@@ -1168,11 +1168,11 @@ impl ClusterInfo {
         })
     }
 
-    /// all tvu peers with valid gossip addrs that likely have the slot being requested
-    pub fn repair_peers(&self, slot: Slot) -> Vec<ContactInfo> {
+    /// all tvu peers with valid serve-repair addresses
+    pub fn repair_peers(&self) -> Vec<ContactInfo> {
         let _st = ScopedTimer::from(&self.stats.repair_peers);
         let self_pubkey = self.id();
-        self.collect_nodes(|crds, value| {
+        self.collect_nodes(|_, value| {
             value
                 .value
                 .contact_info()
@@ -1182,10 +1182,6 @@ impl ClusterInfo {
                         && self.check_socket_addr_space(
                             &node.serve_repair(contact_info::Protocol::UDP),
                         )
-                        && match crds.get::<&LowestSlot>(*node.pubkey()) {
-                            None => true, // fallback to legacy behavior
-                            Some(lowest_slot) => lowest_slot.lowest <= slot,
-                        }
                 })
                 .cloned()
         })
@@ -3735,7 +3731,7 @@ mod tests {
         check(cluster_info.rpc_peers());
         check(cluster_info.gossip_peers());
         check(cluster_info.tvu_peers(ContactInfo::clone));
-        check(cluster_info.repair_peers(/*slot:*/ 0));
+        check(cluster_info.repair_peers());
         check(cluster_info.tpu_peers());
         let all_peers = cluster_info.all_peers();
         assert_eq!(
@@ -3760,21 +3756,12 @@ mod tests {
             node_keypair,
             SocketAddrSpace::Unspecified,
         );
-        for i in 0..10 {
-            // make these invalid for the upcoming repair request
-            let peer_lowest = if i >= 5 { 10 } else { 0 };
+        for _ in 0..10 {
             let other_node_pubkey = solana_pubkey::new_rand();
             let other_node = ContactInfo::new_localhost(&other_node_pubkey, timestamp());
-            cluster_info.insert_info(other_node.clone());
-            let value = CrdsValue::new_unsigned(CrdsData::LowestSlot(
-                0,
-                LowestSlot::new(other_node_pubkey, peer_lowest, timestamp()),
-            ));
-            let mut gossip_crds = cluster_info.gossip.crds.write();
-            let _ = gossip_crds.insert(value, timestamp(), GossipRoute::LocalMessage);
+            cluster_info.insert_info(other_node);
         }
-        // only half the visible peers should be eligible to serve this repair
-        assert_eq!(cluster_info.repair_peers(5).len(), 5);
+        assert_eq!(cluster_info.repair_peers().len(), 10);
     }
 
     #[test]

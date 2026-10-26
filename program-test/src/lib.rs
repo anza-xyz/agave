@@ -35,8 +35,11 @@ use {
     solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionRegisterer, program_cache_entry::ProgramCacheEntry,
-        serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
+        invoke_context::BuiltinFunctionRegisterer,
+        program_cache_entry::ProgramCacheEntry,
+        serialization::{SerializationResult, serialize_parameters},
+        stable_log,
+        sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -139,13 +142,15 @@ pub fn invoke_builtin_function(
         .direct_account_pointers_in_program_input;
 
     // Serialize entrypoint parameters with SBF ABI
-    let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
-        serialize_parameters(
-            &instruction_context,
-            false, // There is no VM so virtual_address_space_adjustments can not be implemented here
-            false, // There is no VM so account_data_direct_mapping can not be implemented here
-            direct_account_pointers_in_program_input,
-        )?;
+    let SerializationResult {
+        mut parameter_bytes,
+        ..
+    } = serialize_parameters(
+        &instruction_context,
+        false, // There is no VM so virtual_address_space_adjustments can not be implemented here
+        false, // There is no VM so account_data_direct_mapping can not be implemented here
+        direct_account_pointers_in_program_input,
+    )?;
 
     // Deserialize data back into instruction params
     let (program_id, account_infos, input) =

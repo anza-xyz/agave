@@ -613,9 +613,9 @@ mod tests {
             1,
             [(&pubkey_keep, &account), (&pubkey_multi, &account)].as_slice(),
         ));
-        accounts.add_root(1);
+        accounts.add_root_for_tests(1);
         accounts.store_for_tests((2, [(&pubkey_multi, &account)].as_slice()));
-        accounts.add_root(2);
+        accounts.add_root_for_tests(2);
         // Flush without clean so pubkey_multi keeps both slot list entries
         accounts.flush_rooted_accounts_cache_without_clean();
 

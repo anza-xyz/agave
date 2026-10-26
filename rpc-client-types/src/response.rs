@@ -307,8 +307,6 @@ pub struct RpcContactInfo {
     pub tpu_forwards: Option<SocketAddr>,
     /// Tpu QUIC forwards port
     pub tpu_forwards_quic: Option<SocketAddr>,
-    /// Tpu UDP vote port
-    pub tpu_vote: Option<SocketAddr>,
     /// Server repair UDP port
     pub serve_repair: Option<SocketAddr>,
     /// JSON RPC port
@@ -376,6 +374,10 @@ pub struct RpcIdentity {
     pub identity: String,
 }
 
+/// A legacy TowerBFT vote notification payload.
+///
+/// These notifications are no longer produced. This type is retained for API
+/// compatibility until the next major release.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcVote {

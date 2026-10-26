@@ -341,22 +341,15 @@ impl AccountsCache {
     /// Removes a slot from the accounts cache and returns the set of pubkeys removed from the index.
     #[must_use]
     pub fn remove_slot(&self, slot: Slot) -> Option<Vec<Pubkey>> {
-        let bank_id = {
-            // Held across the bank id removal so a concurrent `add_root` can't re-track this bank
+        let slot_cache = {
+            // Held across the cache removal so a concurrent `add_root` can't re-track this bank
             let mut unflushed_roots = self.unflushed_roots.write().unwrap();
             let bank_id = self.bank_ids.write().unwrap().remove(&slot)?;
             // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
             unflushed_roots.remove(&bank_id);
-            bank_id
+            self.cache.remove(&bank_id)?.1
         };
-        let result = self
-            .cache
-            .remove(&bank_id)
-            .map(|(_, slot_cache)| slot_cache);
-
-        result
-            .as_ref()
-            .map(|slot_cache| self.index.remove(slot_cache.iter().map(|item| *item.key())))
+        Some(self.index.remove(slot_cache.iter().map(|item| *item.key())))
     }
 
     /// Finds the newest write-cache entry for `pubkey` visible from `ancestors`. Searches
@@ -428,11 +421,14 @@ impl AccountsCache {
     }
 
     /// A root without a slot cache is not tracked; nothing stores into a slot once it is rooted
-    pub fn add_root(&self, root: Slot) {
+    pub fn add_root(&self, bank_id: BankId) -> Option<Slot> {
         // Held across the lookup so a concurrent `remove_slot` can't leave this root stranded
         let mut unflushed_roots = self.unflushed_roots.write().unwrap();
-        if let Some(bank_id) = self.bank_id(root) {
-            unflushed_roots.insert(bank_id, root);
+        if let Some(slot) = self.cache.get(&bank_id).map(|slot_cache| slot_cache.slot) {
+            unflushed_roots.insert(bank_id, slot);
+            Some(slot)
+        } else {
+            None
         }
     }
 
@@ -782,7 +778,7 @@ mod tests {
                 &pk,
                 AccountSharedData::new(slot, 0, &Pubkey::default()),
             );
-            cache.add_root(slot);
+            cache.add_root(BankId::new(slot));
         }
 
         let mut all_ancestors: Vec<Slot> = ancestor_slots.to_vec();
@@ -824,7 +820,7 @@ mod tests {
             &pk,
             AccountSharedData::new(100, 0, &Pubkey::default()),
         );
-        cache.add_root(10);
+        cache.add_root(BankId::new(10));
         // A flush finishes a slot with `remove_slot`, which drops both its cache and its
         // unflushed-root tracking; call it directly here to stand in for that flush.
         let _ = cache.remove_slot(10);
@@ -845,7 +841,7 @@ mod tests {
                 &Pubkey::new_unique(),
                 AccountSharedData::new(1, 0, &Pubkey::default()),
             );
-            cache.add_root(slot);
+            cache.add_root(BankId::new(slot));
         }
 
         // roots_to_flush(Some(5)) returns {1, 3, 5}, excluding 7.
@@ -866,7 +862,7 @@ mod tests {
                 &Pubkey::new_unique(),
                 AccountSharedData::new(1, 0, &Pubkey::default()),
             );
-            cache.add_root(slot);
+            cache.add_root(BankId::new(slot));
         }
 
         let to_flush = cache.roots_to_flush(None);
@@ -886,14 +882,14 @@ mod tests {
             &pk,
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
-        cache.add_root(1);
+        cache.add_root(BankId::new(1));
         cache.store(
             2,
             BankId::new(2),
             &pk,
             AccountSharedData::new(2, 0, &Pubkey::default()),
         );
-        cache.add_root(2);
+        cache.add_root(BankId::new(2));
 
         // remove_slot drops slot 1 from both the cache and the tracked roots, leaving slot 2.
         let _ = cache.remove_slot(1);

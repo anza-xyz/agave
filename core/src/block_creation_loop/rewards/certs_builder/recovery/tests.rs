@@ -210,7 +210,7 @@ impl Fixture {
         match (&response.notar, expected_notar) {
             (Some(notar), Some((block_id, ranks))) => {
                 assert_eq!(notar.slot, slot);
-                assert_eq!(notar.block_id, block_id.to_hash());
+                assert_eq!(notar.block_id, block_id);
                 validate(
                     Vote::new_notarization_vote(Block { slot, block_id }),
                     &notar.signature,

@@ -75,7 +75,7 @@ impl SnapshotStorageRebuilder {
                     &rebuilder.next_append_vec_id,
                     &mut rebuilder.num_collisions,
                 )?;
-                let accounts_file = AccountsFile::open_append_vec(remapped_file_info)?;
+                let accounts_file = AccountsFile::open_append_vec_for_startup(remapped_file_info)?;
                 let storage_entry = AccountStorageEntry::new_existing(
                     slot,
                     remapped_id,

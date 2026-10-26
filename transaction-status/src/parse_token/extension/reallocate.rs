@@ -7,9 +7,9 @@ pub(in crate::parse_token) fn parse_reallocate_instruction(
 ) -> Result<ParsedInstructionEnum, ParseInstructionError> {
     check_num_token_accounts(account_indexes, 4)?;
     let mut value = json!({
-        "account": account_keys[account_indexes[0] as usize].to_string(),
-        "payer": account_keys[account_indexes[1] as usize].to_string(),
-        "systemProgram": account_keys[account_indexes[2] as usize].to_string(),
+        "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+        "payer": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
+        "systemProgram": account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string(),
         "extensionTypes": extension_types.into_iter().map(UiExtensionType::from).collect::<Vec<_>>(),
     });
     let map = value.as_object_mut().unwrap();

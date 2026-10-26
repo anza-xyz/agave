@@ -3,7 +3,7 @@ use {
     solana_genesis_config::GenesisConfig, solana_rent::Rent,
 };
 
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RentCollector {
     pub epoch: Epoch,
     pub epoch_schedule: EpochSchedule,
