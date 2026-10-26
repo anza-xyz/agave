@@ -7662,12 +7662,8 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-transaction-context",
-<<<<<<< HEAD
- "thiserror 2.0.20",
-=======
  "static_assertions",
- "thiserror 2.0.21",
->>>>>>> d830857 (Fix - `dev-depedencies` cycle of #15818 (#16405))
+ "thiserror 2.0.20",
  "wincode",
 ]
 
