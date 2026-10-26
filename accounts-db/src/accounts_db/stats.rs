@@ -768,9 +768,12 @@ pub struct LoadAccountsStats {
 }
 
 impl LoadAccountsStats {
-    pub fn report(&self) {
+    /// `name` names the datapoint, so foreground loads and the background loads issued by
+    /// `prefetch_accounts` can be told apart. A prefetch's own `num_loaded_from_index_storage`
+    /// is the work it moved off the critical path, not a miss on it.
+    pub fn report(&self, name: &'static str) {
         datapoint_info!(
-            "accounts_db_load_accounts",
+            name,
             (
                 "num_loaded_from_write_cache",
                 self.num_loaded_from_write_cache.swap(0, Ordering::Relaxed),
@@ -785,6 +788,42 @@ impl LoadAccountsStats {
                 "num_loaded_from_index_storage",
                 self.num_loaded_from_index_storage
                     .swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PrefetchAccountsStats {
+    /// what the background loads themselves found; these never touch `LoadAccountsStats`
+    pub loads: LoadAccountsStats,
+    /// pubkeys loaded by a prefetch
+    pub num_issued: AtomicU64,
+    /// pubkeys dropped because a cache already held them
+    pub num_skipped_cached: AtomicU64,
+    /// pubkeys dropped because an earlier prefetch was still loading them
+    pub num_skipped_outstanding: AtomicU64,
+}
+
+impl PrefetchAccountsStats {
+    pub fn report(&self) {
+        self.loads.report("accounts_db_prefetch_accounts_loads");
+        datapoint_info!(
+            "accounts_db_prefetch_accounts",
+            (
+                "num_issued",
+                self.num_issued.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_skipped_cached",
+                self.num_skipped_cached.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_skipped_outstanding",
+                self.num_skipped_outstanding.swap(0, Ordering::Relaxed),
                 i64
             ),
         );

@@ -20,6 +20,7 @@
 
 mod accounts_db_config;
 mod geyser_plugin_utils;
+mod prefetch;
 pub(crate) mod stats;
 pub(crate) mod tests;
 
@@ -38,6 +39,7 @@ use {
         account_storage_entry::AccountStorageEntry,
         account_storage_reader::{ACCOUNT_STORAGE_MAX_BUFFER_SIZE, storage_file_buf_reader},
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
+        accounts_db::prefetch::AccountsPrefetcher,
         accounts_db::stats::{
             AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
             ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
@@ -779,6 +781,9 @@ pub struct AccountsDb {
     /// Stats for loading accounts during transaction processing
     load_account_stats: LoadAccountsStats,
 
+    /// Warms the read cache in the background; see `prefetch_accounts`
+    prefetcher: AccountsPrefetcher,
+
     /// Stats from storing accounts unfrozen
     store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats,
 
@@ -970,6 +975,7 @@ impl AccountsDb {
             shrink_ancient_stats: ShrinkAncientStats::default(),
             stats: AccountsStats::default(),
             load_account_stats: LoadAccountsStats::default(),
+            prefetcher: AccountsPrefetcher::default(),
             store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats::default(),
             is_bank_drop_callback_enabled: AtomicBool::default(),
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
@@ -2597,6 +2603,7 @@ impl AccountsDb {
                 &pubkey,
                 PopulateReadCache::False,
                 None::<fn(_, &_, _) -> _>,
+                &self.load_account_stats,
             ) {
                 scan_func(Some((&pubkey, account, slot)));
             }
@@ -2712,8 +2719,14 @@ impl AccountsDb {
         populate_read_cache: PopulateReadCache,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load(ancestors, pubkey, populate_read_cache, load_filter)
-            .filter(|(account, _)| !account.is_zero_lamport())
+        self.do_load(
+            ancestors,
+            pubkey,
+            populate_read_cache,
+            load_filter,
+            &self.load_account_stats,
+        )
+        .filter(|(account, _)| !account.is_zero_lamport())
     }
 
     fn do_load(
@@ -2722,12 +2735,13 @@ impl AccountsDb {
         pubkey: &Pubkey,
         populate_read_cache: PopulateReadCache,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
+        stats: &LoadAccountsStats,
     ) -> Option<(AccountSharedData, Slot)> {
         // Check the write cache first; a hit is the freshest version visible on this fork
         if let Some((cached_account, cached_slot)) =
             self.accounts_cache.load_latest(pubkey, ancestors)
         {
-            self.load_account_stats
+            stats
                 .num_loaded_from_write_cache
                 .fetch_add(1, Ordering::Relaxed);
 
@@ -2748,7 +2762,7 @@ impl AccountsDb {
             .read_only_accounts_cache
             .load(pubkey, |slot| ancestors.is_ancestor(slot))
         {
-            self.load_account_stats
+            stats
                 .num_loaded_from_read_cache
                 .fetch_add(1, Ordering::Relaxed);
 
@@ -2770,7 +2784,7 @@ impl AccountsDb {
                 (slot, self.get_account_accessor(slot, &storage_location))
             },
         )?;
-        self.load_account_stats
+        stats
             .num_loaded_from_index_storage
             .fetch_add(1, Ordering::Relaxed);
 
@@ -4480,7 +4494,8 @@ impl AccountsDb {
                 ),
             );
 
-            self.load_account_stats.report();
+            self.load_account_stats.report("accounts_db_load_accounts");
+            self.prefetcher.stats.report();
         }
     }
 
@@ -5342,6 +5357,7 @@ impl AccountsDb {
             pubkey,
             PopulateReadCache::True,
             None::<fn(_, &_, _) -> _>,
+            &self.load_account_stats,
         )
     }
 

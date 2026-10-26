@@ -215,6 +215,25 @@ fn process_entries(
 ) -> result::Result<(), BlockstoreProcessorError> {
     let mut tick_hashes = vec![];
 
+    // Warm the read cache for the whole chunk before scheduling any of it, so the loads have
+    // the scheduler's queue depth to land in. Accounts either cache already holds are dropped
+    // by `prefetch_accounts`, so this only reaches storage for the ones a handler thread would
+    // otherwise block on.
+    let entries: Vec<_> = entries.into_iter().collect();
+    bank.prefetch_accounts(
+        entries
+            .iter()
+            .filter_map(|replay_entry| match replay_entry {
+                Ok(ReplayEntry {
+                    entry: EntryType::Transactions(transactions),
+                    ..
+                }) => Some(transactions),
+                _ => None,
+            })
+            .flatten()
+            .flat_map(|transaction| transaction.account_keys().iter().copied()),
+    );
+
     for entry in entries {
         let ReplayEntry {
             entry,
