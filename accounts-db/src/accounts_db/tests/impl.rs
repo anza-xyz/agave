@@ -20,6 +20,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         iter,
+        ops::ControlFlow,
         str::FromStr as _,
         sync::{
             Arc, RwLock,
@@ -4246,6 +4247,7 @@ fn test_alive_bytes() {
                     num_obsolete_accounts
                 );
             }
+            ControlFlow::Continue(())
         })
         .expect("must scan accounts storage");
 }

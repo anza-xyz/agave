@@ -93,7 +93,7 @@ use {
         collections::{BTreeSet, HashSet, VecDeque},
         io, iter, mem,
         num::Saturating,
-        ops::RangeBounds,
+        ops::{ControlFlow, RangeBounds},
         path::{Path, PathBuf},
         sync::{
             Arc, Mutex, RwLock,
@@ -1884,6 +1884,7 @@ impl AccountsDb {
                     pubkey: *account.pubkey(),
                     data_len: account.data_len as u64,
                 });
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
 
