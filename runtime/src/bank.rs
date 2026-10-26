@@ -78,7 +78,7 @@ use {
             SerdeStakesToStakeFormat, Stakes, StakesCache,
         },
         status_cache::{SlotDelta, StatusCache},
-        sysvar_account::{create_account, from_account},
+        sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, create_account, from_account},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::AccountsLtHashAsyncProgress,
@@ -107,7 +107,7 @@ use {
     rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_account::{
-        Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
+        Account, AccountSharedData, ReadableAccount, WritableAccount,
         state_traits::StateMutWincode as _,
     },
     solana_accounts_db::{
@@ -126,8 +126,7 @@ use {
     },
     solana_builtins::{BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
-        Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot,
-        SlotIndex, UnixTimestamp,
+        Epoch, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot, SlotIndex, UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
@@ -174,6 +173,7 @@ use {
     solana_svm::{
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
+        rent_calculator::RENT_EXEMPT_RENT_EPOCH,
         transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -2009,10 +2009,7 @@ impl Bank {
         clock.epoch_start_timestamp = parent_timestamp;
         clock.unix_timestamp = parent_timestamp;
         new.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(
-                &clock,
-                new.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&clock, new.inherit_lamports(account))
         });
         new.transaction_processor
             .fill_missing_sysvar_cache_entries(&new);
@@ -2522,22 +2519,11 @@ impl Bank {
         self.store_account_and_update_capitalization(pubkey, &new_account);
     }
 
-    fn inherit_specially_retained_account_fields(
-        &self,
-        old_account: &Option<AccountSharedData>,
-    ) -> InheritableAccountFields {
-        const RENT_UNADJUSTED_INITIAL_BALANCE: u64 = 1;
-
-        (
-            old_account
-                .as_ref()
-                .map(|a| a.lamports())
-                .unwrap_or(RENT_UNADJUSTED_INITIAL_BALANCE),
-            old_account
-                .as_ref()
-                .map(|a| a.rent_epoch())
-                .unwrap_or(INITIAL_RENT_EPOCH),
-        )
+    fn inherit_lamports(&self, old_account: &Option<AccountSharedData>) -> u64 {
+        old_account
+            .as_ref()
+            .map(|a| a.lamports())
+            .unwrap_or(RENT_UNADJUSTED_INITIAL_BALANCE)
     }
 
     pub fn clock(&self) -> sysvar::clock::Clock {
@@ -2597,10 +2583,7 @@ impl Bank {
             unix_timestamp,
         };
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(
-                &clock,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&clock, self.inherit_lamports(account))
         });
     }
 
@@ -2627,10 +2610,7 @@ impl Bank {
             unix_timestamp: clock.unix_timestamp,
         };
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(
-                &clock,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&clock, self.inherit_lamports(account))
         });
     }
 
@@ -2663,7 +2643,7 @@ impl Bank {
             self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
                 create_account(
                     &LastRestartSlot { last_restart_slot },
-                    self.inherit_specially_retained_account_fields(account),
+                    self.inherit_lamports(account),
                 )
             });
         }
@@ -2676,10 +2656,7 @@ impl Bank {
             + SysvarId,
     {
         self.update_sysvar_account(&T::id(), |account| {
-            create_account(
-                sysvar,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(sysvar, self.inherit_lamports(account))
         });
         // Simply force fill sysvar cache rather than checking which sysvar was
         // actually updated since tests don't need to be optimized for performance.
@@ -2694,10 +2671,7 @@ impl Bank {
                 .map(|account| account.state().unwrap())
                 .unwrap_or_default();
             slot_history.add(self.slot());
-            create_account(
-                &slot_history,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&slot_history, self.inherit_lamports(account))
         });
     }
 
@@ -2708,10 +2682,7 @@ impl Bank {
                 .map(|account| account.state().unwrap())
                 .unwrap_or_default();
             slot_hashes.add(self.parent_slot, self.parent_hash);
-            create_account(
-                &slot_hashes,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&slot_hashes, self.inherit_lamports(account))
         });
     }
 
@@ -2841,19 +2812,13 @@ impl Bank {
 
     fn update_rent(&self) {
         self.update_sysvar_account(&sysvar::rent::id(), |account| {
-            create_account(
-                &self.rent_collector.rent,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&self.rent_collector.rent, self.inherit_lamports(account))
         });
     }
 
     fn update_epoch_schedule(&self) {
         self.update_sysvar_account(&sysvar::epoch_schedule::id(), |account| {
-            create_account(
-                self.epoch_schedule(),
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(self.epoch_schedule(), self.inherit_lamports(account))
         });
     }
 
@@ -2865,7 +2830,7 @@ impl Bank {
         self.update_sysvar_account(&stake_history::id(), |account| {
             create_account::<StakeHistory>(
                 self.stakes_cache.stakes().history(),
-                self.inherit_specially_retained_account_fields(account),
+                self.inherit_lamports(account),
             )
         });
     }
@@ -3123,9 +3088,9 @@ impl Bank {
         #[expect(deprecated)]
         self.update_sysvar_account(&sysvar::recent_blockhashes::id(), |account| {
             let recent_blockhash_iter = locked_blockhash_queue.get_recent_blockhashes();
-            recent_blockhashes_account::create_account_with_data_and_fields(
+            recent_blockhashes_account::create_account_with_data_and_lamports(
                 recent_blockhash_iter,
-                self.inherit_specially_retained_account_fields(account),
+                self.inherit_lamports(account),
             )
         });
     }
@@ -3430,14 +3395,14 @@ impl Bank {
         );
 
         // Add a bogus executable account, which will be loaded and ignored.
-        let (lamports, rent_epoch) = self.inherit_specially_retained_account_fields(&None);
+        let lamports = self.inherit_lamports(&None);
 
         let account = AccountSharedData::from(Account {
             lamports,
             owner,
             data: vec![],
             executable: true,
-            rent_epoch,
+            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
         });
         self.store_account_and_update_capitalization(program_id, &account);
     }
@@ -3606,10 +3571,7 @@ impl Bank {
         };
 
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(
-                &clock,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&clock, self.inherit_lamports(account))
         });
 
         // Update Alpenglow clock
@@ -6615,14 +6577,13 @@ impl Bank {
         );
 
         // Add a bogus executable builtin account, which will be loaded and ignored.
-        let (lamports, rent_epoch) =
-            self.inherit_specially_retained_account_fields(&existing_genuine_program);
+        let lamports = self.inherit_lamports(&existing_genuine_program);
         let account: AccountSharedData = AccountSharedData::from(Account {
             lamports,
             data: name.as_bytes().to_vec(),
             owner: solana_sdk_ids::native_loader::id(),
             executable: true,
-            rent_epoch,
+            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
         });
         self.store_account_and_update_capitalization(program_id, &account);
     }
@@ -6974,10 +6935,7 @@ impl Bank {
                 ..clock
             };
             bank.update_sysvar_account(&sysvar::clock::id(), |account| {
-                create_account(
-                    &clock,
-                    bank.inherit_specially_retained_account_fields(account),
-                )
+                create_account(&clock, bank.inherit_lamports(account))
             });
             bank.transaction_processor.reset_sysvar_cache();
             bank.transaction_processor
