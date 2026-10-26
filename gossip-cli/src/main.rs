@@ -1,20 +1,29 @@
 //! A command-line executable for monitoring a cluster's gossip plane.
 #[allow(deprecated)]
-use solana_gossip::{contact_info::ContactInfo, gossip_service::discover_peers};
+use solana_gossip::{
+    contact_info::ContactInfo,
+    gossip_service::{discover_peers, discover_peers_and_inspect},
+};
 use {
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name, value_t,
         value_t_or_exit, values_t,
     },
     log::{info, warn},
+    serde_json::{Map, Value, json},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::{keypair_of, pubkeys_of},
         input_validators::{is_keypair_or_ask_keyword, is_port, is_pubkey},
     },
+    solana_gossip::{
+        contact_info::socket_tag_name,
+        ping_probe::{PingProbeConfig, TargetStats, run_ping_probe},
+    },
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     std::{
+        collections::HashMap,
         error,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         process::exit,
@@ -153,7 +162,82 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                         .value_name("SECONDS")
                         .takes_value(true)
                         .help("Maximum time to wait in seconds [default: wait forever]"),
+                )
+                .arg(
+                    Arg::with_name("dump")
+                        .long("dump")
+                        .value_name("PATH")
+                        .takes_value(true)
+                        .help(
+                            "Dump every discovered ContactInfo, plus the slots each node voted \
+                             on, to PATH as JSON lines (- for stdout)",
+                        ),
                 ),
+        )
+        .subcommand(
+            SubCommand::with_name("ping")
+                .about("Measure gossip ping/pong loss and round-trip time against endpoints")
+                .setting(AppSettings::DisableVersion)
+                .arg(
+                    Arg::with_name("target")
+                        .short("t")
+                        .long("target")
+                        .value_name("HOST:PORT")
+                        .takes_value(true)
+                        .multiple(true)
+                        .required(true)
+                        .validator(solana_net_utils::is_host_port)
+                        .help("Gossip endpoint to ping. May be given more than once"),
+                )
+                .arg(
+                    Arg::with_name("identity")
+                        .short("i")
+                        .long("identity")
+                        .value_name("PATH")
+                        .takes_value(true)
+                        .validator(is_keypair_or_ask_keyword)
+                        .help("Identity keypair to sign pings with [default: ephemeral keypair]"),
+                )
+                .arg(
+                    Arg::with_name("count")
+                        .short("c")
+                        .long("count")
+                        .value_name("NUM")
+                        .takes_value(true)
+                        .default_value("10")
+                        .help("Number of pings to send to each target, or 0 to ping forever"),
+                )
+                .arg(
+                    Arg::with_name("interval")
+                        .long("interval")
+                        .value_name("MILLIS")
+                        .takes_value(true)
+                        .default_value("500")
+                        .help("Delay between successive pings to the same target"),
+                )
+                .arg(
+                    Arg::with_name("timeout")
+                        .long("timeout")
+                        .value_name("MILLIS")
+                        .takes_value(true)
+                        .default_value("500")
+                        .help("A pong arriving later than this counts as lost"),
+                )
+                .arg(
+                    Arg::with_name("report_interval")
+                        .long("report-interval")
+                        .value_name("SECONDS")
+                        .takes_value(true)
+                        .default_value("10")
+                        .help("How often to log an interim summary while running"),
+                )
+                .arg(
+                    Arg::with_name("json")
+                        .long("json")
+                        .takes_value(false)
+                        .help("Print the summary as JSON lines, one object per target"),
+                )
+                .arg(&bind_address_arg),
         )
 }
 
@@ -247,6 +331,52 @@ fn process_spy_results(
     }
 }
 
+/// Dumps one JSON object per line: every discovered ContactInfo together with
+/// the slots of the votes that node gossiped, followed by vote-only records for
+/// nodes which have votes in CRDS but no (longer a) contact info.
+fn dump_gossip_state(
+    path: &str,
+    nodes: &[ContactInfo],
+    mut vote_slots: HashMap<Pubkey, Vec<u64>>,
+) -> std::io::Result<()> {
+    let mut out = String::new();
+    for node in nodes {
+        let sockets: Map<String, Value> = node
+            .iter_sockets()
+            .map(|(tag, addr)| {
+                let name = socket_tag_name(tag)
+                    .map_or_else(|| format!("unknown_{tag}"), ToString::to_string);
+                (name, Value::from(addr.to_string()))
+            })
+            .collect();
+        let entry = json!({
+            "pubkey": node.pubkey().to_string(),
+            "wallclock": node.wallclock(),
+            "outset": node.outset(),
+            "shred_version": node.shred_version(),
+            "version": node.version().to_string(),
+            "sockets": sockets,
+            "vote_slots": vote_slots.remove(node.pubkey()).unwrap_or_default(),
+        });
+        out.push_str(&entry.to_string());
+        out.push('\n');
+    }
+    for (pubkey, slots) in vote_slots {
+        let entry = json!({
+            "pubkey": pubkey.to_string(),
+            "vote_slots": slots,
+        });
+        out.push_str(&entry.to_string());
+        out.push('\n');
+    }
+    if path == "-" {
+        print!("{out}");
+        Ok(())
+    } else {
+        std::fs::write(path, out)
+    }
+}
+
 /// Check entrypoints until one returns a valid non-zero shred version
 fn get_entrypoint_shred_version(entrypoint_addrs: &[SocketAddr]) -> Option<u16> {
     entrypoint_addrs.iter().find_map(|entrypoint_addr| {
@@ -290,8 +420,9 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     }
 
     let discover_timeout = Duration::from_secs(timeout.unwrap_or(u64::MAX));
+    let dump_path = matches.value_of("dump");
     #[allow(deprecated)]
-    let (_all_peers, validators) = discover_peers(
+    let (all_peers, validators, vote_slots) = discover_peers_and_inspect(
         identity_keypair,
         &entrypoint_addrs,
         num_nodes,
@@ -301,7 +432,16 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         Some(&gossip_addr),
         shred_version,
         socket_addr_space,
+        |cluster_info| {
+            dump_path
+                .map(|_| cluster_info.get_all_vote_slots())
+                .unwrap_or_default()
+        },
     )?;
+
+    if let Some(path) = dump_path {
+        dump_gossip_state(path, &all_peers, vote_slots)?;
+    }
 
     process_spy_results(
         timeout,
@@ -312,6 +452,109 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     );
 
     Ok(())
+}
+
+fn process_ping(matches: &ArgMatches) -> std::io::Result<()> {
+    let targets: Vec<SocketAddr> = values_t!(matches, "target", String)
+        .unwrap_or_default()
+        .iter()
+        .map(|target| {
+            solana_net_utils::parse_host_port(target).unwrap_or_else(|e| {
+                eprintln!("failed to parse target {target}: {e}");
+                exit(1);
+            })
+        })
+        .collect();
+    let count = value_t_or_exit!(matches, "count", u64);
+    let config = PingProbeConfig {
+        bind_ip: matches.value_of("bind_address").map_or(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            |bind_address| {
+                solana_net_utils::parse_host(bind_address).unwrap_or_else(|e| {
+                    eprintln!("failed to parse bind-address: {e}");
+                    exit(1);
+                })
+            },
+        ),
+        interval: Duration::from_millis(value_t_or_exit!(matches, "interval", u64)),
+        timeout: Duration::from_millis(value_t_or_exit!(matches, "timeout", u64)),
+        count: (count != 0).then_some(count),
+        report_interval: Duration::from_secs(value_t_or_exit!(matches, "report_interval", u64)),
+    };
+    let stats = run_ping_probe(&targets, keypair_of(matches, "identity"), &config)?;
+    if matches.is_present("json") {
+        for stats in &stats {
+            println!("{}", ping_stats_json(stats));
+        }
+    } else {
+        for stats in &stats {
+            print_ping_stats(stats);
+        }
+    }
+    Ok(())
+}
+
+fn ping_stats_json(stats: &TargetStats) -> Value {
+    let rtt_ms = stats.rtt_summary().map(|rtt| {
+        json!({
+            "min": millis(rtt.min),
+            "p50": millis(rtt.p50),
+            "mean": millis(rtt.mean),
+            "p99": millis(rtt.p99),
+            "max": millis(rtt.max),
+            "stddev": millis(rtt.stddev),
+        })
+    });
+    let responders: Map<String, Value> = stats
+        .responders
+        .iter()
+        .map(|(pubkey, count)| (pubkey.to_string(), Value::from(*count)))
+        .collect();
+    json!({
+        "target": stats.addr.to_string(),
+        "sent": stats.sent,
+        "received": stats.received,
+        "loss_percent": stats.loss_percent(),
+        "late": stats.late,
+        "invalid": stats.invalid,
+        "send_errors": stats.send_errors,
+        "rtt_ms": rtt_ms,
+        "responders": responders,
+    })
+}
+
+fn print_ping_stats(stats: &TargetStats) {
+    println!("{}", stats.addr);
+    println!(
+        "  sent {}  received {}  loss {:.2}%  late {}  invalid {}  send-errors {}",
+        stats.sent,
+        stats.received,
+        stats.loss_percent(),
+        stats.late,
+        stats.invalid,
+        stats.send_errors,
+    );
+    match stats.rtt_summary() {
+        Some(rtt) => println!(
+            "  rtt ms  min {:.3}  p50 {:.3}  mean {:.3}  p99 {:.3}  max {:.3}  stddev {:.3}",
+            millis(rtt.min),
+            millis(rtt.p50),
+            millis(rtt.mean),
+            millis(rtt.p99),
+            millis(rtt.max),
+            millis(rtt.stddev),
+        ),
+        None => println!("  rtt ms  no replies in time"),
+    }
+    let mut responders: Vec<_> = stats.responders.iter().collect();
+    responders.sort_unstable_by_key(|(_pubkey, count)| std::cmp::Reverse(**count));
+    for (pubkey, count) in responders {
+        println!("  responder {pubkey}  {count} pong(s)");
+    }
+}
+
+fn millis(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
 }
 
 fn parse_entrypoints(matches: &ArgMatches) -> Vec<SocketAddr> {
@@ -410,6 +653,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
         ("rpc-url", Some(matches)) => {
             process_rpc_url(matches, socket_addr_space)?;
+        }
+        ("ping", Some(matches)) => {
+            process_ping(matches)?;
         }
         _ => unreachable!(),
     }
