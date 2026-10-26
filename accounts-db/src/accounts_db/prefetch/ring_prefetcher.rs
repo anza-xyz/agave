@@ -41,6 +41,10 @@ const MAX_IOWQ_WORKERS: u32 = 8;
 const COMPLETION_WAIT: Duration = Duration::from_micros(200);
 /// Reads at least this slow are logged
 const SLOW_READ_US: u64 = 5_000;
+/// Dispatch passes, and the handling of single completions, at least this slow are logged: their
+/// time counts against the reads waiting on them
+const SLOW_DISPATCH_US: u64 = 1_000;
+const SLOW_COMPLETION_US: u64 = 1_000;
 
 pub(super) struct RingPrefetcher {
     ring: Ring<PrefetchState, ReadOp>,
@@ -55,6 +59,8 @@ struct PrefetchState {
     /// set while handling the completions posted during their own submission
     reaping_submitted: bool,
     read_counts: ReadCounts,
+    /// completions handled so far, to count those handled during a dispatch pass
+    num_completions: u64,
 }
 
 /// What reads took, added to the stats once per pass rather than per read
@@ -127,7 +133,9 @@ impl RingOp<PrefetchState> for ReadOp {
         completion: &mut Completion<PrefetchState, Self>,
         res: io::Result<i32>,
     ) -> io::Result<()> {
+        let started = Instant::now();
         let state = completion.context_mut();
+        state.num_completions += 1;
         let read_us = self.pushed.elapsed().as_micros() as u64;
         if state.reaping_submitted {
             state.read_counts.num_page_cache_reads += 1;
@@ -138,11 +146,14 @@ impl RingOp<PrefetchState> for ReadOp {
         state.read_counts.max_read_us = state.read_counts.max_read_us.max(read_us);
         if read_us >= SLOW_READ_US {
             info!(
-                "slow prefetch read: pubkey {}, slot {}, {} bytes, {read_us}us, {:?}",
+                "slow prefetch read: pubkey {}, slot {}, {} bytes, {read_us}us, {:?}, page cache \
+                 {}, {} in flight",
                 self.pubkey,
                 self.slot,
                 self.len,
                 res.as_ref().map_err(|err| err.kind()),
+                state.reaping_submitted,
+                state.num_in_flight,
             );
         }
 
@@ -181,6 +192,14 @@ impl RingOp<PrefetchState> for ReadOp {
         completion
             .context_mut()
             .finish(self.pubkey, self.slot, account);
+        let completion_us = started.elapsed().as_micros() as u64;
+        if completion_us >= SLOW_COMPLETION_US {
+            info!(
+                "slow prefetch completion: pubkey {}, {} bytes, {completion_us}us",
+                self.pubkey,
+                self.buf.len(),
+            );
+        }
         Ok(())
     }
 }
@@ -199,6 +218,7 @@ impl RingPrefetcher {
             num_in_flight: 0,
             reaping_submitted: false,
             read_counts: ReadCounts::default(),
+            num_completions: 0,
         };
         Ok(Self {
             ring: Ring::new(ring, state),
@@ -250,9 +270,13 @@ impl RingPrefetcher {
         let Some(accounts_db) = self.ring.context().accounts_db.upgrade() else {
             return Ok(false);
         };
+        let started = Instant::now();
+        let num_completions_before = self.ring.context().num_completions;
+        let mut num_batches = 0;
         let mut counts = DispatchCounts::default();
         // a full ring makes `push` reap completions until there is room
         for pubkeys in first_batch.into_iter().chain(batch_receiver.try_iter()) {
+            num_batches += 1;
             for pubkey in pubkeys {
                 let outstanding = &mut self.ring.context_mut().outstanding;
                 if let Some(read) = accounts_db.read_for_prefetch(pubkey, outstanding, &mut counts)
@@ -260,6 +284,19 @@ impl RingPrefetcher {
                     self.push_read(read)?;
                 }
             }
+        }
+        let dispatch_us = started.elapsed().as_micros() as u64;
+        if dispatch_us >= SLOW_DISPATCH_US {
+            let num_keys = counts.num_skipped_cached
+                + counts.num_skipped_outstanding
+                + counts.num_not_in_index
+                + counts.num_issued;
+            info!(
+                "slow prefetch dispatch: {dispatch_us}us, {num_batches} batches, {num_keys} keys, \
+                 {} reads issued, {} completions handled",
+                counts.num_issued,
+                self.ring.context().num_completions - num_completions_before,
+            );
         }
         counts.add_to(&accounts_db.prefetcher.stats);
         Ok(true)
