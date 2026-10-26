@@ -8,7 +8,7 @@
 //! every account fits.
 
 use {
-    super::{DispatchCounts, Outstanding, POLL_INTERVAL, Read},
+    super::{DispatchCounts, Outstanding, Read},
     crate::{
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsDb, LoadedAccountAccessor},
@@ -26,7 +26,6 @@ use {
         io,
         os::fd::AsRawFd,
         sync::{Arc, Weak},
-        thread,
         time::Duration,
     },
 };
@@ -166,31 +165,37 @@ impl RingPrefetcher {
 
     fn do_run(&mut self, batch_receiver: &Receiver<Vec<Pubkey>>) -> io::Result<()> {
         loop {
-            // the queue's sender lives in `accounts_db`, so this is its disconnect
-            if self.ring.context().accounts_db.strong_count() == 0 {
+            // nothing in flight, so nothing to reap: block until there is work. With reads in
+            // flight, `reap` waits on the ring instead, and new batches wait for it.
+            let first_batch = if self.ring.context().num_in_flight == 0 {
+                let Ok(pubkeys) = batch_receiver.recv() else {
+                    return Ok(());
+                };
+                Some(pubkeys)
+            } else {
+                None
+            };
+            if !self.dispatch(first_batch, batch_receiver)? {
                 return Ok(());
             }
-            if self.ring.context().num_in_flight == 0 && batch_receiver.is_empty() {
-                thread::sleep(POLL_INTERVAL);
-                continue;
-            }
-            self.dispatch(batch_receiver)?;
             self.reap()?;
         }
     }
 
-    /// Takes incoming batches and, for each pubkey worth reading, looks up where the account is
-    /// stored and pushes a read of it
-    fn dispatch(&mut self, batch_receiver: &Receiver<Vec<Pubkey>>) -> io::Result<()> {
-        if batch_receiver.is_empty() {
-            return Ok(());
-        }
+    /// Takes `first_batch` and any queued batches and, for each pubkey worth reading, looks up
+    /// where the account is stored and pushes a read of it. Returns false once `accounts_db` is
+    /// gone.
+    fn dispatch(
+        &mut self,
+        first_batch: Option<Vec<Pubkey>>,
+        batch_receiver: &Receiver<Vec<Pubkey>>,
+    ) -> io::Result<bool> {
         let Some(accounts_db) = self.ring.context().accounts_db.upgrade() else {
-            return Ok(());
+            return Ok(false);
         };
         let mut counts = DispatchCounts::default();
         // a full ring makes `push` reap completions until there is room
-        for pubkeys in batch_receiver.try_iter() {
+        for pubkeys in first_batch.into_iter().chain(batch_receiver.try_iter()) {
             for pubkey in pubkeys {
                 let outstanding = &mut self.ring.context_mut().outstanding;
                 if let Some(read) = accounts_db.read_for_prefetch(pubkey, outstanding, &mut counts)
@@ -200,7 +205,7 @@ impl RingPrefetcher {
             }
         }
         counts.add_to(&accounts_db.prefetcher.stats);
-        Ok(())
+        Ok(true)
     }
 
     /// Waits briefly for reads to complete; each completion finishes its read or reads more

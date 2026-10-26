@@ -7,8 +7,9 @@
 //!
 //! The thread alone owns the set of outstanding pubkeys, so the set needs no lock.
 //!
-//! The thread polls its queue rather than blocking on it. A blocked receiver has to be woken by
-//! the sender, a syscall on the caller's critical path; a polled one never does.
+//! With nothing in flight, the thread blocks on its queue, so a batch starts at once, at the
+//! cost of the sender waking it. With reads in flight it waits on the ring instead, so a sender
+//! has nothing to wake: the batch waits for the next completion or a short timeout.
 
 #[cfg(target_os = "linux")]
 mod ring_prefetcher;
@@ -16,7 +17,7 @@ mod ring_prefetcher;
 use {
     super::{AccountsDb, LoadedAccountAccessor, stats::PrefetchAccountsStats},
     crate::ancestors::Ancestors,
-    crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
+    crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -24,14 +25,11 @@ use {
         collections::HashSet,
         sync::{Arc, OnceLock, Weak, atomic::Ordering},
         thread,
-        time::Duration,
     },
 };
 
 /// Batches waiting for the prefetch thread; once full, new batches are dropped
 const MAX_QUEUED_BATCHES: usize = 64;
-/// With nothing to do, how long the prefetch thread sleeps before checking its queue again
-const POLL_INTERVAL: Duration = Duration::from_micros(200);
 
 type Outstanding = HashSet<Pubkey, PubkeyHasherBuilder>;
 
@@ -106,15 +104,7 @@ fn run_prefetcher(accounts_db: Weak<AccountsDb>, batch_receiver: Receiver<Vec<Pu
 /// Reads one account at a time, blocking on each
 fn run_blocking_prefetcher(accounts_db: Weak<AccountsDb>, batch_receiver: Receiver<Vec<Pubkey>>) {
     let mut outstanding = Outstanding::default();
-    loop {
-        let pubkeys = match batch_receiver.try_recv() {
-            Ok(pubkeys) => pubkeys,
-            Err(TryRecvError::Empty) => {
-                thread::sleep(POLL_INTERVAL);
-                continue;
-            }
-            Err(TryRecvError::Disconnected) => break,
-        };
+    for pubkeys in batch_receiver {
         let Some(accounts_db) = accounts_db.upgrade() else {
             break;
         };
