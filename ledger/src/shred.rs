@@ -205,6 +205,11 @@ impl ShredFlags {
     pub(crate) fn from_reference_tick(reference_tick: u8) -> Self {
         Self::from_bits_retain(Self::SHRED_TICK_REFERENCE_MASK.bits().min(reference_tick))
     }
+
+    /// Checks that if `LAST_SHRED_IN_SLOT` is set, `DATA_COMPLETE_SHRED` is also set.
+    pub(crate) fn is_valid(self) -> bool {
+        !self.intersects(Self::LAST_SHRED_IN_SLOT) || self.contains(Self::DATA_COMPLETE_SHRED)
+    }
 }
 
 #[derive(Debug, Error)]
