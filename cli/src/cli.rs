@@ -1940,6 +1940,7 @@ mod tests {
     use {
         super::*,
         serde_json::json,
+        solana_instruction::Instruction,
         solana_keypair::{Keypair, keypair_from_seed, read_keypair_file, write_keypair_file},
         solana_presigner::Presigner,
         solana_pubkey::Pubkey,
@@ -1954,10 +1955,33 @@ mod tests {
         solana_transaction_status::TransactionConfirmationStatus,
     };
 
-    #[test_case::test_case(0; "legacy")]
-    #[test_case::test_case(1; "v0")]
-    #[test_case::test_case(2; "v1")]
-    fn test_sign_transaction(version: u8) {
+    fn legacy_message(instructions: &[Instruction], payer: &Pubkey) -> VersionedMessage {
+        VersionedMessage::Legacy(solana_message::Message::new(instructions, Some(payer)))
+    }
+
+    fn v0_message(instructions: &[Instruction], payer: &Pubkey) -> VersionedMessage {
+        VersionedMessage::V0(
+            solana_message::v0::Message::try_compile(payer, instructions, &[], Hash::default())
+                .unwrap(),
+        )
+    }
+
+    fn v1_message(instructions: &[Instruction], payer: &Pubkey) -> VersionedMessage {
+        VersionedMessage::V1(
+            solana_message::v1::Message::try_compile_with_config(
+                payer,
+                instructions,
+                Hash::default(),
+                solana_message::v1::TransactionConfig::empty(),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test_case::test_case(legacy_message; "legacy")]
+    #[test_case::test_case(v0_message; "v0")]
+    #[test_case::test_case(v1_message; "v1")]
+    fn test_sign_transaction(create_message: fn(&[Instruction], &Pubkey) -> VersionedMessage) {
         let payer = Keypair::new();
         let from = Keypair::new();
         let instructions = [solana_system_interface::instruction::transfer(
@@ -1966,30 +1990,7 @@ mod tests {
             1,
         )];
         let blockhash = Hash::new_unique();
-        let message = match version {
-            0 => VersionedMessage::Legacy(solana_message::Message::new(
-                &instructions,
-                Some(&payer.pubkey()),
-            )),
-            1 => VersionedMessage::V0(
-                solana_message::v0::Message::try_compile(
-                    &payer.pubkey(),
-                    &instructions,
-                    &[],
-                    Hash::default(),
-                )
-                .unwrap(),
-            ),
-            _ => VersionedMessage::V1(
-                solana_message::v1::Message::try_compile_with_config(
-                    &payer.pubkey(),
-                    &instructions,
-                    Hash::default(),
-                    solana_message::v1::TransactionConfig::empty(),
-                )
-                .unwrap(),
-            ),
-        };
+        let message = create_message(&instructions, &payer.pubkey());
         let partial = sign_transaction(message.clone(), &[&from], blockhash, true).unwrap();
         let output = solana_cli_output::return_signers_data(
             &partial,
