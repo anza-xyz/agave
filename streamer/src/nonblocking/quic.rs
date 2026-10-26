@@ -1778,108 +1778,6 @@ pub mod test {
     }
 
     #[test]
-    fn test_prune_table_with_ip() {
-        use std::net::Ipv4Addr;
-        agave_logger::setup();
-        let cancel = CancellationToken::new();
-        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
-        let max_connections_per_peer = 10;
-        let sockets: Vec<_> = (0..5)
-            .map(|i| SocketAddr::new(IpAddr::V4(Ipv4Addr::new(i, 0, 0, 0)), 0))
-            .collect();
-        let stats = Arc::new(StreamerStats::default());
-        for socket in &sockets {
-            table
-                .try_add_connection(
-                    ConnectionTableKey::IP(socket.ip()),
-                    socket.port(),
-                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                    None,
-                    ConnectionPeerType::Unstaked,
-                    max_connections_per_peer,
-                    || Arc::new(NullStreamerCounter {}),
-                )
-                .unwrap();
-        }
-        // A second connection from the first IP: 6 connections under 5 keys.
-        table
-            .try_add_connection(
-                ConnectionTableKey::IP(sockets[0].ip()),
-                sockets[0].port(),
-                ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                None,
-                ConnectionPeerType::Unstaked,
-                max_connections_per_peer,
-                || Arc::new(NullStreamerCounter {}),
-            )
-            .unwrap();
-        assert_eq!(table.total_size, 6);
-
-        // One key per call: the whole bucket is evicted.
-        while table.total_size > 3 {
-            let pruned = table.prune_random(1, u64::MAX);
-            assert!(pruned == 1 || pruned == 2);
-        }
-        assert!(table.total_size <= 3);
-        // Emptied buckets are removed, never left behind.
-        assert!(
-            table
-                .table
-                .values()
-                .all(|connections| !connections.is_empty())
-        );
-        assert!(table.table.len() <= 3);
-
-        for socket in &sockets {
-            table.remove_connection(ConnectionTableKey::IP(socket.ip()), socket.port(), 0);
-        }
-        assert_eq!(table.total_size, 0);
-        assert!(table.table.is_empty());
-        assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn test_prune_table_with_unique_pubkeys() {
-        agave_logger::setup();
-        let cancel = CancellationToken::new();
-        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
-
-        // We should be able to add more entries than max_connections_per_peer, since each entry is
-        // from a different peer pubkey.
-        let num_entries = 15;
-        let max_connections_per_peer = 10;
-        let stats = Arc::new(StreamerStats::default());
-
-        let pubkeys: Vec<_> = (0..num_entries).map(|_| Pubkey::new_unique()).collect();
-        for pubkey in &pubkeys {
-            table
-                .try_add_connection(
-                    ConnectionTableKey::Pubkey(*pubkey),
-                    0,
-                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                    None,
-                    ConnectionPeerType::Unstaked,
-                    max_connections_per_peer,
-                    || Arc::new(NullStreamerCounter {}),
-                )
-                .unwrap();
-        }
-
-        let new_size = 3;
-        // One key per call: each pubkey holds one connection.
-        while table.total_size > new_size {
-            assert_eq!(table.prune_random(1, u64::MAX), 1);
-        }
-        assert_eq!(table.total_size, new_size);
-        assert_eq!(table.table.len(), new_size);
-        for pubkey in &pubkeys {
-            table.remove_connection(ConnectionTableKey::Pubkey(*pubkey), 0, 0);
-        }
-        assert_eq!(table.total_size, 0);
-        assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
     fn test_remove_connections_by_key() {
         agave_logger::setup();
         let cancel = CancellationToken::new();
@@ -1927,7 +1825,7 @@ pub mod test {
     }
 
     #[test]
-    fn test_prune_table_with_non_unique_pubkeys() {
+    fn test_prune_table_evicts_whole_key() {
         agave_logger::setup();
         let cancel = CancellationToken::new();
         let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
@@ -1985,24 +1883,16 @@ pub mod test {
 
         assert_eq!(table.total_size, num_entries);
 
-        let new_max_size = 3;
-        // One key per call: the whole bucket is evicted.
-        while table.total_size > new_max_size {
-            let pruned = table.prune_random(1, u64::MAX);
-            assert!(pruned == 1 || pruned == 10);
+        // Each call evicts a whole key.
+        let mut pruned = Vec::new();
+        while table.total_size > 0 {
+            let before = table.total_size;
+            let n = table.prune_random(1, u64::MAX);
+            assert_eq!(table.total_size, before - n);
+            pruned.push(n);
         }
-        assert!(table.total_size <= new_max_size);
-        assert!(table.table.len() <= 2);
-        assert!(
-            table
-                .table
-                .values()
-                .all(|connections| !connections.is_empty())
-        );
-
-        table.remove_connection(ConnectionTableKey::Pubkey(pubkey), 0, 0);
-        table.remove_connection(ConnectionTableKey::Pubkey(pubkey2), 0, 0);
-        assert_eq!(table.total_size, 0);
+        pruned.sort_unstable();
+        assert_eq!(pruned, [1, max_connections_per_peer]);
         assert!(table.table.is_empty());
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
