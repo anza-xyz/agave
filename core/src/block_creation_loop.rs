@@ -1398,7 +1398,7 @@ fn create_and_insert_leader_bank(
             ctx.my_pubkey,
         );
     };
-    let leader = leaders.leader;
+    let leader = *leaders.cur_leader();
 
     if ctx.my_pubkey != leader.id {
         return Err(StartLeaderError::LeaderIdentityMismatch {

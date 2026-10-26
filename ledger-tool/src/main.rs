@@ -1381,10 +1381,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
         // stakes cover, so keep `bank`'s leader for both slots.
         Arc::new(Bank::warp_from_parent(
             bank.clone(),
-            SlotLeaders {
-                leader: *bank.leader(),
-                next_leader: *bank.leader(),
-            },
+            SlotLeaders::new_unchecked(*bank.leader(), *bank.leader()),
             warp_slot,
         ))
     } else {
@@ -3015,10 +3012,7 @@ fn main() {
                         // the base bank's leader for both slots.
                         let warped_bank = Bank::new_from_parent_with_tracer(
                             base_bank.clone(),
-                            SlotLeaders {
-                                leader: *base_bank.leader(),
-                                next_leader: *base_bank.leader(),
-                            },
+                            SlotLeaders::new_unchecked(*base_bank.leader(), *base_bank.leader()),
                             next_epoch,
                             tracer,
                         );

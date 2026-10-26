@@ -5842,16 +5842,16 @@ fn test_slot_leaders_from_epoch_stakes_epoch_boundary() {
 
     // Within an epoch, both leaders come from that epoch's schedule.
     let leaders = Bank::slot_leaders_from_epoch_stakes(1, &epoch_schedule, &epoch_stakes).unwrap();
-    assert_eq!(leaders.leader.id, leader_a);
-    assert_eq!(leaders.next_leader.id, leader_a);
+    assert_eq!(leaders.cur_leader().id, leader_a);
+    assert_eq!(leaders.next_leader().id, leader_a);
 
     // At the last slot of epoch 0, the next leader comes from epoch 1's
     // schedule.
     let last_slot = epoch_schedule.get_last_slot_in_epoch(0);
     let leaders =
         Bank::slot_leaders_from_epoch_stakes(last_slot, &epoch_schedule, &epoch_stakes).unwrap();
-    assert_eq!(leaders.leader.id, leader_a);
-    assert_eq!(leaders.next_leader.id, leader_b);
+    assert_eq!(leaders.cur_leader().id, leader_a);
+    assert_eq!(leaders.next_leader().id, leader_b);
 
     // The first slot of epoch 1 is led entirely from epoch 1's schedule. Its
     // next slot is still in epoch 1, so epoch 0's stakes are not consulted.
@@ -5859,8 +5859,13 @@ fn test_slot_leaders_from_epoch_stakes_epoch_boundary() {
     let leaders =
         Bank::slot_leaders_from_epoch_stakes(last_slot + 1, &epoch_schedule, &epoch_stakes_1)
             .unwrap();
-    assert_eq!(leaders.leader.id, leader_b);
-    assert_eq!(leaders.next_leader.id, leader_b);
+    assert_eq!(leaders.cur_leader().id, leader_b);
+    assert_eq!(leaders.next_leader().id, leader_b);
+
+    // Without the epoch of the slot, there is no schedule to read.
+    assert!(
+        Bank::slot_leaders_from_epoch_stakes(last_slot, &epoch_schedule, &epoch_stakes_1).is_none()
+    );
 }
 
 #[ignore]

@@ -6,7 +6,7 @@
 use {
     agave_random::weighted::WeightedU64Index,
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
-    solana_clock::Epoch,
+    solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     std::{iter, num::NonZeroUsize, sync::Arc},
 };
@@ -38,19 +38,55 @@ impl SlotLeader {
 /// resolved from the leader schedule by whoever creates the bank for that slot.
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub struct SlotLeaders {
-    pub leader: SlotLeader,
-    pub next_leader: SlotLeader,
+    cur_leader: SlotLeader,
+    next_leader: SlotLeader,
 }
 
-/// Uses `leader` for both slots, for tests that don't care about the next
-/// leader.
+impl SlotLeaders {
+    /// Looks up the leaders of `slot` and `slot + 1` with `leader_at`, so the
+    /// pair always matches the schedule it was read from. Returns `None` if
+    /// either slot has no leader.
+    pub fn new(slot: Slot, mut leader_at: impl FnMut(Slot) -> Option<SlotLeader>) -> Option<Self> {
+        Some(Self {
+            cur_leader: leader_at(slot)?,
+            next_leader: leader_at(slot.saturating_add(1))?,
+        })
+    }
+
+    /// Pairs leaders that were not read from a leader schedule, such as the
+    /// genesis leader or a warp target past what epoch stakes cover. Prefer
+    /// [`Self::new`].
+    pub fn new_unchecked(cur_leader: SlotLeader, next_leader: SlotLeader) -> Self {
+        Self {
+            cur_leader,
+            next_leader,
+        }
+    }
+
+    /// Uses `leader` for both slots, for tests that don't care about the next
+    /// leader.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_for_tests(leader: SlotLeader) -> Self {
+        Self::new_unchecked(leader, leader)
+    }
+
+    /// The leader of the slot.
+    pub fn cur_leader(&self) -> &SlotLeader {
+        &self.cur_leader
+    }
+
+    /// The leader of the slot after it.
+    pub fn next_leader(&self) -> &SlotLeader {
+        &self.next_leader
+    }
+}
+
+/// Lets tests pass a bare [`SlotLeader`] wherever bank creation takes
+/// `SlotLeaders`. See [`SlotLeaders::new_for_tests`].
 #[cfg(feature = "dev-context-only-utils")]
 impl From<SlotLeader> for SlotLeaders {
     fn from(leader: SlotLeader) -> Self {
-        Self {
-            leader,
-            next_leader: leader,
-        }
+        Self::new_for_tests(leader)
     }
 }
 

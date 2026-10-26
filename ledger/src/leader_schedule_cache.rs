@@ -98,12 +98,7 @@ impl LeaderScheduleCache {
     /// following epoch. With a `bank`, that epoch's schedule is always
     /// computable, since the bank holds stakes up to its leader schedule epoch.
     pub fn slot_leaders_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<SlotLeaders> {
-        let leader = self.slot_leader_at(slot, bank)?;
-        let next_leader = self.slot_leader_at(slot.saturating_add(1), bank)?;
-        Some(SlotLeaders {
-            leader,
-            next_leader,
-        })
+        SlotLeaders::new(slot, |slot| self.slot_leader_at(slot, bank))
     }
 
     /// Returns the (next slot, last slot) consecutive range of slots after
@@ -620,18 +615,18 @@ mod tests {
         let last_slot = bank.epoch_schedule().get_last_slot_in_epoch(0);
         let leaders = cache.slot_leaders_at(last_slot, Some(&bank)).unwrap();
         assert_eq!(
-            Some(leaders.leader),
+            Some(*leaders.cur_leader()),
             cache.slot_leader_at(last_slot, Some(&bank))
         );
         assert_eq!(
-            Some(leaders.next_leader),
+            Some(*leaders.next_leader()),
             cache.slot_leader_at(last_slot + 1, Some(&bank))
         );
 
         // A bank created with the pair reports it as-is.
         let bank = Bank::new_from_parent(bank, leaders, last_slot);
-        assert_eq!(bank.leader(), &leaders.leader);
-        assert_eq!(bank.next_leader(), &leaders.next_leader);
+        assert_eq!(bank.leader(), leaders.cur_leader());
+        assert_eq!(bank.next_leader(), leaders.next_leader());
     }
 
     #[test]

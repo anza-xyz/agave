@@ -150,13 +150,11 @@ mod tests {
         assert_eq!(bank0.next_leader(), &leader_schedule(0, &bank0).unwrap()[1]);
 
         // A child bank reports the leaders it was created with.
-        let leaders = SlotLeaders {
-            leader: SlotLeader::new_unique(),
-            next_leader: SlotLeader::new_unique(),
-        };
+        let leaders =
+            SlotLeaders::new_unchecked(SlotLeader::new_unique(), SlotLeader::new_unique());
         let bank = Bank::new_from_parent(bank0, leaders, 1);
-        assert_eq!(bank.leader(), &leaders.leader);
-        assert_eq!(bank.next_leader(), &leaders.next_leader);
+        assert_eq!(bank.leader(), leaders.cur_leader());
+        assert_eq!(bank.next_leader(), leaders.next_leader());
     }
 
     #[test]

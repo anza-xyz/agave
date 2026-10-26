@@ -3075,7 +3075,7 @@ impl ReplayStage {
                 return None;
             }
 
-            let next_leader_id = &leaders.leader.id;
+            let next_leader_id = &leaders.cur_leader().id;
             trace!("{my_pubkey} leader {next_leader_id} at poh slot: {poh_slot}");
 
             // I guess I missed my slot
@@ -5536,13 +5536,12 @@ impl ReplayStage {
                 let leaders = leader_schedule_cache
                     .slot_leaders_at(child_slot, Some(parent_bank))
                     .unwrap();
+                let leader = *leaders.cur_leader();
 
                 // We don't create the bank here for live leader banks, as that is handled by BCL
                 // and BankingStage. However, a full block may need to be replayed after a
                 // SwitchBank event or after repairing a block following a improper set-identity command.
-                if Self::leader_is_me(&leaders.leader.id, my_pubkey)
-                    && !blockstore.is_full(child_slot)
-                {
+                if Self::leader_is_me(&leader.id, my_pubkey) && !blockstore.is_full(child_slot) {
                     trace!("skipping replay bank creation for own leader slot {child_slot}");
                     continue;
                 }
@@ -5582,7 +5581,7 @@ impl ReplayStage {
                 Self::update_fork_propagated_threshold_from_votes(
                     progress,
                     empty,
-                    vec![leaders.leader.id],
+                    vec![leader.id],
                     parent_bank.slot(),
                     &bank_forks.read().unwrap(),
                 );

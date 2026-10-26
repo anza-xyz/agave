@@ -1131,10 +1131,7 @@ impl ProgramTest {
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().root_bank();
         // The test validator is the only staked node, so it leads every slot.
-        let leaders = SlotLeaders {
-            leader: *bank0.leader(),
-            next_leader: *bank0.leader(),
-        };
+        let leaders = SlotLeaders::new_unchecked(*bank0.leader(), *bank0.leader());
         let bank1 = Bank::new_from_parent(bank0.clone(), leaders, bank0.slot() + 1);
         let bank1 = {
             let mut bf = bank_forks.write().unwrap();
@@ -1425,10 +1422,7 @@ impl ProgramTestContext {
     pub fn warp_to_slot(&mut self, warp_slot: Slot) -> Result<(), ProgramTestError> {
         let bank = self.bank_forks.read().unwrap().working_bank();
         // The test validator is the only staked node, so it leads every slot.
-        let leaders = SlotLeaders {
-            leader: *bank.leader(),
-            next_leader: *bank.leader(),
-        };
+        let leaders = SlotLeaders::new_unchecked(*bank.leader(), *bank.leader());
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
@@ -1492,10 +1486,7 @@ impl ProgramTestContext {
     pub fn warp_forward_force_reward_interval_end(&mut self) -> Result<(), ProgramTestError> {
         let bank = self.bank_forks.read().unwrap().working_bank();
         // The test validator is the only staked node, so it leads every slot.
-        let leaders = SlotLeaders {
-            leader: *bank.leader(),
-            next_leader: *bank.leader(),
-        };
+        let leaders = SlotLeaders::new_unchecked(*bank.leader(), *bank.leader());
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature

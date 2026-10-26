@@ -42,14 +42,11 @@ fn test_syscall_get_leader() {
 
     // The leaders arrive with the bank, the way the block creation loop and
     // replay stage supply them from the leader schedule cache.
-    let leaders = SlotLeaders {
-        leader: SlotLeader::new_unique(),
-        next_leader: SlotLeader::new_unique(),
-    };
+    let leaders = SlotLeaders::new_unchecked(SlotLeader::new_unique(), SlotLeader::new_unique());
     let mut bank_client = BankClient::new_shared(bank);
     let bank = bank_client.advance_slot(1, &bank_forks, leaders).unwrap();
     bank.freeze();
-    assert_eq!(bank.leader(), &leaders.leader);
+    assert_eq!(bank.leader(), leaders.cur_leader());
 
     let mint_pubkey = mint_keypair.pubkey();
     let message = Message::new(
@@ -67,11 +64,12 @@ fn test_syscall_get_leader() {
 
     // `LeaderInfo` layout (SIMD-0558): leader identity, leader vote, next
     // leader identity, next leader vote.
-    let next_leader = leaders.next_leader;
+    let cur_leader = leaders.cur_leader();
+    let next_leader = leaders.next_leader();
     let data = &result.return_data.unwrap().data;
     assert_eq!(data.len(), 128);
-    assert_eq!(read_pubkey(data, 0), leaders.leader.id);
-    assert_eq!(read_pubkey(data, 32), leaders.leader.vote_address);
+    assert_eq!(read_pubkey(data, 0), cur_leader.id);
+    assert_eq!(read_pubkey(data, 32), cur_leader.vote_address);
     assert_eq!(read_pubkey(data, 64), next_leader.id);
     assert_eq!(read_pubkey(data, 96), next_leader.vote_address);
 }
