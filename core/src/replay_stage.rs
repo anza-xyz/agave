@@ -33,6 +33,7 @@ use {
     },
     agave_jemalloc::jemalloc::Arena,
     agave_votor::{
+        cancelled_replay_slots::CancelledReplaySlots,
         commitment::{self, CommitmentAggregationData, CommitmentType},
         event::{
             CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, SwitchBankEvent, VotorEvent,
@@ -349,6 +350,8 @@ struct NewBankForksContext<'a> {
     migration_status: &'a MigrationStatus,
     /// This validator's identity, used to leave live own-leader banks to BCL.
     my_pubkey: &'a Pubkey,
+    /// Skip-certified slots whose replay Votor cancelled; their banks are not recreated.
+    cancelled_replay_slots: &'a CancelledReplaySlots,
 }
 
 struct LastVoteRefreshTime {
@@ -461,6 +464,8 @@ pub struct ReplayStageConfig {
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
+    /// Skip-certified slots whose replay Votor cancelled.
+    pub cancelled_replay_slots: CancelledReplaySlots,
     pub(crate) replay_arena: Option<Arena>,
 }
 
@@ -783,6 +788,7 @@ impl ReplayStage {
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
+            cancelled_replay_slots,
             replay_arena,
         } = config;
 
@@ -1021,6 +1027,7 @@ impl ReplayStage {
                         transaction_status_sender: transaction_status_sender.as_ref(),
                         migration_status: migration_status.as_ref(),
                         my_pubkey: &my_pubkey,
+                        cancelled_replay_slots: &cancelled_replay_slots,
                     },
                     &mut progress,
                     &mut replay_timing,
@@ -1029,6 +1036,19 @@ impl ReplayStage {
                     break;
                 }
                 generate_new_bank_forks_time.stop();
+
+                // Discard banks whose replay votor cancelled because their slot is
+                // skip-certified.
+                //
+                // Note: this runs after generate_new_bank_forks, so that a bank created
+                // concurrently with votor cancelling its slot is discarded before it gets replayed.
+                Self::process_cancelled_banks(
+                    &my_pubkey,
+                    &bank_forks,
+                    &mut progress,
+                    &mut async_verification_freelist,
+                    &cancelled_replay_slots,
+                );
 
                 // We either have a bank currently, OR there is a pending message to either reset or set
                 // the bank.
@@ -2603,7 +2623,7 @@ impl ReplayStage {
         }
 
         info!("{my_pubkey}: Clearing banks for switching: {slots_to_clear:?}");
-        Self::clear_slots(
+        Self::clear_slots_and_tx_history(
             slots_to_clear,
             bank_forks,
             progress,
@@ -2636,13 +2656,79 @@ impl ReplayStage {
         Ok(())
     }
 
+    /// Discards the banks whose replay votor cancelled because their slot is skip-certified
+    /// without a NotarizeFallback-or-stronger certificate. Such blocks are unlikely to be
+    /// finalized, so this avoids spending replay time on them and limits how much replay time a
+    /// slow block can consume.
+    ///
+    /// Frozen banks, leader banks, and dead banks are left alone.
+    ///
+    /// Note that cancellation is not a replay failure: the slot is not marked dead and its shreds
+    /// are kept, so the bank can be recreated if votor resumes the slot. Votor resumes it when a
+    /// block in the slot gets a NotarizeFallback (or stronger) certificate, or when a descendant
+    /// block is finalized.
+    fn process_cancelled_banks(
+        my_pubkey: &Pubkey,
+        bank_forks: &RwLock<BankForks>,
+        progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+        cancelled_replay_slots: &CancelledReplaySlots,
+    ) {
+        // Banks are only created on top of frozen banks, so there is at most one unfrozen bank per
+        // fork: usually only the bank being replayed.
+        let banks_to_discard: SmallVec<[_; 2]> = {
+            let is_unfrozen_replay_bank = |bank: &BankWithScheduler| {
+                !bank.is_frozen() && bank.should_replay_from_blockstore()
+            };
+            let is_cancelled = |bank: &BankWithScheduler| {
+                // Neither check alone is enough: votor may resume a slot by removing it from
+                // `cancelled_replay_slots`, but never unflags a bank. Hence by only checking
+                // `cancelled_replay_slots`, we might keep a flagged bank that can no longer
+                // execute (in a slot that is no longer cancelled). Conversely, by only checking a
+                // bank's `is_replay_cancel_requested` flag, we might miss a bank that replay
+                // inserted into `BankForks` after votor looked it up when cancelling its slot.
+                bank.is_replay_cancel_requested() || cancelled_replay_slots.contains(bank.slot())
+            };
+            let is_dead = |bank: &BankWithScheduler| {
+                // Dead banks don't execute anything, and keeping them prevents replaying them.
+                progress.is_dead(bank.slot()).unwrap_or(false)
+            };
+
+            bank_forks
+                .read()
+                .unwrap()
+                .banks()
+                .values()
+                .filter(|bank| {
+                    is_unfrozen_replay_bank(bank) && is_cancelled(bank) && !is_dead(bank)
+                })
+                .map(|bank| bank.clone_without_scheduler())
+                .collect()
+        };
+
+        for bank in banks_to_discard {
+            let slot = bank.slot();
+            info!(
+                "{my_pubkey}: Discarding bank {slot} (bank id {:?}) whose replay was cancelled",
+                bank.bank_id()
+            );
+            bank.request_replay_cancel();
+            // Note that we do not want to purge transaction history: the shreds are kept, so if
+            // votor resumes the slot, replay either re-executes the same block on the same parent,
+            // overwriting the rows written so far with identical keys and values, or starts from an
+            // `UpdateParent` offset, in which case `generate_new_bank_forks` purges the slot's
+            // transaction history first.
+            Self::clear_slots([slot], bank_forks, progress, async_verification_freelist);
+        }
+    }
+
     fn leader_bank_shreds_pending(bank: &Bank, blockstore: &Blockstore) -> bool {
         !bank.should_replay_from_blockstore() && !blockstore.is_full(bank.slot())
     }
 
-    /// Clear the requested slots and their descendants from progress, bank forks, and shared
-    /// caches. Requested slots are purged from shared caches even if their banks no longer exist.
-    fn clear_slots(
+    /// Clears the requested slots like [`Self::clear_slots`], then purges their transaction
+    /// history if `transaction_history_purge` is set.
+    fn clear_slots_and_tx_history(
         slots_to_clear: impl IntoIterator<Item = Slot>,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
@@ -2653,10 +2739,70 @@ impl ReplayStage {
             TransactionHistoryPurgeInput,
         )>,
     ) -> Result<(), ReplayStageError> {
+        let cleared_slots = Self::clear_slots(
+            slots_to_clear,
+            bank_forks,
+            progress,
+            async_verification_freelist,
+        );
+
+        let Some((transaction_status_sender, source, input)) = transaction_history_purge else {
+            return Ok(());
+        };
+        for slot in cleared_slots {
+            match &input {
+                TransactionHistoryPurgeInput::ReplayStage => {
+                    // TSS processes the discarded prefix writes, this purge, and restarted
+                    // execution writes in channel order, so replay does not need to wait.
+                    transaction_status_sender
+                        .send_purge_transaction_history_for_slot(
+                            slot,
+                            source,
+                            TransactionHistoryPurgeInput::ReplayStage,
+                            /*wait_until_finished:*/ false,
+                        )
+                        .map_err(|source| ReplayStageError::PurgeTransactionHistory {
+                            slot,
+                            source,
+                        })?;
+                }
+                TransactionHistoryPurgeInput::SwitchBank => {
+                    // Wait while the outgoing slot's shreds are still present; the purge must
+                    // reconstruct their deletion keys before SwitchBank replaces those shreds.
+                    transaction_status_sender
+                        .send_purge_transaction_history_for_slot(
+                            slot,
+                            source,
+                            TransactionHistoryPurgeInput::SwitchBank,
+                            /*wait_until_finished:*/ true,
+                        )
+                        .map_err(|source| ReplayStageError::PurgeTransactionHistory {
+                            slot,
+                            source,
+                        })?;
+                }
+                TransactionHistoryPurgeInput::Leader(_) => {
+                    unreachable!("leader transaction-history purge cannot clear replay slots")
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Clear the requested slots and their descendants from progress, bank forks, and shared
+    /// caches. Requested slots are purged from shared caches even if their banks no longer exist.
+    ///
+    /// Returns the cleared slots.
+    fn clear_slots(
+        slots_to_clear: impl IntoIterator<Item = Slot>,
+        bank_forks: &RwLock<BankForks>,
+        progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+    ) -> BTreeSet<Slot> {
         let (slots_to_purge, banks_to_clear) =
             bank_forks.read().unwrap().slots_to_clear(slots_to_clear);
         if slots_to_purge.is_empty() {
-            return Ok(());
+            return slots_to_purge;
         }
 
         // Wait for async verify to complete
@@ -2718,46 +2864,7 @@ impl ReplayStage {
             root_bank.prune_program_cache_by_deployment_slot(*slot);
         }
 
-        if let Some((transaction_status_sender, source, input)) = transaction_history_purge {
-            for slot in slots_to_purge {
-                match &input {
-                    TransactionHistoryPurgeInput::ReplayStage => {
-                        // TSS processes the discarded prefix writes, this purge, and restarted
-                        // execution writes in channel order, so replay does not need to wait.
-                        transaction_status_sender
-                            .send_purge_transaction_history_for_slot(
-                                slot,
-                                source,
-                                TransactionHistoryPurgeInput::ReplayStage,
-                                /*wait_until_finished:*/ false,
-                            )
-                            .map_err(|source| ReplayStageError::PurgeTransactionHistory {
-                                slot,
-                                source,
-                            })?;
-                    }
-                    TransactionHistoryPurgeInput::SwitchBank => {
-                        // Wait while the outgoing slot's shreds are still present; the purge must
-                        // reconstruct their deletion keys before SwitchBank replaces those shreds.
-                        transaction_status_sender
-                            .send_purge_transaction_history_for_slot(
-                                slot,
-                                source,
-                                TransactionHistoryPurgeInput::SwitchBank,
-                                /*wait_until_finished:*/ true,
-                            )
-                            .map_err(|source| ReplayStageError::PurgeTransactionHistory {
-                                slot,
-                                source,
-                            })?;
-                    }
-                    TransactionHistoryPurgeInput::Leader(_) => {
-                        unreachable!("leader transaction-history purge cannot clear replay slots")
-                    }
-                }
-            }
-        }
-        Ok(())
+        slots_to_purge
     }
 
     fn recycle_async_verification(
@@ -4114,6 +4221,12 @@ impl ReplayStage {
                         );
                         return Ok(vec![]);
                     }
+                    Err(err) if bank.is_replay_cancel_requested() => {
+                        // Votor cancelled replay of this slot, so the error is expected. Don't
+                        // mark the slot dead; process_cancelled_banks discards the bank.
+                        info!("Replay of slot {bank_slot} was cancelled: {err:?}");
+                        continue;
+                    }
                     Err(err) => {
                         mark_replay_dead_slot(
                             bank,
@@ -4146,6 +4259,12 @@ impl ReplayStage {
                     async_verification_freelist,
                 ) {
                     Ok(completed_replay) => completed_replay,
+                    Err(err) if bank.is_replay_cancel_requested() => {
+                        // Votor cancelled replay of this slot, so the error is expected. Don't
+                        // mark the slot dead; process_cancelled_banks discards the bank.
+                        info!("Replay of slot {bank_slot} was cancelled: {err:?}");
+                        continue;
+                    }
                     Err(err) => {
                         mark_replay_dead_slot(
                             bank,
@@ -5441,15 +5560,12 @@ impl ReplayStage {
                 slot,
                 response_sender,
             } => {
-                let Ok(()) = Self::clear_slots(
+                Self::clear_slots(
                     [slot],
                     &context.bank_forks,
                     progress,
                     async_verification_freelist,
-                    None,
-                ) else {
-                    unreachable!("clearing a bank without a transaction-history purge cannot fail")
-                };
+                );
                 response_sender.send(()).unwrap_or_else(|_| {
                     warn!("bank forks controller clear-bank response receiver dropped")
                 });
@@ -5471,6 +5587,7 @@ impl ReplayStage {
             transaction_status_sender,
             migration_status,
             my_pubkey,
+            cancelled_replay_slots,
         } = ctx;
 
         // Find the next slot that chains to the old slot
@@ -5520,6 +5637,12 @@ impl ReplayStage {
             for child_slot in children {
                 if known_bank_slots.contains(&child_slot) || new_banks.contains_key(&child_slot) {
                     trace!("child already active or frozen {child_slot}");
+                    continue;
+                }
+                // Votor cancelled replay of this skip-certified slot. Don't recreate its bank
+                // unless votor later resumes it.
+                if cancelled_replay_slots.contains(child_slot) {
+                    trace!("replay of skip-certified slot {child_slot} is cancelled");
                     continue;
                 }
 

@@ -53,6 +53,7 @@ pub(crate) fn set_root(
         block_id: BlockId::default(),
     });
     *received_shred = received_shred.split_off(&new_root_slot);
+    ctx.cancelled_replay_slots.prune_through(new_root_slot);
 
     rctx.bank_forks_controller.enqueue_set_root(new_root);
 

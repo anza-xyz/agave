@@ -45,6 +45,7 @@
 //! ```
 use {
     crate::{
+        cancelled_replay_slots::CancelledReplaySlots,
         commitment::CommitmentAggregationData,
         consensus_metrics::ConsensusMetrics,
         consensus_pool_service::{
@@ -148,6 +149,7 @@ pub struct VotorConfig {
     pub own_reward_aggregates_sender: Sender<RewardInput>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
+    pub cancelled_replay_slots: CancelledReplaySlots,
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
@@ -168,6 +170,7 @@ pub(crate) struct SharedContext {
     pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub(crate) repair_event_sender: RepairEventSender,
     pub(crate) latest_switch_request: LatestSwitchRequest,
+    pub(crate) cancelled_replay_slots: CancelledReplaySlots,
 }
 
 pub struct Votor {
@@ -202,6 +205,7 @@ impl Votor {
             own_reward_aggregates_sender,
             repair_event_sender,
             latest_switch_request,
+            cancelled_replay_slots,
             event_receiver,
             consensus_message_receiver,
             consensus_metrics_sender,
@@ -230,6 +234,7 @@ impl Votor {
             vote_history_storage: vote_history_storage.clone(),
             repair_event_sender: repair_event_sender.clone(),
             latest_switch_request,
+            cancelled_replay_slots,
         };
 
         let voting_context = VotingContext {

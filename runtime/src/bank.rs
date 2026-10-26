@@ -1035,6 +1035,9 @@ pub struct Bank {
 struct TransactionExecutionGate {
     lock: RwLock<()>,
     quiesce_requested: AtomicBool,
+    /// Set (and never reset) when replay of this Bank was cancelled, e.g. because votor observed
+    /// a Skip certificate for its slot. Implies `quiesce_requested`.
+    replay_cancel_requested: AtomicBool,
 }
 
 /// Proof that transaction execution has been admitted for a specific [`Bank`].
@@ -2455,6 +2458,28 @@ impl Bank {
         drop(self.transaction_execution_gate.lock.write().unwrap());
         // Quiesce record and commit
         self.wait_for_inflight_commits();
+    }
+
+    /// Stops replay execution of this Bank without waiting; replay then discards the Bank.
+    ///
+    /// Unlike [`Self::quiesce_transaction_execution`], this never takes the execution gate's
+    /// write lock, so it doesn't wait for admitted transaction execution to finish. Every batch
+    /// that tries to start execution afterwards is cancelled (`CommitCancelled`), which aborts
+    /// the unified scheduler session and unblocks any thread waiting on it.
+    pub fn request_replay_cancel(&self) {
+        self.transaction_execution_gate
+            .replay_cancel_requested
+            .store(true, Release);
+        self.transaction_execution_gate
+            .quiesce_requested
+            .store(true, Release);
+    }
+
+    /// Returns whether [`Self::request_replay_cancel`] was called on this Bank.
+    pub fn is_replay_cancel_requested(&self) -> bool {
+        self.transaction_execution_gate
+            .replay_cancel_requested
+            .load(Acquire)
     }
 
     pub fn hash(&self) -> Hash {
