@@ -40,6 +40,12 @@ pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: NonZeroU32 =
     NonZeroU32::new(64 * 1024 * 1024).unwrap();
 
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+    solana_transaction_context::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SVMTransactionExecutionBudget {
     /// Number of compute units that a transaction or individual instruction is

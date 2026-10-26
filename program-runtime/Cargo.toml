@@ -74,6 +74,7 @@ solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true, features = ["serde"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
+static_assertions = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 

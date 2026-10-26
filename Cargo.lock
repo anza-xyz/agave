@@ -9674,6 +9674,7 @@ dependencies = [
  "solana-sysvar-id",
  "solana-transaction",
  "solana-transaction-context",
+ "static_assertions",
  "test-case",
  "thiserror 2.0.20",
  "wincode",
@@ -11356,8 +11357,12 @@ dependencies = [
  "solana-instruction-error 3.0.0",
  "solana-instructions-sysvar 5.0.0",
  "solana-program-entrypoint",
+<<<<<<< HEAD
  "solana-program-runtime",
  "solana-pubkey 4.3.0",
+=======
+ "solana-pubkey 4.4.0",
+>>>>>>> d830857 (Fix - `dev-depedencies` cycle of #15818 (#16405))
  "solana-rent",
  "solana-sbpf",
  "solana-sdk-ids",
