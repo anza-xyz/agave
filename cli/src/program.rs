@@ -2557,11 +2557,9 @@ async fn process_extend_program(
 }
 
 pub fn calculate_max_chunk_size(baseline_msg: VersionedMessage) -> usize {
-    let size_limit = match &baseline_msg {
-        // Reserve one byte for growth of the shortvec instruction data length.
-        VersionedMessage::Legacy(_) | VersionedMessage::V0(_) => PACKET_DATA_SIZE - 1,
-        VersionedMessage::V1(_) => solana_message::v1::MAX_TRANSACTION_SIZE,
-    };
+    // Reserve one byte for growth of the shortvec instruction data length.
+    // The loader limits write instruction data to PACKET_DATA_SIZE for every version.
+    let size_limit = PACKET_DATA_SIZE - 1;
     let tx_size = wincode::serialized_size(&VersionedTransaction {
         signatures: vec![
             Signature::default();
@@ -3426,6 +3424,27 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::write_keypair_file,
     };
+
+    #[test]
+    fn test_v1_write_chunk_fits_packet() {
+        let payer = Pubkey::new_unique();
+        let buffer = Pubkey::new_unique();
+        let create_message = |bytes| {
+            VersionedMessage::V1(
+                solana_message::v1::Message::try_compile_with_config(
+                    &payer,
+                    &[loader_v3_instruction::write(&buffer, &payer, 0, bytes)],
+                    Hash::default(),
+                    solana_message::v1::TransactionConfig::empty(),
+                )
+                .unwrap(),
+            )
+        };
+
+        let chunk_size = calculate_max_chunk_size(create_message(Vec::new()));
+        let transaction = VersionedTransaction::new_unsigned(create_message(vec![0; chunk_size]));
+        assert!(wincode::serialized_size(&transaction).unwrap() as usize <= PACKET_DATA_SIZE);
+    }
 
     fn make_tmp_path(name: &str) -> String {
         let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());
