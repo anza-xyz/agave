@@ -44,28 +44,47 @@ fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
         .collect()
 }
 
-fn bench_verify(c: &mut Criterion, name: &str, message_length: u16) {
-    let feature_set = FeatureSet::all_enabled();
+fn bench_verify(c: &mut Criterion, name: &str, feature_set: &FeatureSet, message_length: u16) {
     let ixs = create_test_instructions(message_length);
     let mut ix_iter = ixs.iter().cycle();
     c.bench_function(name, |b| {
         b.iter(|| {
             let instruction = ix_iter.next().unwrap();
-            verify(&instruction.data, &[&instruction.data], &feature_set).unwrap();
+            verify(&instruction.data, &[&instruction.data], feature_set).unwrap();
         })
     });
 }
 
 fn bench_secp256k1(c: &mut Criterion) {
     let required_extra_space = 113_u16; // len for pubkey, sig, and offsets
-    bench_verify(c, "bench_secp256k1_len_032", 32);
-    bench_verify(c, "bench_secp256k1_len_256", 256);
-    bench_verify(c, "bench_secp256k1_len_32k", 32 * 1024);
-    bench_verify(
-        c,
-        "bench_secp256k1_len_max",
-        u16::MAX - required_extra_space,
-    );
+    let legacy = FeatureSet::default();
+    let k256 = FeatureSet::all_enabled();
+    for (backend, feature_set) in [("legacy", &legacy), ("k256", &k256)] {
+        bench_verify(
+            c,
+            &format!("bench_secp256k1_{backend}_len_032"),
+            feature_set,
+            32,
+        );
+        bench_verify(
+            c,
+            &format!("bench_secp256k1_{backend}_len_256"),
+            feature_set,
+            256,
+        );
+        bench_verify(
+            c,
+            &format!("bench_secp256k1_{backend}_len_32k"),
+            feature_set,
+            32 * 1024,
+        );
+        bench_verify(
+            c,
+            &format!("bench_secp256k1_{backend}_len_max"),
+            feature_set,
+            u16::MAX - required_extra_space,
+        );
+    }
 }
 
 criterion_group! {

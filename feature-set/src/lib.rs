@@ -63,6 +63,7 @@ pub struct FeatureSnapshot {
     pub enable_alt_bn128_g2_syscalls: bool,
     pub commission_rate_in_basis_points: bool,
     pub custom_commission_collector: bool,
+    pub secp256k1_use_k256: bool,
     pub set_lamports_per_byte_to_6333: bool,
     pub set_lamports_per_byte_to_5080: bool,
     pub set_lamports_per_byte_to_2575: bool,
@@ -156,6 +157,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_alt_bn128_g2_syscalls: is_active(&enable_alt_bn128_g2_syscalls::ID),
             commission_rate_in_basis_points: is_active(&commission_rate_in_basis_points::ID),
             custom_commission_collector: is_active(&custom_commission_collector::ID),
+            secp256k1_use_k256: is_active(&secp256k1_use_k256::ID),
             set_lamports_per_byte_to_6333: is_active(&set_lamports_per_byte_to_6333::ID),
             set_lamports_per_byte_to_5080: is_active(&set_lamports_per_byte_to_5080::ID),
             set_lamports_per_byte_to_2575: is_active(&set_lamports_per_byte_to_2575::ID),
@@ -325,6 +327,7 @@ impl FeatureSet {
             enable_alt_bn128_g2_syscalls: snapshot.enable_alt_bn128_g2_syscalls,
             commission_rate_in_basis_points: snapshot.commission_rate_in_basis_points,
             custom_commission_collector: snapshot.custom_commission_collector,
+            secp256k1_use_k256: snapshot.secp256k1_use_k256,
             block_revenue_sharing: snapshot.block_revenue_sharing,
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot
@@ -1543,6 +1546,10 @@ pub mod pass_input_metadata_in_vm_r3_r5 {
     solana_pubkey::declare_id!("r3r5hXFhEZLB2VCDXmUysuDZj4oMbtW8JRVUqvQSgqE");
 }
 
+pub mod secp256k1_use_k256 {
+    solana_pubkey::declare_id!("sk1BRtQU6D8GXphAqrQZnSJm3ajNVPPidY1NATASfwQ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2590,6 +2597,11 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             upgrade_bpf_stake_program_to_v5::id(),
             "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
+        ),
+        (
+            secp256k1_use_k256::id(),
+            "SIMD-0506: Use k256 backend for secp256k1 recovery and precompile verification \
+             (NOTE: Agave only)",
         ),
         (
             loader_v3_minimum_extend_program_size::id(),
