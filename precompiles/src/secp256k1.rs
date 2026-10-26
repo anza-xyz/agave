@@ -1,6 +1,10 @@
 use {
     agave_feature_set::{FeatureSet, secp256k1_use_k256},
-    k256::ecdsa::{RecoveryId, Signature, VerifyingKey},
+    k256::{
+        FieldBytes, Scalar,
+        ecdsa::{RecoveryId, Signature, VerifyingKey},
+        elliptic_curve::PrimeField,
+    },
     solana_precompile_error::PrecompileError,
     solana_secp256k1_program::{
         HASHED_PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
@@ -42,6 +46,7 @@ pub fn verify(
     if data.len() < expected_data_size {
         return Err(PrecompileError::InvalidInstructionDataSize);
     }
+    let use_k256 = feature_set.is_active(&secp256k1_use_k256::id());
     for i in 0..count {
         let start = i
             .saturating_mul(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
@@ -63,8 +68,11 @@ pub fn verify(
             return Err(PrecompileError::InvalidSignature);
         }
 
-        let signature = &signature_instruction[sig_start..sig_end];
-        let recovery_id = signature_instruction[sig_end];
+        let parsed_signature = ParsedSignature::parse(
+            use_k256,
+            &signature_instruction[sig_start..sig_end],
+            signature_instruction[sig_end],
+        )?;
 
         // Parse out pubkey
         let eth_address_slice = get_data_slice(
@@ -88,11 +96,7 @@ pub fn verify(
             hasher.result()
         };
 
-        let pubkey = if feature_set.is_active(&secp256k1_use_k256::id()) {
-            recover_pubkey_k256(message_hash.as_bytes(), recovery_id, signature)?
-        } else {
-            recover_pubkey_legacy(message_hash.as_bytes(), recovery_id, signature)?
-        };
+        let pubkey = parsed_signature.recover(message_hash.as_bytes())?;
         let eth_address = eth_address_from_pubkey(&pubkey);
 
         if eth_address_slice != eth_address {
@@ -102,53 +106,132 @@ pub fn verify(
     Ok(())
 }
 
-// Recovers a public key with `libsecp256k1`, which accepts high-S signatures.
-// This is a legacy method as the `libsecp256k1` crate is no longer maintained.
+/// A signature and recovery id that passed the parse-time checks of the
+/// active recovery backend.
+///
+/// Parsing is kept separate from recovery so that malformed signatures and
+/// recovery ids are reported before the eth address and message offsets are
+/// checked, exactly as the legacy `libsecp256k1` path has always done.
+enum ParsedSignature {
+    Legacy {
+        signature: libsecp256k1::Signature,
+        recovery_id: libsecp256k1::RecoveryId,
+    },
+    K256 {
+        signature: [u8; SIGNATURE_SERIALIZED_SIZE],
+        recovery_id: RecoveryId,
+    },
+}
+
+impl ParsedSignature {
+    fn parse(use_k256: bool, signature: &[u8], recovery_id: u8) -> Result<Self, PrecompileError> {
+        if use_k256 {
+            Self::parse_k256(signature, recovery_id)
+        } else {
+            Self::parse_legacy(signature, recovery_id)
+        }
+    }
+
+    // `libsecp256k1` is no longer maintained; this path is kept until the
+    // `secp256k1_use_k256` feature is activated and cleaned up.
+    fn parse_legacy(signature: &[u8], recovery_id: u8) -> Result<Self, PrecompileError> {
+        let signature = libsecp256k1::Signature::parse_standard_slice(signature)
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+        let recovery_id = libsecp256k1::RecoveryId::parse(recovery_id)
+            .map_err(|_| PrecompileError::InvalidRecoveryId)?;
+        Ok(Self::Legacy {
+            signature,
+            recovery_id,
+        })
+    }
+
+    fn parse_k256(signature: &[u8], recovery_id: u8) -> Result<Self, PrecompileError> {
+        let signature: [u8; SIGNATURE_SERIALIZED_SIZE] = signature
+            .try_into()
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+        // `libsecp256k1` rejects `r` or `s` at or above the curve order when
+        // parsing, but only rejects a zero `r` or `s` during recovery. Mirror
+        // that split so both backends fail at the same step.
+        for scalar in [&signature[..32], &signature[32..]] {
+            let repr = FieldBytes::from(<[u8; 32]>::try_from(scalar).unwrap());
+            if bool::from(Scalar::from_repr(repr).is_none()) {
+                return Err(PrecompileError::InvalidSignature);
+            }
+        }
+        let recovery_id =
+            RecoveryId::try_from(recovery_id).map_err(|_| PrecompileError::InvalidRecoveryId)?;
+        Ok(Self::K256 {
+            signature,
+            recovery_id,
+        })
+    }
+
+    fn recover(&self, message_hash: &[u8; 32]) -> Result<[u8; 64], PrecompileError> {
+        match self {
+            Self::Legacy {
+                signature,
+                recovery_id,
+            } => {
+                let pubkey = libsecp256k1::recover(
+                    &libsecp256k1::Message::parse_slice(message_hash).unwrap(),
+                    signature,
+                    recovery_id,
+                )
+                .map_err(|_| PrecompileError::InvalidSignature)?;
+                Ok(pubkey.serialize()[1..65].try_into().unwrap())
+            }
+            Self::K256 {
+                signature,
+                recovery_id,
+            } => Self::recover_k256(message_hash, signature, *recovery_id),
+        }
+    }
+
+    /// Recovers a public key with `k256` while preserving legacy high-S acceptance.
+    ///
+    /// `k256` recovery requires low-S signatures. To match `libsecp256k1`
+    /// semantics for malleable signatures, this normalizes high-S signatures to
+    /// low-S and flips the recovery-id y-parity when normalization occurs.
+    fn recover_k256(
+        message_hash: &[u8; 32],
+        signature: &[u8; SIGNATURE_SERIALIZED_SIZE],
+        mut recovery_id: RecoveryId,
+    ) -> Result<[u8; 64], PrecompileError> {
+        // Rejects a zero `r` or `s`, like `libsecp256k1::recover`.
+        let mut signature = Signature::try_from(signature.as_slice())
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+
+        let normalized_signature = signature.normalize_s();
+        if normalized_signature != signature {
+            signature = normalized_signature;
+            recovery_id = RecoveryId::new(!recovery_id.is_y_odd(), recovery_id.is_x_reduced());
+        }
+
+        // `ecdsa` 0.17 folded `recover_from_prehash_noverify` into `recover_from_prehash`:
+        // it no longer verifies the signature against the recovered key.
+        let pubkey = VerifyingKey::recover_from_prehash(message_hash, &signature, recovery_id)
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+        let encoded = pubkey.to_sec1_point(false);
+        Ok(encoded.as_bytes()[1..65].try_into().unwrap())
+    }
+}
+
+#[cfg(test)]
 fn recover_pubkey_legacy(
     message_hash: &[u8; 32],
     recovery_id: u8,
     signature: &[u8],
 ) -> Result<[u8; 64], PrecompileError> {
-    let signature = libsecp256k1::Signature::parse_standard_slice(signature)
-        .map_err(|_| PrecompileError::InvalidSignature)?;
-    let recovery_id = libsecp256k1::RecoveryId::parse(recovery_id)
-        .map_err(|_| PrecompileError::InvalidRecoveryId)?;
-    let pubkey = libsecp256k1::recover(
-        &libsecp256k1::Message::parse_slice(message_hash).unwrap(),
-        &signature,
-        &recovery_id,
-    )
-    .map_err(|_| PrecompileError::InvalidSignature)?;
-    Ok(pubkey.serialize()[1..65].try_into().unwrap())
+    ParsedSignature::parse(false, signature, recovery_id)?.recover(message_hash)
 }
 
-/// Recovers a public key with `k256` while preserving legacy high-S acceptance.
-///
-/// `k256` recovery requires low-S signatures. To match `libsecp256k1`
-/// semantics for malleable signatures, this normalizes high-S signatures to
-/// low-S and flips the recovery-id y-parity when normalization occurs.
+#[cfg(test)]
 fn recover_pubkey_k256(
     message_hash: &[u8; 32],
     recovery_id: u8,
     signature: &[u8],
 ) -> Result<[u8; 64], PrecompileError> {
-    let mut signature =
-        Signature::try_from(signature).map_err(|_| PrecompileError::InvalidSignature)?;
-    let mut recovery_id =
-        RecoveryId::try_from(recovery_id).map_err(|_| PrecompileError::InvalidRecoveryId)?;
-
-    let normalized_signature = signature.normalize_s();
-    if normalized_signature != signature {
-        signature = normalized_signature;
-        recovery_id = RecoveryId::new(!recovery_id.is_y_odd(), recovery_id.is_x_reduced());
-    }
-
-    // `ecdsa` 0.17 folded `recover_from_prehash_noverify` into `recover_from_prehash`:
-    // it no longer verifies the signature against the recovered key.
-    let pubkey = VerifyingKey::recover_from_prehash(message_hash, &signature, recovery_id)
-        .map_err(|_| PrecompileError::InvalidSignature)?;
-    let encoded = pubkey.to_sec1_point(false);
-    Ok(encoded.as_bytes()[1..65].try_into().unwrap())
+    ParsedSignature::parse(true, signature, recovery_id)?.recover(message_hash)
 }
 
 fn get_data_slice<'a>(
@@ -648,6 +731,101 @@ pub mod tests {
             &legacy_feature_set,
             &k256_feature_set,
             Err(PrecompileError::InvalidSignature),
+        );
+    }
+
+    // Unit test.
+    // Remove this test when the legacy libsecp256k1 recovery path is deleted.
+    #[test]
+    fn test_signature_parse_errors_take_priority_over_offset_errors() {
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
+        let public_key = libsecp256k1::PublicKey::from_secret_key(&secret_key);
+        let eth_address = eth_address_from_pubkey(&public_key.serialize()[1..].try_into().unwrap());
+
+        let message = b"hello";
+        let message_hash = {
+            let mut hasher = keccak::Hasher::default();
+            hasher.hash(message);
+            hasher.result()
+        };
+        let secp_message = libsecp256k1::Message::parse(message_hash.as_bytes());
+        let (signature, recovery_id) = libsecp256k1::sign(&secp_message, &secret_key);
+
+        let legacy_feature_set = FeatureSet::default();
+        let k256_feature_set = FeatureSet::all_enabled();
+
+        // Point the eth address at a non-existent instruction so the offset
+        // check fails whenever it is reached.
+        let with_bad_eth_address_offset = |mut instruction_data: Vec<u8>| {
+            let offsets_end = 1usize
+                .checked_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
+                .unwrap();
+            let mut offsets: SecpSignatureOffsets =
+                wincode::deserialize(&instruction_data[1..offsets_end]).unwrap();
+            offsets.eth_address_instruction_index = 1;
+            wincode::serialize_into(&mut instruction_data[1..], &offsets).unwrap();
+            instruction_data
+        };
+
+        // A well-formed signature reaches the offset check.
+        let valid_instruction = with_bad_eth_address_offset(new_instruction_data(
+            &signature.serialize(),
+            recovery_id.serialize(),
+            &eth_address,
+            message,
+        ));
+        assert_feature_parity(
+            &valid_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidDataOffsets),
+        );
+
+        // An out-of-range recovery id is rejected before the offset check.
+        let invalid_recovery_id_instruction = with_bad_eth_address_offset(new_instruction_data(
+            &signature.serialize(),
+            4,
+            &eth_address,
+            message,
+        ));
+        assert_feature_parity(
+            &invalid_recovery_id_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidRecoveryId),
+        );
+
+        // A scalar at or above the curve order is rejected before the offset check.
+        let mut overflow_s_signature = signature.serialize();
+        overflow_s_signature[32..].copy_from_slice(&SECP256K1_ORDER);
+        let overflow_s_instruction = with_bad_eth_address_offset(new_instruction_data(
+            &overflow_s_signature,
+            recovery_id.serialize(),
+            &eth_address,
+            message,
+        ));
+        assert_feature_parity(
+            &overflow_s_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        // A zero scalar is only rejected during recovery, after the offset check.
+        let mut zero_s_signature = signature.serialize();
+        zero_s_signature[32..].fill(0);
+        let zero_s_instruction = with_bad_eth_address_offset(new_instruction_data(
+            &zero_s_signature,
+            recovery_id.serialize(),
+            &eth_address,
+            message,
+        ));
+        assert_feature_parity(
+            &zero_s_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidDataOffsets),
         );
     }
 
