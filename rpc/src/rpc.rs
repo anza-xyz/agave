@@ -2103,21 +2103,22 @@ impl JsonRpcRequestProcessor {
 
                 let mut results_set: HashSet<_> =
                     results.iter().map(|result| result.signature).collect();
-                while limit > 0 {
-                    let page_limit = limit;
+                if limit > 0 {
+                    // BigTable applies its limit before RPC filters results. If the upload race
+                    // above reset the cursor, the response may contain every Blockstore result
+                    // plus the original `before` signature, so overfetch enough to discard them.
+                    let bigtable_limit = limit + results_set.len() + usize::from(before.is_some());
                     let bigtable_results = bigtable_ledger_storage
-                        .get_confirmed_signatures_for_address(
+                        .get_confirmed_signatures_for_address_with_highest_slot(
                             &address,
                             bigtable_before.as_ref(),
                             until.as_ref(),
-                            page_limit,
+                            highest_complete_transaction_history_root,
+                            bigtable_limit,
                         )
                         .await;
                     match bigtable_results {
                         Ok(bigtable_results) => {
-                            let num_results = bigtable_results.len();
-                            let next_before =
-                                bigtable_results.last().map(|(result, _)| result.signature);
                             for (bigtable_result, _) in bigtable_results {
                                 // In the upload race condition, latest address-signatures in
                                 // long-term storage may include original `before` signature...
@@ -2131,12 +2132,11 @@ impl JsonRpcRequestProcessor {
                                 {
                                     results.push(bigtable_result);
                                     limit -= 1;
+                                    if limit == 0 {
+                                        break;
+                                    }
                                 }
                             }
-                            if num_results < page_limit {
-                                break;
-                            }
-                            bigtable_before = next_before;
                         }
                         Err(StorageError::SignatureNotFound(not_found_signature)) => {
                             // bigtable_before is checked above
