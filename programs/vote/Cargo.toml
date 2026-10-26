@@ -52,7 +52,7 @@ solana-vote-interface = { workspace = true, features = ["wincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-feature-set = { workspace = true }
+agave-feature-set = { path = "../../feature-set", features = ["agave-unstable-api"] }
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 arbitrary = { workspace = true }
 assert_matches = { workspace = true }
@@ -73,7 +73,7 @@ solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
 solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
 solana-sysvar-id = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote-interface = { workspace = true, features = ["dev-context-only-utils"] }
 solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
