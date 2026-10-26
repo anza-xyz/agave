@@ -342,6 +342,7 @@ macro_rules! impl_merkle_shred {
             Ok(())
         }
 
+        #[cfg(test)]
         pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error> {
             let section = self.retransmitter_signature_section()?;
             self.payload
@@ -1330,6 +1331,42 @@ pub(crate) fn sign_with_invalid_parity_for_tests(keypair: &Keypair, batch: &mut 
             .unwrap()
             .iter_mut()
             .for_each(|byte| *byte ^= 0xFF);
+    }
+    sign_erasure_batch(keypair, batch);
+}
+
+/// Gives the coding shred at erasure position 0 of the erasure batch, ordered by erasure
+/// shard index, the index of the coding shred at erasure position 1, builds and signs
+/// the Merkle tree over them.
+/// The two coding shreds then share the index, the Merkle root and the
+/// signature, but not the payload.
+#[cfg(test)]
+pub(crate) fn sign_with_duplicate_coding_index_for_tests(keypair: &Keypair, batch: &mut [Shred]) {
+    assert_eq!(
+        batch.len(),
+        SHREDS_PER_FEC_BLOCK,
+        "expected a full erasure batch"
+    );
+    let Shred::ShredCode(next_shred) = &batch[DATA_SHREDS_PER_FEC_BLOCK + 1] else {
+        panic!("expected a coding shred at erasure position 1");
+    };
+    assert_eq!(
+        next_shred.coding_header.position, 1,
+        "the batch should be ordered by erasure shard index"
+    );
+    let index = next_shred.common_header.index;
+    let Shred::ShredCode(shred) = &mut batch[DATA_SHREDS_PER_FEC_BLOCK] else {
+        panic!("expected a coding shred at erasure position 0");
+    };
+    assert_eq!(
+        shred.coding_header.position, 0,
+        "the batch should be ordered by erasure shard index"
+    );
+    shred.common_header.index = index;
+    {
+        let mut dst = &mut shred.payload.as_mut()[..];
+        wincode::serialize_into(&mut dst, &(&shred.common_header, &shred.coding_header))
+            .expect("headers should fit the payload");
     }
     sign_erasure_batch(keypair, batch);
 }

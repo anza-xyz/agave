@@ -282,7 +282,7 @@ pub fn get_shred_without_retransmitter_signature(packet: &BytesPacket) -> Option
 }
 
 #[inline]
-pub(super) fn get_payload_without_retransmitter_signature(shred: &[u8]) -> &[u8] {
+pub(crate) fn get_payload_without_retransmitter_signature(shred: &[u8]) -> &[u8] {
     let Ok(shred_variant) = get_shred_variant(shred) else {
         return shred;
     };

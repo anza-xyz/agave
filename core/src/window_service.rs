@@ -18,9 +18,7 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
-        blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, handle_duplicate_shred,
-        },
+        blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
         blockstore_db::{DBPinnableSlice, WriteBatch},
         blockstore_meta::BlockLocation,
         shred::{self, Shred, filter::ShredRecoveryContext},
@@ -118,20 +116,14 @@ fn run_check_duplicate(
     let migration_status = bank_forks.read().unwrap().migration_status();
     let check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
         let shred_slot = shred.slot();
-        let duplicate = handle_duplicate_shred(blockstore, shred)?;
+        let (shred1, shred2) = shred.into_proof();
 
         let should_mark_dead = migration_status
             .genesis_block()
             .is_some_and(|genesis| shred_slot > genesis.slot);
         if should_mark_dead {
-            // Apart from Exists all existing cases mark dead inline in blockstore.
-            // Once Alpenglow is active we can fully remove this thread and move Exists to inline as well.
             blockstore.set_dead_slot_if_duplicate_and_not_full(shred_slot)?;
         }
-
-        let Some((shred1, shred2)) = duplicate else {
-            return Ok(());
-        };
 
         if migration_status.should_respond_to_ancestor_hashes_requests(shred_slot) {
             // In alpenglow we store the duplicate block proofs in blockstore for the purposes of slashing,
@@ -472,7 +464,8 @@ mod test {
         solana_runtime::{
             bank::Bank,
             genesis_utils::{
-                bootstrap_validator_stake_lamports, create_genesis_config_with_tower_leader,
+                bootstrap_validator_stake_lamports, create_genesis_config,
+                create_genesis_config_with_tower_leader,
             },
         },
         solana_signer::Signer,
@@ -538,9 +531,11 @@ mod test {
         assert_eq!(duplicate_shred.slot(), shreds[0].slot());
         let duplicate_shred_slot = duplicate_shred.slot();
         sender
-            .send(PossibleDuplicateShred::Exists(duplicate_shred.clone()))
+            .send(PossibleDuplicateShred::MerkleRootConflict(
+                duplicate_shred,
+                original_shred.into_payload(),
+            ))
             .unwrap();
-        assert!(!blockstore.has_duplicate_shreds_in_slot(duplicate_shred_slot));
         let keypair = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
         let cluster_info = ClusterInfo::new(
@@ -557,15 +552,70 @@ mod test {
         )
         .unwrap();
 
-        // Make sure the correct duplicate proof was stored
-        let duplicate_proof = blockstore.get_duplicate_slot(duplicate_shred_slot).unwrap();
-        assert_eq!(duplicate_proof.shred1, *original_shred.payload());
-        assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
-
         // Make sure a duplicate signal was sent
         assert_eq!(
             duplicate_slot_receiver.try_recv().unwrap(),
             duplicate_shred_slot
+        );
+    }
+
+    /// A conflicting shred at an occupied index stores the proof at insert time, and
+    /// `run_check_duplicate` marks the not-full Alpenglow slot dead afterwards.
+    #[test]
+    fn test_run_check_duplicate_marks_existing_index_conflict_dead() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let genesis_config = create_genesis_config(10_000).genesis_config;
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let (sender, receiver) = bounded(1024);
+        let (duplicate_slot_sender, _duplicate_slot_receiver) = bounded(1024);
+        let (shreds, _) = make_many_slot_entries(5, 1, 10);
+        let original_shred = shreds[0].clone();
+        let duplicate_shred = {
+            let (mut shreds, _) = make_many_slot_entries(5, 1, 10);
+            shreds.swap_remove(0)
+        };
+        let slot = original_shred.slot();
+        blockstore
+            .insert_shreds(vec![original_shred.clone()], false)
+            .unwrap();
+
+        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+        let is_trusted = false;
+        blockstore
+            .insert_shreds_handle_duplicate(
+                [(Cow::Borrowed(&duplicate_shred), /*is_repaired:*/ false)],
+                is_trusted,
+                &mut ShredRecoveryContext::new(
+                    dummy_retransmit_sender,
+                    bank_forks.read().unwrap().root_bank(),
+                    0, // shred_version
+                ),
+                &|shred| sender.send(shred).unwrap(),
+                &mut BlockstoreInsertionMetrics::default(),
+            )
+            .unwrap();
+        assert!(blockstore.has_duplicate_shreds_in_slot(slot));
+        assert!(!blockstore.is_dead(slot));
+
+        let keypair = Keypair::new();
+        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+        let cluster_info = ClusterInfo::new(
+            contact_info,
+            Arc::new(keypair),
+            SocketAddrSpace::Unspecified,
+        );
+        run_check_duplicate(
+            &cluster_info,
+            &blockstore,
+            &receiver,
+            &duplicate_slot_sender,
+            &bank_forks,
+        )
+        .unwrap();
+        assert!(
+            blockstore.is_dead(slot),
+            "duplicate slot that is not full must be marked dead"
         );
     }
 

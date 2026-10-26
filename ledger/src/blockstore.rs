@@ -255,7 +255,6 @@ enum InsertCodingShredError {
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum PossibleDuplicateShred {
-    Exists(Shred), // Blockstore has another shred in its spot
     // The index of this shred conflicts with `slot_meta.last_index`
     LastIndexConflict(
         Shred,          // original
@@ -271,53 +270,33 @@ pub enum PossibleDuplicateShred {
         Shred,          // original
         shred::Payload, // conflict
     ),
+    // Same Merkle root but a different payload at the same index
+    // TODO: remove once SIMD-0504 is active
+    PayloadConflict(
+        Shred,          // incoming
+        shred::Payload, // stored
+    ),
 }
 
 impl PossibleDuplicateShred {
     pub fn slot(&self) -> Slot {
         match self {
-            Self::Exists(shred) => shred.slot(),
             Self::LastIndexConflict(shred, _) => shred.slot(),
             Self::ErasureConflict(shred, _) => shred.slot(),
             Self::MerkleRootConflict(shred, _) => shred.slot(),
+            Self::PayloadConflict(shred, _) => shred.slot(),
         }
     }
-}
 
-/// Per-shred duplicate handling, extracted from `run_check_duplicate` so callers
-/// can run the same duplicate-detection path without gossip/channel side effects.
-///
-/// Returns the duplicate proof (`shred` and the conflicting payload) when one is
-/// detected, leaving propagation to the caller.
-pub fn handle_duplicate_shred(
-    blockstore: &Blockstore,
-    shred: PossibleDuplicateShred,
-) -> Result<Option<(Shred, shred::Payload)>> {
-    let shred_slot = shred.slot();
-    let (shred1, shred2) = match shred {
-        PossibleDuplicateShred::LastIndexConflict(shred, conflict)
-        | PossibleDuplicateShred::ErasureConflict(shred, conflict)
-        | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
-        PossibleDuplicateShred::Exists(shred) => {
-            // Unlike the other cases we have to wait until here to decide to handle the duplicate and store
-            // in blockstore. This is because the duplicate could have been part of the same insert batch,
-            // so we wait until the batch has been written.
-            if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
-                return Ok(None); // A duplicate is already recorded
-            }
-            let Some(existing_shred_payload) = blockstore.is_shred_duplicate(&shred) else {
-                return Ok(None); // Not a duplicate
-            };
-            blockstore.store_duplicate_slot(
-                shred_slot,
-                existing_shred_payload.clone(),
-                shred.clone().into_payload(),
-            )?;
-            (shred, shred::Payload::from(existing_shred_payload))
+    /// Returns the duplicate proof: the shred and the conflicting payload.
+    pub fn into_proof(self) -> (Shred, shred::Payload) {
+        match self {
+            Self::LastIndexConflict(shred, conflict)
+            | Self::ErasureConflict(shred, conflict)
+            | Self::MerkleRootConflict(shred, conflict)
+            | Self::PayloadConflict(shred, conflict) => (shred, conflict),
         }
-    };
-
-    Ok(Some((shred1, shred2)))
+    }
 }
 
 enum WorkingEntry<T> {
@@ -2648,7 +2627,16 @@ impl Blockstore {
         // So, all coding shreds in a given FEC block will have the same set index
         if !is_trusted {
             if index_meta.coding().contains(shred_index) {
-                duplicate_shreds.push(PossibleDuplicateShred::Exists(shred.into_owned()));
+                self.check_existing_shred_consistency(
+                    just_inserted_shreds,
+                    slot,
+                    BlockLocation::Original,
+                    merkle_root_metas
+                        .get(&(BlockLocation::Original, erasure_set))
+                        .map(WorkingEntry::as_ref),
+                    &shred,
+                    duplicate_shreds,
+                );
                 return Err(InsertCodingShredError::Exists);
             }
 
@@ -2895,7 +2883,16 @@ impl Blockstore {
 
         if !is_trusted {
             if Self::is_data_shred_present(&shred, slot_meta, index_meta.data()) {
-                duplicate_shreds.push(PossibleDuplicateShred::Exists(shred.into_owned()));
+                self.check_existing_shred_consistency(
+                    just_inserted_shreds,
+                    slot,
+                    location,
+                    merkle_root_metas
+                        .get(&(location, erasure_set))
+                        .map(WorkingEntry::as_ref),
+                    &shred,
+                    duplicate_shreds,
+                );
                 return Err(InsertDataShredError::Exists);
             }
 
@@ -3132,6 +3129,65 @@ impl Blockstore {
             ));
         }
         false
+    }
+
+    /// Checks an untrusted `shred` whose index is already occupied against the stored one.
+    /// A difference in Merkle root or leader signature is treated as equivocation.
+    ///
+    /// The duplicate proof is stored here, but the slot is not marked dead: the caller
+    /// returns `Exists`, and `window_service` marks the slot dead after the write batch
+    /// commits, if it is still not full.
+    fn check_existing_shred_consistency(
+        &self,
+        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        slot: Slot,
+        location: BlockLocation,
+        merkle_root_meta: Option<&MerkleRootMeta>,
+        shred: &Shred,
+        duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
+    ) {
+        // The FEC set is fixed by the shred index, so a shred with a different
+        // Merkle root than its FEC set is a duplicate.
+        if let Some(merkle_root_meta) = merkle_root_meta
+            && !self.check_merkle_root_consistency(
+                just_inserted_shreds,
+                slot,
+                location,
+                merkle_root_meta,
+                shred,
+                duplicate_shreds,
+            )
+        {
+            return;
+        }
+        if self.has_duplicate_shreds_in_slot(slot) {
+            return;
+        }
+        // A matching Merkle root does not imply a matching payload: the leader
+        // may produce several valid signatures over the same root, and the
+        // erasure position of a coding shred, which places it in the Merkle
+        // tree, is not bound to its index.
+        // TODO: compare Merkle roots only once SIMD-0504 is active.
+        let Some(existing_shred) =
+            self.get_shred_from_just_inserted_or_db(just_inserted_shreds, shred.id(), location)
+        else {
+            return;
+        };
+        if shred::layout::get_payload_without_retransmitter_signature(&existing_shred)
+            == shred::layout::get_payload_without_retransmitter_signature(shred.payload())
+        {
+            return;
+        }
+        let existing_shred = existing_shred.into_owned();
+        if let Err(err) =
+            self.store_duplicate_slot(slot, existing_shred.clone(), shred.payload().clone())
+        {
+            warn!("Unable to store conflicting payload duplicate proof for {slot}: {err}");
+        }
+        duplicate_shreds.push(PossibleDuplicateShred::PayloadConflict(
+            shred.clone(),
+            existing_shred,
+        ));
     }
 
     fn should_insert_data_shred(
@@ -5285,27 +5341,6 @@ impl Blockstore {
         self.duplicate_slots_cf
             .get(slot)
             .expect("fetch from DuplicateSlots column family failed")
-    }
-
-    /// Returns the shred already stored in blockstore if it has a different
-    /// payload than the given `shred` but the same (slot, index, shred-type).
-    /// This implies the leader generated two different shreds with the same
-    /// slot, index and shred-type.
-    /// The payload is modified so that it has the same retransmitter's
-    /// signature as the `shred` argument.
-    pub fn is_shred_duplicate(&self, shred: &Shred) -> Option<Vec<u8>> {
-        let (slot, index, shred_type) = shred.id().unpack();
-        let mut other = match shred_type {
-            ShredType::Data => self.get_data_shred(slot, u64::from(index)),
-            ShredType::Code => self.get_coding_shred(slot, u64::from(index)),
-        }
-        .expect("fetch from DuplicateSlots column family failed")?;
-        if let Ok(signature) = shred.retransmitter_signature()
-            && let Err(err) = shred::layout::set_retransmitter_signature(&mut other, &signature)
-        {
-            error!("set retransmitter signature failed: {err:?}");
-        }
-        (other != **shred.payload()).then_some(other)
     }
 
     pub fn has_duplicate_shreds_in_slot(&self, slot: Slot) -> bool {

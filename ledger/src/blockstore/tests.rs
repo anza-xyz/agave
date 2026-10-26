@@ -5,7 +5,7 @@ use {
         shred::{
             DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, ShredFlags,
             max_ticks_per_n_shreds,
-            merkle::finish_erasure_batch_for_tests,
+            merkle::{finish_erasure_batch_for_tests, sign_with_duplicate_coding_index_for_tests},
             merkle_tree::{
                 SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
                 verify_merkle_proof,
@@ -1858,33 +1858,47 @@ fn test_should_insert_data_shred() {
     assert!(blockstore.has_duplicate_shreds_in_slot(0));
 }
 
+/// A shred arriving at an occupied index is a duplicate only if its Merkle root
+/// differs: then the proof is stored, but the slot is not marked dead at insert time.
 #[test]
-fn test_handle_duplicate_shred_returns_duplicate_proof() {
+fn test_existing_shred_index_with_different_merkle_root() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-    let (shreds, _) = make_many_slot_entries(5, 5, 10);
-    blockstore.insert_shreds(shreds.clone(), false).unwrap();
-    let duplicate_index = 0;
-    let original_shred = shreds[duplicate_index].clone();
+    let (shreds, _) = make_many_slot_entries(5, 1, 10);
+    let original_shred = shreds[0].clone();
     let duplicate_shred = {
         let (mut shreds, _) = make_many_slot_entries(5, 1, 10);
-        shreds.swap_remove(duplicate_index)
+        shreds.swap_remove(0)
     };
-    let duplicate_shred_slot = duplicate_shred.slot();
-    assert!(!blockstore.has_duplicate_shreds_in_slot(duplicate_shred_slot));
+    let slot = original_shred.slot();
+    assert_eq!(duplicate_shred.id(), original_shred.id());
+    assert_ne!(
+        duplicate_shred.merkle_root().unwrap(),
+        original_shred.merkle_root().unwrap()
+    );
+    blockstore
+        .insert_shreds(vec![original_shred.clone()], false)
+        .unwrap();
 
-    let (returned_shred, conflicting_payload) = handle_duplicate_shred(
-        &blockstore,
-        PossibleDuplicateShred::Exists(duplicate_shred.clone()),
-    )
-    .unwrap()
-    .unwrap();
+    blockstore
+        .insert_shreds(vec![original_shred.clone()], false)
+        .unwrap();
+    assert!(
+        !blockstore.has_duplicate_shreds_in_slot(slot),
+        "same Merkle root is not a duplicate"
+    );
+    assert!(!blockstore.is_dead(slot));
 
-    assert_eq!(returned_shred.payload(), duplicate_shred.payload());
-    assert_eq!(conflicting_payload, *original_shred.payload());
-    let duplicate_proof = blockstore.get_duplicate_slot(duplicate_shred_slot).unwrap();
+    blockstore
+        .insert_shreds(vec![duplicate_shred.clone()], false)
+        .unwrap();
+    let duplicate_proof = blockstore.get_duplicate_slot(slot).unwrap();
     assert_eq!(duplicate_proof.shred1, *original_shred.payload());
     assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
+    assert!(
+        !blockstore.is_dead(slot),
+        "window_service marks the slot dead once the write batch is committed"
+    );
 }
 
 #[test]
@@ -2376,9 +2390,173 @@ fn test_check_insert_coding_shred() {
         ),
         Err(InsertCodingShredError::Exists)
     ));
+    assert!(shred_insertion_tracker.duplicate_shreds.is_empty());
+}
+
+/// A shred at an occupied index with the same Merkle root but a different leader
+/// signature is a duplicate: the proof is stored, but the slot is not marked dead.
+#[test]
+fn test_existing_shred_index_with_different_signature() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let mut pinnable_slice = blockstore.new_pinnable_slice();
+
+    let slot = 1;
+    let (_data_shreds, code_shreds) =
+        setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
+            slot,
+            0,
+            10,
+            0,
+            Hash::default(),
+            true,
+        );
+    let original_shred = code_shreds[0].clone();
+    let conflicting_shred = {
+        let mut payload = original_shred.payload().clone();
+        payload.as_mut()[0] ^= 1;
+        Shred::new_from_serialized_shred(payload).unwrap()
+    };
+    assert_eq!(conflicting_shred.id(), original_shred.id());
+    assert_eq!(
+        conflicting_shred.merkle_root().unwrap(),
+        original_shred.merkle_root().unwrap()
+    );
+    assert_ne!(conflicting_shred.signature(), original_shred.signature());
+
+    let mut write_batch = blockstore.get_write_batch();
+    let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
+    let is_trusted = false;
+    blockstore
+        .check_insert_coding_shred(
+            Cow::Borrowed(&original_shred),
+            &mut shred_insertion_tracker,
+            is_trusted,
+            ShredSource::Turbine,
+            &mut pinnable_slice,
+        )
+        .unwrap();
+    assert!(matches!(
+        blockstore.check_insert_coding_shred(
+            Cow::Borrowed(&conflicting_shred),
+            &mut shred_insertion_tracker,
+            is_trusted,
+            ShredSource::Turbine,
+            &mut pinnable_slice,
+        ),
+        Err(InsertCodingShredError::Exists)
+    ));
+
     assert_eq!(
         shred_insertion_tracker.duplicate_shreds,
-        vec![PossibleDuplicateShred::Exists(coding_shred)]
+        vec![PossibleDuplicateShred::PayloadConflict(
+            conflicting_shred.clone(),
+            original_shred.payload().clone(),
+        )]
+    );
+    let duplicate_proof = blockstore.get_duplicate_slot(slot).unwrap();
+    assert_eq!(duplicate_proof.shred1, *original_shred.payload());
+    assert_eq!(duplicate_proof.shred2, *conflicting_shred.payload());
+    assert!(
+        !blockstore.is_dead(slot),
+        "window_service marks the slot dead once the write batch is committed"
+    );
+}
+
+/// A byzantine leader may sign an erasure batch in which two coding shreds at
+/// different erasure positions share an index. Both pass sigverify and share the
+/// Merkle root and the signature, yet their payloads differ, so the second one
+/// to arrive is a duplicate: the proof is stored, but the slot is not marked dead.
+#[test_case(false; "honest shred first")]
+#[test_case(true; "relabeled shred first")]
+fn test_existing_coding_shred_index_with_different_position(relabeled_first: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let mut pinnable_slice = blockstore.new_pinnable_slice();
+
+    let slot = 1;
+    let (data_shreds, code_shreds, leader_keypair) =
+        setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot_and_keypair(
+            slot,
+            0,
+            10,
+            0,
+            Hash::default(),
+            true,
+        );
+    let mut batch: Vec<_> = data_shreds
+        .into_iter()
+        .chain(code_shreds)
+        .filter(|shred| shred.fec_set_index() == 0)
+        .collect();
+    batch.sort_unstable_by_key(|shred| (shred.is_code(), shred.index()));
+    assert_eq!(batch.len(), 2 * DATA_SHREDS_PER_FEC_BLOCK);
+    sign_with_duplicate_coding_index_for_tests(&leader_keypair, &mut batch);
+
+    let relabeled_shred = batch[DATA_SHREDS_PER_FEC_BLOCK].clone();
+    let honest_shred = batch[DATA_SHREDS_PER_FEC_BLOCK + 1].clone();
+    for shred in [&relabeled_shred, &honest_shred] {
+        assert!(
+            shred.verify(&leader_keypair.pubkey()),
+            "the leader signed the erasure batch"
+        );
+        let deserialized_shred = Shred::new_from_serialized_shred(shred.payload().clone())
+            .expect("the shred should deserialize and sanitize");
+        assert_eq!(&deserialized_shred, shred);
+    }
+    assert_eq!(relabeled_shred.id(), honest_shred.id());
+    assert_eq!(
+        relabeled_shred.merkle_root().unwrap(),
+        honest_shred.merkle_root().unwrap()
+    );
+    assert_eq!(relabeled_shred.signature(), honest_shred.signature());
+    assert_ne!(
+        relabeled_shred.first_coding_index(),
+        honest_shred.first_coding_index()
+    );
+    assert_ne!(relabeled_shred.payload(), honest_shred.payload());
+
+    let (original_shred, conflicting_shred) = if relabeled_first {
+        (relabeled_shred, honest_shred)
+    } else {
+        (honest_shred, relabeled_shred)
+    };
+    let mut write_batch = blockstore.get_write_batch();
+    let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
+    let is_trusted = false;
+    blockstore
+        .check_insert_coding_shred(
+            Cow::Borrowed(&original_shred),
+            &mut shred_insertion_tracker,
+            is_trusted,
+            ShredSource::Turbine,
+            &mut pinnable_slice,
+        )
+        .unwrap();
+    assert!(matches!(
+        blockstore.check_insert_coding_shred(
+            Cow::Borrowed(&conflicting_shred),
+            &mut shred_insertion_tracker,
+            is_trusted,
+            ShredSource::Turbine,
+            &mut pinnable_slice,
+        ),
+        Err(InsertCodingShredError::Exists)
+    ));
+
+    assert_eq!(
+        shred_insertion_tracker.duplicate_shreds,
+        vec![PossibleDuplicateShred::PayloadConflict(
+            conflicting_shred.clone(),
+            original_shred.payload().clone(),
+        )]
+    );
+    let duplicate_proof = blockstore.get_duplicate_slot(slot).unwrap();
+    assert_eq!(duplicate_proof.shred1, *original_shred.payload());
+    assert_eq!(duplicate_proof.shred2, *conflicting_shred.payload());
+    assert!(
+        !blockstore.is_dead(slot),
+        "window_service marks the slot dead once the write batch is committed"
     );
 }
 
@@ -5203,7 +5381,6 @@ fn test_duplicate_slot() {
     );
     let shred = shreds[0].clone();
     let duplicate_shred = duplicate_shreds[0].clone();
-    let non_duplicate_shred = shred.clone();
 
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -5214,17 +5391,6 @@ fn test_duplicate_slot() {
 
     // No duplicate shreds exist yet
     assert!(!blockstore.has_duplicate_shreds_in_slot(slot));
-
-    // Check if shreds are duplicated
-    assert_eq!(
-        blockstore.is_shred_duplicate(&duplicate_shred).as_deref(),
-        Some(shred.payload().as_ref())
-    );
-    assert!(
-        blockstore
-            .is_shred_duplicate(&non_duplicate_shred)
-            .is_none()
-    );
 
     // Store a duplicate shred
     blockstore

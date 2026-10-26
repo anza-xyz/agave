@@ -590,6 +590,7 @@ impl Shred {
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
 
     dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
+    #[cfg(test)]
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
     #[cfg(test)]
     dispatch!(fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
