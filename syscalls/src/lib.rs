@@ -208,7 +208,8 @@ fn recover_secp256k1_pubkey_k256(
     let mut signature = k256::ecdsa::Signature::try_from(signature)
         .map_err(|_| Secp256k1RecoverError::InvalidSignature)?;
 
-    if let Some(normalized_signature) = signature.normalize_s() {
+    let normalized_signature = signature.normalize_s();
+    if normalized_signature != signature {
         signature = normalized_signature;
         recovery_id =
             k256::ecdsa::RecoveryId::new(!recovery_id.is_y_odd(), recovery_id.is_x_reduced());
@@ -217,7 +218,7 @@ fn recover_secp256k1_pubkey_k256(
     let public_key = k256::ecdsa::VerifyingKey::recover_from_prehash(hash, &signature, recovery_id)
         .map_err(|_| Secp256k1RecoverError::InvalidSignature)?;
     let mut serialized = [0u8; 65];
-    serialized.copy_from_slice(public_key.to_encoded_point(false).as_bytes());
+    serialized.copy_from_slice(public_key.to_sec1_point(false).as_bytes());
     Ok(serialized)
 }
 

@@ -137,14 +137,15 @@ fn recover_pubkey_k256(
     let mut recovery_id =
         RecoveryId::try_from(recovery_id).map_err(|_| PrecompileError::InvalidRecoveryId)?;
 
-    if let Some(normalized_signature) = signature.normalize_s() {
+    let normalized_signature = signature.normalize_s();
+    if normalized_signature != signature {
         signature = normalized_signature;
         recovery_id = RecoveryId::new(!recovery_id.is_y_odd(), recovery_id.is_x_reduced());
     }
 
     let pubkey = VerifyingKey::recover_from_prehash(message_hash, &signature, recovery_id)
         .map_err(|_| PrecompileError::InvalidSignature)?;
-    let encoded = pubkey.to_encoded_point(false);
+    let encoded = pubkey.to_sec1_point(false);
     Ok(encoded.as_bytes()[1..65].try_into().unwrap())
 }
 
