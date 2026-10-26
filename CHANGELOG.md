@@ -81,6 +81,8 @@ Release channels have their own copy of this changelog:
 * `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
   no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
 * `solana-genesis` now activates Alpenglow consensus at genesis by default.
+* `inflation` no longer shows the foundation percentage 100 times too small: the default inflation
+  schedule now shows `5.00%` instead of `0.05%`.
 
 ### Geyser
 
