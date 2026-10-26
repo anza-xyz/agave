@@ -1801,7 +1801,7 @@ pub mod test {
                 )
                 .unwrap();
         }
-        // A second connection on the first peer: 6 entries over 5 buckets.
+        // A second connection from the first IP: 6 connections under 5 keys.
         table
             .try_add_connection(
                 ConnectionTableKey::IP(sockets[0].ip()),
