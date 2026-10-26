@@ -2667,6 +2667,8 @@ impl ReplayStage {
     /// are kept, so the bank can be recreated if votor resumes the slot. Votor resumes it when a
     /// block in the slot gets a NotarizeFallback (or stronger) certificate, or when a descendant
     /// block is finalized.
+    ///
+    /// Each discarded bank that replay started on is reported in `replay-slot-cancelled-stats`.
     fn process_cancelled_banks(
         my_pubkey: &Pubkey,
         bank_forks: &RwLock<BankForks>,
@@ -2713,6 +2715,11 @@ impl ReplayStage {
                 bank.bank_id()
             );
             bank.request_replay_cancel();
+            // A slot cancelled before replay started on its bank has no `ForkProgress`: nothing
+            // was spent on it, so there is nothing to report.
+            if let Some(fork_progress) = progress.get(&slot) {
+                Self::report_cancelled_bank(slot, fork_progress, cancelled_replay_slots);
+            }
             // Note that we do not want to purge transaction history: the shreds are kept, so if
             // votor resumes the slot, replay either re-executes the same block on the same parent,
             // overwriting the rows written so far with identical keys and values, or starts from an
@@ -2720,6 +2727,43 @@ impl ReplayStage {
             // transaction history first.
             Self::clear_slots([slot], bank_forks, progress, async_verification_freelist);
         }
+    }
+
+    /// Reports how far replay of a cancelled bank got, and how long it took, in
+    /// `replay-slot-cancelled-stats`.
+    fn report_cancelled_bank(
+        slot: Slot,
+        fork_progress: &ForkProgress,
+        cancelled_replay_slots: &CancelledReplaySlots,
+    ) {
+        // Zero if votor flagged the bank, but resumed its slot before replay discarded it.
+        let cancel_latency_us = cancelled_replay_slots
+            .cancelled_at(slot)
+            .map_or(0, |cancelled_at| cancelled_at.elapsed().as_micros() as i64);
+        let replay_total_elapsed_us = fork_progress
+            .replay_stats
+            .read()
+            .unwrap()
+            .started
+            .elapsed()
+            .as_micros() as i64;
+        let (num_txs, num_entries, num_shreds) = {
+            let replay_progress = fork_progress.replay_progress.read().unwrap();
+            (
+                replay_progress.num_txs as i64,
+                replay_progress.num_entries as i64,
+                replay_progress.num_shreds as i64,
+            )
+        };
+        datapoint_info!(
+            "replay-slot-cancelled-stats",
+            ("slot", slot as i64, i64),
+            ("replay_total_elapsed", replay_total_elapsed_us, i64),
+            ("cancel_latency_us", cancel_latency_us, i64),
+            ("total_transactions", num_txs, i64),
+            ("total_entries", num_entries, i64),
+            ("total_shreds", num_shreds, i64),
+        );
     }
 
     fn leader_bank_shreds_pending(bank: &Bank, blockstore: &Blockstore) -> bool {
