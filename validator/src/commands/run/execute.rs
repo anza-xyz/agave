@@ -60,7 +60,6 @@ use {
     solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
     solana_turbine::broadcast_stage::BroadcastStageType,
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -125,19 +124,6 @@ pub fn execute(
     let unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
     let execution_arenas = value_t!(matches, "execution_arenas", usize).ok();
-    if let Some(arena_count) = execution_arenas {
-        let max_execution_arenas = unified_scheduler_handler_threads
-            .unwrap_or_else(DefaultSchedulerPool::default_handler_count)
-            .max(block_production_num_workers.get())
-            .saturating_add(1);
-        if arena_count > max_execution_arenas {
-            Err(format!(
-                "--experimental-execution-arenas must be at most {max_execution_arenas} (the \
-                 larger of the banking worker and unified scheduler handler thread counts, plus \
-                 one)"
-            ))?;
-        }
-    }
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
 

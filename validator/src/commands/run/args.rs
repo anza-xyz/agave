@@ -825,11 +825,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("COUNT")
             .takes_value(true)
             .validator(|s| is_within_range(s, 1..))
-            .help(
-                "Number of jemalloc arenas shared by replay and banking. Must be at most the \
-                 larger of --block-production-num-workers and \
-                 --unified-scheduler-handler-threads, plus one",
-            ),
+            .help("Number of jemalloc arenas shared by replay and banking."),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
