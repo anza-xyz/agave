@@ -271,7 +271,7 @@ fn add_validator_accounts(
 
         genesis_config.add_account(
             *identity_pubkey,
-            AccountSharedData::new(lamports, 0, &system_program::id()),
+            AccountSharedData::empty(lamports, &system_program::id()),
         );
 
         let bls_pubkey_compressed_bytes = bls_pubkeys_iter
@@ -821,7 +821,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
             genesis_config.add_account(
                 faucet_pubkey,
-                AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+                AccountSharedData::empty(faucet_lamports, &system_program::id()),
             );
             faucet_lamports
         })
@@ -1501,11 +1501,7 @@ mod tests {
                     assert_eq!(meta.authorized.withdrawer, identity_pk);
 
                     assert_eq!(stake.delegation.voter_pubkey, vote_pk);
-                    let stake_account = AccountSharedData::new(
-                        b64_account.stake_lamports,
-                        StakeStateV2::size_of(),
-                        &stake::program::id(),
-                    );
+                    let stake_account = AccountSharedData::new_with_data(b64_account.stake_lamports, vec![0; StakeStateV2::size_of()], &stake::program::id());
                     let rent_exempt_reserve =
                         &Rent::default().minimum_balance(stake_account.data().len());
                     assert_eq!(

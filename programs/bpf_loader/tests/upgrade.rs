@@ -89,13 +89,13 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         )
         .unwrap();
         program_account.set_executable(true);
-        let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+        let spill_account = AccountSharedData::empty(0, &Pubkey::new_unique());
         let rent_account = create_sysvar_account(&rent);
         let clock_account = create_sysvar_account(&Clock {
             slot: SLOT.saturating_add(1),
             ..Clock::default()
         });
-        let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
             (programdata_address, programdata_account),
             (program_address, program_account),
@@ -745,13 +745,13 @@ fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
         .unwrap();
         program_account.set_executable(true);
 
-        let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+        let spill_account = AccountSharedData::empty(0, &Pubkey::new_unique());
         let rent_account = create_sysvar_account(&rent);
         let clock_account = create_sysvar_account(&Clock {
             slot: SLOT.saturating_add(1),
             ..Clock::default()
         });
-        let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
             (programdata_address, programdata_account),
             (program_address, program_account),

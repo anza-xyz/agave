@@ -241,8 +241,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let storage = AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, provider);
 
-        let account = AccountSharedData::new(1, 10, &Pubkey::default());
-        let account2 = AccountSharedData::new(1, 10, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
+        let account2 = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
 
         let accounts = [
             (&Pubkey::new_unique(), &account),
@@ -286,7 +286,7 @@ mod tests {
             AccountsFileProvider::Split,
         );
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new(1, 10, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
         storage
             .write_accounts(&(0, &[(&pubkey, &account)][..]))
             .unwrap();
@@ -380,9 +380,9 @@ mod tests {
         let accounts: Vec<_> = (0..total_accounts)
             .map(|index| {
                 if tombstone_indexes.contains(&index) {
-                    AccountSharedData::new(0, 0, &Pubkey::default())
+                    AccountSharedData::empty(0, &Pubkey::default())
                 } else {
-                    AccountSharedData::new(1, 10, &Pubkey::default())
+                    AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default())
                 }
             })
             .collect();
@@ -520,7 +520,7 @@ mod tests {
 
         // Create a bunch of accounts and add them to the storage
         let accounts: Vec<_> =
-            iter::repeat_with(|| AccountSharedData::new(1, 10, &Pubkey::default()))
+            iter::repeat_with(|| AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default()))
                 .take(total_accounts)
                 .collect();
 
@@ -684,7 +684,7 @@ mod tests {
             .enumerate()
             .map(|(i, data_len)| {
                 let mut account =
-                    AccountSharedData::new(100 + i as u64, data_len, &Pubkey::new_unique());
+                    AccountSharedData::new_with_data(100 + i as u64, vec![0; data_len], &Pubkey::new_unique());
                 account.set_data_from_slice(&vec![i as u8 + 1; data_len]);
                 account.set_executable(i == 1);
                 account.set_rent_epoch(42 + i as u64);

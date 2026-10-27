@@ -45,7 +45,7 @@ fn store_rooted_nonzero_accounts<'a>(
     slot: Slot,
     pubkeys: impl IntoIterator<Item = &'a Pubkey>,
 ) {
-    let predecessor_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let predecessor_account = AccountSharedData::empty(1, &Pubkey::default());
     let accounts = pubkeys
         .into_iter()
         .map(|pubkey| (pubkey, &predecessor_account))
@@ -109,8 +109,8 @@ fn test_generate_index_duplicates_within_slot() {
 
     let store = db.create_store(slot0, 1000);
 
-    let account_small = AccountSharedData::new(1, 1, &Pubkey::default());
-    let account_big = AccountSharedData::new(2, 10, &Pubkey::default());
+    let account_small = AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::default());
+    let account_big = AccountSharedData::new_with_data(2, vec![0; 10], &Pubkey::default());
     // same account twice with different data lens
     // Rules are the last one of each pubkey is the one that ends up in the index.
     let data = [(&pubkey, &account_big), (&pubkey, &account_small)];
@@ -155,7 +155,7 @@ fn test_generate_index_with_direct_io() {
                     let mut pubkey_bytes = pubkey.to_bytes();
                     pubkey_bytes[31] = i as u8;
                     let lamports = slot * 1000 + i as u64 + 1;
-                    let account = AccountSharedData::new(lamports, *data_size, &Pubkey::default());
+                    let account = AccountSharedData::new_with_data(lamports, vec![0; *data_size], &Pubkey::default());
                     (Pubkey::from(pubkey_bytes), account)
                 })
                 .collect();
@@ -232,9 +232,9 @@ fn test_generate_index_collects_stake_pubkeys() {
     let staked = Pubkey::from([1; 32]);
     let closed = Pubkey::from([2; 32]);
     let other = Pubkey::from([3; 32]);
-    let stake_account = AccountSharedData::new(1, 0, &stake_owner);
-    let closed_account = AccountSharedData::new(0, 0, &stake_owner);
-    let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let stake_account = AccountSharedData::empty(1, &stake_owner);
+    let closed_account = AccountSharedData::empty(0, &stake_owner);
+    let other_account = AccountSharedData::empty(1, &Pubkey::default());
 
     // Write the same accounts in two slots so the list has repeats.
     let data = [
@@ -256,7 +256,7 @@ fn test_generate_index_collects_stake_pubkeys() {
 fn test_accountsdb_add_root() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key = Pubkey::default();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
 
     db.store_for_tests((0, [(&key, &account0)].as_slice()));
     db.add_root_for_tests(0);
@@ -268,11 +268,11 @@ fn test_accountsdb_add_root() {
 fn test_accountsdb_latest_ancestor() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key = Pubkey::default();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
 
     db.store_for_tests((0, [(&key, &account0)].as_slice()));
 
-    let account1 = AccountSharedData::new(0, 0, &key);
+    let account1 = AccountSharedData::empty(0, &key);
     db.store_for_tests((1, [(&key, &account1)].as_slice()));
 
     let ancestors = Ancestors::from(vec![1]);
@@ -306,11 +306,11 @@ fn test_accountsdb_latest_ancestor() {
 fn test_accountsdb_latest_ancestor_with_root() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key = Pubkey::default();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
 
     db.store_for_tests((0, [(&key, &account0)].as_slice()));
 
-    let account1 = AccountSharedData::new(0, 0, &key);
+    let account1 = AccountSharedData::empty(0, &key);
     db.store_for_tests((1, [(&key, &account1)].as_slice()));
     db.add_root_for_tests(0);
 
@@ -331,7 +331,7 @@ fn test_accountsdb_latest_ancestor_with_root() {
 fn test_accountsdb_root_one_slot() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key = Pubkey::default();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
 
     // store value 1 in the "root", i.e. db zero
     db.store_for_tests((0, [(&key, &account0)].as_slice()));
@@ -346,7 +346,7 @@ fn test_accountsdb_root_one_slot() {
     //                                       (via root0)
 
     // store value 0 in one child
-    let account1 = AccountSharedData::new(0, 0, &key);
+    let account1 = AccountSharedData::empty(0, &key);
     db.store_for_tests((1, [(&key, &account1)].as_slice()));
 
     // masking accounts is done at the Accounts level, at accountsDB we see
@@ -416,7 +416,7 @@ fn test_accountsdb_count_stores() {
     db.check_storage(0, 2, 2);
 
     let pubkey = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 3, &pubkey);
+    let account = AccountSharedData::new_with_data(1, vec![0; DEFAULT_FILE_SIZE as usize / 3], &pubkey);
     db.store_for_tests((1, [(&pubkey, &account)].as_slice()));
     db.store_for_tests((1, [(&pubkeys[0], &account)].as_slice()));
     // adding root doesn't change anything
@@ -453,11 +453,11 @@ fn test_accounts_unsquashed() {
     let key = Pubkey::default();
 
     // 1 token in the "root", i.e. db zero
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
     db0.store_for_tests((0, [(&key, &account0)].as_slice()));
 
     // 0 lamports in the child
-    let account1 = AccountSharedData::new(0, 0, &key);
+    let account1 = AccountSharedData::empty(0, &key);
     db0.store_for_tests((1, [(&key, &account1)].as_slice()));
 
     // masking accounts is done at the Accounts level, at accountsDB we see
@@ -482,7 +482,7 @@ fn test_flush_slots_with_reclaim_old_slots() {
         let mut slot_pubkeys = vec![];
         for _ in 0..5 {
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(slot + 1, 0, &pubkey);
+            let account = AccountSharedData::empty(slot + 1, &pubkey);
             accounts.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
             slot_pubkeys.push(pubkey);
         }
@@ -495,7 +495,7 @@ fn test_flush_slots_with_reclaim_old_slots() {
     let new_slot = 5;
     for (slot, slot_pubkeys) in pubkeys.iter().enumerate() {
         for pubkey in slot_pubkeys.iter().take(5 - slot) {
-            let account = AccountSharedData::new(new_slot + 1, 0, pubkey);
+            let account = AccountSharedData::empty(new_slot + 1, pubkey);
             accounts.store_for_tests((new_slot, [(pubkey, &account)].as_slice()));
         }
     }
@@ -543,7 +543,7 @@ fn test_flush_defers_write_through_until_all_cached_slots_drop() {
     );
 
     let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
 
     // Cache the same pubkey at three consecutive slots without flushing in between.
     db.store_for_tests((0, [(&pubkey, &account)].as_slice()));
@@ -593,7 +593,7 @@ fn test_flush_does_not_write_through_when_write_through_disabled() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
     db.store_for_tests((0, [(&pubkey, &account)].as_slice()));
 
     let immediate_disk_writes = || {
@@ -630,7 +630,7 @@ fn test_purge_unrooted_slot_writes_through_surviving_entry() {
         },
     );
     let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
 
     // Cache the pubkey at slot 0 (will be rooted + flushed) and slot 1 (stays unrooted/cached).
     db.store_for_tests((0, [(&pubkey, &account)].as_slice()));
@@ -682,7 +682,7 @@ fn test_remove_unrooted_slot_cached() {
     let unrooted_slot = 9;
     let unrooted_bank_id = BankId::new(9);
     let key = Pubkey::default();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
     let ancestors = Ancestors::from(vec![unrooted_slot]);
     assert!(!db.contains(&key));
     db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
@@ -699,7 +699,7 @@ fn test_remove_unrooted_slot_cached() {
     assert!(!db.contains(&key));
 
     // Test we can store for the same slot again and get the right information
-    let account0 = AccountSharedData::new(2, 0, &key);
+    let account0 = AccountSharedData::empty(2, &key);
     db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
     db.assert_load_account(unrooted_slot, key, 2);
 }
@@ -719,7 +719,7 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
     let pubkey = Pubkey::new_unique();
     let slot = 1;
     let bank_id = BankId::new(0);
-    let account = AccountSharedData::new(1, 0, &owner);
+    let account = AccountSharedData::empty(1, &owner);
 
     // Write only to the cache at an unrooted slot: this populates the secondary index keyed by
     // the account owner, but leaves the primary index untouched.
@@ -757,7 +757,7 @@ fn test_remove_unrooted_slots_aborts_ongoing_scan(
     let slot = 1;
     let bank_id = BankId::new(1);
     let num_accounts = 10;
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
     let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
     let accounts: Vec<_> = pubkeys.iter().map(|pubkey| (pubkey, &account)).collect();
     db.store_for_tests((slot, accounts.as_slice()));
@@ -793,7 +793,7 @@ fn test_index_scan_accounts_aborts_when_bank_removed() {
     let bank_id = BankId::new(1);
     let num_accounts = 10;
     let owner = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &owner);
+    let account = AccountSharedData::empty(1, &owner);
     let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
     let accounts: Vec<_> = pubkeys.iter().map(|pubkey| (pubkey, &account)).collect();
     db.store_for_tests((slot, accounts.as_slice()));
@@ -838,7 +838,7 @@ fn test_purged_pubkey_restored_before_clean_keeps_secondary_index() {
 
     let owner = Pubkey::new_unique();
     let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &owner);
+    let account = AccountSharedData::empty(1, &owner);
 
     // Store the pubkey in an unrooted slot, then purge that slot. The pubkey is deferred to
     // clean, and has no primary index entry at all.
@@ -870,7 +870,7 @@ fn test_remove_slot_snapshot_minimizer() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let rooted_slot = 9;
     let key = Pubkey::default();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
     let ancestors = Ancestors::from(vec![rooted_slot]);
     assert!(!db.contains(&key));
     db.store_for_tests((rooted_slot, [(&key, &account0)].as_slice()));
@@ -953,7 +953,7 @@ fn test_account_grow_many() {
     let mut keys = vec![];
     for i in 0..9 {
         let key = solana_pubkey::new_rand();
-        let account = AccountSharedData::new(i + 1, size as usize / 4, &key);
+        let account = AccountSharedData::new_with_data(i + 1, vec![0; size as usize / 4], &key);
         accounts.store_for_tests((0, [(&key, &account)].as_slice()));
         keys.push(key);
     }
@@ -989,7 +989,7 @@ fn test_account_grow() {
             AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
         let pubkey1 = solana_pubkey::new_rand();
-        let account1 = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 2, &pubkey1);
+        let account1 = AccountSharedData::new_with_data(1, vec![0; DEFAULT_FILE_SIZE as usize / 2], &pubkey1);
         accounts.store_for_tests((0, [(&pubkey1, &account1)].as_slice()));
         if pass == 0 {
             accounts.add_root_and_flush_write_cache(0);
@@ -999,7 +999,7 @@ fn test_account_grow() {
         }
 
         let pubkey2 = solana_pubkey::new_rand();
-        let account2 = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 2, &pubkey2);
+        let account2 = AccountSharedData::new_with_data(1, vec![0; DEFAULT_FILE_SIZE as usize / 2], &pubkey2);
         accounts.store_for_tests((0, [(&pubkey2, &account2)].as_slice()));
 
         if pass == 1 {
@@ -1048,8 +1048,8 @@ fn test_clean_zero_lamport_and_dead_slot() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey1 = solana_pubkey::new_rand();
     let pubkey2 = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, 1, &Pubkey::default());
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // Store both accounts in slot 0, which will prevent pubkey1 from being cleaned up later
     // even when it's a zero-lamport account
@@ -1084,8 +1084,8 @@ fn test_clean_zero_lamport_and_dead_slot() {
 fn test_clean_dead_slot_removes_reclaimed_pubkey_entries() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let updated_account = AccountSharedData::new(2, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
+    let updated_account = AccountSharedData::empty(2, &Pubkey::default());
 
     // Store pubkey in slot 10, then update it in slot 11.
     accounts.store_for_tests((10, [(&pubkey, &account)].as_slice()));
@@ -1118,7 +1118,7 @@ fn test_clean_marks_reclaims_obsolete_at_new_slot() {
     let pubkey1 = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let pubkey3 = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
 
     // Store all three pubkeys in slot 10; pubkey1 is superseded in slot 11 and pubkey2
     // in slot 12, while pubkey3 keeps slot 10's storage alive.
@@ -1165,8 +1165,8 @@ fn test_clean_reclaim_tombstones_zero_lamport_single_ref() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey1 = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // pubkey1's newest version is zero-lamport in slot 11, whose storage is kept alive by
     // pubkey2, so clean cannot purge pubkey1 outright.
@@ -1212,8 +1212,8 @@ fn test_shrink_does_not_resurrect_dead_account() {
     let pubkey = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let pubkey3 = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // Slot 1: pubkey's original version, pubkey2 to keep the storage alive later, and
     // pubkey3 as dead weight so shrink always sees the storage as worth rewriting
@@ -1270,7 +1270,7 @@ fn test_reclaiming_last_live_account_purges_tombstone_only_storage() {
     let tombstone_pubkey = Pubkey::new_unique();
     let live_pubkey = Pubkey::new_unique();
     let slot = 1;
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
 
     // slot: both accounts stored and flushed
     accounts.store_for_tests((
@@ -1321,8 +1321,8 @@ fn test_shrink_carries_or_purges_flush_tombstone() {
             AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
         let pubkey_zero = Pubkey::from([1; 32]);
         let pubkey2 = Pubkey::from([2; 32]);
-        let account = AccountSharedData::new(1, 0, &Pubkey::default());
-        let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(1, &Pubkey::default());
+        let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
         let slot = 1;
         store_rooted_nonzero_accounts(&accounts, slot, [&pubkey_zero]);
         let slot = slot + 1;
@@ -1403,8 +1403,8 @@ fn test_clean_converts_zero_lamport_single_ref_account_to_tombstone_after_shrink
     let zero_lamport_single_ref_pubkey = Pubkey::new_unique();
     let zero_lamport_multi_ref_pubkey = Pubkey::new_unique();
     let alive_pubkey = Pubkey::new_unique();
-    let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    let open_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let closed_account = AccountSharedData::empty(0, &Pubkey::default());
+    let open_account = AccountSharedData::empty(1, &Pubkey::default());
 
     let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
     let storage1 = Arc::new(AccountStorageEntry::new(
@@ -1489,8 +1489,8 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
 
     let alive_pubkey = Pubkey::new_unique();
     let tombstone_pubkey = Pubkey::new_unique();
-    let alive_account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let alive_account = AccountSharedData::empty(1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // An older version of the account that will become a tombstone in `slot`.
     accounts_db.store_for_tests((slot - 1, [(&tombstone_pubkey, &alive_account)].as_slice()));
@@ -1546,7 +1546,7 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
 fn test_fully_tombstoned_storage_reclaim() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 2;
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // Latest full snapshot older than `slot`: tombstones are not yet purgeable.
     accounts_db.set_latest_full_snapshot_slot(slot - 1);
@@ -1554,7 +1554,7 @@ fn test_fully_tombstoned_storage_reclaim() {
     // Older versions of the accounts, so that their zero-lamport version is written as a tombstone
     // rather than purged completely
     let num_tombstones = 3;
-    let alive_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let alive_account = AccountSharedData::empty(1, &Pubkey::default());
     let pubkeys: Vec<_> = iter::repeat_with(Pubkey::new_unique)
         .take(num_tombstones)
         .collect();
@@ -1689,13 +1689,13 @@ fn test_alive_bytes_after_shrink() {
 fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 1;
-    let dead_account = AccountSharedData::new(0, 123, &Pubkey::default());
+    let dead_account = AccountSharedData::new_with_data(0, vec![0; 123], &Pubkey::default());
     let dead_pubkeys = [
         Pubkey::new_unique(),
         Pubkey::new_unique(),
         Pubkey::new_unique(),
     ];
-    let alive_account = AccountSharedData::new(11, 17, &Pubkey::default());
+    let alive_account = AccountSharedData::new_with_data(11, vec![0; 17], &Pubkey::default());
     let alive_pubkey = Pubkey::new_unique();
 
     store_rooted_nonzero_accounts(&accounts_db, slot, &dead_pubkeys);
@@ -1751,8 +1751,8 @@ fn test_clean_multiple_zero_lamport_slots() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey1 = solana_pubkey::new_rand();
     let pubkey2 = solana_pubkey::new_rand();
-    let one_lamport_account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let one_lamport_account = AccountSharedData::empty(1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // If there is no latest full snapshot, zero lamport accounts can be cleaned and removed
     // immediately. Set latest full snapshot slot to zero to avoid cleaning zero lamport accounts
@@ -1806,8 +1806,8 @@ fn test_clean_multiple_zero_lamport_slots() {
 fn test_clean_zero_lamport_and_old_roots() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // Store a zero-lamport account
     accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
@@ -1999,7 +1999,7 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
         &spl_generic_token::token::id(),
     );
 
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let zero_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // Slot 0: a rooted non-zero version so the tombstone below reaches storage and the index
     store_rooted_nonzero_accounts(&accounts, 0, [&pubkey]);
@@ -2052,8 +2052,8 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
 fn test_clean_max_slot_zero_lamport_account() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
+    let zero_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // If there is no latest full snapshot, zero lamport accounts can be cleaned and removed
     accounts.set_latest_full_snapshot_slot(0);
@@ -2093,13 +2093,13 @@ fn test_accounts_db_purge_keep_live() {
     let no_data = 0;
     let owner = Pubkey::default();
 
-    let account = AccountSharedData::new(some_lamport, no_data, &owner);
+    let account = AccountSharedData::new_with_data(some_lamport, vec![0; no_data], &owner);
     let pubkey = solana_pubkey::new_rand();
 
-    let account2 = AccountSharedData::new(some_lamport, no_data, &owner);
+    let account2 = AccountSharedData::new_with_data(some_lamport, vec![0; no_data], &owner);
     let pubkey2 = solana_pubkey::new_rand();
 
-    let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+    let zero_lamport_account = AccountSharedData::new_with_data(zero_lamport, vec![0; no_data], &owner);
 
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     accounts.add_root_and_flush_write_cache(0);
@@ -2163,10 +2163,10 @@ fn test_accounts_db_purge1() {
     let no_data = 0;
     let owner = Pubkey::default();
 
-    let account = AccountSharedData::new(some_lamport, no_data, &owner);
+    let account = AccountSharedData::new_with_data(some_lamport, vec![0; no_data], &owner);
     let pubkey = solana_pubkey::new_rand();
 
-    let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+    let zero_lamport_account = AccountSharedData::new_with_data(zero_lamport, vec![0; no_data], &owner);
 
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     accounts.add_root_for_tests(0);
@@ -2213,12 +2213,12 @@ fn test_accountsdb_scan_accounts() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key = Pubkey::default();
     let key0 = solana_pubkey::new_rand();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
 
     db.store_for_tests((0, [(&key0, &account0)].as_slice()));
 
     let key1 = solana_pubkey::new_rand();
-    let account1 = AccountSharedData::new(2, 0, &key);
+    let account1 = AccountSharedData::empty(2, &key);
     db.store_for_tests((1, [(&key1, &account1)].as_slice()));
 
     let ancestors = Ancestors::from(vec![0]);
@@ -2258,12 +2258,12 @@ fn test_cleanup_key_not_removed() {
 
     let key = Pubkey::default();
     let key0 = solana_pubkey::new_rand();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
 
     db.store_for_tests((0, [(&key0, &account0)].as_slice()));
 
     let key1 = solana_pubkey::new_rand();
-    let account1 = AccountSharedData::new(2, 0, &key);
+    let account1 = AccountSharedData::empty(2, &key);
     db.store_for_tests((1, [(&key1, &account1)].as_slice()));
 
     db.print_accounts_stats("pre");
@@ -2272,7 +2272,7 @@ fn test_cleanup_key_not_removed() {
     let purge_keys = [(key1, slots)];
     let _ = db.purge_keys_exact(purge_keys);
 
-    let account2 = AccountSharedData::new(3, 0, &key);
+    let account2 = AccountSharedData::empty(3, &key);
     db.store_for_tests((2, [(&key1, &account2)].as_slice()));
 
     db.print_accounts_stats("post");
@@ -2292,7 +2292,7 @@ fn test_store_large_account() {
 
     let key = Pubkey::default();
     let data_len = DEFAULT_FILE_SIZE as usize + 7;
-    let account = AccountSharedData::new(1, data_len, &key);
+    let account = AccountSharedData::new_with_data(1, vec![0; data_len], &key);
 
     db.store_for_tests((0, [(&key, &account)].as_slice()));
 
@@ -2358,7 +2358,7 @@ fn test_verify_bank_capitalization() {
         let key = solana_pubkey::new_rand();
         let some_data_len = 0;
         let some_slot: Slot = 0;
-        let account = AccountSharedData::new(1, some_data_len, &key);
+        let account = AccountSharedData::new_with_data(1, vec![0; some_data_len], &key);
         let ancestors = Ancestors::from(vec![some_slot]);
 
         db.store_for_tests((some_slot, [(&key, &account)].as_slice()));
@@ -2401,7 +2401,7 @@ fn test_get_snapshot_storages_only_older_than_or_equal_to_snapshot_slot() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let key = Pubkey::default();
-    let account = AccountSharedData::new(1, 0, &key);
+    let account = AccountSharedData::empty(1, &key);
     let before_slot = 0;
     let base_slot = before_slot + 1;
     let after_slot = base_slot + 1;
@@ -2420,7 +2420,7 @@ fn test_get_snapshot_storages_only_non_empty() {
         let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
         let key = Pubkey::default();
-        let account = AccountSharedData::new(1, 0, &key);
+        let account = AccountSharedData::empty(1, &key);
         let base_slot = 0;
         let after_slot = base_slot + 1;
 
@@ -2443,7 +2443,7 @@ fn test_get_snapshot_storages_only_roots() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let key = Pubkey::default();
-    let account = AccountSharedData::new(1, 0, &key);
+    let account = AccountSharedData::empty(1, &key);
     let base_slot = 0;
     let after_slot = base_slot + 1;
 
@@ -2459,7 +2459,7 @@ fn test_get_snapshot_storages_exclude_empty() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let key = Pubkey::default();
-    let account = AccountSharedData::new(1, 0, &key);
+    let account = AccountSharedData::empty(1, &key);
     let base_slot = 0;
     let after_slot = base_slot + 1;
 
@@ -2479,7 +2479,7 @@ fn test_get_snapshot_storages_with_base_slot() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let key = Pubkey::default();
-    let account = AccountSharedData::new(1, 0, &key);
+    let account = AccountSharedData::empty(1, &key);
 
     let slot = 10;
     db.store_for_tests((slot, [(&key, &account)].as_slice()));
@@ -2493,7 +2493,7 @@ fn test_get_snapshot_storages_with_base_slot() {
 fn test_storage_remove_account_double_remove() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
     accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
     let storage_entry = accounts.storage.get_slot_storage_entry(0).unwrap();
@@ -2515,11 +2515,11 @@ fn do_full_clean_refcount(accounts: AccountsDb, store1_first: bool) {
 
     let owner = Pubkey::default();
 
-    let account = AccountSharedData::new(old_lamport, data_size, &owner);
-    let account2 = AccountSharedData::new(old_lamport + 100_001, data_size, &owner);
-    let account3 = AccountSharedData::new(old_lamport + 100_002, data_size, &owner);
-    let account4 = AccountSharedData::new(dummy_lamport, data_size, &owner);
-    let zero_lamport_account = AccountSharedData::new(zero_lamport, data_size, &owner);
+    let account = AccountSharedData::new_with_data(old_lamport, vec![0; data_size], &owner);
+    let account2 = AccountSharedData::new_with_data(old_lamport + 100_001, vec![0; data_size], &owner);
+    let account3 = AccountSharedData::new_with_data(old_lamport + 100_002, vec![0; data_size], &owner);
+    let account4 = AccountSharedData::new_with_data(dummy_lamport, vec![0; data_size], &owner);
+    let zero_lamport_account = AccountSharedData::new_with_data(zero_lamport, vec![0; data_size], &owner);
 
     let mut current_slot = 0;
 
@@ -2623,7 +2623,7 @@ fn test_verify_index_small_dataset_detects_mismatch() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 0;
     let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
 
     accounts.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(slot);
@@ -2652,7 +2652,7 @@ fn test_shrink_candidate_slots() {
     let no_data = 0;
     let owner = Pubkey::default();
 
-    let account = AccountSharedData::new(some_lamport, no_data, &owner);
+    let account = AccountSharedData::new_with_data(some_lamport, vec![0; no_data], &owner);
 
     let mut current_slot = 0;
 
@@ -2707,7 +2707,7 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
         .map(|data_size| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, *data_size, &Pubkey::default()),
+                AccountSharedData::new_with_data(1, vec![0; *data_size], &Pubkey::default()),
             )
         })
         .collect();
@@ -2731,7 +2731,7 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
         .unwrap()
         .pubkey;
     let modified_account_owner = Pubkey::default();
-    let modified_account = AccountSharedData::new(223, 0, &modified_account_owner);
+    let modified_account = AccountSharedData::empty(223, &modified_account_owner);
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap().abs();
     let current_slot = epoch_schedule.slots_per_epoch + ancient_append_vec_offset as u64 + 1;
     // Simulate killing of the ancient account by overwriting it in the current slot.
@@ -2794,7 +2794,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     let (_temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
     let account_size = 100;
     let store_file_size = account_size + 10_000;
-    let account = AccountSharedData::new(1, account_size as usize, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(1, vec![0; account_size as usize], &Pubkey::default());
 
     let store1_slot = 11;
     let store1 = Arc::new(AccountStorageEntry::new(
@@ -2867,7 +2867,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     let (_temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
     let account_size = 100;
     let store_file_size = account_size + 10_000;
-    let account = AccountSharedData::new(1, account_size as usize, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(1, vec![0; account_size as usize], &Pubkey::default());
 
     let store1_slot = 11;
     let store1 = Arc::new(AccountStorageEntry::new(
@@ -2937,7 +2937,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
     let (_temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
     let account_size = 100;
     let store_file_size = account_size + 10_000;
-    let account = AccountSharedData::new(1, account_size as usize, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(1, vec![0; account_size as usize], &Pubkey::default());
 
     let store1_slot = 11;
     let store1 = Arc::new(AccountStorageEntry::new(
@@ -2992,7 +2992,7 @@ fn test_select_candidates_by_total_usage_with_tombstones() {
 
     let file_size = 10_000;
     let num_tombstones = 4;
-    let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let closed_account = AccountSharedData::empty(0, &Pubkey::default());
     let accounts_to_store: Vec<_> =
         iter::repeat_with(|| (Pubkey::new_unique(), closed_account.clone()))
             .take(num_tombstones)
@@ -3121,7 +3121,7 @@ fn test_account_balance_for_capitalization_native_program() {
 #[test]
 fn test_store_overhead() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
     let pubkey = solana_pubkey::new_rand();
     accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
@@ -3135,14 +3135,14 @@ fn test_store_clean_after_shrink() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let epoch_schedule = EpochSchedule::default();
 
-    let account = AccountSharedData::new(1, 16 * 4096, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(1, vec![0; 16 * 4096], &Pubkey::default());
     let pubkey1 = solana_pubkey::new_rand();
     accounts.store_for_tests((0, &[(&pubkey1, &account)][..]));
 
     let pubkey2 = solana_pubkey::new_rand();
     accounts.store_for_tests((0, &[(&pubkey2, &account)][..]));
 
-    let zero_account = AccountSharedData::new(0, 1, &Pubkey::default());
+    let zero_account = AccountSharedData::new_with_data(0, vec![0; 1], &Pubkey::default());
     accounts.store_for_tests((1, &[(&pubkey1, &zero_account)][..]));
 
     // Add root 0 and flush separately
@@ -3176,7 +3176,7 @@ fn test_store_clean_after_shrink() {
 fn test_wrapping_storage_id() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
 
     // set 'next' id to the max possible value
     db.next_id.store(AccountsFileId::MAX, Ordering::Release);
@@ -3200,7 +3200,7 @@ fn test_wrapping_storage_id() {
 fn test_reuse_storage_id() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
 
     // set 'next' id to the max possible value
     db.next_id.store(AccountsFileId::MAX, Ordering::Release);
@@ -3227,7 +3227,7 @@ fn test_reuse_storage_id() {
 fn test_clean_does_not_tombstone_zero_lamport_above_clean_root() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let account_key = Pubkey::new_unique();
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // Store a rooted non-zero version so the zero-lamport stores below reach storage
     store_rooted_nonzero_accounts(&db, 0, [&account_key]);
@@ -3381,7 +3381,7 @@ fn test_clean_tombstone_purges_secondary_index() {
 fn test_store_load_cached() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key = Pubkey::default();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
     let slot = 0;
     db.store_for_tests((slot, &[(&key, &account0)][..]));
 
@@ -3411,7 +3411,7 @@ fn test_store_load_cached() {
 fn test_store_flush_load_cached() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key = Pubkey::default();
-    let account0 = AccountSharedData::new(1, 0, &key);
+    let account0 = AccountSharedData::empty(1, &key);
     let slot = 0;
     db.store_for_tests((slot, &[(&key, &account0)][..]));
     db.mark_slot_frozen(slot);
@@ -3437,7 +3437,7 @@ fn test_store_flush_load_cached() {
 #[test]
 fn test_flush_accounts_cache() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account0 = AccountSharedData::empty(1, &Pubkey::default());
 
     let unrooted_slot = 4;
     let root5 = 5;
@@ -3499,7 +3499,7 @@ fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize
     let mut db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     db.write_cache_limit_bytes = Some(max_cache_slots() as u64);
     let space = 1; // # data bytes per account. write cache counts data len
-    let account0 = AccountSharedData::new(1, space, &Pubkey::default());
+    let account0 = AccountSharedData::new_with_data(1, vec![0; space], &Pubkey::default());
     let mut keys = vec![];
     let num_slots = 2 * max_cache_slots();
     for i in 0..num_roots + num_unrooted {
@@ -3558,8 +3558,8 @@ fn test_read_only_accounts_cache_not_populated_from_older_ancestors() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let account_key = Pubkey::new_unique();
-    let slot1_account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let slot2_account = AccountSharedData::new(2, 0, &Pubkey::default());
+    let slot1_account = AccountSharedData::empty(1, &Pubkey::default());
+    let slot2_account = AccountSharedData::empty(2, &Pubkey::default());
     db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
     db.add_root_for_tests(1);
     db.flush_rooted_accounts_cache_without_clean();
@@ -3596,8 +3596,8 @@ fn test_read_only_accounts_cache() {
     ));
 
     let account_key = Pubkey::new_unique();
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    let slot1_account = AccountSharedData::new(1, 1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
+    let slot1_account = AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::default());
     db.store_for_tests((0, &[(&account_key, &zero_lamport_account)][..]));
     db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
 
@@ -3653,8 +3653,8 @@ fn test_read_only_accounts_cache_skips_zero_lamport() {
     ));
 
     let account_key = Pubkey::new_unique();
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    let slot0_account = AccountSharedData::new(1, 1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
+    let slot0_account = AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::default());
     db.store_for_tests((0, &[(&account_key, &slot0_account)][..]));
     db.add_root_for_tests(0);
     db.flush_rooted_accounts_cache_without_clean();
@@ -3679,8 +3679,8 @@ fn test_load_with_read_only_accounts_cache() {
     ));
 
     let account_key = Pubkey::new_unique();
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    let slot1_account = AccountSharedData::new(1, 1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
+    let slot1_account = AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::default());
     db.store_for_tests((0, &[(&account_key, &zero_lamport_account)][..]));
     db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
 
@@ -3737,7 +3737,7 @@ fn test_load_with_read_only_accounts_cache() {
     assert!(account.is_none());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
 
-    let slot3_account = AccountSharedData::new(3, 1, &Pubkey::default());
+    let slot3_account = AccountSharedData::new_with_data(3, vec![0; 1], &Pubkey::default());
     db.store_for_tests((3, &[(&account_key, &slot3_account)][..]));
     db.add_root_for_tests(3);
     let (account, slot) = db
@@ -3774,7 +3774,7 @@ fn test_load_filter_with_open_accounts() {
     let account_key = Pubkey::new_unique();
     let owner = Pubkey::new_unique();
     let data_size = 40;
-    let account = AccountSharedData::new(123, data_size, &owner);
+    let account = AccountSharedData::new_with_data(123, vec![0; data_size], &owner);
 
     let satisfied = |_, o: &_, d| o == &owner && d == data_size;
     let wrong_owner = |_, o: &_, _| o != &owner;
@@ -3842,7 +3842,7 @@ fn test_load_filter_with_closed_accounts() {
     let always_load = |_, _: &_, _| true;
 
     // this always becomes AccountSharedData::default() on readback
-    let zero_lamport_account = AccountSharedData::new(0, data_size, &owner);
+    let zero_lamport_account = AccountSharedData::new_with_data(0, vec![0; data_size], &owner);
 
     let assert_absent = |pubkey: &Pubkey| {
         assert!(
@@ -3901,7 +3901,7 @@ fn test_load_filter_with_closed_accounts() {
 #[test]
 fn test_select_pubkeys_to_store() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
 
     // The same account is written in all three roots.
     let roots = BTreeSet::from([5, 10, 15]);
@@ -3943,8 +3943,8 @@ fn test_flush_cache_clean() {
     ));
 
     let account_key = Pubkey::new_unique();
-    let slot0_account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let slot1_account = AccountSharedData::new(2, 1, &Pubkey::default());
+    let slot0_account = AccountSharedData::empty(1, &Pubkey::default());
+    let slot1_account = AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::default());
     db.store_for_tests((0, &[(&account_key, &slot0_account)][..]));
     db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
 
@@ -3978,8 +3978,8 @@ fn test_flush_cache_dont_clean_zero_lamport_account() {
     let other_account_key = Pubkey::new_unique();
 
     let original_lamports = 1;
-    let slot0_account = AccountSharedData::new(original_lamports, 1, &Pubkey::default());
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let slot0_account = AccountSharedData::new_with_data(original_lamports, vec![0; 1], &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
 
     // Store into slot 0, and then flush the slot to storage
     db.store_for_tests((0, &[(&zero_lamport_account_key, &slot0_account)][..]));
@@ -4038,7 +4038,7 @@ fn test_flush_cache_without_clean_populates_uncleaned_pubkeys() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 123;
     let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(10, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(10, &Pubkey::default());
 
     // storing accounts doesn't add anything to uncleaned_pubkeys
     accounts_db.store_for_tests((slot, [(pubkey, account)].as_slice()));
@@ -4119,9 +4119,9 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
     ));
     let account_key = Pubkey::new_unique();
     let account_key2 = Pubkey::new_unique();
-    let slot0_account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let slot1_account = AccountSharedData::new(2, 1, &Pubkey::default());
-    let slot2_account = AccountSharedData::new(3, 1, &Pubkey::default());
+    let slot0_account = AccountSharedData::empty(1, &Pubkey::default());
+    let slot1_account = AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::default());
+    let slot2_account = AccountSharedData::new_with_data(3, vec![0; 1], &Pubkey::default());
 
     /*
         Store account into slots 0, 1, 2 where
@@ -4197,7 +4197,7 @@ fn test_alive_bytes() {
     let mut num_obsolete_accounts = 0;
 
     for data_size in 0..num_keys {
-        let account = AccountSharedData::new(1, data_size, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(1, vec![0; data_size], &Pubkey::default());
         accounts_db.store_for_tests((slot, &[(&Pubkey::new_unique(), &account)][..]));
     }
 
@@ -4258,7 +4258,7 @@ fn test_alive_bytes_exclude_zero_lamport_accounts() {
 
     // populate storage with zero lamport single ref (zlsr) accounts
     for key in &pubkeys {
-        let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let zero_account = AccountSharedData::empty(0, &Pubkey::default());
         accounts_db.store_for_tests((slot, &[(key, &zero_account)][..]));
     }
 
@@ -4285,8 +4285,8 @@ fn test_alive_bytes_exclude_zero_lamport_accounts() {
 fn test_zero_lamport_single_ref_resweep_respects_last_swept(set_last_swept: bool) {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
-    let one_lamport_account = AccountSharedData::new(1, 0, &Pubkey::default());
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let one_lamport_account = AccountSharedData::empty(1, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
     let slot_at_last_swept = 2;
     let slot_above_last_swept = 3;
     let full_snapshot_slot = 4;
@@ -4372,7 +4372,7 @@ fn setup_accounts_db_cache_clean(
                 stall_slot,
                 &[(
                     &scan_stall_key,
-                    &AccountSharedData::new(1, 0, &Pubkey::default()),
+                    &AccountSharedData::empty(1, &Pubkey::default()),
                 )][..],
             ),
         );
@@ -4385,7 +4385,7 @@ fn setup_accounts_db_cache_clean(
             let space = 1; // 1 byte allows us to track by size
             accounts_db.store_for_tests((
                 *slot,
-                &[(key, &AccountSharedData::new(1, space, &Pubkey::default()))][..],
+                &[(key, &AccountSharedData::new_with_data(1, vec![0; space], &Pubkey::default()))][..],
             ));
         }
         accounts_db.add_root_for_tests(*slot as Slot);
@@ -4428,7 +4428,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
         // Store a slot that overwrites all previous keys, rendering all previous keys dead
         accounts_db.store_for_tests((
             alive_slot,
-            &[(key, &AccountSharedData::new(1, 0, &Pubkey::default()))][..],
+            &[(key, &AccountSharedData::empty(1, &Pubkey::default()))][..],
         ));
         accounts_db.add_root_for_tests(alive_slot);
     }
@@ -4735,7 +4735,7 @@ fn test_flush_untracks_cacheless_root() {
         10,
         BankId::new(10),
         &pubkey,
-        AccountSharedData::new(10, 0, &Pubkey::default()),
+        AccountSharedData::empty(10, &Pubkey::default()),
     );
     db.add_root_for_tests(10);
 
@@ -4751,7 +4751,7 @@ fn test_shrink_unref() {
     let epoch_schedule = EpochSchedule::default();
     let account_key1 = Pubkey::new_unique();
     let account_key2 = Pubkey::new_unique();
-    let account1 = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account1 = AccountSharedData::empty(1, &Pubkey::default());
 
     // Store into slot 0
     db.store_for_tests((0, [(&account_key1, &account1)].as_slice()));
@@ -4799,8 +4799,8 @@ fn test_clean_drop_dead_zero_lamport_single_ref_accounts() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let key1 = Pubkey::new_unique();
 
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    let one_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let zero_account = AccountSharedData::empty(0, &Pubkey::default());
+    let one_account = AccountSharedData::empty(1, &Pubkey::default());
 
     // slot 0 - stored a 1-lamport account
     let slot = 0;
@@ -4828,8 +4828,8 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let account_key1 = Pubkey::new_unique();
     let account_key2 = Pubkey::new_unique();
-    let account1 = AccountSharedData::new(1, 0, &Pubkey::default());
-    let account0 = AccountSharedData::new(0, 0, &Pubkey::default());
+    let account1 = AccountSharedData::empty(1, &Pubkey::default());
+    let account0 = AccountSharedData::empty(0, &Pubkey::default());
 
     // Store into slot 0
     db.store_for_tests((0, [(&account_key1, &account1)].as_slice()));
@@ -4869,8 +4869,8 @@ fn test_clean_tombstones_zero_lamport_single_ref_at_reclaim() {
     let account_key1 = Pubkey::new_unique();
     let account_key2 = Pubkey::new_unique();
     let account_key3 = Pubkey::new_unique();
-    let account1 = AccountSharedData::new(1, 0, &Pubkey::default());
-    let account0 = AccountSharedData::new(0, 0, &Pubkey::default());
+    let account1 = AccountSharedData::empty(1, &Pubkey::default());
+    let account0 = AccountSharedData::empty(0, &Pubkey::default());
 
     // Store into slot 0
     db.store_for_tests((0, [(&account_key1, &account1)].as_slice()));
@@ -4941,10 +4941,10 @@ fn test_partial_clean() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let account_key1 = Pubkey::new_unique();
     let account_key2 = Pubkey::new_unique();
-    let account1 = AccountSharedData::new(1, 0, &Pubkey::default());
-    let account2 = AccountSharedData::new(2, 0, &Pubkey::default());
-    let account3 = AccountSharedData::new(3, 0, &Pubkey::default());
-    let account4 = AccountSharedData::new(4, 0, &Pubkey::default());
+    let account1 = AccountSharedData::empty(1, &Pubkey::default());
+    let account2 = AccountSharedData::empty(2, &Pubkey::default());
+    let account3 = AccountSharedData::empty(3, &Pubkey::default());
+    let account4 = AccountSharedData::empty(4, &Pubkey::default());
 
     // Store accounts into slots 0 and 1
     db.store_for_tests((
@@ -5040,7 +5040,7 @@ fn test_load_account_and_cache_flush_race() {
         0,
         &[(
             pubkey.as_ref(),
-            &AccountSharedData::new(1, 0, &Pubkey::default()),
+            &AccountSharedData::empty(1, &Pubkey::default()),
         )][..],
     ));
     db.add_root_for_tests(0);
@@ -5050,7 +5050,7 @@ fn test_load_account_and_cache_flush_race() {
         let db = db.clone();
         let exit = exit.clone();
         let pubkey = pubkey.clone();
-        let mut account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let mut account = AccountSharedData::empty(1, &Pubkey::default());
         std::thread::Builder::new()
             .name("account-cache-flush".to_string())
             .spawn(move || {
@@ -5099,7 +5099,7 @@ fn test_load_during_batched_flush_returns_latest() {
         0,
         &[(
             pubkey.as_ref(),
-            &AccountSharedData::new(1, 0, &Pubkey::default()),
+            &AccountSharedData::empty(1, &Pubkey::default()),
         )][..],
     ));
     db.add_root_for_tests(0);
@@ -5111,7 +5111,7 @@ fn test_load_during_batched_flush_returns_latest() {
         1,
         &[(
             pubkey.as_ref(),
-            &AccountSharedData::new(2, 0, &Pubkey::default()),
+            &AccountSharedData::empty(2, &Pubkey::default()),
         )][..],
     ));
     db.add_root_for_tests(1);
@@ -5120,7 +5120,7 @@ fn test_load_during_batched_flush_returns_latest() {
     // has to process ~100 other slots before it reaches slot 1.
     for slot in 2..=100 {
         let other = Pubkey::new_unique();
-        let account = AccountSharedData::new(slot, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(slot, &Pubkey::default());
         db.store_for_tests((slot, &[(&other, &account)][..]));
         db.add_root_for_tests(slot);
     }
@@ -5152,7 +5152,7 @@ fn test_load_account_and_shrink_race() {
 
     // Store an account
     let lamports = 42;
-    let mut account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let mut account = AccountSharedData::empty(1, &Pubkey::default());
     account.set_lamports(lamports);
     db.store_for_tests((slot, [(pubkey.as_ref(), &account)].as_slice()));
 
@@ -5229,9 +5229,9 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
     let pubkey2 = Pubkey::new_unique();
     let pubkey3 = Pubkey::new_unique();
 
-    let account1 = AccountSharedData::new(0, 0, &pubkey1);
-    let account2 = AccountSharedData::new(0, 0, &pubkey2);
-    let account3 = AccountSharedData::new(0, 0, &pubkey3);
+    let account1 = AccountSharedData::empty(0, &pubkey1);
+    let account2 = AccountSharedData::empty(0, &pubkey2);
+    let account3 = AccountSharedData::empty(0, &pubkey3);
 
     db.store_for_tests((slot1, [(&pubkey1, &account1)].as_slice()));
     db.store_for_tests((slot2, [(&pubkey2, &account2)].as_slice()));
@@ -5278,7 +5278,7 @@ fn test_is_shrinking_productive() {
         file_size,
         accounts.accounts_file_provider,
     ));
-    let account = AccountSharedData::new(1, account_size, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(1, vec![0; account_size], &Pubkey::default());
     let stored_size = store.accounts.calculate_stored_size(account.data().len());
     store
         .write_accounts(&(
@@ -5327,7 +5327,7 @@ fn test_is_candidate_for_shrink() {
             slot,
             [(
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 100, &Pubkey::default()),
+                AccountSharedData::new_with_data(1, vec![0; 100], &Pubkey::default()),
             )]
             .as_slice(),
         ))
@@ -5370,7 +5370,7 @@ fn test_calculate_storage_count_and_alive_bytes() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     accounts.accounts_index.set_startup(Startup::Startup);
     let shared_key = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, 1, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::default());
     let slot0 = 0;
 
     accounts.accounts_index.set_startup(Startup::Startup);
@@ -5427,8 +5427,8 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
                     .bin_calculator
                     .bin_from_pubkey(&keys[1]))
     );
-    let account1 = AccountSharedData::new(1, 1, &Pubkey::default());
-    let account2 = AccountSharedData::new(1, 1000, &Pubkey::default());
+    let account1 = AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::default());
+    let account2 = AccountSharedData::new_with_data(1, vec![0; 1000], &Pubkey::default());
     let slot0 = 0;
     let storage = accounts.create_store(slot0, 4_000);
     storage
@@ -5472,7 +5472,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         .map(|size| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, size, &Pubkey::default()),
+                AccountSharedData::new_with_data(1, vec![0; size], &Pubkey::default()),
             )
         })
         .collect();
@@ -5541,7 +5541,7 @@ fn test_purge_alive_unrooted_slots_after_clean() {
     store_rooted_nonzero_accounts(&accounts, slot0, [&shared_key]);
 
     // Store accounts with greater than 0 lamports
-    let account = AccountSharedData::new(1, 1, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::default());
     accounts.store_for_tests((slot1, [(&shared_key, &account)].as_slice()));
     accounts.store_for_tests((slot1, [(&unrooted_key, &account)].as_slice()));
 
@@ -5549,7 +5549,7 @@ fn test_purge_alive_unrooted_slots_after_clean() {
     // not a rooted slot
 
     // On the next *rooted* slot, update the `shared_key` account to zero lamports
-    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
     accounts.store_for_tests((slot2, [(&shared_key, &zero_lamport_account)].as_slice()));
 
     // Simulate adding dirty pubkeys on bank freeze, set root
@@ -5602,17 +5602,17 @@ fn test_clean_accounts_with_latest_full_snapshot_slot() {
     accounts_db.set_latest_full_snapshot_slot(0);
 
     let slot1: Slot = 1;
-    let account = AccountSharedData::new(111, space, &owner);
+    let account = AccountSharedData::new_with_data(111, vec![0; space], &owner);
     accounts_db.store_for_tests((slot1, &[(&pubkey, &account)][..]));
     accounts_db.add_root_and_flush_write_cache(slot1);
 
     let slot2: Slot = 2;
-    let account = AccountSharedData::new(222, space, &owner);
+    let account = AccountSharedData::new_with_data(222, vec![0; space], &owner);
     accounts_db.store_for_tests((slot2, &[(&pubkey, &account)][..]));
     accounts_db.add_root_and_flush_write_cache(slot2);
 
     let slot3: Slot = 3;
-    let account = AccountSharedData::new(0, space, &owner);
+    let account = AccountSharedData::new_with_data(0, vec![0; space], &owner);
     accounts_db.store_for_tests((slot3, &[(&pubkey, &account)][..]));
     accounts_db.add_root_and_flush_write_cache(slot3);
 
@@ -5798,7 +5798,7 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
 #[test]
 fn test_get_sorted_potential_ancient_slots() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
     // Ensure all slots are considered for ancients
     db.max_cleaned_root.store(Slot::MAX, Ordering::Relaxed);
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap();
@@ -5860,7 +5860,7 @@ fn test_get_sorted_potential_ancient_slots() {
 #[test]
 fn test_get_sorted_potential_ancient_slots_bounded_by_max_cleaned_root() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(1, &Pubkey::default());
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap();
     let epoch_schedule = EpochSchedule::default();
 
@@ -5972,7 +5972,7 @@ fn test_shrink_collect_simple() {
                             // don't do special zero lamport account handling
                             db.set_latest_full_snapshot_slot(0);
                             let mut account =
-                                AccountSharedData::new(lamports, space, &Pubkey::default());
+                                AccountSharedData::new_with_data(lamports, vec![0; space], &Pubkey::default());
 
                             let is_zero_lamport = |pubkey: &Pubkey| {
                                 if Some(pubkey) == pubkey_opposite_zero_lamports {
@@ -6155,11 +6155,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 5;
 
-    let mut account = AccountSharedData::new(
-        100, // lamports
-        128, // space
-        &Pubkey::default(),
-    );
+    let mut account = AccountSharedData::new_with_data(100, vec![0; 128], &Pubkey::default());
 
     let mut regular_pubkeys = Vec::new();
     let mut obsolete_pubkeys = Vec::new();
@@ -6254,7 +6250,7 @@ fn test_combine_ancient_slots_simple() {
 
     let slot = 42;
     let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(123, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(123, &Pubkey::default());
     accounts_db.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
     accounts_db.add_root_and_flush_write_cache(slot);
 
@@ -6282,7 +6278,7 @@ fn test_calculate_capitalization_simple() {
         0,
         [(
             &Pubkey::new_unique(),
-            &AccountSharedData::new(123, 0, &Pubkey::default()),
+            &AccountSharedData::empty(123, &Pubkey::default()),
         )]
         .as_slice(),
     ));
@@ -6290,7 +6286,7 @@ fn test_calculate_capitalization_simple() {
         1,
         [(
             &Pubkey::new_unique(),
-            &AccountSharedData::new(456, 0, &Pubkey::default()),
+            &AccountSharedData::empty(456, &Pubkey::default()),
         )]
         .as_slice(),
     ));
@@ -6306,7 +6302,7 @@ fn test_calculate_capitalization_simple() {
 #[should_panic(expected = "capitalization cannot overflow")]
 fn test_calculate_capitalization_overflow_intra_slot() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let account = AccountSharedData::new(u64::MAX - 1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(u64::MAX - 1, &Pubkey::default());
     accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
     accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
     accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0]));
@@ -6318,7 +6314,7 @@ fn test_calculate_capitalization_overflow_intra_slot() {
 #[should_panic(expected = "capitalization cannot overflow")]
 fn test_calculate_capitalization_overflow_inter_slot() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let account = AccountSharedData::new(u64::MAX - 1, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(u64::MAX - 1, &Pubkey::default());
     accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
     accounts_db.store_for_tests((1, [(&Pubkey::new_unique(), &account)].as_slice()));
     accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]));
@@ -6347,7 +6343,7 @@ fn test_mark_obsolete_accounts_at_startup_purge_slot() {
     let slots = 2;
     let pubkey1 = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
-    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(100, &Pubkey::default());
 
     // Store the same pubkey in multiple slots
     // Store other pubkey in slot0 to ensure slot is not purged
@@ -6384,7 +6380,7 @@ fn test_mark_obsolete_accounts_at_startup_multiple_bins() {
     let accounts_db = AccountsDb::new_for_tests_with_config(paths, DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey1 = Pubkey::from([0; 32]); // Ensure pubkey1 is in bin 0
     let pubkey2 = Pubkey::from([255; 32]); // Ensure pubkey2 is in a different bin
-    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(100, &Pubkey::default());
 
     for slot in 0..2 {
         accounts_db.store_for_tests((
@@ -6421,8 +6417,8 @@ fn test_new_zero_lamport_accounts_skipped() {
     let pubkey1 = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let pubkey3 = Pubkey::new_unique();
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+    let zero_account = AccountSharedData::empty(0, &Pubkey::default());
+    let account = AccountSharedData::empty(100, &Pubkey::default());
     let slot = 0;
     let mut ancestors = Ancestors::from(vec![slot]);
 
@@ -6572,7 +6568,7 @@ fn test_write_accounts_to_cache_scenarios(
             // No setup needed
         }
         InitialState::WithLamports(lamports) => {
-            let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
+            let account = AccountSharedData::empty(lamports, &Pubkey::default());
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account)].as_slice()),
                 BankId::new(slot),
@@ -6580,8 +6576,8 @@ fn test_write_accounts_to_cache_scenarios(
             );
         }
         InitialState::WithoutLamports => {
-            let account = AccountSharedData::new(1, 0, &Pubkey::default());
-            let account_zero = AccountSharedData::new(0, 0, &Pubkey::default());
+            let account = AccountSharedData::empty(1, &Pubkey::default());
+            let account_zero = AccountSharedData::empty(0, &Pubkey::default());
             // Store a non-zero account first to create the index entry
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account)].as_slice()),
@@ -6602,7 +6598,7 @@ fn test_write_accounts_to_cache_scenarios(
     // Store batch accounts
     let accounts: Vec<_> = batch_accounts
         .iter()
-        .map(|&lamports| AccountSharedData::new(lamports, 0, &Pubkey::default()))
+        .map(|&lamports| AccountSharedData::empty(lamports, &Pubkey::default()))
         .collect();
     let batch: Vec<_> = accounts.iter().map(|account| (&key, account)).collect();
 
@@ -6661,7 +6657,7 @@ fn test_is_ancestor_zero_lamport_cache_ancestor() {
     assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), None);
 
     // Insert a non-zero lamport account and verify the function returns Some(false).
-    let nonzero_account = AccountSharedData::new(100, 0, &Pubkey::default());
+    let nonzero_account = AccountSharedData::empty(100, &Pubkey::default());
     db.accounts_cache
         .store(slot, BankId::new(slot), &pubkey, nonzero_account);
     assert_eq!(
@@ -6670,7 +6666,7 @@ fn test_is_ancestor_zero_lamport_cache_ancestor() {
     );
 
     // Update the account to zero lamports and verify the function returns Some(true).
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let zero_account = AccountSharedData::empty(0, &Pubkey::default());
     db.accounts_cache
         .store(slot, BankId::new(slot), &pubkey, zero_account);
     assert_eq!(db.is_ancestor_zero_lamport(&pubkey, &ancestors), Some(true));
@@ -6685,7 +6681,7 @@ fn test_is_ancestor_zero_lamport_unflushed_root_in_cache() {
     let pubkey = Pubkey::new_unique();
     let slot = 5;
 
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let zero_account = AccountSharedData::empty(0, &Pubkey::default());
     db.accounts_cache
         .store(slot, BankId::new(slot), &pubkey, zero_account);
     db.add_root_for_tests(slot);
@@ -6706,7 +6702,7 @@ fn test_is_ancestor_zero_lamport_index_only() {
     store_rooted_nonzero_accounts(&db, slot, [&pubkey]);
     let slot = slot + 1;
 
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let zero_account = AccountSharedData::empty(0, &Pubkey::default());
     db.store_for_tests((slot, [(&pubkey, &zero_account)].as_slice()));
     db.add_root_for_tests(slot);
     db.flush_rooted_accounts_cache_without_clean();
@@ -6726,13 +6722,13 @@ fn test_is_ancestor_zero_lamport_cache_over_storage() {
     let cache_slot = 10;
 
     // Non-zero lamport entry in storage at the older slot.
-    let nonzero_account = AccountSharedData::new(100, 0, &Pubkey::default());
+    let nonzero_account = AccountSharedData::empty(100, &Pubkey::default());
     db.store_for_tests((storage_slot, [(&pubkey, &nonzero_account)].as_slice()));
     db.add_root_and_flush_write_cache(storage_slot);
     assert!(!db.accounts_cache.contains_pubkey(&pubkey));
 
     // Zero lamport entry in the cache at the newer slot.
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let zero_account = AccountSharedData::empty(0, &Pubkey::default());
     db.accounts_cache
         .store(cache_slot, BankId::new(cache_slot), &pubkey, zero_account);
 
@@ -6749,7 +6745,7 @@ fn test_do_load_returns_cache_value_for_cache_only_pubkey() {
     let pubkey = Pubkey::new_unique();
     let slot = 5;
 
-    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(100, &Pubkey::default());
     db.accounts_cache
         .store(slot, BankId::new(slot), &pubkey, account.clone());
     db.add_root_for_tests(slot);
@@ -6782,12 +6778,12 @@ fn test_load_does_not_return_data_from_non_ancestor_root() {
     let pubkey = Pubkey::new_unique();
 
     // Store account at slot 16 (rooted, below ancestors.min_slot)
-    let account_v1 = AccountSharedData::new(100, 0, &Pubkey::default());
+    let account_v1 = AccountSharedData::empty(100, &Pubkey::default());
     db.store_for_tests((16, &[(&pubkey, &account_v1)][..]));
     db.add_root_for_tests(16);
 
     // Store account at slot 18 (rooted, but not an ancestor of bank 19)
-    let account_v2 = AccountSharedData::new(200, 0, &Pubkey::default());
+    let account_v2 = AccountSharedData::empty(200, &Pubkey::default());
     db.store_for_tests((18, &[(&pubkey, &account_v2)][..]));
     db.add_root_for_tests(18);
 

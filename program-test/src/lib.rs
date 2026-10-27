@@ -663,7 +663,7 @@ fn required_sysvar_data_len(sysvar_id: &Pubkey, serialized_len: usize) -> usize 
 fn create_sysvar_account<T: SysvarId + Serialize<Src = T>>(sysvar: &T) -> Account {
     let serialized_len = wincode::serialized_size(sysvar).unwrap() as usize;
     let data_len = required_sysvar_data_len(&T::id(), serialized_len);
-    let mut account = Account::new(1, data_len, &sysvar::id());
+    let mut account = Account::new_with_data(1, vec![0; data_len], &sysvar::id());
     wincode::serialize_into(account.data.as_mut_slice(), sysvar).unwrap();
     account
 }

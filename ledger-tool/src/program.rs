@@ -378,7 +378,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let pubkey = Pubkey::new_unique();
             transaction_accounts.push((
                 pubkey,
-                AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(0, vec![0; allocation_size], &Pubkey::new_unique()),
             ));
             instruction_accounts.push(InstructionAccount::new(0, false, true));
             vec![]
@@ -456,11 +456,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let program_index: u16 = instruction_accounts.len().try_into().unwrap();
     transaction_accounts.push((
         loader_id,
-        AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+        AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id()),
     ));
     transaction_accounts.push((
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
-        AccountSharedData::new(0, 0, &loader_id),
+        AccountSharedData::empty(0, &loader_id),
     ));
     let epoch_schedule_account = AccountSharedData::new_data_with_space(
         1,

@@ -136,11 +136,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
 
     // Setup accounts
     let buffer_account = {
-        let mut account = AccountSharedData::new(
-            min_buffer_balance,
-            UpgradeableLoaderState::size_of_buffer(elf.len()),
-            &bpf_loader_upgradeable::id(),
-        );
+        let mut account = AccountSharedData::new_with_data(min_buffer_balance, vec![0; UpgradeableLoaderState::size_of_buffer(elf.len())], &bpf_loader_upgradeable::id());
         account
             .set_state(&UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
@@ -153,11 +149,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             .copy_from_slice(&elf);
         account
     };
-    let program_account = AccountSharedData::new(
-        min_program_balance,
-        UpgradeableLoaderState::size_of_program(),
-        &bpf_loader_upgradeable::id(),
-    );
+    let program_account = AccountSharedData::new_with_data(min_program_balance, vec![0; UpgradeableLoaderState::size_of_program()], &bpf_loader_upgradeable::id());
 
     // Test uninitialized program invocation
     bank.store_account(&program_keypair.pubkey(), &program_account);
@@ -208,11 +200,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
     bank.store_account(
         &payer_keypair.pubkey(),
-        &AccountSharedData::new(
-            payer_base_balance.saturating_add(min_payer_balance),
-            0,
-            &system_program::id(),
-        ),
+        &AccountSharedData::empty(payer_base_balance.saturating_add(min_payer_balance), &system_program::id()),
     );
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
@@ -342,11 +330,7 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
 
     // Setup accounts
     let buffer_account = {
-        let mut account = AccountSharedData::new(
-            min_buffer_balance,
-            UpgradeableLoaderState::size_of_buffer(elf.len()),
-            &bpf_loader_upgradeable::id(),
-        );
+        let mut account = AccountSharedData::new_with_data(min_buffer_balance, vec![0; UpgradeableLoaderState::size_of_buffer(elf.len())], &bpf_loader_upgradeable::id());
         account
             .set_state(&UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
@@ -371,11 +355,7 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
         .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
     bank.store_account(
         &payer_keypair.pubkey(),
-        &AccountSharedData::new(
-            payer_base_balance.saturating_add(min_payer_balance),
-            0,
-            &system_program::id(),
-        ),
+        &AccountSharedData::empty(payer_base_balance.saturating_add(min_payer_balance), &system_program::id()),
     );
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());

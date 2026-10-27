@@ -1233,14 +1233,14 @@ mod tests {
 
         let mut accounts = [
             // one version of pubkey1
-            (&pubkey1, &AccountSharedData::new(11, 0, &Pubkey::default())),
+            (&pubkey1, &AccountSharedData::empty(11, &Pubkey::default())),
             // two versions of pubkey2
-            (&pubkey2, &AccountSharedData::new(21, 0, &Pubkey::default())),
-            (&pubkey2, &AccountSharedData::new(22, 0, &Pubkey::default())),
+            (&pubkey2, &AccountSharedData::empty(21, &Pubkey::default())),
+            (&pubkey2, &AccountSharedData::empty(22, &Pubkey::default())),
             // three versions of pubkey3
-            (&pubkey3, &AccountSharedData::new(31, 0, &Pubkey::default())),
-            (&pubkey3, &AccountSharedData::new(32, 0, &Pubkey::default())),
-            (&pubkey3, &AccountSharedData::new(33, 0, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::empty(31, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::empty(32, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::empty(33, &Pubkey::default())),
         ];
         accounts.shuffle(&mut rand::rng());
 
@@ -1267,8 +1267,8 @@ mod tests {
                 async_progress: Arc::clone(&async_progress1),
                 inner: AccountsLtHashUpdate {
                     address,
-                    prev_account: Some(AccountSharedData::new(11, 0, &Pubkey::default())),
-                    curr_account: Some(AccountSharedData::new(12, 0, &Pubkey::default())),
+                    prev_account: Some(AccountSharedData::empty(11, &Pubkey::default())),
+                    curr_account: Some(AccountSharedData::empty(12, &Pubkey::default())),
                 },
             },
         );
@@ -1279,8 +1279,8 @@ mod tests {
                 async_progress: Arc::clone(&async_progress1),
                 inner: AccountsLtHashUpdate {
                     address,
-                    prev_account: Some(AccountSharedData::new(12, 0, &Pubkey::default())),
-                    curr_account: Some(AccountSharedData::new(13, 0, &Pubkey::default())),
+                    prev_account: Some(AccountSharedData::empty(12, &Pubkey::default())),
+                    curr_account: Some(AccountSharedData::empty(13, &Pubkey::default())),
                 },
             },
         );
@@ -1292,8 +1292,8 @@ mod tests {
                 async_progress: Arc::clone(&async_progress2),
                 inner: AccountsLtHashUpdate {
                     address,
-                    prev_account: Some(AccountSharedData::new(21, 0, &Pubkey::default())),
-                    curr_account: Some(AccountSharedData::new(22, 0, &Pubkey::default())),
+                    prev_account: Some(AccountSharedData::empty(21, &Pubkey::default())),
+                    curr_account: Some(AccountSharedData::empty(22, &Pubkey::default())),
                 },
             },
         );
@@ -1365,7 +1365,7 @@ mod tests {
                     // Spread sizes from 0.5KiB to 128KiB, since dispatch may treat large
                     // accounts apart.
                     let data_len = 512 << (index % 9);
-                    let curr = AccountSharedData::new(round, data_len, &owner);
+                    let curr = AccountSharedData::new_with_data(round, vec![0; data_len], &owner);
                     AccountsLtHashUpdate {
                         address: *address,
                         prev_account: last_version.replace(curr.clone()),

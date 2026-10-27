@@ -79,13 +79,13 @@ fn get_accounts(
         programdata,
         (
             *payer_address,
-            AccountSharedData::new(10_000_000_000, 0, &system_program::id()),
+            AccountSharedData::empty(10_000_000_000, &system_program::id()),
         ),
         (sysvar::clock::id(), create_clock_account(1)),
         (sysvar::rent::id(), create_sysvar_account(&Rent::default())),
         (
             system_program::id(),
-            AccountSharedData::new(0, 0, &native_loader::id()),
+            AccountSharedData::empty(0, &native_loader::id()),
         ),
     ]
 }
@@ -352,15 +352,15 @@ fn test_extend_program_with_invalid_payer() {
     transaction_accounts.extend([
         (
             payer_with_sufficient_funds,
-            AccountSharedData::new(10_000_000_000, 0, &system_program::id()),
+            AccountSharedData::empty(10_000_000_000, &system_program::id()),
         ),
         (
             payer_with_insufficient_funds,
-            AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id()),
+            AccountSharedData::empty(rent.minimum_balance(0), &system_program::id()),
         ),
         (
             payer_with_invalid_owner,
-            AccountSharedData::new(10_000_000_000, 0, &id()),
+            AccountSharedData::empty(10_000_000_000, &id()),
         ),
     ]);
 

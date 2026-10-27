@@ -1068,7 +1068,7 @@ mod tests {
 
         // Fail: program account invalid state
         let invalid_program_account =
-            AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
+            AccountSharedData::new_with_data(100, vec![0; 100], &bpf_loader_upgradeable::id());
         assert_eq!(
             get_program_deployment_slot(
                 &mock_bank,
@@ -1242,8 +1242,8 @@ mod tests {
             mock_bank
                 .account_shared_data
                 .borrow_mut()
-                .insert(loader_ids[i], AccountSharedData::new(1, 1, &program_ids[3]));
-            let mut program = AccountSharedData::new(1, 1, &loader_ids[i]);
+                .insert(loader_ids[i], AccountSharedData::new_with_data(1, vec![0; 1], &program_ids[3]));
+            let mut program = AccountSharedData::new_with_data(1, vec![0; 1], &loader_ids[i]);
             program.set_data_from_slice(&ELFMAG);
             mock_bank
                 .account_shared_data
@@ -1251,7 +1251,7 @@ mod tests {
                 .insert(program_ids[i], program);
             mock_bank.account_shared_data.borrow_mut().insert(
                 account_ids[i],
-                AccountSharedData::new(1, 1, &program_ids[i]),
+                AccountSharedData::new_with_data(1, vec![0; 1], &program_ids[i]),
             );
         }
 

@@ -453,13 +453,13 @@ mod tests {
         for _ in 0..num_genesis_accounts {
             accounts.insert(
                 solana_pubkey::new_rand(),
-                Account::new(balance, 0, &Pubkey::default()),
+                Account::new_with_data(balance, vec![0; 0], &Pubkey::default()),
             );
         }
         let non_circulating_accounts = non_circulating_accounts();
         let num_non_circulating_accounts = non_circulating_accounts.len() as u64;
         for key in non_circulating_accounts.clone() {
-            accounts.insert(key, Account::new(balance, 0, &Pubkey::default()));
+            accounts.insert(key, Account::new_with_data(balance, vec![0; 0], &Pubkey::default()));
         }
 
         let num_stake_accounts = 3;
@@ -514,7 +514,7 @@ mod tests {
         for key in non_circulating_accounts {
             bank.store_account(
                 &key,
-                &AccountSharedData::new(new_balance, 0, &Pubkey::default()),
+                &AccountSharedData::empty(new_balance, &Pubkey::default()),
             );
         }
         let non_circulating_supply = calculate_non_circulating_supply(&bank).unwrap();

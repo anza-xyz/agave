@@ -842,17 +842,17 @@ mod tests {
         let transaction_accounts = [
             (
                 fee_payer.pubkey(),
-                AccountSharedData::new(100, 0, &Pubkey::default()),
+                AccountSharedData::empty(100, &Pubkey::default()),
             ),
             (
                 touched_key,
-                AccountSharedData::new(1, 0, &Pubkey::default()),
+                AccountSharedData::empty(1, &Pubkey::default()),
             ),
             (
                 untouched_key,
-                AccountSharedData::new(2, 0, &Pubkey::default()),
+                AccountSharedData::empty(2, &Pubkey::default()),
             ),
-            (program, AccountSharedData::new(3, 0, &Pubkey::default())),
+            (program, AccountSharedData::empty(3, &Pubkey::default())),
         ];
 
         // Fee payer (index 0) and the VM-modified account (index 1) are marked;
@@ -888,10 +888,10 @@ mod tests {
         let key0 = keypair.pubkey();
         let key1 = Pubkey::from([5u8; 32]);
 
-        let account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(1, &Pubkey::default());
         accounts.push((key0, account));
 
-        let account = AccountSharedData::new(2, 1, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::default());
         accounts.push((key1, account));
 
         let instructions = vec![CompiledInstruction::new(1, &(), vec![0])];
@@ -931,11 +931,11 @@ mod tests {
         let key0 = keypair.pubkey();
         let key1 = Pubkey::from([5u8; 32]);
 
-        let mut account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let mut account = AccountSharedData::empty(1, &Pubkey::default());
         account.set_rent_epoch(1);
         accounts.push((key0, account));
 
-        let mut account = AccountSharedData::new(2, 1, &Pubkey::default());
+        let mut account = AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::default());
         account.set_rent_epoch(1);
         accounts.push((key1, account));
 
@@ -978,10 +978,10 @@ mod tests {
         let key0 = keypair.pubkey();
         let key1 = Pubkey::from([5u8; 32]);
 
-        let account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(1, &Pubkey::default());
         accounts.push((key0, account));
 
-        let mut account = AccountSharedData::new(40, 1, &Pubkey::default());
+        let mut account = AccountSharedData::new_with_data(40, vec![0; 1], &Pubkey::default());
         account.set_executable(true);
         accounts.push((key1, account));
 
@@ -1022,10 +1022,10 @@ mod tests {
         let key0 = keypair.pubkey();
         let key1 = Pubkey::from([5u8; 32]);
 
-        let account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(1, &Pubkey::default());
         accounts.push((key0, account));
 
-        let account = AccountSharedData::new(40, 0, &native_loader::id());
+        let account = AccountSharedData::empty(40, &native_loader::id());
         accounts.push((key1, account));
 
         let instructions = vec![CompiledInstruction::new(1, &(), vec![0])];
@@ -1069,17 +1069,17 @@ mod tests {
         let key1 = bpf_loader_upgradeable::id();
         let key2 = Pubkey::from([6u8; 32]);
 
-        let mut account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let mut account = AccountSharedData::empty(1, &Pubkey::default());
         account.set_rent_epoch(1);
         accounts.push((key0, account));
 
-        let mut account = AccountSharedData::new(40, 1, &Pubkey::default());
+        let mut account = AccountSharedData::new_with_data(40, vec![0; 1], &Pubkey::default());
         account.set_executable(true);
         account.set_rent_epoch(1);
         account.set_owner(native_loader::id());
         accounts.push((key1, account));
 
-        let mut account = AccountSharedData::new(41, 1, &Pubkey::default());
+        let mut account = AccountSharedData::new_with_data(41, vec![0; 1], &Pubkey::default());
         account.set_executable(true);
         account.set_rent_epoch(1);
         account.set_owner(key1);
@@ -1179,11 +1179,11 @@ mod tests {
         setup_test_logger();
         let mut account_overrides = AccountOverrides::default();
         let slot_history_id = sysvar::slot_history::id();
-        let account = AccountSharedData::new(42, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(42, &Pubkey::default());
         account_overrides.set_slot_history(Some(account));
 
         let keypair = Keypair::new();
-        let account = AccountSharedData::new(1_000_000, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(1_000_000, &Pubkey::default());
 
         let mut program_account = AccountSharedData::default();
         program_account.set_lamports(1);
@@ -1276,7 +1276,7 @@ mod tests {
             )
             .unwrap()
         } else {
-            AccountSharedData::new(test_parameter.payer_init_balance, 0, &system_program::id())
+            AccountSharedData::empty(test_parameter.payer_init_balance, &system_program::id())
         };
         let result = validate_fee_payer(
             &mut account,
@@ -2310,7 +2310,7 @@ mod tests {
         let mock_bank = TestCallbacks::default();
         let mut account_loader = (&mock_bank).into();
 
-        let fee_payer_account = AccountSharedData::new(200, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(200, &Pubkey::default());
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_message,

@@ -1057,7 +1057,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
     if let Some(faucet_pubkey) = faucet_pubkey {
         bank.store_account(
             &faucet_pubkey,
-            &AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            &AccountSharedData::empty(faucet_lamports, &system_program::id()),
         );
     }
 
@@ -1135,7 +1135,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
 
             bank.store_account(
                 identity_pubkey,
-                &AccountSharedData::new(bootstrap_validator_lamports, 0, &system_program::id()),
+                &AccountSharedData::empty(bootstrap_validator_lamports, &system_program::id()),
             );
 
             let vote_account = vote_state::create_v4_account_with_authorized(

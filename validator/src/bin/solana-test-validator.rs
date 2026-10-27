@@ -497,7 +497,7 @@ fn main() {
         .tower_storage(tower_storage)
         .add_account(
             faucet_pubkey,
-            AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            AccountSharedData::empty(faucet_lamports, &system_program::id()),
         )
         .pubsub_config(pub_sub_config)
         .rpc_port(rpc_port)

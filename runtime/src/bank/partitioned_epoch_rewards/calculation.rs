@@ -1472,11 +1472,7 @@ mod tests {
             },
             credits_observed: vote_credits,
         };
-        let mut account = AccountSharedData::new(
-            rent_exempt_reserve + non_rent_lamports,
-            StakeStateV2::size_of(),
-            &solana_stake_interface::program::id(),
-        );
+        let mut account = AccountSharedData::new_with_data(rent_exempt_reserve + non_rent_lamports, vec![0; StakeStateV2::size_of()], &solana_stake_interface::program::id());
         account
             .set_state(&StakeStateV2::Stake(
                 Meta::default(),
@@ -1945,11 +1941,7 @@ mod tests {
         vote_address: &Pubkey,
         activation_epoch: Epoch,
     ) -> AccountSharedData {
-        let mut stake_account = AccountSharedData::new(
-            lamports,
-            StakeStateV2::size_of(),
-            &solana_sdk_ids::stake::id(),
-        );
+        let mut stake_account = AccountSharedData::new_with_data(lamports, vec![0; StakeStateV2::size_of()], &solana_sdk_ids::stake::id());
         let rent_exempt_reserve = lamports.saturating_sub(delegation);
 
         let meta = Meta {
@@ -1997,11 +1989,7 @@ mod tests {
                     &identity.pubkey(),
                     &Clock::default(),
                 );
-                let mut account = solana_account::AccountSharedData::new(
-                    *balance,
-                    VoteStateV4::size_of(),
-                    &solana_vote_program::id(),
-                );
+                let mut account = solana_account::AccountSharedData::new_with_data(*balance, vec![0; VoteStateV4::size_of()], &solana_vote_program::id());
                 account
                     .set_state(&VoteStateVersions::new_v4(vote_state))
                     .unwrap();
@@ -4167,11 +4155,7 @@ mod tests {
             // system account with lamports, success
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
-                    LAMPORTS_PER_SOL,
-                    0,
-                    &solana_sdk_ids::system_program::id(),
-                )),
+                Some(AccountSharedData::empty(LAMPORTS_PER_SOL, &solana_sdk_ids::system_program::id())),
                 true,
             ),
             // vote account, success
@@ -4181,21 +4165,13 @@ mod tests {
             // non-rent-exempt system account with 1 lamport, success with relaxed checks
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
-                    1,
-                    0,
-                    &solana_sdk_ids::system_program::id(),
-                )),
+                Some(AccountSharedData::empty(1, &solana_sdk_ids::system_program::id())),
                 true,
             ),
             // invalid owner, no commission
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
-                    LAMPORTS_PER_SOL,
-                    0,
-                    &Pubkey::new_unique(),
-                )),
+                Some(AccountSharedData::empty(LAMPORTS_PER_SOL, &Pubkey::new_unique())),
                 false,
             ),
             // reserved account, no commission
@@ -4399,7 +4375,7 @@ mod tests {
         let invalid_collector = Pubkey::new_unique();
         bank.store_account(
             &invalid_collector,
-            &AccountSharedData::new(LAMPORTS_PER_SOL, 0, &Pubkey::new_unique()),
+            &AccountSharedData::empty(LAMPORTS_PER_SOL, &Pubkey::new_unique()),
         );
 
         // Point the vote account at the invalid collector and advance to the reward
@@ -4679,11 +4655,7 @@ mod tests {
                 &Clock::default(),
             );
             vote_state.pending_delegator_rewards = pending_delegator_rewards;
-            let mut account = solana_account::AccountSharedData::new(
-                1_000_000_000,
-                VoteStateV4::size_of(),
-                &solana_vote_program::id(),
-            );
+            let mut account = solana_account::AccountSharedData::new_with_data(1_000_000_000, vec![0; VoteStateV4::size_of()], &solana_vote_program::id());
             account
                 .set_state(&VoteStateVersions::new_v4(vote_state))
                 .unwrap();

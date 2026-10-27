@@ -1986,7 +1986,7 @@ pub(crate) mod tests {
                 let lamports = bank.get_minimum_balance_for_rent_exemption(space);
                 let owner = &bpf_loader::id();
 
-                let mut account = AccountSharedData::new(lamports, space, owner);
+                let mut account = AccountSharedData::new_with_data(lamports, vec![0; space], owner);
                 account.set_executable(true);
                 account.data_as_mut_slice().copy_from_slice(&elf);
                 bank.store_account_and_update_capitalization(
@@ -2068,7 +2068,7 @@ pub(crate) mod tests {
                 let lamports = bank.get_minimum_balance_for_rent_exemption(space);
                 let owner = &bpf_loader::id();
 
-                let mut account = AccountSharedData::new(lamports, space, owner);
+                let mut account = AccountSharedData::new_with_data(lamports, vec![0; space], owner);
                 account.set_executable(true);
                 account.data_as_mut_slice().copy_from_slice(&elf);
                 bank.store_account_and_update_capitalization(

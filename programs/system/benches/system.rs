@@ -64,15 +64,15 @@ impl TestSetup {
         let transaction_accounts = vec![
             (
                 funding_address,
-                AccountSharedData::new(ACCOUNT_BALANCE, 0, &owner_address),
+                AccountSharedData::empty(ACCOUNT_BALANCE, &owner_address),
             ),
             (
                 derived_address,
-                AccountSharedData::new(0, 0, &owner_address),
+                AccountSharedData::empty(0, &owner_address),
             ),
             (
                 base_address,
-                AccountSharedData::new(ACCOUNT_BALANCE, 0, &owner_address),
+                AccountSharedData::empty(ACCOUNT_BALANCE, &owner_address),
             ),
         ];
 
@@ -451,7 +451,7 @@ impl TestSetup {
             (nonce_address, nonce_account),
             (
                 recipient_address,
-                AccountSharedData::new(0, 0, &recipient_address),
+                AccountSharedData::empty(0, &recipient_address),
             ),
             (
                 blockhash_id,

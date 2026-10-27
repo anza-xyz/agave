@@ -233,9 +233,9 @@ mod tests {
         let keypair0 = Keypair::new();
         let keypair1 = Keypair::new();
         let pubkey = solana_pubkey::new_rand();
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
 
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -329,10 +329,10 @@ mod tests {
         let fee_payer = Keypair::new();
         let (touched_key, untouched_key) = (solana_pubkey::new_rand(), solana_pubkey::new_rand());
 
-        let fee_payer_account = AccountSharedData::new(100, 0, &Pubkey::default());
-        let touched_account = AccountSharedData::new(1, 0, &Pubkey::default());
-        let untouched_account = AccountSharedData::new(2, 0, &Pubkey::default());
-        let program_account = AccountSharedData::new(3, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(100, &Pubkey::default());
+        let touched_account = AccountSharedData::empty(1, &Pubkey::default());
+        let untouched_account = AccountSharedData::empty(2, &Pubkey::default());
+        let program_account = AccountSharedData::empty(3, &Pubkey::default());
 
         // Writable accounts at indices 0, 1, 2, plus a readonly program at index 3.
         let instructions = vec![CompiledInstruction::new(3, &(), vec![1, 2])];
@@ -388,8 +388,8 @@ mod tests {
         let from = keypair_from_seed(&[1; 32]).unwrap();
         let from_address = from.pubkey();
         let to_address = Pubkey::new_unique();
-        let from_account_post = AccountSharedData::new(4199, 0, &Pubkey::default());
-        let to_account = AccountSharedData::new(2, 0, &Pubkey::default());
+        let from_account_post = AccountSharedData::empty(4199, &Pubkey::default());
+        let to_account = AccountSharedData::empty(2, &Pubkey::default());
 
         let instructions = vec![system_instruction::transfer(&from_address, &to_address, 42)];
         let message = Message::new(&instructions, Some(&from_address));
@@ -400,7 +400,7 @@ mod tests {
         ];
         let tx = new_sanitized_tx(&[&from], message, blockhash);
 
-        let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
+        let from_account_pre = AccountSharedData::empty(4242, &Pubkey::default());
 
         let touched_flags =
             touched_flags_for_test(transaction_accounts.len(), transaction_accounts.len());
@@ -467,10 +467,10 @@ mod tests {
         )));
         let nonce_account_post =
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
-        let from_account_post = AccountSharedData::new(4199, 0, &Pubkey::default());
-        let to_account = AccountSharedData::new(2, 0, &Pubkey::default());
-        let nonce_authority_account = AccountSharedData::new(3, 0, &Pubkey::default());
-        let recent_blockhashes_sysvar_account = AccountSharedData::new(4, 0, &Pubkey::default());
+        let from_account_post = AccountSharedData::empty(4199, &Pubkey::default());
+        let to_account = AccountSharedData::empty(2, &Pubkey::default());
+        let nonce_authority_account = AccountSharedData::empty(3, &Pubkey::default());
+        let recent_blockhashes_sysvar_account = AccountSharedData::empty(4, &Pubkey::default());
 
         let instructions = vec![
             system_instruction::advance_nonce_account(&nonce_address, &nonce_authority.pubkey()),
@@ -495,7 +495,7 @@ mod tests {
         )));
         let nonce_account_pre =
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
-        let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
+        let from_account_pre = AccountSharedData::empty(4242, &Pubkey::default());
 
         let touched_flags =
             touched_flags_for_test(transaction_accounts.len(), transaction_accounts.len());
@@ -580,10 +580,10 @@ mod tests {
         )));
         let nonce_account_post =
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
-        let from_account_post = AccountSharedData::new(4200, 0, &Pubkey::default());
-        let to_account = AccountSharedData::new(2, 0, &Pubkey::default());
-        let nonce_authority_account = AccountSharedData::new(3, 0, &Pubkey::default());
-        let recent_blockhashes_sysvar_account = AccountSharedData::new(4, 0, &Pubkey::default());
+        let from_account_post = AccountSharedData::empty(4200, &Pubkey::default());
+        let to_account = AccountSharedData::empty(2, &Pubkey::default());
+        let nonce_authority_account = AccountSharedData::empty(3, &Pubkey::default());
+        let recent_blockhashes_sysvar_account = AccountSharedData::empty(4, &Pubkey::default());
 
         let instructions = vec![
             system_instruction::advance_nonce_account(&nonce_address, &nonce_authority.pubkey()),
@@ -678,7 +678,7 @@ mod tests {
         let blockhash = Hash::new_unique();
         let tx = new_sanitized_tx(&[&from], message, blockhash);
 
-        let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
+        let from_account_pre = AccountSharedData::empty(4242, &Pubkey::default());
 
         let txs = vec![tx];
         let processing_results = vec![Ok(ProcessedTransaction::FeesOnly(Box::new(

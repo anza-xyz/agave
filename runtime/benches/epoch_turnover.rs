@@ -72,11 +72,7 @@ fn create_stake_account(
 
     let stake_state = StakeStateV2::Stake(meta, stake, StakeFlags::empty());
 
-    let mut account = AccountSharedData::new(
-        total_lamports,
-        StakeStateV2::size_of(),
-        &stake_program::id(),
-    );
+    let mut account = AccountSharedData::new_with_data(total_lamports, vec![0; StakeStateV2::size_of()], &stake_program::id());
     account.set_state(&stake_state).unwrap();
     Account::from(account)
 }
@@ -96,7 +92,7 @@ fn populate_vote_accounts(
             v4.inflation_rewards_collector = commission_collector;
             let lamports = bank.rent_collector().rent.minimum_balance(0);
             let account =
-                AccountSharedData::new(lamports, 0, &solana_sdk_ids::system_program::id());
+                AccountSharedData::empty(lamports, &solana_sdk_ids::system_program::id());
             bank.store_account(&commission_collector, &account);
         }
 

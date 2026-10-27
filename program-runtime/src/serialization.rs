@@ -1549,33 +1549,29 @@ mod tests {
     #[test]
     fn test_access_violation_handler() {
         let program_id = Pubkey::new_unique();
-        let shared_account = AccountSharedData::new(0, 4, &program_id);
+        let shared_account = AccountSharedData::new_with_data(0, vec![0; 4], &program_id);
         let mut transaction_context = TransactionContext::new(
             vec![
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(0, 4, &program_id),
+                    AccountSharedData::new_with_data(0, vec![0; 4], &program_id),
                 ), // readonly
                 (Pubkey::new_unique(), shared_account.clone()), // writable shared
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(0, 0, &program_id),
+                    AccountSharedData::empty(0, &program_id),
                 ), // another writable account
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(
-                        0,
-                        MAX_PERMITTED_DATA_LENGTH as usize - 0x100,
-                        &program_id,
-                    ),
+                    AccountSharedData::new_with_data(0, vec![0; MAX_PERMITTED_DATA_LENGTH as usize - 0x100], &program_id),
                 ), // almost max sized writable account
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(0, 0, &program_id),
+                    AccountSharedData::empty(0, &program_id),
                 ), // writable dummy to burn accounts_resize_delta
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(0, 0x3000, &program_id),
+                    AccountSharedData::new_with_data(0, vec![0; 0x3000], &program_id),
                 ), // writable dummy to burn accounts_resize_delta
                 (program_id, AccountSharedData::default()),     // program
             ],
@@ -1769,7 +1765,7 @@ mod tests {
         let transaction_accounts = vec![
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(0, 4, &program_id),
+                AccountSharedData::new_with_data(0, vec![0; 4], &program_id),
             ),
             (
                 solana_pubkey::new_rand(),

@@ -268,7 +268,7 @@ mod test {
         let tx_accounts = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; data_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -344,7 +344,7 @@ mod test {
         let tx_accounts = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; data_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -387,7 +387,7 @@ mod test {
         let tx_accounts = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; data_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -437,7 +437,7 @@ mod test {
         let mut tx_accounts = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; data_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -506,7 +506,7 @@ mod test {
         let tx_accounts_pre = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, pre_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; pre_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -523,7 +523,7 @@ mod test {
         let tx_accounts_post = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, post_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; post_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -560,7 +560,7 @@ mod test {
         let tx_accounts_post = vec![
             (
                 account,
-                AccountSharedData::new(post_min, post_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(post_min, vec![0; post_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -604,7 +604,7 @@ mod test {
         let tx_accounts_pre = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, pre_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; pre_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -621,7 +621,7 @@ mod test {
         let tx_accounts_post = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, post_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; post_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -667,7 +667,7 @@ mod test {
         let tx_accounts_pre = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &owner_pre),
+                AccountSharedData::new_with_data(pre_balance, vec![0; data_len], &owner_pre),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -684,7 +684,7 @@ mod test {
         let tx_accounts_post = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &owner_post),
+                AccountSharedData::new_with_data(pre_balance, vec![0; data_len], &owner_post),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),

@@ -124,31 +124,31 @@ pub mod tests {
         let stakes: HashMap<Pubkey, (u64, Account)> = [
             (
                 pubkey0,
-                (LAMPORTS_PER_SOL, Account::new(1, 0, &Pubkey::default())),
+                (LAMPORTS_PER_SOL, Account::new_with_data(1, vec![0; 0], &Pubkey::default())),
             ),
             (
                 pubkey1,
-                (LAMPORTS_PER_SOL, Account::new(1, 0, &Pubkey::default())),
+                (LAMPORTS_PER_SOL, Account::new_with_data(1, vec![0; 0], &Pubkey::default())),
             ),
             (
                 pubkey2,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey3,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey4,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
         ]
@@ -230,21 +230,21 @@ pub mod tests {
                 pubkey0,
                 (
                     1_000_000 * LAMPORTS_PER_SOL, // 1/3 stake
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey1,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey2,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
         ]
@@ -277,14 +277,14 @@ pub mod tests {
                 pubkey0,
                 (
                     1_000_001 * LAMPORTS_PER_SOL, // 1/3 stake
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey1,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
         ]
@@ -332,21 +332,21 @@ pub mod tests {
                 pubkey0,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey1,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey2,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
         ]
@@ -469,21 +469,21 @@ pub mod tests {
                 pubkey0,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey1,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey2,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
         ]
@@ -601,21 +601,21 @@ pub mod tests {
                 pubkey0,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey1,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey2,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
         ]
@@ -736,21 +736,21 @@ pub mod tests {
                 pubkey0,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey1,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
             (
                 pubkey2,
                 (
                     1_000_000 * LAMPORTS_PER_SOL,
-                    Account::new(1, 0, &Pubkey::default()),
+                    Account::new_with_data(1, vec![0; 0], &Pubkey::default()),
                 ),
             ),
         ]

@@ -88,11 +88,7 @@ pub fn create_program_with_elf(
 pub fn create_buffer_with_elf(bank: &Bank, authority_address: &Pubkey, elf: &[u8]) -> Pubkey {
     let buffer_address = Pubkey::new_unique();
     let size = UpgradeableLoaderState::size_of_buffer(elf.len());
-    let mut account = AccountSharedData::new(
-        bank.get_minimum_balance_for_rent_exemption(size),
-        size,
-        &bpf_loader_upgradeable::id(),
-    );
+    let mut account = AccountSharedData::new_with_data(bank.get_minimum_balance_for_rent_exemption(size), vec![0; size], &bpf_loader_upgradeable::id());
     account
         .set_state(&UpgradeableLoaderState::Buffer {
             authority_address: Some(*authority_address),

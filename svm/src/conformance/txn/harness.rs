@@ -259,16 +259,16 @@ mod tests {
         };
 
         let accounts = with_system_program(vec![
-            (from, Account::new(FROM_LAMPORTS, 0, &system_program::id())),
+            (from, Account::new_with_data(FROM_LAMPORTS, vec![0; 0], &system_program::id())),
             (
                 to_one,
-                Account::new(TO_ONE_LAMPORTS, 0, &system_program::id()),
+                Account::new_with_data(TO_ONE_LAMPORTS, vec![0; 0], &system_program::id()),
             ),
             (
                 to_two,
-                Account::new(TO_TWO_LAMPORTS, 0, &system_program::id()),
+                Account::new_with_data(TO_TWO_LAMPORTS, vec![0; 0], &system_program::id()),
             ),
-            (unused, Account::new(1, 0, &system_program::id())),
+            (unused, Account::new_with_data(1, vec![0; 0], &system_program::id())),
         ]);
         let message = sanitized_message_from_versioned_message(message, &accounts);
         let context =
@@ -325,9 +325,9 @@ mod tests {
         };
 
         let accounts = with_system_program(vec![
-            (c, Account::new(1, 0, &system_program::id())),
-            (b, Account::new(1, 0, &system_program::id())),
-            (a, Account::new(1, 0, &system_program::id())),
+            (c, Account::new_with_data(1, vec![0; 0], &system_program::id())),
+            (b, Account::new_with_data(1, vec![0; 0], &system_program::id())),
+            (a, Account::new_with_data(1, vec![0; 0], &system_program::id())),
         ]);
         let message = sanitized_message_from_versioned_message(message, &accounts);
         let context =
@@ -374,7 +374,7 @@ mod tests {
             v0::Message::try_compile(&payer, &instructions, &[lookup_table], blockhash).unwrap();
 
         let accounts = with_system_program(vec![
-            (to, Account::new(1, 0, &system_program::id())),
+            (to, Account::new_with_data(1, vec![0; 0], &system_program::id())),
             (
                 lookup_table_key,
                 Account {
@@ -385,7 +385,7 @@ mod tests {
                     rent_epoch: 0,
                 },
             ),
-            (payer, Account::new(5_000_000, 0, &system_program::id())),
+            (payer, Account::new_with_data(5_000_000, vec![0; 0], &system_program::id())),
             (
                 clock_pubkey,
                 Account::new_data(
@@ -440,8 +440,8 @@ mod tests {
         ));
 
         let accounts = with_system_program(vec![
-            (from, Account::new(5_000_000, 0, &system_program::id())),
-            (to, Account::new(1, 0, &system_program::id())),
+            (from, Account::new_with_data(5_000_000, vec![0; 0], &system_program::id())),
+            (to, Account::new_with_data(1, vec![0; 0], &system_program::id())),
         ]);
         let message = sanitized_message_from_versioned_message(message, &accounts);
         let context = TxnContext {

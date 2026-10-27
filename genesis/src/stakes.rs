@@ -83,7 +83,7 @@ pub fn create_and_add_stakes(
         .entry(authorized.staker)
         .or_insert_with(|| {
             stakes_lamports -= staker_rent_reserve;
-            Account::new(staker_rent_reserve, 0, &system_program::id())
+            Account::new_with_data(staker_rent_reserve, vec![0; 0], &system_program::id())
         })
         .lamports += staker_fees;
 

@@ -598,7 +598,7 @@ mod tests {
 
         for i in 0..MAX_ENTRIES {
             let pubkey = Pubkey::new_unique();
-            let account = AccountSharedData::new(i as u64, ACCOUNT_DATA_SIZE, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(i as u64, vec![0; ACCOUNT_DATA_SIZE], &Pubkey::default());
             cache.store(pubkey, i as Slot, account);
         }
         // we haven't exceeded the max cache size yet, so no evictions should've happened
@@ -609,7 +609,7 @@ mod tests {
         // store another account to trigger evictions
         let slot = MAX_ENTRIES as Slot;
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new(42, ACCOUNT_DATA_SIZE, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(42, vec![0; ACCOUNT_DATA_SIZE], &Pubkey::default());
         cache.store(pubkey, slot, account);
 
         // wait for the evictor to run...
@@ -642,18 +642,14 @@ mod tests {
 
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let slot = i as Slot;
-            let account = AccountSharedData::new(i as u64, ACCOUNT_DATA_SIZE, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(i as u64, vec![0; ACCOUNT_DATA_SIZE], &Pubkey::default());
             cache.store(*pubkey, slot, account);
         }
 
         // Updating an existing entry should not change the tracked length.
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let slot = i.saturating_add(1) as Slot;
-            let account = AccountSharedData::new(
-                i.saturating_add(1) as u64,
-                ACCOUNT_DATA_SIZE,
-                &Pubkey::default(),
-            );
+            let account = AccountSharedData::new_with_data(i.saturating_add(1) as u64, vec![0; ACCOUNT_DATA_SIZE], &Pubkey::default());
             cache.store(*pubkey, slot, account);
             assert_eq!(cache.cache_len(), NUM_ACCOUNTS);
         }
