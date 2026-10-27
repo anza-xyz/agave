@@ -1,7 +1,4 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[path = "local_cluster/reward_recovery.rs"]
-mod reward_recovery;
-
 use {
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
@@ -2265,7 +2262,7 @@ fn test_alpenglow_1() {
     test_alpenglow_nodes_basic(NUM_NODES, 0);
 }
 
-/// Multi-node Alpenglow baseline where every validator stays online with reward recovery.
+/// Multi-node Alpenglow baseline where every validator stays online.
 /// This does not cover offline-node or restart behavior.
 #[test]
 #[serial]

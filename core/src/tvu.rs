@@ -914,7 +914,6 @@ pub mod tests {
             None, // completed_data_sets_sender
             None, // bank_notification_sender
             gossip_confirmed_slots_receiver,
-            // Default reward recovery includes a verifier thread that must also exit.
             TvuConfig::default(),
             &Arc::new(MaxSlots::default()),
             None, // block_metadata_notifier

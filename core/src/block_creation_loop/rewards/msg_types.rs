@@ -18,12 +18,7 @@ pub(crate) struct RewardRequest {
 }
 
 /// Response when the reward certs are built successfully.
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    qualifier_attr::qualifiers(pub),
-    qualifier_attr::field_qualifiers(validators(pub))
-)]
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct RewardRespSucc {
     /// Skip reward certificate.  None if no skip votes were registered.
     pub(crate) skip: Option<SkipRewardCertificate>,
@@ -38,13 +33,9 @@ pub(crate) struct RewardRespSucc {
 pub(crate) struct RewardResponse {
     /// The result of building reward certs for `bank_slot`.
     pub(crate) result: Result<RewardRespSucc, BuildRewardCertsRespError>,
-    /// Optional improvement to this exact direct-vote snapshot. The baseline is published first;
-    /// its consumer never waits for recovery to finish.
-    pub(super) recovery: Option<Receiver<RewardRespSucc>>,
 }
 
 /// The request token to be used to receive responses on previously sent requests to build reward certs.
 pub(crate) struct RewardRequestToken {
     pub(super) reply_receiver: Receiver<RewardResponse>,
-    pub(super) request_sent: Instant,
 }

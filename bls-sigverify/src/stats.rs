@@ -189,22 +189,17 @@ pub(super) struct SigVerifyCertStats {
     /// Number of certs skipped because another cert of the same `CertificateType` was verified in
     /// the same batch.
     pub(super) redundant_certs_skipped: Saturating<u64>,
-    /// Number of reward candidates beyond the per-type limit in one batch.
-    pub(super) reward_candidate_cap_dropped: Saturating<u64>,
-    /// Number of reward candidates dropped as copies of a retained signer set, or as exact
-    /// repeats within a batch.
-    pub(super) reward_candidates_filtered: Saturating<u64>,
-    /// Number of inputs handed to the reward certificate verifier.
-    pub(super) reward_inputs_sent: Saturating<u64>,
-    /// Number of reward certificate verifier inputs dropped because it was behind.
-    pub(super) reward_inputs_dropped: Saturating<u64>,
     /// Number of times we are banning a validator.
     pub(super) banning_validator: Saturating<u64>,
 
     /// Number of times cert verification failed.
     pub(super) certificate_verification_failed: Saturating<u64>,
+    /// Number of certs that only rewards needed, which [`verify_and_send_certificates`]
+    /// successfully verified the signature of.
+    pub(super) certs_for_rewards_sig_verified: Saturating<u64>,
 
     pub(super) pool_sender: SenderStats,
+    pub(super) rewards_sender: SenderStats,
 
     /// Stats for [`verify_and_send_certificates`].
     pub(super) fn_verify_and_send_certs_stats: WelfordStats,
@@ -217,26 +212,22 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             redundant_certs_skipped,
-            reward_candidate_cap_dropped,
-            reward_candidates_filtered,
-            reward_inputs_sent,
-            reward_inputs_dropped,
             banning_validator,
             certificate_verification_failed,
+            certs_for_rewards_sig_verified,
             pool_sender,
+            rewards_sender,
             fn_verify_and_send_certs_stats,
         } = other;
         self.certs_to_sig_verify += certs_to_sig_verify;
         self.sig_verified_certs += sig_verified_certs;
         self.unnecessary_certs_verified += unnecessary_certs_verified;
         self.redundant_certs_skipped += redundant_certs_skipped;
-        self.reward_candidate_cap_dropped += reward_candidate_cap_dropped;
-        self.reward_candidates_filtered += reward_candidates_filtered;
-        self.reward_inputs_sent += reward_inputs_sent;
-        self.reward_inputs_dropped += reward_inputs_dropped;
         self.banning_validator += banning_validator;
         self.certificate_verification_failed += certificate_verification_failed;
+        self.certs_for_rewards_sig_verified += certs_for_rewards_sig_verified;
         self.pool_sender.merge(pool_sender);
+        self.rewards_sender.merge(rewards_sender);
         self.fn_verify_and_send_certs_stats
             .merge(fn_verify_and_send_certs_stats);
     }
@@ -247,17 +238,16 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             redundant_certs_skipped,
-            reward_candidate_cap_dropped,
-            reward_candidates_filtered,
-            reward_inputs_sent,
-            reward_inputs_dropped,
             banning_validator,
             certificate_verification_failed,
+            certs_for_rewards_sig_verified,
             pool_sender,
+            rewards_sender,
             fn_verify_and_send_certs_stats,
         } = self;
 
         pool_sender.report();
+        rewards_sender.report();
         datapoint_info!(
             "bls_cert_sigverify_stats",
             ("certs_to_sig_verify", certs_to_sig_verify.0, i64),
@@ -268,22 +258,15 @@ impl SigVerifyCertStats {
                 i64
             ),
             ("redundant_certs_skipped", redundant_certs_skipped.0, i64),
-            (
-                "reward_candidate_cap_dropped",
-                reward_candidate_cap_dropped.0,
-                i64
-            ),
-            (
-                "reward_candidates_filtered",
-                reward_candidates_filtered.0,
-                i64
-            ),
-            ("reward_inputs_sent", reward_inputs_sent.0, i64),
-            ("reward_inputs_dropped", reward_inputs_dropped.0, i64),
             ("banning_validator", banning_validator.0, i64),
             (
                 "certificate_verification_failed",
                 certificate_verification_failed.0,
+                i64
+            ),
+            (
+                "certs_for_rewards_sig_verified",
+                certs_for_rewards_sig_verified.0,
                 i64
             ),
             (
@@ -307,99 +290,13 @@ impl Default for SigVerifyCertStats {
             sig_verified_certs: Saturating(0),
             unnecessary_certs_verified: Saturating(0),
             redundant_certs_skipped: Saturating(0),
-            reward_candidate_cap_dropped: Saturating(0),
-            reward_candidates_filtered: Saturating(0),
-            reward_inputs_sent: Saturating(0),
-            reward_inputs_dropped: Saturating(0),
             banning_validator: Saturating(0),
             certificate_verification_failed: Saturating(0),
+            certs_for_rewards_sig_verified: Saturating(0),
             pool_sender: new_cert_stats_pool_sender_stats(),
+            rewards_sender: SenderStats::new("bls_cert_sigverify_rewards_sender_stats"),
             fn_verify_and_send_certs_stats: WelfordStats::default(),
         }
-    }
-}
-
-/// Stats for reward certificate verification, on its own thread.
-pub(super) struct RewardCertVerifierStats {
-    last_report: Instant,
-    /// Number of consensus certificates recorded for reward coverage.
-    pub(super) verified_inputs: Saturating<u64>,
-    /// Number of reward candidates received.
-    pub(super) candidates_received: Saturating<u64>,
-    /// Number of reward candidates whose reward window closed before they were handled.
-    pub(super) late_candidates: Saturating<u64>,
-    /// Number of reward candidates whose signature was checked.
-    pub(super) certs_to_sig_verify: Saturating<u64>,
-    /// Number of reward candidates whose signature verified.
-    pub(super) sig_verified_certs: Saturating<u64>,
-    /// Number of reward candidates that failed verification. Their senders are banned.
-    pub(super) certificate_verification_failed: Saturating<u64>,
-    pub(super) candidate_cap_dropped: Saturating<u64>,
-    pub(super) coverage_dropped: Saturating<u64>,
-    pub(super) budget_dropped: Saturating<u64>,
-    pub(super) global_budget_dropped: Saturating<u64>,
-    pub(super) budget_cache_full: Saturating<u64>,
-}
-
-impl Default for RewardCertVerifierStats {
-    fn default() -> Self {
-        Self {
-            last_report: Instant::now(),
-            verified_inputs: Saturating(0),
-            candidates_received: Saturating(0),
-            late_candidates: Saturating(0),
-            certs_to_sig_verify: Saturating(0),
-            sig_verified_certs: Saturating(0),
-            certificate_verification_failed: Saturating(0),
-            candidate_cap_dropped: Saturating(0),
-            coverage_dropped: Saturating(0),
-            budget_dropped: Saturating(0),
-            global_budget_dropped: Saturating(0),
-            budget_cache_full: Saturating(0),
-        }
-    }
-}
-
-impl RewardCertVerifierStats {
-    pub(super) fn maybe_report(&mut self) {
-        if self.last_report.elapsed() >= DURATION_INTERVAL {
-            self.report();
-        }
-    }
-
-    pub(super) fn report(&mut self) {
-        let Self {
-            last_report: _,
-            verified_inputs,
-            candidates_received,
-            late_candidates,
-            certs_to_sig_verify,
-            sig_verified_certs,
-            certificate_verification_failed,
-            candidate_cap_dropped,
-            coverage_dropped,
-            budget_dropped,
-            global_budget_dropped,
-            budget_cache_full,
-        } = std::mem::take(self);
-        datapoint_info!(
-            "bls_cert_sigverify_rewards_stats",
-            ("verified_inputs", verified_inputs.0, i64),
-            ("candidates_received", candidates_received.0, i64),
-            ("late_candidates", late_candidates.0, i64),
-            ("certs_to_sig_verify", certs_to_sig_verify.0, i64),
-            ("sig_verified_certs", sig_verified_certs.0, i64),
-            (
-                "certificate_verification_failed",
-                certificate_verification_failed.0,
-                i64
-            ),
-            ("candidate_cap_dropped", candidate_cap_dropped.0, i64),
-            ("coverage_dropped", coverage_dropped.0, i64),
-            ("budget_dropped", budget_dropped.0, i64),
-            ("global_budget_dropped", global_budget_dropped.0, i64),
-            ("budget_cache_full", budget_cache_full.0, i64),
-        );
     }
 }
 

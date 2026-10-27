@@ -2,7 +2,8 @@
 
 use {
     crate::block_creation_loop::rewards::certs_builder::entry::{
-        PartialCert, partial_cert::BuildResult,
+        PartialCert,
+        partial_cert::{BuildResult, CertificateStats},
     },
     agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor::aggregate_accumulator::AggregateAccumulatorError,
@@ -10,8 +11,11 @@ use {
         consensus_message::{BlockId, VoteMessage},
         reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
     },
+    bitvec::vec::BitVec,
+    solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
+    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
     std::{cmp::Reverse, collections::HashMap},
 };
 
@@ -35,7 +39,7 @@ impl NotarEntry {
     /// Accumulates a new observed vote aggregate from another validator.
     pub(super) fn add_aggregate(
         &mut self,
-        aggregate: &VoteAggregate,
+        aggregate: VoteAggregate,
         vote_account_pubkeys: Vec<Pubkey>,
         block_id: BlockId,
         max_validators: usize,
@@ -50,7 +54,7 @@ impl NotarEntry {
     /// Accumulates a new observed own vote msg.
     pub(super) fn add_own_msg(
         &mut self,
-        vote_msg: &VoteMessage,
+        vote_msg: VoteMessage,
         vote_account_pubkey: Pubkey,
         block_id: BlockId,
         max_validators: usize,
@@ -62,18 +66,35 @@ impl NotarEntry {
         partial.add_own_msg(vote_msg, vote_account_pubkey)
     }
 
+    /// Stores a verified certificate from another validator.
+    pub(super) fn add_certificate(
+        &mut self,
+        ranks: &BitVec<u8>,
+        signature: BLSSignature,
+        block_id: BlockId,
+        max_validators: usize,
+    ) {
+        let partial = self
+            .partials
+            .entry(block_id)
+            .or_insert_with(|| PartialCert::new(max_validators));
+        partial.add_certificate(ranks, signature)
+    }
+
     /// Builds a [`NotarRewardCertificate`] and a list of validators in the certs from the observed votes.
     pub(super) fn build_cert(
         self,
         reward_slot: Slot,
+        rank_map: &BLSPubkeyToRankMap,
+        stats: &mut CertificateStats,
     ) -> Result<Option<(NotarRewardCertificate, Vec<Pubkey>)>, BuildRewardCertsRespError> {
         // We can only submit one notar rewards certificate, but different validators may vote for
-        // different block ids. Try them in descending stake order to maximize leader rewards,
+        // different block ids. Try them in descending order of the stake of the collected votes,
         // skipping empty candidates and aggregates with an identity signature.
         let mut candidates = self.partials.into_iter().collect::<Vec<_>>();
         candidates.sort_unstable_by_key(|(_block_id, partial)| Reverse(partial.stake()));
         for (block_id, partial) in candidates {
-            let (signature, bitmap, validators) = match partial.build_sig_bitmap() {
+            let (signature, bitmap, validators) = match partial.build(rank_map, stats) {
                 BuildResult::Empty | BuildResult::Identity => continue,
                 BuildResult::EncodingError(e) => {
                     return Err(BuildRewardCertsRespError::Encoding(e));
@@ -96,12 +117,22 @@ mod tests {
     use {
         super::*,
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
-            get_keypair_with_stakes, get_keypairs, new_identity_reward_vote_aggregate,
+            get_keypairs, get_rank_map_and_keypairs, new_identity_reward_vote_aggregate,
             new_reward_vote_aggregate, validate_bitmap,
         },
         agave_votor_messages::{consensus_message::Block, vote::Vote},
         rand::Rng,
     };
+
+    fn build(
+        entry: NotarEntry,
+        slot: Slot,
+        rank_map: &BLSPubkeyToRankMap,
+    ) -> Option<(NotarRewardCertificate, Vec<Pubkey>)> {
+        entry
+            .build_cert(slot, rank_map, &mut CertificateStats::default())
+            .unwrap()
+    }
 
     #[test]
     fn validator_add_vote() {
@@ -122,7 +153,7 @@ mod tests {
         let (aggregate, vote_account_pubkeys) =
             new_reward_vote_aggregate(notar_vote, rank as usize, &keypairs, None, shred_version);
         entry
-            .add_aggregate(&aggregate, vote_account_pubkeys, blockid0, max_validators)
+            .add_aggregate(aggregate, vote_account_pubkeys, blockid0, max_validators)
             .unwrap();
     }
 
@@ -131,11 +162,11 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let stakes = vec![1_000, 900, 10, 10, 10];
-        let keypairs = get_keypair_with_stakes(stakes.clone(), slot);
+        let (rank_map, keypairs) = get_rank_map_and_keypairs(stakes.clone(), slot);
         let shred_version = rand::rng().random();
 
         let mut entry = NotarEntry::new();
-        assert_eq!(entry.clone().build_cert(slot).unwrap(), None);
+        assert_eq!(build(entry.clone(), slot, &rank_map), None);
 
         let blockid0 = BlockId::new_unique();
         let blockid1 = BlockId::new_unique();
@@ -148,7 +179,7 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(notar, rank, &keypairs, Some(&stakes), shred_version);
             entry
-                .add_aggregate(&aggregate, vote_account_pubkeys, blockid0, max_validators)
+                .add_aggregate(aggregate, vote_account_pubkeys, blockid0, max_validators)
                 .unwrap();
         }
         for rank in 2..5 {
@@ -159,10 +190,10 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(notar, rank, &keypairs, Some(&stakes), shred_version);
             entry
-                .add_aggregate(&aggregate, vote_account_pubkeys, blockid1, max_validators)
+                .add_aggregate(aggregate, vote_account_pubkeys, blockid1, max_validators)
                 .unwrap();
         }
-        let (notar_cert, _) = entry.build_cert(slot).unwrap().unwrap();
+        let (notar_cert, _) = build(entry, slot, &rank_map).unwrap();
         assert_eq!(notar_cert.slot, slot);
         // We should pick the block id with the most stake (not the most votes)
         assert_eq!(notar_cert.block_id, blockid0);
@@ -174,7 +205,7 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
-        let keypairs = get_keypairs(max_validators, slot);
+        let (rank_map, keypairs) = get_rank_map_and_keypairs(vec![100; max_validators], slot);
         let mut entry = NotarEntry::new();
 
         let blockid0 = BlockId::new_unique();
@@ -189,7 +220,7 @@ mod tests {
             shred_version,
         );
         entry
-            .add_aggregate(&aggregate, vote_account_pubkeys, blockid0, max_validators)
+            .add_aggregate(aggregate, vote_account_pubkeys, blockid0, max_validators)
             .unwrap();
 
         let blockid1 = BlockId::new_unique();
@@ -204,7 +235,7 @@ mod tests {
             shred_version,
         );
         entry
-            .add_aggregate(&aggregate, vote_account_pubkeys, blockid1, max_validators)
+            .add_aggregate(aggregate, vote_account_pubkeys, blockid1, max_validators)
             .unwrap();
 
         let blockid2 = BlockId::new_unique();
@@ -216,10 +247,10 @@ mod tests {
             new_reward_vote_aggregate(notar, 4, &keypairs, None, shred_version);
         let expected_validators = vote_account_pubkeys.clone();
         entry
-            .add_aggregate(&aggregate, vote_account_pubkeys, blockid2, max_validators)
+            .add_aggregate(aggregate, vote_account_pubkeys, blockid2, max_validators)
             .unwrap();
 
-        let (notar_cert, validators) = entry.build_cert(slot).unwrap().unwrap();
+        let (notar_cert, validators) = build(entry, slot, &rank_map).unwrap();
         assert_eq!(notar_cert.block_id, blockid2);
         assert_eq!(validators, expected_validators);
         validate_bitmap(notar_cert.bitmap(), 1, max_validators);

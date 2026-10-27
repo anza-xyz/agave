@@ -1,77 +1,159 @@
 use {
-    crate::block_creation_loop::rewards::msg_types::RewardRespSucc,
-    agave_bls_sigverify::rewards::RewardInput,
+    crate::block_creation_loop::rewards::msg_types::{
+        RewardRequest, RewardRespSucc, RewardResponse,
+    },
+    agave_bls_sigverify::rewards::{RewardInput, reward_vote_and_signers},
+    agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
-    entry::Entry,
+    crossbeam_channel::RecvError,
+    entry::{CertificateStats, Entry},
     solana_clock::Slot,
+    solana_gossip::cluster_info::ClusterInfo,
+    solana_measure::measure_us,
     solana_runtime::bank::Bank,
-    std::collections::BTreeMap,
+    std::{
+        collections::BTreeMap,
+        sync::Arc,
+        time::{Duration, Instant},
+    },
 };
 
 mod entry;
-#[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-pub(super) mod recovery;
 
-#[derive(Default)]
-#[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-pub(super) struct InputStats {
-    pub(super) purged_state: u64,
-    pub(super) late_vote_aggregates: u64,
+const REPORT_INTERVAL: Duration = Duration::from_secs(1);
+
+struct Metrics {
+    last_report: Instant,
+    build_us: WelfordStats,
+    purged_state: u64,
+    queue_waited_us: WelfordStats,
+    certificates: CertificateStats,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            last_report: Instant::now(),
+            build_us: WelfordStats::default(),
+            purged_state: 0,
+            queue_waited_us: WelfordStats::default(),
+            certificates: CertificateStats::default(),
+        }
+    }
+}
+
+impl Metrics {
+    fn maybe_report(&mut self) {
+        let Self {
+            last_report,
+            build_us,
+            purged_state,
+            queue_waited_us,
+            certificates,
+        } = self;
+        if last_report.elapsed() > REPORT_INTERVAL {
+            datapoint_info!(
+                "reward-certs-builder",
+                ("build_us_count", build_us.count(), i64),
+                ("build_us_max", build_us.maximum::<u64>(), Option<i64>),
+                ("build_us_mean", build_us.mean::<u64>(), Option<i64>),
+                ("queue_waited_us_count", queue_waited_us.count(), i64),
+                ("queue_waited_us_max", queue_waited_us.maximum::<u64>(), Option<i64>),
+                ("queue_waited_us_mean", queue_waited_us.mean::<u64>(), Option<i64>),
+                ("purged_state", *purged_state, i64),
+                ("validators_from_certs", certificates.validators_from_certs, i64),
+                ("partially_overlapping_certs", certificates.partially_overlapping_certs, i64),
+            );
+            *self = Self::default();
+        }
+    }
 }
 
 /// Container to store state needed to generate reward certificates.
-#[derive(Default)]
-#[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
 pub(super) struct CertsBuilder {
     /// Per [`Slot`], stores the skip and notar votes.
     aggregates: BTreeMap<Slot, Entry>,
-    /// A sealed slot must not be recreated by a late vote or worker completion.
-    sealed_through: Option<Slot>,
+    /// Stores the latest pubkey for the current node.
+    cluster_info: Arc<ClusterInfo>,
+    metrics: Metrics,
 }
 
 impl CertsBuilder {
     /// Constructs a new instance of [`CertsBuilder`].
-    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-    pub(super) fn new() -> Self {
-        Self::default()
+    pub(super) fn new(cluster_info: Arc<ClusterInfo>) -> Self {
+        Self {
+            aggregates: BTreeMap::default(),
+            cluster_info,
+            metrics: Metrics::default(),
+        }
+    }
+
+    pub(super) fn maybe_report(&mut self) {
+        self.metrics.maybe_report();
     }
 
     /// Builds reward certificates.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-    pub(super) fn build_certs(
+    fn build_certs(
         &mut self,
         bank_slot: Slot,
     ) -> Result<RewardRespSucc, BuildRewardCertsRespError> {
         let Some(reward_slot) = bank_slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
             return Ok(RewardRespSucc::default());
         };
-        self.sealed_through = Some(
-            self.sealed_through
-                .map_or(reward_slot, |slot| slot.max(reward_slot)),
-        );
         // we assume that the block creation loop will only ever request to build reward certs in a
         // strictly increasing order so we can drop older state
         self.aggregates = self.aggregates.split_off(&reward_slot);
-        self.aggregates.remove(&reward_slot).map_or_else(
-            || Ok(RewardRespSucc::default()),
-            |entry| entry.build_certs(reward_slot),
-        )
+        match self.aggregates.remove(&reward_slot) {
+            None => Ok(RewardRespSucc::default()),
+            Some(entry) => entry.build_certs(reward_slot, &mut self.metrics.certificates),
+        }
     }
 
-    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-    pub(super) fn handle_input(&mut self, root_bank: &Bank, input: &RewardInput) -> InputStats {
-        let mut stats = InputStats::default();
+    pub(super) fn build_request(
+        &mut self,
+        request: Result<RewardRequest, RecvError>,
+    ) -> Result<(), ()> {
+        let my_pubkey = self.cluster_info.id();
+        match request {
+            Ok(RewardRequest {
+                bank_slot,
+                reply_sender,
+                request_sent,
+            }) => {
+                let queue_waited_us = request_sent
+                    .elapsed()
+                    .as_micros()
+                    .try_into()
+                    .unwrap_or(u64::MAX);
+                let (result, build_us) = measure_us!(self.build_certs(bank_slot));
+                let resp = RewardResponse { result };
+                let _ = reply_sender.send(resp).inspect_err(|_| {
+                    info!(
+                        "{my_pubkey}: channel to send reply for bank_slot={bank_slot} disconnected"
+                    );
+                });
+                self.metrics.build_us.add_sample(build_us);
+                self.metrics.queue_waited_us.add_sample(queue_waited_us);
+                self.metrics.maybe_report();
+                Ok(())
+            }
+            Err(_) => {
+                error!("{my_pubkey}: build reward certs channel is disconnected; exiting.");
+                Err(())
+            }
+        }
+    }
+
+    pub(super) fn handle_input(&mut self, root_bank: &Bank, input: RewardInput) {
         let root_slot = root_bank.slot();
-        let minimum_slot = root_slot
-            .checked_sub(NUM_SLOTS_FOR_REWARD)
-            .map_or(0, |slot| slot.saturating_add(1))
-            .max(self.sealed_through.map_or(0, |slot| slot.saturating_add(1)));
         // drop state that is too old based on how the root slot has progressed
         // if this actually drops state, that probably indicates that the leader missed its
         // window.
-        let new_aggregates = self.aggregates.split_off(&minimum_slot);
+        let new_aggregates = self
+            .aggregates
+            .split_off(&root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD));
         if !self.aggregates.is_empty() {
-            stats.purged_state += 1;
+            self.metrics.purged_state += 1;
         }
         self.aggregates = new_aggregates;
 
@@ -80,23 +162,18 @@ impl CertsBuilder {
                 for aggregate in aggregates {
                     let vote = *aggregate.vote();
                     let vote_slot = vote.slot();
-                    if vote_slot < minimum_slot {
-                        stats.late_vote_aggregates += 1;
-                        continue;
-                    }
                     let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
                         warn!(
                             "failed to look up rank_map for slot {vote_slot} using bank for slot \
                              {}",
                             root_bank.slot()
                         );
-                        return stats;
+                        return;
                     };
-                    let max_validators = rank_map.len();
                     let mut vote_account_pubkeys = vec![];
                     for rank in aggregate.ranks().iter_ones() {
                         let Some(stake_entry) = rank_map.get_pubkey_stake_entry(rank) else {
-                            return stats;
+                            return;
                         };
                         vote_account_pubkeys.push(stake_entry.vote_account_pubkey);
                     }
@@ -104,7 +181,7 @@ impl CertsBuilder {
                     match self
                         .aggregates
                         .entry(vote_slot)
-                        .or_insert_with(|| Entry::new(max_validators))
+                        .or_insert_with(|| Entry::new(rank_map.clone()))
                         .add_aggregate(aggregate, vote_account_pubkeys)
                     {
                         Ok(()) => (),
@@ -117,27 +194,22 @@ impl CertsBuilder {
             RewardInput::Own(vote_msg) => {
                 let vote = vote_msg.vote;
                 let vote_slot = vote.slot();
-                if vote_slot < minimum_slot {
-                    stats.late_vote_aggregates += 1;
-                    return stats;
-                }
                 let Some(rank_map) = root_bank.get_rank_map(vote_slot) else {
                     warn!(
                         "failed to look up rank_map for slot {vote_slot} using bank for slot {}",
                         root_bank.slot()
                     );
-                    return stats;
+                    return;
                 };
-                let max_validators = rank_map.len();
                 let Some(stake_entry) = rank_map.get_pubkey_stake_entry(vote_msg.rank as usize)
                 else {
-                    return stats;
+                    return;
                 };
 
                 match self
                     .aggregates
                     .entry(vote_msg.vote.slot())
-                    .or_insert_with(|| Entry::new(max_validators))
+                    .or_insert_with(|| Entry::new(rank_map.clone()))
                     .add_own_msg(vote_msg, stake_entry.vote_account_pubkey)
                 {
                     Ok(()) => (),
@@ -146,8 +218,29 @@ impl CertsBuilder {
                     }
                 }
             }
-            RewardInput::Certificates(_) => (),
+            RewardInput::Certificates(certs) => {
+                for cert in certs {
+                    let cert_slot = cert.cert_type.slot();
+                    let Some(rank_map) = root_bank.get_rank_map(cert_slot) else {
+                        warn!(
+                            "failed to look up rank_map for slot {cert_slot} using bank for slot \
+                             {}",
+                            root_bank.slot()
+                        );
+                        continue;
+                    };
+                    let Some((vote, ranks)) =
+                        reward_vote_and_signers(&cert.cert_type, &cert.bitmap, rank_map.len())
+                    else {
+                        continue;
+                    };
+                    self.aggregates
+                        .entry(cert_slot)
+                        .or_insert_with(|| Entry::new(rank_map.clone()))
+                        .add_certificate(vote, &ranks, cert.signature);
+                }
+            }
         }
-        stats
+        self.metrics.maybe_report();
     }
 }

@@ -238,9 +238,5 @@ harness = false
 name = "shredder"
 harness = false
 
-[[bench]]
-name = "reward_recovery"
-harness = false
-
 [lints]
 workspace = true

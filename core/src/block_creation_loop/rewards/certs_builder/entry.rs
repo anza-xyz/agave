@@ -1,3 +1,4 @@
+pub(super) use partial_cert::CertificateStats;
 use {
     super::BuildRewardCertsRespError,
     crate::block_creation_loop::rewards::{
@@ -8,10 +9,14 @@ use {
     agave_votor_messages::{
         consensus_message::VoteMessage, reward_certificate::SkipRewardCertificate, vote::Vote,
     },
+    bitvec::vec::BitVec,
     notar_entry::NotarEntry,
     partial_cert::PartialCert,
+    solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
+    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
+    std::sync::Arc,
 };
 
 mod notar_entry;
@@ -24,24 +29,24 @@ pub(super) struct Entry {
     skip: PartialCert,
     /// Struct to store state for observed notar votes.
     notar: NotarEntry,
-    /// Maximum number of validators for the slot this entry is working on.
-    max_validators: usize,
+    /// Rank map of the slot this entry is working on.
+    rank_map: Arc<BLSPubkeyToRankMap>,
 }
 
 impl Entry {
     /// Creates a new instance of [`Entry`].
-    pub(super) fn new(max_validators: usize) -> Self {
+    pub(super) fn new(rank_map: Arc<BLSPubkeyToRankMap>) -> Self {
         Self {
-            skip: PartialCert::new(max_validators),
+            skip: PartialCert::new(rank_map.len()),
             notar: NotarEntry::new(),
-            max_validators,
+            rank_map,
         }
     }
 
     /// Adds the given [`VoteAggregate`] from another validator to the aggregate.
     pub(super) fn add_aggregate(
         &mut self,
-        aggregate: &VoteAggregate,
+        aggregate: VoteAggregate,
         vote_account_pubkeys: Vec<Pubkey>,
     ) -> Result<(), AggregateAccumulatorError> {
         match *aggregate.vote() {
@@ -49,7 +54,7 @@ impl Entry {
                 aggregate,
                 vote_account_pubkeys,
                 notar.block.block_id,
-                self.max_validators,
+                self.rank_map.len(),
             ),
             Vote::Skip(_) => self.skip.add_aggregate(aggregate, vote_account_pubkeys),
             _ => Ok(()),
@@ -59,7 +64,7 @@ impl Entry {
     /// Adds the given [`VoteMessage`] from this node itself to the aggregate.
     pub(super) fn add_own_msg(
         &mut self,
-        vote_msg: &VoteMessage,
+        vote_msg: VoteMessage,
         vote_account_pubkey: Pubkey,
     ) -> Result<(), AggregateAccumulatorError> {
         match vote_msg.vote {
@@ -67,20 +72,41 @@ impl Entry {
                 vote_msg,
                 vote_account_pubkey,
                 notar.block.block_id,
-                self.max_validators,
+                self.rank_map.len(),
             ),
             Vote::Skip(_) => self.skip.add_own_msg(vote_msg, vote_account_pubkey),
             _ => Ok(()),
         }
     }
 
-    /// Builds reward certificates from the observed votes.
+    /// Adds a verified certificate from another validator, whose `ranks` all signed `vote`.
+    pub(super) fn add_certificate(
+        &mut self,
+        vote: Vote,
+        ranks: &BitVec<u8>,
+        signature: BLSSignature,
+    ) {
+        match vote {
+            Vote::Notarize(notar) => self.notar.add_certificate(
+                ranks,
+                signature,
+                notar.block.block_id,
+                self.rank_map.len(),
+            ),
+            Vote::Skip(_) => self.skip.add_certificate(ranks, signature),
+            _ => (),
+        }
+    }
+
+    /// Builds reward certificates from the observed votes, and from certificates of other
+    /// validators that contain votes this node missed.
     pub(super) fn build_certs(
         self,
         reward_slot: Slot,
+        stats: &mut CertificateStats,
     ) -> Result<RewardRespSucc, BuildRewardCertsRespError> {
-        let notar = self.notar.build_cert(reward_slot)?;
-        let skip = match self.skip.build_sig_bitmap() {
+        let notar = self.notar.build_cert(reward_slot, &self.rank_map, stats)?;
+        let skip = match self.skip.build(&self.rank_map, stats) {
             BuildResult::Empty | BuildResult::Identity => None,
             BuildResult::EncodingError(e) => return Err(BuildRewardCertsRespError::Encoding(e)),
             BuildResult::Success {
@@ -118,8 +144,12 @@ impl Entry {
 mod tests {
     use {
         super::*,
+        crate::block_creation_loop::rewards::certs_builder::CertsBuilder,
+        agave_bls_sigverify::rewards::RewardInput,
         agave_votor_messages::{
+            certificate::{Certificate, CertificateType},
             consensus_message::{Block, BlockId},
+            reward_certificate::NUM_SLOTS_FOR_REWARD,
             stake::NonZeroStake,
             vote::Vote,
             wire::{VotePayloadToSign, get_vote_payload_to_sign},
@@ -129,12 +159,17 @@ mod tests {
             Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed, SignatureProjective,
         },
         solana_epoch_schedule::EpochSchedule,
+        solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+        solana_keypair::Keypair,
+        solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
+            validated_reward_certificate::ValidatedRewardCert,
         },
-        solana_signer_store::{Decoded, decode},
+        solana_signer::Signer,
+        solana_signer_store::{Decoded, decode, encode_base2},
         std::collections::HashMap,
     };
 
@@ -199,6 +234,24 @@ mod tests {
     }
 
     pub(crate) fn get_keypair_with_stakes(stakes: Vec<u64>, slot: Slot) -> Vec<BlsKeypair> {
+        get_rank_map_and_keypairs(stakes, slot).1
+    }
+
+    /// Returns the rank map of `slot`, and the validators' BLS keypairs by rank.
+    pub(crate) fn get_rank_map_and_keypairs(
+        stakes: Vec<u64>,
+        slot: Slot,
+    ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
+        let (_, rank_map, keypairs) = get_reward_bank(stakes, slot);
+        (rank_map, keypairs)
+    }
+
+    /// Returns the bank of the slot whose block carries the reward certs of `slot`, the rank map
+    /// of `slot`, and the validators' BLS keypairs by rank.
+    pub(crate) fn get_reward_bank(
+        stakes: Vec<u64>,
+        slot: Slot,
+    ) -> (Arc<Bank>, Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
         let max_validators = stakes.len();
         let validator_keypairs = (0..max_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -222,10 +275,10 @@ mod tests {
             bank_forks.as_ref(),
             bank,
             SlotLeader::default(),
-            slot,
+            slot + NUM_SLOTS_FOR_REWARD,
         );
         let rank_map = bank.get_rank_map(slot).unwrap().clone();
-        (0..max_validators)
+        let keypairs = (0..max_validators)
             .map(|index| {
                 let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
                 keypair_map
@@ -233,17 +286,24 @@ mod tests {
                     .unwrap()
                     .clone()
             })
-            .collect()
+            .collect();
+        (bank, rank_map, keypairs)
+    }
+
+    fn build(entry: Entry, slot: Slot) -> RewardRespSucc {
+        entry
+            .build_certs(slot, &mut CertificateStats::default())
+            .unwrap()
     }
 
     #[test]
     fn validate_build_skip_cert() {
         let slot = 123;
         let max_validators = 5;
-        let keypairs = get_keypairs(max_validators, slot);
+        let (rank_map, keypairs) = get_rank_map_and_keypairs(vec![100; max_validators], slot);
         let shred_version = rand::rng().random();
-        let mut entry = Entry::new(max_validators);
-        let resp = entry.clone().build_certs(slot).unwrap();
+        let mut entry = Entry::new(rank_map);
+        let resp = build(entry.clone(), slot);
         assert_eq!(resp.skip, None);
         assert_eq!(resp.notar, None);
 
@@ -251,9 +311,9 @@ mod tests {
         let (aggregate, vote_account_pubkeys) =
             new_reward_vote_aggregate(skip, 0, &keypairs, None, shred_version);
         entry
-            .add_aggregate(&aggregate, vote_account_pubkeys)
+            .add_aggregate(aggregate, vote_account_pubkeys)
             .unwrap();
-        let resp = entry.build_certs(slot).unwrap();
+        let resp = build(entry, slot);
         assert_eq!(resp.notar, None);
         let skip = resp.skip.unwrap();
         assert_eq!(skip.slot, slot);
@@ -265,10 +325,10 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
-        let keypairs = get_keypairs(max_validators, slot);
+        let (rank_map, keypairs) = get_rank_map_and_keypairs(vec![100; max_validators], slot);
 
-        let mut entry = Entry::new(max_validators);
-        let resp = entry.clone().build_certs(slot).unwrap();
+        let mut entry = Entry::new(rank_map);
+        let resp = build(entry.clone(), slot);
         assert_eq!(resp.skip, None);
         assert_eq!(resp.notar, None);
 
@@ -283,7 +343,7 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(notar, rank, &keypairs, None, shred_version);
             entry
-                .add_aggregate(&aggregate, vote_account_pubkeys)
+                .add_aggregate(aggregate, vote_account_pubkeys)
                 .unwrap();
         }
         for rank in 2..5 {
@@ -294,10 +354,10 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(notar, rank, &keypairs, None, shred_version);
             entry
-                .add_aggregate(&aggregate, vote_account_pubkeys)
+                .add_aggregate(aggregate, vote_account_pubkeys)
                 .unwrap();
         }
-        let resp = entry.build_certs(slot).unwrap();
+        let resp = build(entry, slot);
         assert_eq!(resp.skip, None);
         let notar = resp.notar.unwrap();
         assert_eq!(notar.slot, slot);
@@ -313,7 +373,8 @@ mod tests {
         let keypairs = (0..max_validators)
             .map(|_| BlsKeypair::new())
             .collect::<Vec<_>>();
-        let mut entry = Entry::new(max_validators);
+        let (rank_map, _) = get_rank_map_and_keypairs(vec![100; max_validators], slot);
+        let mut entry = Entry::new(rank_map);
 
         let skip = Vote::new_skip_vote(slot);
         let (aggregate, skip_validators) = new_identity_reward_vote_aggregate(
@@ -322,17 +383,17 @@ mod tests {
             &[(0, 100), (1, 100)],
             shred_version,
         );
-        entry.add_aggregate(&aggregate, skip_validators).unwrap();
+        entry.add_aggregate(aggregate, skip_validators).unwrap();
 
         let block_id = BlockId::new_unique();
         let notar = Vote::new_notarization_vote(Block { slot, block_id });
         let (aggregate, notar_validators) =
             new_reward_vote_aggregate(notar, 2, &keypairs, None, shred_version);
         entry
-            .add_aggregate(&aggregate, notar_validators.clone())
+            .add_aggregate(aggregate, notar_validators.clone())
             .unwrap();
 
-        let resp = entry.build_certs(slot).unwrap();
+        let resp = build(entry, slot);
         assert!(resp.skip.is_none());
         assert_eq!(resp.notar.unwrap().block_id, block_id);
         assert_eq!(resp.validators, notar_validators);
@@ -346,7 +407,8 @@ mod tests {
         let keypairs = (0..max_validators)
             .map(|_| BlsKeypair::new())
             .collect::<Vec<_>>();
-        let mut entry = Entry::new(max_validators);
+        let (rank_map, _) = get_rank_map_and_keypairs(vec![100; max_validators], slot);
+        let mut entry = Entry::new(rank_map);
 
         let block_id = BlockId::new_unique();
         let notar = Vote::new_notarization_vote(Block { slot, block_id });
@@ -356,18 +418,245 @@ mod tests {
             &[(0, 100), (1, 100)],
             shred_version,
         );
-        entry.add_aggregate(&aggregate, notar_validators).unwrap();
+        entry.add_aggregate(aggregate, notar_validators).unwrap();
 
         let skip = Vote::new_skip_vote(slot);
         let (aggregate, skip_validators) =
             new_reward_vote_aggregate(skip, 2, &keypairs, None, shred_version);
         entry
-            .add_aggregate(&aggregate, skip_validators.clone())
+            .add_aggregate(aggregate, skip_validators.clone())
             .unwrap();
 
-        let resp = entry.build_certs(slot).unwrap();
+        let resp = build(entry, slot);
         assert!(resp.notar.is_none());
         assert_eq!(resp.skip.unwrap().slot, slot);
         assert_eq!(resp.validators, skip_validators);
+    }
+
+    /// Validators with equal stake voting in [`Self::SLOT`].
+    struct CertificateFixture {
+        /// The bank whose block carries the reward certs.
+        bank: Arc<Bank>,
+        rank_map: Arc<BLSPubkeyToRankMap>,
+        keypairs: Vec<BlsKeypair>,
+        shred_version: u16,
+    }
+
+    impl CertificateFixture {
+        const SLOT: Slot = 123;
+
+        fn new(num_validators: usize) -> Self {
+            let (bank, rank_map, keypairs) = get_reward_bank(vec![100; num_validators], Self::SLOT);
+            Self {
+                bank,
+                rank_map,
+                keypairs,
+                shred_version: rand::rng().random(),
+            }
+        }
+
+        fn aggregate_signature(&self, vote: Vote, ranks: &[usize]) -> SignatureProjective {
+            let payload = get_vote_payload_to_sign(vote, self.shred_version);
+            let signatures = ranks
+                .iter()
+                .map(|&rank| self.keypairs[rank].sign(&payload))
+                .collect::<Vec<_>>();
+            SignatureProjective::aggregate(signatures.iter()).unwrap()
+        }
+
+        /// A vote aggregate that was verified as a whole.
+        fn aggregate(&self, vote: Vote, ranks: &[usize]) -> (VoteAggregate, Vec<Pubkey>) {
+            let aggregate = VoteAggregate::new_from_verified_votes(
+                self.rank_map.len(),
+                VotePayloadToSign::new_from_vote(vote, self.shred_version),
+                ranks.iter().map(|&rank| {
+                    let stake = self.rank_map.get_pubkey_stake_entry(rank).unwrap().stake;
+                    (u16::try_from(rank).unwrap(), stake)
+                }),
+                self.aggregate_signature(vote, ranks),
+            );
+            (aggregate, self.vote_accounts(ranks))
+        }
+
+        /// The signers and signature of a certificate from another validator.
+        fn certificate(&self, vote: Vote, ranks: &[usize]) -> (BitVec<u8>, BLSSignature) {
+            let mut signers = BitVec::repeat(false, self.rank_map.len());
+            for &rank in ranks {
+                signers.set(rank, true);
+            }
+            (signers, self.aggregate_signature(vote, ranks).into())
+        }
+
+        fn vote_accounts(&self, ranks: &[usize]) -> Vec<Pubkey> {
+            ranks
+                .iter()
+                .map(|&rank| {
+                    self.rank_map
+                        .get_pubkey_stake_entry(rank)
+                        .unwrap()
+                        .vote_account_pubkey
+                })
+                .collect()
+        }
+
+        /// Builds the reward certs, and returns the ranks of the validators they pay.
+        fn build(&self, entry: Entry, stats: &mut CertificateStats) -> Vec<usize> {
+            let resp = entry.build_certs(Self::SLOT, stats).unwrap();
+            self.paid_ranks(resp)
+        }
+
+        /// Checks that replay accepts the reward certs and that they pay exactly the returned
+        /// validators, and returns the ranks of those validators.
+        fn paid_ranks(&self, resp: RewardRespSucc) -> Vec<usize> {
+            assert!(
+                ValidatedRewardCert::try_new(
+                    &self.bank,
+                    self.shred_version,
+                    &resp.skip,
+                    &resp.notar
+                )
+                .unwrap()
+                .is_some()
+            );
+            let bitmaps = resp
+                .skip
+                .iter()
+                .map(|skip| skip.to_bitmap())
+                .chain(resp.notar.iter().map(|notar| notar.bitmap()));
+            let mut signers = vec![];
+            for bitmap in bitmaps {
+                let Decoded::Base2(ranks) = decode(bitmap, self.rank_map.len()).unwrap() else {
+                    panic!("reward certs are base2");
+                };
+                signers.extend(ranks.iter_ones());
+            }
+            signers.sort_unstable();
+            let mut ranks = resp
+                .validators
+                .iter()
+                .map(|pubkey| usize::from(*self.rank_map.get_rank_for_vote_pubkey(pubkey).unwrap()))
+                .collect::<Vec<_>>();
+            ranks.sort_unstable();
+            assert_eq!(ranks, signers);
+            ranks
+        }
+    }
+
+    #[test]
+    fn test_certificate_pays_votes_this_node_missed() {
+        let fixture = CertificateFixture::new(6);
+        for vote in [
+            Vote::new_notarization_vote(Block::new_unique(CertificateFixture::SLOT)),
+            Vote::new_skip_vote(CertificateFixture::SLOT),
+        ] {
+            let mut entry = Entry::new(fixture.rank_map.clone());
+            for ranks in [&[0][..], &[4, 5]] {
+                let (aggregate, validators) = fixture.aggregate(vote, ranks);
+                entry.add_aggregate(aggregate, validators).unwrap();
+            }
+            // The votes of 1, 2 and 3 only reached this node inside another validator's cert.
+            let (signers, signature) = fixture.certificate(vote, &[0, 1, 2, 3]);
+            entry.add_certificate(vote, &signers, signature);
+
+            let mut stats = CertificateStats::default();
+            assert_eq!(fixture.build(entry, &mut stats), [0, 1, 2, 3, 4, 5]);
+            assert_eq!(stats.validators_from_certs, 3);
+        }
+    }
+
+    #[test]
+    fn test_partly_overlapping_aggregate_keeps_collected_votes() {
+        let fixture = CertificateFixture::new(6);
+        let vote = Vote::new_notarization_vote(Block::new_unique(CertificateFixture::SLOT));
+        let mut entry = Entry::new(fixture.rank_map.clone());
+        let (aggregate, validators) = fixture.aggregate(vote, &[0, 4]);
+        entry.add_aggregate(aggregate, validators).unwrap();
+        // The aggregate cannot be split, and using the cert alone would drop validator 4.
+        let (signers, signature) = fixture.certificate(vote, &[0, 1, 2, 3]);
+        entry.add_certificate(vote, &signers, signature);
+
+        let mut stats = CertificateStats::default();
+        assert_eq!(fixture.build(entry, &mut stats), [0, 4]);
+        assert_eq!(stats.validators_from_certs, 0);
+        assert_eq!(stats.partially_overlapping_certs, 1);
+    }
+
+    #[test]
+    fn test_certificate_that_adds_no_signers_keeps_collected_votes() {
+        let fixture = CertificateFixture::new(6);
+        let vote = Vote::new_skip_vote(CertificateFixture::SLOT);
+        let mut entry = Entry::new(fixture.rank_map.clone());
+        let (aggregate, validators) = fixture.aggregate(vote, &[0, 1, 2]);
+        entry.add_aggregate(aggregate, validators).unwrap();
+        let (signers, signature) = fixture.certificate(vote, &[0, 1]);
+        entry.add_certificate(vote, &signers, signature);
+
+        let mut stats = CertificateStats::default();
+        assert_eq!(fixture.build(entry, &mut stats), [0, 1, 2]);
+        assert_eq!(stats.validators_from_certs, 0);
+        assert_eq!(stats.partially_overlapping_certs, 0);
+    }
+
+    #[test]
+    fn test_certificate_without_collected_votes() {
+        let fixture = CertificateFixture::new(6);
+        let vote = Vote::new_notarization_vote(Block::new_unique(CertificateFixture::SLOT));
+        let mut entry = Entry::new(fixture.rank_map.clone());
+        let (signers, signature) = fixture.certificate(vote, &[1, 2, 3, 4]);
+        entry.add_certificate(vote, &signers, signature);
+
+        let mut stats = CertificateStats::default();
+        assert_eq!(fixture.build(entry, &mut stats), [1, 2, 3, 4]);
+        assert_eq!(stats.validators_from_certs, 4);
+    }
+
+    #[test]
+    fn test_certificate_that_pays_the_most_stake_is_used() {
+        let fixture = CertificateFixture::new(6);
+        let vote = Vote::new_notarization_vote(Block::new_unique(CertificateFixture::SLOT));
+        let mut entry = Entry::new(fixture.rank_map.clone());
+        let (aggregate, validators) = fixture.aggregate(vote, &[0]);
+        entry.add_aggregate(aggregate, validators).unwrap();
+        // Overlapping certs cannot be combined with each other.
+        for ranks in [&[0, 1][..], &[0, 2, 3]] {
+            let (signers, signature) = fixture.certificate(vote, ranks);
+            entry.add_certificate(vote, &signers, signature);
+        }
+
+        let mut stats = CertificateStats::default();
+        assert_eq!(fixture.build(entry, &mut stats), [0, 2, 3]);
+        assert_eq!(stats.validators_from_certs, 2);
+    }
+
+    #[test]
+    fn test_certs_builder_uses_certificates() {
+        let fixture = CertificateFixture::new(6);
+        let keypair = Arc::new(Keypair::new());
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::new_localhost(&keypair.pubkey(), 0),
+            keypair,
+            SocketAddrSpace::Unspecified,
+        ));
+        let mut builder = CertsBuilder::new(cluster_info);
+        let block = Block::new_unique(CertificateFixture::SLOT);
+        let vote = Vote::new_notarization_vote(block);
+        let (aggregate, _) = fixture.aggregate(vote, &[4, 5]);
+        builder.handle_input(&fixture.bank, RewardInput::External(vec![aggregate]));
+        // A cert's bitmap ends at its last signer.
+        let (mut signers, signature) = fixture.certificate(vote, &[0, 1, 2, 3]);
+        signers.truncate(4);
+        builder.handle_input(
+            &fixture.bank,
+            RewardInput::Certificates(vec![Certificate {
+                cert_type: CertificateType::Notarize(block),
+                signature,
+                bitmap: encode_base2(&signers).unwrap(),
+            }]),
+        );
+
+        let resp = builder
+            .build_certs(CertificateFixture::SLOT + NUM_SLOTS_FOR_REWARD)
+            .unwrap();
+        assert_eq!(fixture.paid_ranks(resp), [0, 1, 2, 3, 4, 5]);
     }
 }

@@ -45,11 +45,6 @@ impl VerifiedBatch {
         self.aggregates.len()
     }
 
-    #[cfg(test)]
-    pub(crate) fn aggregates(&self) -> &[VoteAggregate] {
-        &self.aggregates
-    }
-
     pub(crate) fn process_and_send(
         self,
         root_bank: &Bank,
