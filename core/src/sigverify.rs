@@ -62,8 +62,7 @@ pub(crate) struct SigVerifyWorkerState {
     /// Scheduler-published priority floor: when saturated, the scheduler publishes
     /// the queue-min transaction's priority and workers drop at-or-below-floor
     /// arrivals here, ahead of signature verification. `None` disables the
-    /// check (e.g. for the vote worker, which is governed by a separate
-    /// priority policy in banking stage).
+    /// check.
     priority_floor: Option<Arc<SchedulerPriorityFloor>>,
 }
 
@@ -138,13 +137,11 @@ pub(crate) struct SigVerifyWorkerSenders {
 #[derive(Clone)]
 struct WorkerPoolChannels {
     non_vote_receiver: Receiver<PacketBatch>,
-    tpu_vote_receiver: Receiver<PacketBatch>,
     gossip_receiver: Receiver<GossipVerifyTask>,
     gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
     forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
     sharable_banks: SharableBanks,
     non_vote_state: SigVerifyWorkerState,
-    tpu_vote_state: SigVerifyWorkerState,
 }
 
 pub(crate) struct SigVerifyWorkerPool {
@@ -168,23 +165,19 @@ impl SigVerifyWorkerPool {
     pub(crate) fn new(
         num_workers: NonZeroUsize,
         non_vote_receiver: Receiver<PacketBatch>,
-        tpu_vote_receiver: Receiver<PacketBatch>,
         senders: SigVerifyWorkerSenders,
         forward_non_votes: bool,
         sharable_banks: SharableBanks,
         non_vote_state: SigVerifyWorkerState,
-        tpu_vote_state: SigVerifyWorkerState,
     ) -> Self {
         let (gossip_sender, gossip_receiver) = bounded(SIGVERIFY_GOSSIP_VOTE_WORK_CHANNEL_SIZE);
         let channels = WorkerPoolChannels {
             non_vote_receiver,
-            tpu_vote_receiver,
             gossip_receiver,
             gossip_verified_vote_sender: senders.gossip_verified_vote_sender,
             forward_stage_sender: senders.forward_stage_sender,
             sharable_banks,
             non_vote_state,
-            tpu_vote_state,
         };
         let exit = Arc::new(AtomicBool::new(false));
         let worker_hdls = (0..num_workers.get())
@@ -232,20 +225,6 @@ impl SigVerifyWorkerPool {
                         false,
                         &channels.sharable_banks,
                         &channels.non_vote_state,
-                    ),
-                    Err(_) => false,
-                }
-            }
-            recv(&channels.tpu_vote_receiver) -> maybe_work => {
-                match maybe_work {
-                    Ok(batch) => Self::run_transaction_task(
-                        batch,
-                        true,
-                        &channels.forward_stage_sender,
-                        true,
-                        true,
-                        &channels.sharable_banks,
-                        &channels.tpu_vote_state,
                     ),
                     Err(_) => false,
                 }

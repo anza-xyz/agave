@@ -200,8 +200,8 @@ impl Tpu {
         let Channels {
             non_vote_sender,
             non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
+            tpu_vote_sender: _,
+            tpu_vote_receiver: _,
             gossip_vote_sender,
             gossip_vote_receiver,
         } = banking_channels;
@@ -282,9 +282,7 @@ impl Tpu {
 
         let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_receiver,
-            crossbeam_channel::never(), // TPU votes are not ingested
             non_vote_sender,
-            tpu_vote_sender,
             forward_stage_sender.clone(),
             tpu_sigverify_threads,
             enable_block_production_forwarding,
@@ -313,7 +311,8 @@ impl Tpu {
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
-            tpu_vote_receiver,
+            // TPU votes are not ingested. A disconnected receiver would shut down banking stage.
+            crossbeam_channel::never(),
             gossip_vote_receiver,
             banking_control_receiver,
             block_production_num_workers,
