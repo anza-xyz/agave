@@ -9,7 +9,7 @@ use {
         distr::{Distribution, Uniform},
         rng,
     },
-    solana_core::{banking_trace::BankingTracer, sigverify_stage::SigVerifyStage},
+    solana_core::{banking_channels, sigverify_stage::SigVerifyStage},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
@@ -76,8 +76,8 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     let sharable_banks = bank_forks.read().unwrap().sharable_banks();
     let (packet_s, packet_r) = bounded(1024);
     let (vote_packet_s, vote_packet_r) = bounded(1024);
-    let (verified_s, verified_r) = BankingTracer::channel_for_test();
-    let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+    let (verified_s, verified_r) = banking_channels::channel_for_test();
+    let (tpu_vote_s, _tpu_vote_r) = banking_channels::channel_for_test();
     let (forward_stage_s, _forward_stage_r) = bounded(1024);
     let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
         packet_r,

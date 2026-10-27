@@ -6360,7 +6360,6 @@ fn test_dumped_slot_not_causing_panic() {
         &mut progress,
     );
 
-    let (banking_tracer, _) = BankingTracer::new(None).unwrap();
     // A vote has not technically been rooted, but it doesn't matter for
     // this test to use true to avoid skipping the leader slot
     let has_new_vote_been_rooted = true;
@@ -6379,7 +6378,6 @@ fn test_dumped_slot_not_causing_panic() {
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),
-            &banking_tracer,
             has_new_vote_been_rooted,
             &MigrationStatus::default(),
         )
@@ -7038,7 +7036,6 @@ fn test_skip_leader_slot_for_existing_slot() {
 
     let poh_recorder = Arc::new(poh_recorder);
     let (retransmit_slots_sender, _) = bounded(1024);
-    let (banking_tracer, _) = BankingTracer::new(None).unwrap();
     // A vote has not technically been rooted, but it doesn't matter for
     // this test to use true to avoid skipping the leader slot
     let has_new_vote_been_rooted = true;
@@ -7062,7 +7059,6 @@ fn test_skip_leader_slot_for_existing_slot() {
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),
-            &banking_tracer,
             has_new_vote_been_rooted,
             &MigrationStatus::default(),
         )
@@ -7093,7 +7089,6 @@ fn test_skip_leader_slot_for_existing_slot() {
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),
-            &banking_tracer,
             has_new_vote_been_rooted,
             &MigrationStatus::default(),
         )

@@ -4,11 +4,11 @@
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
+        banking_channels::Channels,
         banking_stage::{
             BankingControlMsg, BankingStage, BankingStageHandle,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
             VoteTracker,
@@ -109,7 +109,6 @@ pub struct Tpu {
     tpu_forwards_quic_t: thread::JoinHandle<()>,
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
-    tracer_thread_hdl: TracerThread,
     tpu_vote_quic_t: thread::JoinHandle<()>,
 }
 
@@ -146,8 +145,7 @@ impl Tpu {
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
         shared_staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
-        banking_tracer_channels: Channels,
-        tracer_thread_hdl: TracerThread,
+        banking_channels: Channels,
         tpu_quic_server_config: SwQosQuicStreamerConfig,
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
@@ -204,7 +202,7 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer_channels;
+        } = banking_channels;
 
         // Streamer for Votes:
         let quic_vote_sockets: Vec<QuicSocket> =
@@ -394,7 +392,6 @@ impl Tpu {
             tpu_forwards_quic_t,
             tpu_entry_notifier,
             staked_nodes_updater_service,
-            tracer_thread_hdl,
             tpu_vote_quic_t,
         }
     }
@@ -419,14 +416,6 @@ impl Tpu {
             tpu_entry_notifier.join()?;
         }
         let _ = broadcast_result?;
-        if let Some(tracer_thread_hdl) = self.tracer_thread_hdl
-            && let Err(tracer_result) = tracer_thread_hdl.join()?
-        {
-            error!(
-                "banking tracer thread returned error after successful thread join: \
-                 {tracer_result:?}"
-            );
-        }
         Ok(())
     }
 }

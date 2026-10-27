@@ -87,7 +87,6 @@ qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
-rolling-file = { workspace = true }
 rts-alloc = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }

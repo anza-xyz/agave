@@ -1,6 +1,6 @@
 use {
     crate::{
-        banking_trace::BankingPacketSender,
+        banking_channels::BankingPacketSender,
         consensus::vote_stake_tracker::VoteStakeTracker,
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,

@@ -678,10 +678,6 @@ impl Blockstore {
         &self.ledger_path
     }
 
-    pub fn banking_trace_path(&self) -> PathBuf {
-        self.ledger_path.join("banking_trace")
-    }
-
     /// Wires the channel used to hand certificates recovered from blockstore to the BLS
     /// sigverifier.
     ///

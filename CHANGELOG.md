@@ -48,10 +48,13 @@ Release channels have their own copy of this changelog:
 * The default full snapshot interval is now 200,000 slots.
 * XDP interface, address, and transmitter setup failures now report startup errors instead of
   panicking.
+* Banking trace has been removed. The validator no longer writes the `banking_trace` directory in
+  the ledger, and an existing one can be deleted.
 
 #### Deprecations
 
 * `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+* `--enable-banking-trace` is deprecated and a no-op, since banking trace has been removed.
 * `--tpu-max-connections-per-peer` is deprecated and will be removed in a future release. Until then,
   it still overrides `--tpu-max-connections-per-staked-peer` and `--tpu-max-connections-per-unstaked-peer`.
   Replace `--tpu-max-connections-per-peer N` with

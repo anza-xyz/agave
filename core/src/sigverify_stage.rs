@@ -5,7 +5,7 @@
 
 use {
     crate::{
-        banking_trace::BankingPacketSender,
+        banking_channels::BankingPacketSender,
         sigverify::{
             GossipSigVerifier, GossipVerifiedVoteBatch, SigVerifyWorkerPool,
             SigVerifyWorkerSenders, SigVerifyWorkerState, SigVerifyWorkerStats,
@@ -352,7 +352,7 @@ impl GossipSigVerifyHandle {
 mod tests {
     use {
         super::*,
-        crate::banking_trace::BankingTracer,
+        crate::banking_channels,
         crossbeam_channel::bounded,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -415,8 +415,8 @@ mod tests {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let (packet_s, packet_r) = bounded(1024);
         let (vote_packet_s, vote_packet_r) = bounded(1024);
-        let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+        let (verified_s, verified_r) = banking_channels::channel_for_test();
+        let (tpu_vote_s, _tpu_vote_r) = banking_channels::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
         let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_r,
@@ -481,8 +481,8 @@ mod tests {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let (packet_s, packet_r) = bounded(1024);
         let (vote_packet_s, vote_packet_r) = bounded(1024);
-        let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+        let (verified_s, verified_r) = banking_channels::channel_for_test();
+        let (tpu_vote_s, _tpu_vote_r) = banking_channels::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
         let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_r,
