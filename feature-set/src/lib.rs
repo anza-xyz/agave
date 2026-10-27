@@ -33,7 +33,6 @@ pub struct FeatureSnapshot {
     pub enable_poseidon_syscall: bool,
     pub remaining_compute_units_syscall_enabled: bool,
     pub enable_alt_bn128_compression_syscall: bool,
-    pub abort_on_invalid_curve: bool,
     pub get_sysvar_syscall_enabled: bool,
     pub enable_get_epoch_stake_syscall: bool,
     pub move_stake_and_move_lamports_ixs: bool,
@@ -115,7 +114,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_alt_bn128_compression_syscall: is_active(
                 &enable_alt_bn128_compression_syscall::ID,
             ),
-            abort_on_invalid_curve: is_active(&abort_on_invalid_curve::ID),
             get_sysvar_syscall_enabled: is_active(&get_sysvar_syscall_enabled::ID),
             enable_get_epoch_stake_syscall: is_active(&enable_get_epoch_stake_syscall::ID),
             move_stake_and_move_lamports_ixs: is_active(&move_stake_and_move_lamports_ixs::ID),
@@ -291,7 +289,6 @@ impl FeatureSet {
             enable_bpf_loader_set_authority_checked_ix: snapshot
                 .enable_bpf_loader_set_authority_checked_ix,
             deplete_cu_meter_on_vm_failure: snapshot.deplete_cu_meter_on_vm_failure,
-            abort_on_invalid_curve: snapshot.abort_on_invalid_curve,
             blake3_syscall_enabled: snapshot.blake3_syscall_enabled,
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
