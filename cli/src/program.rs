@@ -1348,23 +1348,22 @@ async fn process_program_deploy(
         )
     };
 
-    let (program_signer, program_pubkey): (Option<Box<dyn Signer + '_>>, _) =
-        if let Some(i) = program_signer_index {
-            (
-                Some(Box::new(config.signers[i])),
-                config.signers[i].pubkey(),
-            )
-        } else if let Some(program_pubkey) = program_pubkey {
-            (None, program_pubkey)
+    let default_program_keypair;
+    let (program_signer, program_pubkey) = if let Some(i) = program_signer_index {
+        (Some(config.signers[i]), config.signers[i].pubkey())
+    } else if let Some(program_pubkey) = program_pubkey {
+        (None, program_pubkey)
+    } else {
+        default_program_keypair = if generate_ephemeral_program_id {
+            Keypair::new()
         } else {
-            let program_keypair = if generate_ephemeral_program_id {
-                Keypair::new()
-            } else {
-                get_default_program_keypair(program_location)?
-            };
-            let program_pubkey = program_keypair.pubkey();
-            (Some(Box::new(program_keypair)), program_pubkey)
+            get_default_program_keypair(program_location)?
         };
+        (
+            Some(&default_program_keypair as &dyn Signer),
+            default_program_keypair.pubkey(),
+        )
+    };
 
     let do_initial_deploy = if let Some(account) = rpc_client
         .get_account_with_commitment(&program_pubkey, config.commitment)
@@ -1510,7 +1509,7 @@ async fn process_program_deploy(
             program_data_max_len,
             min_rent_exempt_program_data_balance,
             fee_payer_signer,
-            &[program_signer.as_deref().unwrap(), upgrade_authority_signer],
+            &[program_signer.unwrap(), upgrade_authority_signer],
             buffer_signer,
             &buffer_pubkey,
             buffer_program_data,
