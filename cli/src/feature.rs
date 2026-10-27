@@ -1032,6 +1032,7 @@ async fn process_activate(
         &blockhash,
         &fee_payer.pubkey(),
         ComputeUnitLimit::Default,
+        None,
         |lamports| {
             MessageBuilder::new(activate_with_lamports(
                 &feature_id,
@@ -1090,6 +1091,7 @@ async fn process_revoke(
         &blockhash,
         &fee_payer.pubkey(),
         ComputeUnitLimit::Default,
+        None,
         |_lamports| {
             MessageBuilder::new(vec![revoke_pending_activation(&feature_id)])
                 .build(Some(&fee_payer.pubkey()))

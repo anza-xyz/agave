@@ -1479,6 +1479,7 @@ pub async fn process_create_stake_account(
         &from.pubkey(),
         &fee_payer.pubkey(),
         compute_unit_limit,
+        compute_unit_price,
         build_message,
         config.commitment,
     )
@@ -1649,7 +1650,13 @@ pub async fn process_stake_authorize(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
@@ -1814,7 +1821,13 @@ pub async fn process_deactivate_stake_account(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
@@ -1924,6 +1937,7 @@ pub async fn process_withdraw_stake(
         &stake_account_address,
         &fee_payer.pubkey(),
         compute_unit_limit,
+        compute_unit_price,
         build_message,
         config.commitment,
     )
@@ -2118,7 +2132,13 @@ pub async fn process_split_stake(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
@@ -2238,7 +2258,13 @@ pub async fn process_merge_stake(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
@@ -2344,7 +2370,13 @@ pub async fn process_stake_set_lockup(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
@@ -2902,7 +2934,13 @@ pub async fn process_delegate_stake(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;

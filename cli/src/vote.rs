@@ -1290,6 +1290,7 @@ pub async fn process_create_vote_account(
         &config.signers[0].pubkey(),
         &fee_payer.pubkey(),
         compute_unit_limit,
+        compute_unit_price,
         build_message,
         config.commitment,
     )
@@ -1516,7 +1517,13 @@ pub async fn process_vote_authorize(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
@@ -1606,7 +1613,13 @@ pub async fn process_vote_update_validator(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
@@ -1690,7 +1703,13 @@ pub async fn process_vote_update_commission(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
@@ -1794,7 +1813,13 @@ pub async fn process_vote_update_commission_bps(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
@@ -1891,7 +1916,13 @@ pub async fn process_vote_update_commission_collector(
     } else {
         ixs.build(Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
     let tx =
         message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
@@ -2114,6 +2145,7 @@ pub async fn process_withdraw_from_vote_account(
         vote_account_pubkey,
         &fee_payer.pubkey(),
         compute_unit_limit,
+        compute_unit_price,
         build_message,
         config.commitment,
     )
@@ -2222,7 +2254,13 @@ pub async fn process_close_vote_account(
     });
 
     let mut message = ixs.build(Some(&fee_payer.pubkey()));
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
     let tx = message_into_signed_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,

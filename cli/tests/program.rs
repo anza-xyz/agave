@@ -5,10 +5,8 @@ use {
         disable_sbpf_v0_v1_v2_deployment, enable_alt_bn128_syscall,
         loader_v3_allow_prefunded_programdata, loader_v3_set_program_data_to_elf_length,
     },
-    assert_matches::assert_matches,
     serde_json::Value,
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
-    solana_borsh::v1::try_from_slice_unchecked,
     solana_cli::{
         cli::{CliCommand, CliConfig, process_command},
         program::{CLOSE_PROGRAM_WARNING, ProgramCliCommand},
@@ -17,7 +15,6 @@ use {
     solana_cli_output::{OutputFormat, parse_sign_only_reply_string},
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
-    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_calculator::FeeRateGovernor,
     solana_keypair::Keypair,
@@ -45,7 +42,7 @@ use {
     solana_signer::{Signer, null_signer::NullSigner},
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_test_validator::{TestValidator, TestValidatorGenesis},
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
@@ -139,13 +136,14 @@ async fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_be
 async fn fetch_and_decode_transaction(
     rpc_client: &RpcClient,
     signature: &Signature,
-) -> Transaction {
+) -> VersionedTransaction {
     rpc_client
         .get_transaction_with_config(
             signature,
             RpcTransactionConfig {
                 encoding: Some(UiTransactionEncoding::Base64),
                 commitment: Some(CommitmentConfig::confirmed()),
+                max_supported_transaction_version: Some(1),
                 ..RpcTransactionConfig::default()
             },
         )
@@ -154,8 +152,6 @@ async fn fetch_and_decode_transaction(
         .transaction
         .transaction
         .decode()
-        .unwrap()
-        .into_legacy_transaction()
         .unwrap()
 }
 
@@ -1770,8 +1766,9 @@ async fn test_cli_program_upgrade_auto_extend(
     let mut extends = 0;
     for signature in &signatures {
         let tx = fetch_and_decode_transaction(&rpc_client, signature).await;
-        for instruction in &tx.message.instructions {
-            if instruction.program_id(&tx.message.account_keys) == &bpf_loader_upgradeable::id()
+        for instruction in tx.message.instructions() {
+            if instruction.program_id(tx.message.static_account_keys())
+                == &bpf_loader_upgradeable::id()
                 && matches!(
                     wincode::deserialize(&instruction.data),
                     Ok(UpgradeableLoaderInstruction::ExtendProgram { .. })
@@ -3786,45 +3783,41 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]).await;
     let final_tx = fetch_and_decode_transaction(&rpc_client, &deploy_signature).await;
 
+    let configs = [&initial_tx, &write_tx, &final_tx].map(|tx| {
+        let VersionedMessage::V1(message) = &tx.message else {
+            panic!("program deploy transaction should use V1");
+        };
+        assert!(tx.message.instructions().iter().all(|instruction| {
+            instruction.program_id(tx.message.static_account_keys()) != &compute_budget::id()
+        }));
+        &message.config
+    });
+
     if let Some(compute_unit_price) = compute_unit_price {
-        for tx in [&initial_tx, &write_tx, &final_tx] {
-            let ix_len = tx.message.instructions.len();
-            for i in [1, 2] {
-                assert_eq!(
-                    tx.message.instructions[ix_len - i].program_id(&tx.message.account_keys),
-                    &compute_budget::id()
-                );
-            }
-
-            assert_matches!(
-                try_from_slice_unchecked(&tx.message.instructions[ix_len - 2].data),
-                Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) if price == compute_unit_price
+        for config in configs {
+            let limit = config.compute_unit_limit.unwrap();
+            assert!(
+                limit > 0
+                    && limit < solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT
             );
+            let fee = u128::from(compute_unit_price)
+                .saturating_mul(u128::from(limit))
+                .div_ceil(1_000_000);
+            assert_eq!(config.priority_fee, Some(fee as u64));
         }
-
-        assert_matches!(
-            try_from_slice_unchecked(&initial_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2820))
-        );
-        assert_matches!(
-            try_from_slice_unchecked(&write_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2670))
-        );
-        assert_matches!(
-            try_from_slice_unchecked(&final_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2970))
-        );
     } else {
+        assert!(configs.iter().all(|config| config.priority_fee.is_none()));
         assert_eq!(
-            initial_tx.message.instructions[0].program_id(&initial_tx.message.account_keys),
+            initial_tx.message.instructions()[0]
+                .program_id(initial_tx.message.static_account_keys()),
             &system_program::id()
         );
         assert_eq!(
-            write_tx.message.instructions[0].program_id(&write_tx.message.account_keys),
+            write_tx.message.instructions()[0].program_id(write_tx.message.static_account_keys()),
             &bpf_loader_upgradeable::id()
         );
         assert_eq!(
-            final_tx.message.instructions[0].program_id(&final_tx.message.account_keys),
+            final_tx.message.instructions()[0].program_id(final_tx.message.static_account_keys()),
             &system_program::id()
         );
     }

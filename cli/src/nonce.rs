@@ -423,7 +423,13 @@ pub async fn process_authorize_nonce_account(
         compute_unit_limit,
     });
     let mut message = ixs.build(Some(&config.signers[0].pubkey()));
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
     let tx = message_into_signed_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
@@ -517,6 +523,7 @@ pub async fn process_create_nonce_account(
         &latest_blockhash,
         &config.signers[0].pubkey(),
         compute_unit_limit,
+        compute_unit_price,
         build_message,
         config.commitment,
     )
@@ -598,7 +605,13 @@ pub async fn process_new_nonce(
     });
     let latest_blockhash = rpc_client.get_latest_blockhash().await?;
     let mut message = ixs.build(Some(&config.signers[0].pubkey()));
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
     let tx = message_into_signed_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
@@ -676,7 +689,13 @@ pub async fn process_withdraw_from_nonce_account(
         compute_unit_limit,
     });
     let mut message = ixs.build(Some(&config.signers[0].pubkey()));
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
     let tx = message_into_signed_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
@@ -712,7 +731,13 @@ pub(crate) async fn process_upgrade_nonce_account(
             compute_unit_limit,
         });
     let mut message = ixs.build(Some(&config.signers[0].pubkey()));
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
     let tx = message_into_signed_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,

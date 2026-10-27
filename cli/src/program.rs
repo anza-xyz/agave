@@ -2694,6 +2694,7 @@ async fn do_process_program_deploy(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
+        compute_unit_price,
     )
     .await?;
 
@@ -2809,6 +2810,7 @@ async fn do_process_write_buffer(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
+        compute_unit_price,
     )
     .await?;
 
@@ -2960,6 +2962,7 @@ async fn do_process_program_upgrade(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
+        compute_unit_price,
     )
     .await?;
 
@@ -3194,12 +3197,18 @@ async fn send_deploy_messages(
     max_sign_attempts: usize,
     use_rpc: bool,
     compute_unit_limit: &ComputeUnitLimit,
+    compute_unit_price: Option<u64>,
 ) -> Result<Option<Signature>, Box<dyn std::error::Error>> {
     if let Some(mut message) = initial_message {
         if let Some(initial_signer) = initial_signer {
             trace!("Preparing the required accounts");
-            simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
-                .await?;
+            simulate_and_update_compute_unit_limit(
+                compute_unit_limit,
+                compute_unit_price,
+                &rpc_client,
+                &mut message,
+            )
+            .await?;
 
             // Most of the initial_transaction combinations require both the fee-payer and new program
             // account to sign the transaction. One (transfer) only requires the fee-payer signature.
@@ -3240,13 +3249,14 @@ async fn send_deploy_messages(
         {
             if let Some(limit) = simulate_and_update_compute_unit_limit(
                 compute_unit_limit,
+                compute_unit_price,
                 &rpc_client,
                 &mut write_messages[0],
             )
             .await?
             {
                 for message in &mut write_messages[1..] {
-                    set_compute_unit_limit(message, limit);
+                    set_compute_unit_limit(message, limit, compute_unit_price);
                 }
             }
 
@@ -3326,8 +3336,13 @@ async fn send_deploy_messages(
     {
         trace!("Deploying program");
 
-        simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
-            .await?;
+        simulate_and_update_compute_unit_limit(
+            compute_unit_limit,
+            compute_unit_price,
+            &rpc_client,
+            &mut message,
+        )
+        .await?;
         let blockhash = rpc_client.get_latest_blockhash().await?;
         message.set_recent_blockhash(blockhash);
         let mut signers = final_signers.to_vec();

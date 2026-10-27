@@ -71,6 +71,7 @@ pub async fn resolve_spend_tx_and_check_account_balance<F>(
     blockhash: &Hash,
     from_pubkey: &Pubkey,
     compute_unit_limit: ComputeUnitLimit,
+    compute_unit_price: Option<u64>,
     build_message: F,
     commitment: CommitmentConfig,
 ) -> Result<(VersionedMessage, u64), CliError>
@@ -85,12 +86,14 @@ where
         from_pubkey,
         from_pubkey,
         compute_unit_limit,
+        compute_unit_price,
         build_message,
         commitment,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn resolve_spend_tx_and_check_account_balances<F>(
     rpc_client: &RpcClient,
     sign_only: bool,
@@ -99,6 +102,7 @@ pub async fn resolve_spend_tx_and_check_account_balances<F>(
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
     compute_unit_limit: ComputeUnitLimit,
+    compute_unit_price: Option<u64>,
     build_message: F,
     commitment: CommitmentConfig,
 ) -> Result<(VersionedMessage, u64), CliError>
@@ -115,6 +119,7 @@ where
             fee_pubkey,
             0,
             compute_unit_limit,
+            compute_unit_price,
             build_message,
         )
         .await?;
@@ -174,6 +179,7 @@ where
             fee_pubkey,
             from_rent_exempt_minimum,
             compute_unit_limit,
+            compute_unit_price,
             build_message,
         )
         .await?;
@@ -205,6 +211,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve_spend_message<F>(
     rpc_client: &RpcClient,
     amount: SpendAmount,
@@ -214,6 +221,7 @@ async fn resolve_spend_message<F>(
     fee_pubkey: &Pubkey,
     from_rent_exempt_minimum: u64,
     compute_unit_limit: ComputeUnitLimit,
+    compute_unit_price: Option<u64>,
     build_message: F,
 ) -> Result<(VersionedMessage, SpendAndFee), CliError>
 where
@@ -255,6 +263,7 @@ where
             dummy_message.set_recent_blockhash(*blockhash);
             let compute_unit_info = simulate_and_update_compute_unit_limit(
                 &compute_unit_limit,
+                compute_unit_price,
                 rpc_client,
                 &mut dummy_message,
             )
@@ -307,7 +316,7 @@ where
     };
     // After build message, update with correct compute units
     if let Some(limit) = compute_unit_info {
-        set_compute_unit_limit(&mut message, limit);
+        set_compute_unit_limit(&mut message, limit, compute_unit_price);
     }
     Ok((message, spend_and_fee))
 }
@@ -382,6 +391,7 @@ mod tests {
             &vote_account_pubkey,
             &fee_payer,
             ComputeUnitLimit::Default,
+            None,
             |lamports| {
                 VersionedMessage::Legacy(Message::new(
                     &[withdraw(
