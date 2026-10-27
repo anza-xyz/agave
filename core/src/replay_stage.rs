@@ -24,7 +24,9 @@ use {
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
     solana_clock::Slot,
-    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
+    solana_geyser_plugin_manager::block_metadata_notifier_interface::{
+        BlockMetadataNotifier, BlockMetadataNotifierArc,
+    },
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -387,6 +389,32 @@ impl ReplayLoopTiming {
         *self = Self::default();
         self.last_submit = now;
     }
+}
+
+/// Notify geyser of a frozen bank's block metadata. Shared by replay and
+/// startup replay, so a bank replayed at startup is announced like one
+/// replayed live.
+pub(crate) fn notify_block_metadata(
+    block_metadata_notifier: &(dyn BlockMetadataNotifier + Sync + Send),
+    bank: &Bank,
+    entry_count: u64,
+) {
+    let parent_blockhash = bank
+        .parent()
+        .map(|bank| bank.last_blockhash())
+        .unwrap_or_default();
+    block_metadata_notifier.notify_block_metadata(
+        bank.parent_slot(),
+        &parent_blockhash.to_string(),
+        bank.slot(),
+        bank.bank_id(),
+        &bank.last_blockhash().to_string(),
+        &bank.get_rewards_and_num_partitions(),
+        Some(bank.clock().unix_timestamp),
+        Some(bank.block_height()),
+        bank.executed_transaction_count(),
+        entry_count,
+    )
 }
 
 pub struct ReplayStage {
@@ -1626,22 +1654,11 @@ impl ReplayStage {
                     .block_metadata_notifier
                     .as_ref()
                 {
-                    let parent_blockhash = bank
-                        .parent()
-                        .map(|bank| bank.last_blockhash())
-                        .unwrap_or_default();
-                    block_metadata_notifier.notify_block_metadata(
-                        bank.parent_slot(),
-                        &parent_blockhash.to_string(),
-                        bank.slot(),
-                        bank.bank_id(),
-                        &bank.last_blockhash().to_string(),
-                        &bank.get_rewards_and_num_partitions(),
-                        Some(bank.clock().unix_timestamp),
-                        Some(bank.block_height()),
-                        bank.executed_transaction_count(),
+                    notify_block_metadata(
+                        block_metadata_notifier.as_ref(),
+                        bank,
                         r_replay_progress.num_entries as u64,
-                    )
+                    );
                 }
                 bank_complete_time.stop();
 
