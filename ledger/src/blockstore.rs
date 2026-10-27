@@ -1799,9 +1799,14 @@ impl Blockstore {
             &shred_insertion_tracker.just_inserted_shreds,
             shred_recovery_context,
         );
+        if !recovered_shreds.is_empty() {
+            metrics.num_recovered_retransmit_batches += 1;
+        }
+        metrics.num_recovered_data_shreds += recovered_data_shreds.len();
+        metrics.num_recovered_coding_shreds += recovered_shreds.len() - recovered_data_shreds.len();
+
         shred_recovery_context.try_retransmit_shreds(recovered_shreds);
 
-        metrics.num_recovered += recovered_data_shreds.len();
         for shred in recovered_data_shreds {
             let slot = shred.slot();
             *match self.check_insert_data_shred(

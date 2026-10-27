@@ -4911,6 +4911,7 @@ fn test_recovery() {
     let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let mut metrics = BlockstoreInsertionMetrics::default();
 
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     let coding_shreds = coding_shreds.into_iter().map(|shred| {
@@ -4931,9 +4932,12 @@ fn test_recovery() {
             )),
             &mut pinnable_slice,
             &mut write_batch,
-            &mut BlockstoreInsertionMetrics::default(),
+            &mut metrics,
         )
         .unwrap();
+    assert_eq!(metrics.num_recovered_data_shreds, data_shreds.len());
+    assert_eq!(metrics.num_recovered_coding_shreds, 0);
+    assert_eq!(metrics.num_recovered_retransmit_batches, 1);
     let shred_bufs: Vec<_> = data_shreds.iter().map(Shred::payload).cloned().collect();
 
     // Check all the data shreds were recovered
@@ -5008,7 +5012,9 @@ fn test_skip_alt_recovery() {
         )
         .unwrap();
 
-    assert_eq!(metrics.num_recovered, 0);
+    assert_eq!(metrics.num_recovered_data_shreds, 0);
+    assert_eq!(metrics.num_recovered_coding_shreds, 0);
+    assert_eq!(metrics.num_recovered_retransmit_batches, 0);
     assert!(
         blockstore
             .get_index_from_location(slot, alternate_location)
@@ -5101,7 +5107,11 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
         )
         .unwrap();
 
-    assert_eq!(metrics.num_recovered, 0);
+    assert_eq!(metrics.num_recovered_data_shreds, 0);
+    // The invalid data shreds are discarded, but the missing coding shred is
+    // still recovered and submitted for retransmit.
+    assert_eq!(metrics.num_recovered_coding_shreds, 1);
+    assert_eq!(metrics.num_recovered_retransmit_batches, 1);
     assert_eq!(metrics.num_recovered_inserted, 0);
     assert_eq!(metrics.num_recovered_failed_invalid, 0);
 
