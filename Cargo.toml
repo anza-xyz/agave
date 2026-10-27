@@ -533,7 +533,7 @@ solana-svm-timings = { path = "svm-timings", version = "=4.5.0-alpha.4", feature
 solana-svm-transaction = "8.0.0"
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-syscalls = { path = "syscalls", version = "=4.5.0-alpha.4", default-features = false, features = ["agave-unstable-api"] }
-solana-system-interface = { version = "3.3.0", features = ["alloc", "bincode", "serde", "wincode"] }
+solana-system-interface = { version = "3.3.0", features = ["alloc", "serde", "wincode"] }
 solana-system-program = { path = "programs/system", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-system-transaction = "6.0.0"
 solana-sysvar = "5.0.0"
