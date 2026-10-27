@@ -78,9 +78,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "anza-xtask"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25648aaf9535d3227ce584e10fa04acff0f59d11bbbe74a45eed3ccda755c9cf"
+checksum = "f39d1defb1fec85daa4bbcb14936ece462a3378d7fe40913e933dd2de7611af6"
 dependencies = [
  "anyhow",
  "cargo_metadata",
