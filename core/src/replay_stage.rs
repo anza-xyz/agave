@@ -3069,13 +3069,13 @@ impl ReplayStage {
         }
         trace!("{my_pubkey} poh_slot {poh_slot} parent_slot {parent_slot}");
 
-        if let Some(leaders) = leader_schedule_cache.slot_leaders_at(poh_slot, Some(&parent)) {
+        if let Some(next_leaders) = leader_schedule_cache.slot_leaders_at(poh_slot, Some(&parent)) {
             if !has_new_vote_been_rooted {
                 info!("Haven't landed a vote, so skipping my leader slot");
                 return None;
             }
 
-            let next_leader_id = &leaders.cur_leader().id;
+            let next_leader_id = &next_leaders.cur_leader().id;
             trace!("{my_pubkey} leader {next_leader_id} at poh slot: {poh_slot}");
 
             // I guess I missed my slot
@@ -3137,7 +3137,7 @@ impl ReplayStage {
                 parent.clone(),
                 poh_slot,
                 root_slot,
-                leaders,
+                next_leaders,
                 rpc_subscriptions,
                 slot_status_notifier,
                 NewBankOptions { vote_only_bank },

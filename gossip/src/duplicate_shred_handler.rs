@@ -244,7 +244,7 @@ mod tests {
             shred::{Shred, Shredder, override_proof_size},
         },
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             bank_forks::BankForks,
             genesis_utils::create_genesis_config_with_tower_leader,
         },
@@ -350,7 +350,8 @@ mod tests {
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
             let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
-            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
+            let bank9 =
+                Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 9);
             let mut bank_forks = bank_forks_arc.write().unwrap();
             bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);
@@ -409,7 +410,8 @@ mod tests {
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
             let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
-            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
+            let bank9 =
+                Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 9);
             let mut bank_forks = bank_forks_arc.write().unwrap();
             bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);
@@ -536,7 +538,8 @@ mod tests {
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
             let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
-            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
+            let bank9 =
+                Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 9);
             let mut bank_forks = bank_forks_arc.write().unwrap();
             bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);

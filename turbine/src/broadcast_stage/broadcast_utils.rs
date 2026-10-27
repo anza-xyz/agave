@@ -280,7 +280,7 @@ mod tests {
         solana_entry::recorder_message::RecorderMessage,
         solana_genesis_config::GenesisConfig,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        solana_runtime::bank::SlotLeader,
+        solana_runtime::bank::{SlotLeader, SlotLeaders},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
     };
@@ -330,7 +330,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         );
         let (s, r) = bounded(1024);
@@ -365,7 +365,11 @@ mod tests {
     #[test]
     fn test_recv_slot_components_does_not_pre_drain_queue() {
         let (genesis_config, bank0, _bank_forks, tx) = setup_test();
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
+        let bank1 = Arc::new(Bank::new_from_parent(
+            bank0,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        ));
         let (s, r) = bounded(1024);
         let mut last_hash = genesis_config.hash();
         let entries: Vec<_> = (1..=3)
@@ -400,13 +404,13 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         );
         let bank2 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank1.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             2,
         );
         let (s, r) = bounded(1024);
@@ -457,7 +461,11 @@ mod tests {
     #[test]
     fn test_marker_carryover_does_not_advance_last_tick_height() {
         let (genesis_config, bank0, _bank_forks, tx) = setup_test();
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
+        let bank1 = Arc::new(Bank::new_from_parent(
+            bank0,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        ));
         let (s, r) = bounded(1024);
         let max_tick = bank1.max_tick_height();
 
@@ -501,7 +509,11 @@ mod tests {
     #[test]
     fn test_marker_preserves_entry_ordering() {
         let (genesis_config, bank0, _bank_forks, tx) = setup_test();
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
+        let bank1 = Arc::new(Bank::new_from_parent(
+            bank0,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        ));
         let (s, r) = bounded(1024);
 
         let mut last_hash = genesis_config.hash();
@@ -565,12 +577,12 @@ mod tests {
         let (genesis_config, bank0, _bank_forks, tx) = setup_test();
         let bank1 = Arc::new(Bank::new_from_parent(
             bank0.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         ));
         let bank2 = Arc::new(Bank::new_from_parent(
             bank1.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             2,
         ));
         let (s, r) = bounded(1024);

@@ -161,7 +161,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::SlotLeader,
+            bank::{SlotLeader, SlotLeaders},
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
         solana_epoch_schedule::EpochSchedule,
@@ -243,7 +243,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             parent_slot + 1,
         );
         let second_block_rewards = 500_000_000;

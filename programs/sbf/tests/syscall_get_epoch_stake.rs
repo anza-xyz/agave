@@ -4,7 +4,7 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_message::Message,
     solana_runtime::{
-        bank::{Bank, SlotLeaders},
+        bank::{Bank, SlotLeader, SlotLeaders},
         bank_client::BankClient,
         epoch_stakes::VersionedEpochStakes,
         genesis_utils::{
@@ -78,7 +78,11 @@ fn test_syscall_get_epoch_stake() {
     );
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
     bank.freeze();
 

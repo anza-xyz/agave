@@ -473,10 +473,11 @@ impl SimulatorLoop {
                     info!("next leader block!");
                     bank.slot() + 1
                 };
-                let new_leader = self
+                let new_leaders = self
                     .leader_schedule_cache
-                    .slot_leader_at(new_slot, None)
+                    .slot_leaders_at(new_slot, None)
                     .unwrap();
+                let new_leader = *new_leaders.cur_leader();
                 if new_leader.id != self.simulated_leader {
                     logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader.id);
                     break;
@@ -487,7 +488,7 @@ impl SimulatorLoop {
                     info!("new leader bank slot: {new_slot}");
                 }
                 let new_bank =
-                    Bank::new_from_parent(bank.clone_without_scheduler(), new_leader, new_slot)
+                    Bank::new_from_parent(bank.clone_without_scheduler(), new_leaders, new_slot)
                         .mark_leader_bank();
                 if *bank.leader_id() == self.simulated_leader {
                     logger.log_frozen_bank_cost(&bank, bank_created.elapsed());

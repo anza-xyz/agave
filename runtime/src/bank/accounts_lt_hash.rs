@@ -743,7 +743,7 @@ mod tests {
         solana_fee_structure::FeeStructure,
         solana_genesis_config::{self, GenesisConfig},
         solana_keypair::Keypair,
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::{self as pubkey, Pubkey},
         solana_rent::Rent,
@@ -874,7 +874,12 @@ mod tests {
 
         let bank = {
             let slot = bank.slot() + 1;
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), slot)
+            Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+                slot,
+            )
         };
 
         // send from account 2 to account 1; account 1 stays alive, account 2 ends up dead
@@ -1003,7 +1008,7 @@ mod tests {
             bank = Bank::new_from_parent_with_bank_forks(
                 &bank_forks,
                 bank,
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot,
             );
             for _ in 0..13 {
@@ -1063,7 +1068,12 @@ mod tests {
         for _ in 0..9 {
             let slot = bank.slot() + 1;
             let leader = *bank.leader();
-            bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, leader, slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                SlotLeaders::new_for_tests(leader),
+                slot,
+            );
             for _ in 0..3 {
                 bank.register_unique_recent_blockhash_for_test();
                 bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
@@ -1089,7 +1099,12 @@ mod tests {
         for i in 0..num_accounts {
             let slot = bank.slot() + 1;
             let leader = *bank.leader();
-            bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, leader, slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                SlotLeaders::new_for_tests(leader),
+                slot,
+            );
             bank.register_unique_recent_blockhash_for_test();
 
             // transfer into the accounts so they start with a non-zero balance
@@ -1177,7 +1192,12 @@ mod tests {
         for _ in 0..3 {
             let slot = bank.slot() + 1;
             let leader = *bank.leader();
-            bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, leader, slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                SlotLeaders::new_for_tests(leader),
+                slot,
+            );
             bank.register_unique_recent_blockhash_for_test();
             bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
                 .unwrap();
@@ -1322,7 +1342,12 @@ mod tests {
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let leader = *bank.leader();
         let slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, leader, slot);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeaders::new_for_tests(leader),
+            slot,
+        );
 
         for address in [leader.id, leader.vote_address] {
             bank.register_unique_recent_blockhash_for_test();

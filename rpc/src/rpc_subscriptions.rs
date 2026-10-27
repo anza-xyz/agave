@@ -1234,7 +1234,7 @@ pub(crate) mod tests {
             RpcTransactionLogsFilter,
         },
         solana_runtime::{
-            bank::SlotLeader,
+            bank::{SlotLeader, SlotLeaders},
             commitment::BlockCommitment,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             prioritization_fee_cache::PrioritizationFeeCache,
@@ -1402,7 +1402,8 @@ pub(crate) mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let alice = Keypair::new();
 
@@ -2006,7 +2007,8 @@ pub(crate) mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
 
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
 
@@ -2023,7 +2025,8 @@ pub(crate) mod tests {
 
         bank1.process_transaction(&tx).unwrap();
 
-        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+        let bank2 =
+            Bank::new_from_parent(bank1, SlotLeaders::new_for_tests(SlotLeader::default()), 2);
         bank_forks.write().unwrap().insert(bank2);
 
         // add account for bob and process the transaction at bank2
@@ -2040,7 +2043,8 @@ pub(crate) mod tests {
 
         bank2.process_transaction(&tx).unwrap();
 
-        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
+        let bank3 =
+            Bank::new_from_parent(bank2, SlotLeaders::new_for_tests(SlotLeader::default()), 3);
         bank_forks.write().unwrap().insert(bank3);
 
         // add account for joe and process the transaction at bank3
@@ -2211,7 +2215,8 @@ pub(crate) mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
 
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
 
@@ -2228,7 +2233,8 @@ pub(crate) mod tests {
 
         bank1.process_transaction(&tx).unwrap();
 
-        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+        let bank2 =
+            Bank::new_from_parent(bank1, SlotLeaders::new_for_tests(SlotLeader::default()), 2);
         bank_forks.write().unwrap().insert(bank2);
 
         // add account for bob and process the transaction at bank2
@@ -2330,7 +2336,8 @@ pub(crate) mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
 
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
 
@@ -2347,7 +2354,8 @@ pub(crate) mod tests {
 
         bank1.process_transaction(&tx).unwrap();
 
-        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+        let bank2 =
+            Bank::new_from_parent(bank1, SlotLeaders::new_for_tests(SlotLeader::default()), 2);
         bank_forks.write().unwrap().insert(bank2);
 
         // add account for bob and process the transaction at bank2
@@ -2375,7 +2383,8 @@ pub(crate) mod tests {
             16,
             &stake::program::id(),
         );
-        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
+        let bank3 =
+            Bank::new_from_parent(bank2, SlotLeaders::new_for_tests(SlotLeader::default()), 3);
         bank3.process_transaction(&tx).unwrap();
         bank3.freeze();
         let bank3_hash = bank3.hash();
@@ -2543,7 +2552,7 @@ pub(crate) mod tests {
 
         let next_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().get(0).unwrap(),
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             1,
         );
         bank_forks.write().unwrap().insert(next_bank);
@@ -2851,9 +2860,14 @@ pub(crate) mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let bank1 = Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         bank_forks.write().unwrap().insert(bank1);
-        let bank2 = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
+        let bank2 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 2);
         bank_forks.write().unwrap().insert(bank2);
 
         let alice = Keypair::from_base58_string(

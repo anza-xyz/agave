@@ -9,7 +9,7 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
+        bank::{Bank, SlotLeader, SlotLeaders},
         bank_forks::BankForks,
         genesis_utils::{
             GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
@@ -169,7 +169,7 @@ fn setup_bank(
     (
         Arc::new(Bank::new_from_parent(
             initial_bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             last_slot_in_epoch,
         )),
         bank_forks,
@@ -218,7 +218,7 @@ fn bench_epoch_turnover(c: &mut Criterion) {
                 let _ = &bank_forks; // Keep in scope so parent banks retain fork_graph.
                 let bank = Bank::new_from_parent(
                     initial_bank.clone(),
-                    SlotLeader::default(),
+                    SlotLeaders::new_for_tests(SlotLeader::default()),
                     first_epoch_slot,
                 );
 
@@ -241,7 +241,7 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
 
         let bank = Arc::new(Bank::new_from_parent(
             initial_bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             first_epoch_slot,
         ));
 
@@ -259,7 +259,11 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
                 let mut bank = bank.clone();
 
                 for slot in (first_epoch_slot + 1)..=final_rewards_slot {
-                    bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), slot));
+                    bank = Arc::new(Bank::new_from_parent(
+                        bank,
+                        SlotLeaders::new_for_tests(SlotLeader::default()),
+                        slot,
+                    ));
                 }
 
                 black_box(bank);

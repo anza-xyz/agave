@@ -138,9 +138,14 @@ impl OptimisticConfirmationVerifier {
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::vote_simulator::VoteSimulator, solana_leader_schedule::SlotLeader,
-        solana_ledger::get_tmp_ledger_path_auto_delete, solana_pubkey::Pubkey,
-        solana_runtime::bank::Bank, std::collections::HashMap, trees::tr,
+        super::*,
+        crate::vote_simulator::VoteSimulator,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
+        solana_ledger::get_tmp_ledger_path_auto_delete,
+        solana_pubkey::Pubkey,
+        solana_runtime::bank::Bank,
+        std::collections::HashMap,
+        trees::tr,
     };
 
     #[test]
@@ -278,7 +283,8 @@ mod test {
 
         // Add a new bank 7 that descends from 6
         let bank6 = vote_simulator.bank_forks.read().unwrap().get(6).unwrap();
-        let bank7_new = Bank::new_from_parent(bank6, SlotLeader::default(), 7);
+        let bank7_new =
+            Bank::new_from_parent(bank6, SlotLeaders::new_for_tests(SlotLeader::default()), 7);
         vote_simulator.bank_forks.write().unwrap().insert(bank7_new);
         let bank7 = vote_simulator.bank_forks.read().unwrap().get(7).unwrap();
         assert!(!bank7.ancestors.contains_key(&3));

@@ -427,7 +427,7 @@ mod tests {
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::GenesisConfig,
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_stake_interface::state::{Authorized, Lockup, Meta},
         std::{collections::BTreeMap, sync::Arc},
     };
@@ -440,7 +440,7 @@ mod tests {
         Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             parent,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             slot,
         )
     }

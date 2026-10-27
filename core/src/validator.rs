@@ -81,7 +81,7 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_leader_schedule::{FixedSchedule, SlotLeaders},
+    solana_leader_schedule::{FixedSchedule, SlotLeader, SlotLeaders},
     solana_ledger::{
         bank_forks_utils,
         blockstore::{
@@ -2828,7 +2828,11 @@ fn maybe_warp_slot(
         // `RwLock<BankForks>` (deadlock with an exclusive lock).
         // The warp slot can be epochs past the root, beyond what its epoch
         // stakes cover, so there is no schedule to read the leaders from.
-        let warp_bank = Bank::warp_from_parent(root_bank, SlotLeaders::default(), warp_slot);
+        let warp_bank = Bank::warp_from_parent(
+            root_bank,
+            SlotLeaders::new_unchecked(SlotLeader::default(), SlotLeader::default()),
+            warp_slot,
+        );
 
         let mut bank_forks = bank_forks.write().unwrap();
         bank_forks.insert(warp_bank);
@@ -3792,7 +3796,7 @@ mod tests {
         // bank=1, wait=0, should pass, bank is past the wait slot
         let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent(
             bank_forks.read().unwrap().root_bank(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         ));
         config.wait_for_supermajority = Some(0);

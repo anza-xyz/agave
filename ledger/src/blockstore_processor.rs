@@ -2596,7 +2596,7 @@ pub mod tests {
         solana_instruction::Instruction,
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             declare_process_instruction, solana_sbpf::program::BuiltinFunctionDefinition,
@@ -2848,7 +2848,11 @@ pub mod tests {
 
         let root_bank = bank_forks.read().unwrap().root_bank();
         let replacement_key = Pubkey::new_unique();
-        let replacement_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), slot);
+        let replacement_bank = Bank::new_from_parent(
+            root_bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            slot,
+        );
         replacement_bank.store_account(
             &replacement_key,
             &AccountSharedData::new(1, 0, &Pubkey::new_unique()),
@@ -4533,8 +4537,11 @@ pub mod tests {
         )
         .unwrap();
         let bank0_last_blockhash = bank0.last_blockhash();
-        let bank1_child =
-            Bank::new_from_parent(bank0.clone_without_scheduler(), SlotLeader::default(), 1);
+        let bank1_child = Bank::new_from_parent(
+            bank0.clone_without_scheduler(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         let bank1 = bank_forks.write().unwrap().insert(bank1_child);
         confirm_full_slot(
             &blockstore,
@@ -4690,7 +4697,11 @@ pub mod tests {
             i += 1;
 
             let slot = bank.slot() + rng().random_range(1..3);
-            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), slot));
+            bank = Arc::new(Bank::new_from_parent(
+                bank,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+                slot,
+            ));
         }
     }
 
@@ -4738,7 +4749,11 @@ pub mod tests {
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0.freeze();
 
-        let bank1_child = Bank::new_from_parent(bank0.clone(), SlotLeader::new_unique(), 1);
+        let bank1_child = Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+            1,
+        );
         let bank1 = bank_forks
             .write()
             .unwrap()
@@ -5698,7 +5713,11 @@ pub mod tests {
             expected_result,
         } in test_cases
         {
-            let slot_2_bank = Arc::new(Bank::new_from_parent(slot_0_bank.clone(), leader, 2));
+            let slot_2_bank = Arc::new(Bank::new_from_parent(
+                slot_0_bank.clone(),
+                SlotLeaders::new_for_tests(leader),
+                2,
+            ));
             assert_eq!(slot_2_bank.slot(), 2);
             assert_eq!(slot_2_bank.tick_height(), 2);
             assert_eq!(slot_2_bank.max_tick_height(), 6);
@@ -5905,7 +5924,11 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let bank1 = Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         assert!(
             !bank1
                 .feature_set
@@ -5938,7 +5961,11 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let mut bank1 = Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         bank1.activate_feature(&agave_feature_set::alpenglow::id());
         assert!(
             bank1
@@ -6018,7 +6045,11 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let mut bank1 = Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         bank1.activate_feature(&agave_feature_set::alpenglow::id());
         let bank1 = bank_forks.write().unwrap().insert(bank1);
 
@@ -6090,7 +6121,11 @@ pub mod tests {
             .expect("parent should have a merkle root");
 
         // Case 1: No shreds for child slot — should return Unavailable
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 10);
+        let child_bank = Bank::new_from_parent(
+            parent_bank.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            10,
+        );
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Unavailable
@@ -6099,7 +6134,11 @@ pub mod tests {
         // Case 2: Chained merkle root matches parent block ID — should return
         // Pass
         insert_shreds_with_chained_merkle_root(11, 0, parent_block_id);
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 11);
+        let child_bank = Bank::new_from_parent(
+            parent_bank.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            11,
+        );
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Pass
@@ -6108,7 +6147,11 @@ pub mod tests {
         // Case 3: Chained merkle root does NOT match parent block ID — should
         // return Mismatch
         insert_shreds_with_chained_merkle_root(12, 0, Hash::new_unique());
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 12);
+        let child_bank = Bank::new_from_parent(
+            parent_bank.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            12,
+        );
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Mismatch
@@ -6119,7 +6162,11 @@ pub mod tests {
         let mut meta = blockstore.meta(16).unwrap().unwrap();
         meta.replay_fec_set_index = 32;
         blockstore.put_meta(16, &meta).unwrap();
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 16);
+        let child_bank = Bank::new_from_parent(
+            parent_bank.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            16,
+        );
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Mismatch
@@ -6139,11 +6186,15 @@ pub mod tests {
         // should return Pass regardless of chained merkle root.
         let no_shreds_parent_bank = Arc::new(Bank::new_from_parent(
             parent_bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             20,
         ));
         insert_shreds_with_chained_merkle_root(21, 20, Hash::new_unique());
-        let child_bank = Bank::new_from_parent(no_shreds_parent_bank, SlotLeader::default(), 21);
+        let child_bank = Bank::new_from_parent(
+            no_shreds_parent_bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            21,
+        );
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Pass
@@ -6179,7 +6230,7 @@ pub mod tests {
 
         let first_alpenglow_bank = Arc::new(Bank::new_from_parent(
             bank0.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         ));
         first_alpenglow_bank
@@ -6192,7 +6243,11 @@ pub mod tests {
         let first_alpenglow_bank =
             BankWithScheduler::new_without_scheduler(first_alpenglow_bank.clone());
 
-        let pending_bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 2);
+        let pending_bank = Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            2,
+        );
         pending_bank.store_account(&pending_key, &AccountSharedData::new(1, 0, &owner));
         assert!(pending_bank.get_account(&pending_key).is_some());
 
@@ -6431,7 +6486,11 @@ pub mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let parent_bank = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
+        let parent_bank = Arc::new(Bank::new_from_parent(
+            bank0,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        ));
         let parent_block_id = BlockId::new_unique();
         parent_bank.set_block_id(Some(parent_block_id));
 

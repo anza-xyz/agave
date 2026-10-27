@@ -116,8 +116,12 @@ fn test_far_future_optimistic_parent_requires_parent_window_ready() {
     let parent_leader = leader_schedule_cache
         .slot_leader_at(parent_slot, Some(&root_bank))
         .unwrap();
-    let parent_bank =
-        Bank::new_from_parent_with_bank_forks(&bank_forks, root_bank, parent_leader, parent_slot);
+    let parent_bank = Bank::new_from_parent_with_bank_forks(
+        &bank_forks,
+        root_bank,
+        SlotLeaders::new_for_tests(parent_leader),
+        parent_slot,
+    );
     let parent_block_id = BlockId::new_unique();
     parent_bank.set_block_id(Some(parent_block_id));
     parent_bank.freeze();
@@ -470,7 +474,7 @@ fn test_child_slots_of_same_parent() {
     // bank
     let bank1 = Bank::new_from_parent(
         bank_forks.read().unwrap().get(0).unwrap(),
-        leader_schedule_cache.slot_leader_at(1, None).unwrap(),
+        SlotLeaders::new_for_tests(leader_schedule_cache.slot_leader_at(1, None).unwrap()),
         1,
     );
     progress.insert(
@@ -601,7 +605,7 @@ fn test_handle_new_root() {
     let root = 3;
     let root_bank = Bank::new_from_parent(
         bank_forks.read().unwrap().get(0).unwrap(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         root,
     );
     root_bank.freeze();
@@ -738,7 +742,11 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     assert!(!blockstore.is_root(1));
 
     let unfrozen_block_id = BlockId::new_unique();
-    let unfrozen_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 2);
+    let unfrozen_bank = Bank::new_from_parent(
+        root_bank,
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        2,
+    );
     unfrozen_bank.set_block_id(Some(unfrozen_block_id));
     bank_forks.write().unwrap().insert(unfrozen_bank);
     let unfrozen_command = SetRootCommand {
@@ -789,20 +797,20 @@ fn test_handle_new_root_ahead_of_highest_super_majority_root() {
     let fork = 2;
     let bank1 = Bank::new_from_parent(
         bank_forks.read().unwrap().get(0).unwrap(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         confirmed_root,
     );
     bank_forks.write().unwrap().insert(bank1);
     let bank2 = Bank::new_from_parent(
         bank_forks.read().unwrap().get(confirmed_root).unwrap(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         fork,
     );
     bank_forks.write().unwrap().insert(bank2);
     let root = 3;
     let root_bank = Bank::new_from_parent(
         bank_forks.read().unwrap().get(confirmed_root).unwrap(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         root,
     );
     root_bank.freeze();
@@ -1145,7 +1153,8 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
             None, None, None, None, None,
         ));
 
-    let child_bank = Bank::new_from_parent(bank, SlotLeader::default(), 1);
+    let child_bank =
+        Bank::new_from_parent(bank, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
     let bank = bank_forks.write().unwrap().insert(child_bank);
 
     let slot = bank.slot();
@@ -1506,7 +1515,11 @@ fn test_abandon_invalidates() {
     let parent_block_id = BlockId::new_unique();
     insert_update_parent_slot(&blockstore, slot, 3, 0, parent_block_id, 32);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+    let bank = Bank::new_from_parent(
+        bank0,
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        slot,
+    );
     bank_forks.write().unwrap().insert(bank);
     let bank = bank_forks.read().unwrap().get(slot).unwrap();
     progress.insert(
@@ -1600,7 +1613,8 @@ where
         bank_forks.write().unwrap().install_scheduler_pool(
             DefaultSchedulerPool::new_for_verification(None, None, None, None, None),
         );
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get_with_scheduler(1).unwrap();
         let bank1_progress = progress
@@ -1777,7 +1791,7 @@ fn test_replay_commitment_cache() {
         let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             prev_bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             slot,
         );
         let _res = bank.transfer(
@@ -1874,7 +1888,8 @@ fn test_write_persist_transaction_status() {
             )
             .unwrap();
 
-        let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let child_bank =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         let bank1 = bank_forks
             .write()
             .unwrap()
@@ -1985,10 +2000,10 @@ fn test_compute_bank_stats_confirmed() {
     let bank1 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
-        SlotLeader {
+        SlotLeaders::new_for_tests(SlotLeader {
             id: my_node_pubkey,
             vote_address: my_vote_pubkey,
-        },
+        }),
         1,
     );
     bank1.process_transaction(&vote_tx).unwrap();
@@ -2406,9 +2421,19 @@ fn test_update_propagation_status() {
     let (bank_forks_arc, mut progress_map, _) = vote_simulator::initialize_state(&keypairs, stake);
 
     let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
-    Bank::new_from_parent_with_bank_forks(&bank_forks_arc, bank0.clone(), SlotLeader::default(), 9);
+    Bank::new_from_parent_with_bank_forks(
+        &bank_forks_arc,
+        bank0.clone(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        9,
+    );
     let bank9 = bank_forks_arc.read().unwrap().get(9).unwrap();
-    Bank::new_from_parent_with_bank_forks(&bank_forks_arc, bank9, SlotLeader::default(), 10);
+    Bank::new_from_parent_with_bank_forks(
+        &bank_forks_arc,
+        bank9,
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        10,
+    );
     bank_forks_arc.write().unwrap().set_root(9, None, None);
     let total_epoch_stake = bank0.total_epoch_stake();
 
@@ -2518,7 +2543,11 @@ fn test_chain_update_propagation_status() {
     for i in 1..=10 {
         let parent_bank = bank_forks_arc.read().unwrap().get(i - 1).unwrap().clone();
         let prev_leader_slot = ((i - 1) / 2) * 2;
-        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), i);
+        let bank = Bank::new_from_parent(
+            parent_bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            i,
+        );
         bank_forks_arc.write().unwrap().insert(bank);
         progress_map.insert(
             i,
@@ -2601,7 +2630,11 @@ fn test_chain_update_propagation_status2() {
     for i in 1..=10 {
         let parent_bank = bank_forks_arc.read().unwrap().get(i - 1).unwrap().clone();
         let prev_leader_slot = i - 1;
-        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), i);
+        let bank = Bank::new_from_parent(
+            parent_bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            i,
+        );
         bank_forks_arc.write().unwrap().insert(bank);
         let mut fork_progress = ForkProgress::new(
             Hash::default(),
@@ -2754,11 +2787,18 @@ fn test_check_propagation_for_start_leader() {
     // which implies confirmation
     let genesis_config = genesis_config::create_genesis_config(10000).0;
     let (bank0, bank_forks_arc) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let parent_slot_bank =
-        Bank::new_from_parent(Arc::clone(&bank0), SlotLeader::default(), parent_slot);
+    let parent_slot_bank = Bank::new_from_parent(
+        Arc::clone(&bank0),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        parent_slot,
+    );
     bank_forks_arc.write().unwrap().insert(parent_slot_bank);
     let parent_bank = bank_forks_arc.read().unwrap().get(parent_slot).unwrap();
-    let bank5 = Bank::new_from_parent(parent_bank, SlotLeader::default(), 5);
+    let bank5 = Bank::new_from_parent(
+        parent_bank,
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        5,
+    );
     bank_forks_arc.write().unwrap().insert(bank5);
 
     // Should purge only `previous_leader_slot` from the progress map
@@ -2868,7 +2908,7 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
         ..
     } = VoteSimulator::new(1);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+    let bank1 = Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
     let sender = node_pubkeys[0];
     let transfer_signature = bank1
         .transfer(
@@ -2899,7 +2939,7 @@ fn test_clear_slots_propagates_transaction_status_disconnect() {
         ..
     } = VoteSimulator::new(1);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+    let bank1 = Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
     bank_forks.write().unwrap().insert(bank1);
 
     let (sender, receiver) = bounded(1);
@@ -2942,7 +2982,9 @@ fn test_switch_bank_purges_cleared_descendants() {
         ..
     } = vote_simulator;
     let bank1 = bank_forks.read().unwrap().get(1).unwrap();
-    let leader_bank = Bank::new_from_parent(bank1, SlotLeader::default(), 2).mark_leader_bank();
+    let leader_bank =
+        Bank::new_from_parent(bank1, SlotLeaders::new_for_tests(SlotLeader::default()), 2)
+            .mark_leader_bank();
     leader_bank.freeze();
     let leader_bank = bank_forks.write().unwrap().insert(leader_bank);
     let block_id = Hash::new_unique();
@@ -3045,7 +3087,7 @@ fn test_purge_unconfirmed_duplicate_slot() {
     let root_bank = bank_forks.read().unwrap().root_bank();
     let bank7 = Bank::new_from_parent(
         bank_forks.read().unwrap().get(6).unwrap(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         7,
     );
     bank_forks.write().unwrap().insert(bank7);
@@ -3208,7 +3250,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
     let root_bank = bank_forks.read().unwrap().root_bank();
     let bank7 = Bank::new_from_parent(
         bank_forks.read().unwrap().get(6).unwrap(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         7,
     );
     bank_forks.write().unwrap().insert(bank7);
@@ -3416,7 +3458,11 @@ fn test_update_parent_restart() {
     // Slot 16: 32 shreds and a boundary failure recorded for a different
     // replay offset; stale failure state must not authorize this restart.
     for (slot, shreds) in [(4, 5), (8, 40), (12, 32), (16, 32)] {
-        let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), slot);
+        let bank = Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            slot,
+        );
         bank_forks.write().unwrap().insert(bank);
         let mut p = ForkProgress::new(Hash::default(), Some(0), None, 0, 0, None);
         p.replay_progress.write().unwrap().num_shreds = shreds;
@@ -3864,7 +3910,11 @@ fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bo
 
     let slot = 4;
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+    let bank = Bank::new_from_parent(
+        bank0,
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        slot,
+    );
     let bank = bank_forks.write().unwrap().insert(bank);
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
@@ -3967,7 +4017,11 @@ fn test_before_update_soft_dead() {
 
     let slot = 4;
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+    let bank = Bank::new_from_parent(
+        bank0,
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        slot,
+    );
     let bank = bank_forks.write().unwrap().insert(bank);
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
@@ -4034,7 +4088,11 @@ fn test_soft_dead_restarts() {
     let parent_block_id = BlockId::new_unique();
     insert_update_parent_slot(&blockstore, slot, 3, 0, parent_block_id, 32);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+    let bank = Bank::new_from_parent(
+        bank0,
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        slot,
+    );
     bank_forks.write().unwrap().insert(bank);
 
     let mut p = ForkProgress::new(Hash::default(), Some(0), None, 0, 0, None);
@@ -5326,7 +5384,7 @@ fn test_replay_stage_refresh_last_vote() {
     let bank1 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         1,
     );
     bank1.fill_bank_with_ticks_for_tests();
@@ -5398,7 +5456,7 @@ fn test_replay_stage_refresh_last_vote() {
     let bank2 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank1.clone(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         2,
     );
     bank2.fill_bank_with_ticks_for_tests();
@@ -5540,7 +5598,7 @@ fn test_replay_stage_refresh_last_vote() {
             parent_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 parent_bank,
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot,
             );
             parent_bank.fill_bank_with_ticks_for_tests();
@@ -5633,7 +5691,7 @@ fn test_replay_stage_refresh_last_vote() {
     let expired_bank_child = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         expired_bank.clone(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         expired_bank_child_slot,
     );
     expired_bank_child.process_transaction(vote_tx).unwrap();
@@ -5662,7 +5720,7 @@ fn test_replay_stage_refresh_last_vote() {
             parent_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 parent_bank,
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot,
             );
             parent_bank.fill_bank_with_ticks_for_tests();
@@ -5771,7 +5829,7 @@ fn send_vote_in_new_bank(
     let bank = Bank::new_from_parent_with_bank_forks(
         &bank_forks,
         parent_bank,
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         my_slot,
     );
     bank.fill_bank_with_ticks_for_tests();
@@ -5832,7 +5890,7 @@ fn test_replay_stage_last_vote_outside_slot_hashes() {
     let other_fork_bank = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         other_fork_slot,
     );
     other_fork_bank.fill_bank_with_ticks_for_tests();
@@ -5896,7 +5954,7 @@ fn test_replay_stage_last_vote_outside_slot_hashes() {
         let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             new_bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             new_slot,
         );
         bank.fill_bank_with_ticks_for_tests();
@@ -6021,7 +6079,7 @@ fn test_retransmit_latest_unpropagated_leader_slot() {
 
     let bank1 = Bank::new_from_parent(
         bank_forks.read().unwrap().get(0).unwrap(),
-        leader_schedule_cache.slot_leader_at(1, None).unwrap(),
+        SlotLeaders::new_for_tests(leader_schedule_cache.slot_leader_at(1, None).unwrap()),
         1,
     );
     progress.insert(
@@ -6201,7 +6259,7 @@ fn test_maybe_retransmit_unpropagated_slots() {
     for i in (1..10).chain(11..15) {
         let bank = Bank::new_from_parent(
             bank_forks.read().unwrap().get(prev_index).unwrap(),
-            leader_schedule_cache.slot_leader_at(i, None).unwrap(),
+            SlotLeaders::new_for_tests(leader_schedule_cache.slot_leader_at(i, None).unwrap()),
             i,
         );
         progress.insert(
@@ -6292,9 +6350,11 @@ fn test_dumped_slot_not_causing_panic() {
         .unwrap();
     let bank_to_dump = Bank::new_from_parent(
         bank_forks.read().unwrap().get(0).unwrap(),
-        leader_schedule_cache
-            .slot_leader_at(slot_to_dump, None)
-            .unwrap(),
+        SlotLeaders::new_for_tests(
+            leader_schedule_cache
+                .slot_leader_at(slot_to_dump, None)
+                .unwrap(),
+        ),
         slot_to_dump,
     );
     progress.insert(
@@ -6918,8 +6978,11 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     blockstore.store_duplicate_slot(4, vec![], vec![]).unwrap();
     blockstore.store_duplicate_slot(5, vec![], vec![]).unwrap();
 
-    let bank1_child =
-        Bank::new_from_parent(bank0.clone_without_scheduler(), SlotLeader::default(), 1);
+    let bank1_child = Bank::new_from_parent(
+        bank0.clone_without_scheduler(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        1,
+    );
     let bank1 = bank_forks.write().unwrap().insert(bank1_child);
     confirm_full_slot(
         &blockstore,

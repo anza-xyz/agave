@@ -190,7 +190,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::GenesisConfig,
         solana_inflation::Inflation,
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         std::sync::Arc,
     };
 
@@ -232,14 +232,14 @@ mod tests {
             let first_slot_in_epoch_1 = bank_epoch_0.epoch_schedule().get_first_slot_in_epoch(1);
             let bank_epoch_1 = Arc::new(Bank::new_from_parent(
                 bank_epoch_0.clone(),
-                SlotLeader::new_unique(),
+                SlotLeaders::new_for_tests(SlotLeader::new_unique()),
                 first_slot_in_epoch_1,
             ));
             assert_eq!(bank_epoch_1.epoch(), 1);
             let first_slot_in_epoch_2 = bank_epoch_1.epoch_schedule().get_first_slot_in_epoch(2);
             let bank_epoch_2 = Arc::new(Bank::new_from_parent(
                 bank_epoch_1.clone(),
-                SlotLeader::new_unique(),
+                SlotLeaders::new_for_tests(SlotLeader::new_unique()),
                 first_slot_in_epoch_2,
             ));
             (bank_epoch_0, bank_epoch_1, bank_epoch_2)
@@ -290,7 +290,7 @@ mod tests {
             let bank_epoch_1 = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 bank_epoch_0.clone(),
-                SlotLeader::new_unique(),
+                SlotLeaders::new_for_tests(SlotLeader::new_unique()),
                 epoch_1_first_slot,
             );
 

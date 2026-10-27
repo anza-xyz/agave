@@ -743,7 +743,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_runtime::{
-            bank::SlotLeader,
+            bank::{SlotLeader, SlotLeaders},
             bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
@@ -855,7 +855,11 @@ mod tests {
         let startup_root = ctx.ctx.sharable_banks.root().slot();
         let new_root_slot = startup_root + MAX_VOTE_SLOT_DISTANCE_FROM_ROOT + 1;
         let parent = ctx.ctx.sharable_banks.root();
-        let new_root = Bank::new_from_parent(parent, SlotLeader::default(), new_root_slot);
+        let new_root = Bank::new_from_parent(
+            parent,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            new_root_slot,
+        );
         new_root.freeze();
         {
             let mut bank_forks = ctx.bank_forks.write().unwrap();

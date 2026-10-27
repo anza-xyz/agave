@@ -494,7 +494,7 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::bank::{
-            Bank, SlotLeader,
+            Bank, SlotLeader, SlotLeaders,
             test_utils::goto_end_of_slot,
             tests::{create_genesis_config, create_simple_test_arc_bank},
         },
@@ -1362,7 +1362,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             first_slot_in_next_epoch,
         );
 
@@ -1385,7 +1385,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             first_slot_in_next_epoch,
         );
 
@@ -1431,7 +1431,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             next_slot,
         );
 
@@ -1467,7 +1467,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             first_slot_in_next_epoch,
         );
 
@@ -1609,8 +1609,12 @@ pub(crate) mod tests {
         // Advance the bank to cross the epoch boundary and activate the
         // feature.
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            33,
+        );
 
         // Assert the feature _was_ activated but the program was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
@@ -1628,8 +1632,12 @@ pub(crate) mod tests {
 
         // Simulate crossing an epoch boundary again.
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 96);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            96,
+        );
 
         // Again, assert the feature is still active and the program still was
         // not migrated.
@@ -1698,7 +1706,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             slots_per_epoch - 1,
         );
         assert_ne!(
@@ -1713,7 +1721,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             slots_per_epoch,
         );
 
@@ -1806,8 +1814,12 @@ pub(crate) mod tests {
         // Simulate crossing an epoch boundary for a new bank.
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            33,
+        );
 
         // Assert the feature is active but the builtin was not migrated.
         assert!(bank.feature_set.is_active(feature_id));

@@ -201,7 +201,7 @@ mod tests {
             Signature as BLSSignature, SignatureCompressed as BlsSignatureCompressed,
             SignatureProjective, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
         },
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_signer_store::encode_base2,
         std::collections::HashMap,
     };
@@ -257,7 +257,7 @@ mod tests {
         for reward_slot in [migration_slot - 1, migration_slot, migration_slot + 1] {
             let bank = Bank::new_from_parent(
                 root_bank.clone(),
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 reward_slot + NUM_SLOTS_FOR_REWARD,
             );
             bank.set_alpenglow_genesis_certificate(&genesis_cert);
@@ -314,7 +314,11 @@ mod tests {
         );
         let (bank, _bank_forks) =
             Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
-        let bank = Bank::new_from_parent(bank, SlotLeader::default(), bank_slot);
+        let bank = Bank::new_from_parent(
+            bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            bank_slot,
+        );
 
         let rank_map = bank
             .epoch_stakes_from_slot(reward_slot)

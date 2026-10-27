@@ -98,7 +98,7 @@ impl LeaderScheduleCache {
     /// following epoch. With a `bank`, that epoch's schedule is always
     /// computable, since the bank holds stakes up to its leader schedule epoch.
     pub fn slot_leaders_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<SlotLeaders> {
-        SlotLeaders::new(slot, |slot| self.slot_leader_at(slot, bank))
+        SlotLeaders::try_new(slot, |slot| self.slot_leader_at(slot, bank))
     }
 
     /// Returns the (next slot, last slot) consecutive range of slots after
@@ -548,7 +548,11 @@ mod tests {
             target_slot += 1;
         }
 
-        let child_bank = Bank::new_from_parent(bank.clone(), SlotLeader::default(), target_slot);
+        let child_bank = Bank::new_from_parent(
+            bank.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            target_slot,
+        );
         let bank = bank_forks
             .write()
             .unwrap()
@@ -650,7 +654,7 @@ mod tests {
         let bank2 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             95,
         );
         assert!(bank2.epoch_vote_accounts(2).is_some());

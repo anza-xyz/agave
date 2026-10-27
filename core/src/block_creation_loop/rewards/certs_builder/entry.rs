@@ -131,7 +131,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         solana_signer_store::{Decoded, decode},
@@ -221,7 +221,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             slot,
         );
         let rank_map = bank.get_rank_map(slot).unwrap().clone();

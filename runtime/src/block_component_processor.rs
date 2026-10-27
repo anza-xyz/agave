@@ -817,7 +817,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, create_genesis_config_with_tower_leader},
         },
@@ -859,7 +859,7 @@ mod tests {
         Bank::new_from_parent_with_bank_forks(
             bank_forks,
             parent.clone(),
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             slot,
         )
     }

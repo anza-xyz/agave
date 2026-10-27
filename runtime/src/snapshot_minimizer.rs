@@ -366,9 +366,12 @@ impl<'a> SnapshotMinimizer<'a> {
 mod tests {
     use {
         crate::{
-            bank::Bank, genesis_utils::create_genesis_config_with_leader,
-            runtime_config::RuntimeConfig, snapshot_bank_utils,
-            snapshot_minimizer::SnapshotMinimizer, snapshot_utils,
+            bank::{Bank, SlotLeaders},
+            genesis_utils::create_genesis_config_with_leader,
+            runtime_config::RuntimeConfig,
+            snapshot_bank_utils,
+            snapshot_minimizer::SnapshotMinimizer,
+            snapshot_utils,
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         agave_votor_messages::consensus_message::BlockId,
@@ -689,7 +692,11 @@ mod tests {
 
         // No slot holds a minimized account, so all three are purged as dead slots;
         // tombstone_slot's storage still carries the tombstone
-        let child_bank = Bank::new_from_parent(bank.clone(), *bank.leader(), slot + 1);
+        let child_bank = Bank::new_from_parent(
+            bank.clone(),
+            SlotLeaders::new_for_tests(*bank.leader()),
+            slot + 1,
+        );
         let child_bank = bank_forks
             .write()
             .unwrap()
@@ -763,7 +770,11 @@ mod tests {
         // Minimize at the next slot: no stored slot holds a minimized account, so all are
         // purged as dead slots; tombstone_slot's tombstone-only storage produces no index
         // reclaims at all
-        let child_bank = Bank::new_from_parent(bank.clone(), *bank.leader(), slot + 1);
+        let child_bank = Bank::new_from_parent(
+            bank.clone(),
+            SlotLeaders::new_for_tests(*bank.leader()),
+            slot + 1,
+        );
         let child_bank = bank_forks
             .write()
             .unwrap()
@@ -798,7 +809,11 @@ mod tests {
         // write to multiple accounts and keep track of one, for minimization later
         let pubkey_to_keep = Pubkey::new_unique();
         let slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent(bank.clone(), *bank.leader(), slot);
+        let bank = Bank::new_from_parent(
+            bank.clone(),
+            SlotLeaders::new_for_tests(*bank.leader()),
+            slot,
+        );
         let bank = bank_forks
             .write()
             .unwrap()

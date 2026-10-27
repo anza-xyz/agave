@@ -377,7 +377,7 @@ mod tests {
         solana_gossip::contact_info::ContactInfo,
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             bank_forks::BankForks,
             epoch_stakes::VersionedEpochStakes,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
@@ -710,7 +710,8 @@ mod tests {
                 (authorized_voter, (stake as u64, vote_account))
             })
             .collect();
-        let mut new_bank = Bank::new_from_parent(bank, SlotLeader::default(), 1);
+        let mut new_bank =
+            Bank::new_from_parent(bank, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         assert!(new_bank.epoch_stakes(2).is_none());
         let epoch2_epoch_stakes = VersionedEpochStakes::new_for_tests(vote_accounts_hash_map, 2);
         new_bank.set_epoch_stakes_for_test(2, epoch2_epoch_stakes);

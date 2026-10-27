@@ -654,7 +654,7 @@ mod tests {
             ProcessedSignatureResult, ReceivedSignatureResult, RpcSignatureResult, SlotInfo,
         },
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             bank_forks::BankForks,
             commitment::{BlockCommitmentCache, CommitmentSlots},
             genesis_utils::{
@@ -934,7 +934,8 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -1050,7 +1051,8 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -1289,7 +1291,8 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bob = Keypair::new();
 

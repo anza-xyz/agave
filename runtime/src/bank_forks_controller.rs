@@ -224,7 +224,11 @@ impl BankForksCommandReceiver {
 mod tests {
     use {
         super::*,
-        crate::{bank::SlotLeader, bank_forks::BankForks, genesis_utils::create_genesis_config},
+        crate::{
+            bank::{SlotLeader, SlotLeaders},
+            bank_forks::BankForks,
+            genesis_utils::create_genesis_config,
+        },
         agave_votor_messages::consensus_message::BlockId,
         std::{thread, time::Duration},
     };
@@ -278,7 +282,11 @@ mod tests {
         let genesis = create_genesis_config(10_000);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
         let parent_bank = bank_forks.read().unwrap().root_bank();
-        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
+        let bank = Bank::new_from_parent(
+            parent_bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         let block_id = BlockId::new_unique();
         bank.set_block_id(Some(block_id));
         let bank = bank_forks
@@ -362,7 +370,11 @@ mod tests {
         });
 
         let parent_bank = bank_forks.read().unwrap().root_bank();
-        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
+        let bank = Bank::new_from_parent(
+            parent_bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         let block_id = BlockId::new_unique();
         bank.set_block_id(Some(block_id));
         bank.freeze();
@@ -375,7 +387,11 @@ mod tests {
         assert_eq!(bank_forks.read().unwrap().root(), 1);
 
         let parent_bank = bank_forks.read().unwrap().root_bank();
-        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 2);
+        let bank = Bank::new_from_parent(
+            parent_bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            2,
+        );
         bank.freeze();
         let inserted_bank = controller.insert_bank(bank).unwrap();
         assert_eq!(inserted_bank.slot(), 2);

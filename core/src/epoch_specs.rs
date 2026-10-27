@@ -97,7 +97,7 @@ mod tests {
     use {
         super::*,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
     };
@@ -126,7 +126,11 @@ mod tests {
         let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
         for slot in 1..100 {
             let bank = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), slot);
+            let bank = Bank::new_from_parent(
+                bank,
+                SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+                slot,
+            );
             bank_forks.write().unwrap().insert(bank);
         }
 

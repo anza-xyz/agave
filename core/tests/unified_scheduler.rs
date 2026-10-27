@@ -16,7 +16,7 @@ use {
     },
     solana_cost_model::transaction_cost::TrackedCost,
     solana_hash::Hash,
-    solana_leader_schedule::SlotLeader,
+    solana_leader_schedule::{SlotLeader, SlotLeaders},
     solana_ledger::genesis_utils::create_genesis_config,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -82,12 +82,20 @@ fn test_scheduler_waited_by_drop_bank_service() {
 
     // Create bank, which is pruned later
     let pruned = 2;
-    let pruned_bank = Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), pruned);
+    let pruned_bank = Bank::new_from_parent(
+        genesis_bank.clone(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        pruned,
+    );
     let pruned_bank = bank_forks.write().unwrap().insert(pruned_bank);
 
     // Create new root bank
     let root = 3;
-    let root_bank = Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), root);
+    let root_bank = Bank::new_from_parent(
+        genesis_bank.clone(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        root,
+    );
     root_bank.freeze();
     let root_hash = root_bank.hash();
     bank_forks.write().unwrap().insert(root_bank);

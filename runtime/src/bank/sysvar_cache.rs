@@ -8,7 +8,7 @@ mod tests {
         crate::{genesis_utils::activate_all_features, inflation_rewards::points::PointValue},
         solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
         solana_genesis_config::create_genesis_config,
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_sysvar::epoch_rewards::EpochRewards,
     };
 
@@ -34,7 +34,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             bank1_slot,
         );
 
@@ -57,7 +57,7 @@ mod tests {
         let bank2 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank1.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             bank2_slot,
         );
 
@@ -91,7 +91,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             bank1_slot,
         );
 
@@ -181,7 +181,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             bank1_slot,
         );
         assert!(bank1.is_alpenglow());
@@ -241,7 +241,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             parent,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             MINIMUM_SLOTS_PER_EPOCH,
         );
         assert_eq!(bank.epoch(), 1);

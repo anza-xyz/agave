@@ -2062,7 +2062,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
@@ -3027,7 +3027,12 @@ mod tests {
         }
 
         // child_bank inserted after pool so it gets a scheduler
-        Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, SlotLeader::default(), 1);
+        Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         let mut bank_forks = bank_forks.write().unwrap();
         let mut child_bank = bank_forks.get_with_scheduler(1).unwrap();
         assert!(child_bank.has_installed_scheduler());
@@ -3530,7 +3535,7 @@ mod tests {
         // Create new bank to observe behavior difference around session ending
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             bank.slot().checked_add(1).unwrap(),
         ));
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
@@ -3577,7 +3582,7 @@ mod tests {
         let (bank0, _bank_forks) = setup_dummy_fork_graph(bank0);
         let bank1 = Arc::new(Bank::new_from_parent(
             bank0.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             bank0.slot().checked_add(1).unwrap(),
         ));
 
@@ -3791,7 +3796,7 @@ mod tests {
             let slot = bank.slot();
             bank = Arc::new(Bank::new_from_parent(
                 bank,
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot.checked_add(1).unwrap(),
             ));
         }

@@ -173,10 +173,14 @@ impl SnapshotController {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::accounts_background_service::SnapshotRequestKind,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::bounded,
-        solana_genesis_config::create_genesis_config, solana_leader_schedule::SlotLeader,
-        std::sync::Arc, test_case::test_case,
+        super::*,
+        crate::accounts_background_service::SnapshotRequestKind,
+        agave_snapshots::snapshot_config::SnapshotConfig,
+        crossbeam_channel::bounded,
+        solana_genesis_config::create_genesis_config,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
+        std::sync::Arc,
+        test_case::test_case,
     };
 
     fn create_banks(num_banks: u64) -> Vec<Arc<Bank>> {
@@ -192,7 +196,7 @@ mod tests {
             let new_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 parent_bank.clone(),
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot,
             );
             parent_bank = new_bank;

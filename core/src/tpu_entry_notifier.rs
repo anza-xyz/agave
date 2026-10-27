@@ -174,13 +174,17 @@ mod tests {
         },
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
-        solana_runtime::bank::{Bank, SlotLeader},
+        solana_runtime::bank::{Bank, SlotLeader, SlotLeaders},
     };
 
     #[test]
     fn test_block_footer_notification_and_forwarding() {
         let (parent, _bank_forks) = Bank::new_with_bank_forks_for_tests(&GenesisConfig::default());
-        let bank = Arc::new(Bank::new_from_parent(parent, SlotLeader::default(), 42));
+        let bank = Arc::new(Bank::new_from_parent(
+            parent,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            42,
+        ));
         let slot = bank.slot();
         let bank_id = bank.bank_id();
         let block_footer = BlockFooterV1 {

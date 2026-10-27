@@ -453,7 +453,7 @@ mod tests {
         crate::{
             alpenglow_epoch_type::RewardEpochDelegatedStakes,
             bank::{
-                NewEpochBundle, RewardsMetrics, SlotLeader, null_tracer,
+                NewEpochBundle, RewardsMetrics, SlotLeader, SlotLeaders, null_tracer,
                 tests::create_genesis_config,
             },
             bank_forks::BankForks,
@@ -703,7 +703,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             advance_num_slots,
         );
 
@@ -999,7 +999,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             slots_per_epoch - 1,
         );
 
@@ -1100,8 +1100,12 @@ mod tests {
         assert_eq!(stake_account_stores_per_block, 10);
 
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 1);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         assert_eq!(
             bank.partitioned_rewards_stake_account_stores_per_block(),
             stake_account_stores_per_block
@@ -1215,7 +1219,7 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot,
             );
             // Creating the child freezes its parent. Use the finalized parent capitalization as
@@ -1359,7 +1363,7 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot,
             );
             let pre_cap = previous_bank.capitalization();
@@ -1520,7 +1524,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot,
             );
 
@@ -1582,7 +1586,7 @@ mod tests {
         let epoch_boundary_bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             SLOTS_PER_EPOCH,
         );
         let KeyedRewardsAndNumPartitions {
@@ -1622,7 +1626,7 @@ mod tests {
         for partition_index in 0..expected_num_partitions {
             let partition_bank = Arc::new(Bank::new_from_parent(
                 previous_bank,
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 SLOTS_PER_EPOCH + partition_index + 1,
             ));
             // Slot after the epoch boundary contains partitioned staking
@@ -1644,7 +1648,7 @@ mod tests {
         assert_eq!(total_staking_rewards, 0);
         let bank = Bank::new_from_parent(
             previous_bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             SLOTS_PER_EPOCH + expected_num_partitions + 1,
         );
         // Next slot contains empty rewards (since fees are off), and no
@@ -1731,7 +1735,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             first_normal_slot,
         );
 
@@ -1765,8 +1769,11 @@ mod tests {
         }
 
         // Mimic some of the early work in `Bank::new_from_parent`, on a fork that is dropped below
-        let mut simulated_bank =
-            Bank::new_from_parent(bank.clone(), SlotLeader::default(), bank.slot() + 1);
+        let mut simulated_bank = Bank::new_from_parent(
+            bank.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            bank.slot() + 1,
+        );
         simulated_bank.slot = bank.slot() + slots_per_epoch;
         // A bank stores at one slot, so moving the slot makes it a different bank
         simulated_bank.bank_id = simulated_bank.rc.bank_id_generator.next();
@@ -1841,7 +1848,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             first_normal_slot + slots_per_epoch,
         );
         let fetched_reward_epoch_delegated_stakes = RewardEpochDelegatedStakes::get(&bank).unwrap();
@@ -1987,7 +1994,7 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                SlotLeader::default(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
                 slot,
             );
             let post_cap = curr_bank.capitalization();

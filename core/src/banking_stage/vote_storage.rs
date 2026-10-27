@@ -380,7 +380,7 @@ pub(crate) mod tests {
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::genesis_utils::{self, ValidatorVoteKeypairs},
         solana_runtime_transaction::sanitize_config::sanitize_config,
@@ -891,7 +891,7 @@ pub(crate) mod tests {
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let mut bank = Bank::new_from_parent(
             bank_0,
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             MINIMUM_SLOTS_PER_EPOCH, // This puts us in epoch 1
         );
         assert_eq!(bank.epoch(), 1);
@@ -969,7 +969,7 @@ pub(crate) mod tests {
         let (bank_0, _bank_forks) = Bank::new_for_tests(&config).wrap_with_bank_forks_for_tests();
         let bank = Bank::new_from_parent(
             bank_0,
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             MINIMUM_SLOTS_PER_EPOCH - 1,
         );
         assert_eq!(bank.epoch(), 0);
@@ -982,7 +982,11 @@ pub(crate) mod tests {
             genesis_utils::create_genesis_config_with_vote_accounts(100, &[&keypair_b], vec![200])
                 .genesis_config;
         let (bank_0, _bank_forks) = Bank::new_for_tests(&config).wrap_with_bank_forks_for_tests();
-        let bank = Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
+        let bank = Bank::new_from_parent(
+            bank_0,
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+            MINIMUM_SLOTS_PER_EPOCH,
+        );
         assert_eq!(bank.epoch(), 1);
         vote_storage.cache_epoch_boundary_info(&bank);
         insert_packets(&mut vote_storage, VoteSource::Gossip, votes());
@@ -1002,7 +1006,7 @@ pub(crate) mod tests {
         let (bank_0, _bank_forks) = Bank::new_for_tests(&config).wrap_with_bank_forks_for_tests();
         let bank = Bank::warp_from_parent(
             bank_0,
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             3 * MINIMUM_SLOTS_PER_EPOCH,
         );
         assert_eq!(bank.epoch(), 2);
@@ -1034,8 +1038,11 @@ pub(crate) mod tests {
         // Epoch 1: A and B are both staked, and their current votes are valid
         let (bank_0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        let mut bank =
-            Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
+        let mut bank = Bank::new_from_parent(
+            bank_0,
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+            MINIMUM_SLOTS_PER_EPOCH,
+        );
         assert_eq!(bank.epoch(), 1);
 
         bank.set_epoch_stakes_for_test(
@@ -1092,7 +1099,7 @@ pub(crate) mod tests {
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let mut bank = Bank::warp_from_parent(
             bank_0,
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             3 * MINIMUM_SLOTS_PER_EPOCH,
         );
         assert_eq!(bank.epoch(), 2);

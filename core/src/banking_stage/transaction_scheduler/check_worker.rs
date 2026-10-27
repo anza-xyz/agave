@@ -79,11 +79,17 @@ fn preferred_working_bank(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::banking_stage::tests::create_slow_genesis_config,
-        crossbeam_channel::bounded, solana_account::AccountSharedData,
-        solana_leader_schedule::SlotLeader, solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::BytesPacket, solana_poh::poh_recorder::LeaderState,
-        solana_runtime::bank::Bank, solana_sdk_ids::system_program, solana_signer::Signer,
+        super::*,
+        crate::banking_stage::tests::create_slow_genesis_config,
+        crossbeam_channel::bounded,
+        solana_account::AccountSharedData,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
+        solana_ledger::genesis_utils::GenesisConfigInfo,
+        solana_perf::packet::BytesPacket,
+        solana_poh::poh_recorder::LeaderState,
+        solana_runtime::bank::Bank,
+        solana_sdk_ids::system_program,
+        solana_signer::Signer,
         solana_system_transaction::transfer,
     };
 
@@ -154,10 +160,14 @@ mod tests {
         let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let leader_bank = Arc::new(Bank::new_from_parent(
             root_bank.clone(),
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             1,
         ));
-        let working_bank = Bank::new_from_parent(root_bank, SlotLeader::new_unique(), 2);
+        let working_bank = Bank::new_from_parent(
+            root_bank,
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+            2,
+        );
         working_bank.store_account(
             &mint_keypair.pubkey(),
             &AccountSharedData::new(0, 0, &system_program::ID),
@@ -706,7 +716,7 @@ pub(crate) mod external {
             solana_compute_budget_interface::ComputeBudgetInstruction,
             solana_hash::Hash,
             solana_keypair::Keypair,
-            solana_leader_schedule::SlotLeader,
+            solana_leader_schedule::{SlotLeader, SlotLeaders},
             solana_ledger::genesis_utils::GenesisConfigInfo,
             solana_message::{AddressLookupTableAccount, Message, VersionedMessage, v0},
             solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -850,7 +860,11 @@ pub(crate) mod external {
             let GenesisConfigInfo { genesis_config, .. } = create_slow_genesis_config(10_000);
             let (root_bank, _root_bank_forks) =
                 Bank::new_with_bank_forks_for_tests(&genesis_config);
-            let child_bank = Bank::new_from_parent(root_bank, SlotLeader::new_unique(), 1);
+            let child_bank = Bank::new_from_parent(
+                root_bank,
+                SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+                1,
+            );
             let (bank, bank_forks) = child_bank.wrap_with_bank_forks_for_tests();
 
             let logon = ClientLogon {

@@ -166,7 +166,7 @@ pub mod tests {
             get_tmp_ledger_path_auto_delete,
         },
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             bank_forks::BankForks,
         },
     };
@@ -216,7 +216,7 @@ pub mod tests {
         // Simulate this node observing slot 4 as optimistically confirmed - status still behind
         let bank4 = Arc::new(Bank::new_from_parent(
             bank0.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             4,
         ));
         optimistically_confirmed_bank.write().unwrap().bank = bank4.clone();
@@ -224,19 +224,31 @@ pub mod tests {
 
         // Simulate this node observing slot 5 as optimistically confirmed - status now ok
         // as distance is <= health_check_slot_distance
-        let bank5 = Arc::new(Bank::new_from_parent(bank4, SlotLeader::default(), 5));
+        let bank5 = Arc::new(Bank::new_from_parent(
+            bank4,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            5,
+        ));
         optimistically_confirmed_bank.write().unwrap().bank = bank5.clone();
         assert_eq!(health.check(), RpcHealthStatus::Ok);
 
         // Node now up with tip of cluster
-        let bank15 = Arc::new(Bank::new_from_parent(bank5, SlotLeader::default(), 15));
+        let bank15 = Arc::new(Bank::new_from_parent(
+            bank5,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            15,
+        ));
         optimistically_confirmed_bank.write().unwrap().bank = bank15.clone();
         assert_eq!(health.check(), RpcHealthStatus::Ok);
 
         // Node "beyond" tip of cluster - this technically isn't possible but could be
         // observed locally due to a race between updates to Blockstore and
         // OptimisticallyConfirmedBank. Either way, not a problem and status is ok.
-        let bank16 = Arc::new(Bank::new_from_parent(bank15, SlotLeader::default(), 16));
+        let bank16 = Arc::new(Bank::new_from_parent(
+            bank15,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            16,
+        ));
         optimistically_confirmed_bank.write().unwrap().bank = bank16.clone();
         assert_eq!(health.check(), RpcHealthStatus::Ok);
 
@@ -261,7 +273,11 @@ pub mod tests {
             ));
         assert_eq!(health.check(), RpcHealthStatus::Behind { num_slots: 14 });
 
-        let bank20 = Arc::new(Bank::new_from_parent(bank16, SlotLeader::default(), 20));
+        let bank20 = Arc::new(Bank::new_from_parent(
+            bank16,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            20,
+        ));
         optimistically_confirmed_bank.write().unwrap().bank = bank20;
         assert_eq!(health.check(), RpcHealthStatus::Ok);
     }

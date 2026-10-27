@@ -23,7 +23,7 @@ use {
             PrunedBanksRequestHandler, ROOTED_SLOTS_TO_KEEP_IN_CACHE, SendDroppedBankCallback,
             SnapshotRequestHandler,
         },
-        bank::Bank,
+        bank::{Bank, SlotLeaders},
         bank_forks::BankForks,
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
         runtime_config::RuntimeConfig,
@@ -184,7 +184,11 @@ where
     };
     for slot in 1..=last_slot {
         let parent = bank_forks.read().unwrap().get(slot - 1).unwrap().clone();
-        let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
+        let bank = Bank::new_from_parent(
+            parent.clone(),
+            SlotLeaders::new_for_tests(*parent.leader()),
+            slot,
+        );
         let bank = bank_forks.write().unwrap().insert(bank);
         f(bank.clone_without_scheduler().as_ref(), mint_keypair);
         // Set root to make sure we don't end up with too many account storage entries
@@ -296,7 +300,11 @@ fn test_slots_to_snapshot() {
             for _ in 0..*add_root_interval {
                 let new_slot = current_bank.slot() + 1;
                 let leader = *current_bank.leader();
-                let new_bank = Bank::new_from_parent(current_bank, leader, new_slot);
+                let new_bank = Bank::new_from_parent(
+                    current_bank,
+                    SlotLeaders::new_for_tests(leader),
+                    new_slot,
+                );
                 current_bank = bank_forks.write().unwrap().insert(new_bank).clone();
             }
             bank_forks
@@ -421,7 +429,11 @@ fn test_bank_forks_incremental_snapshot() {
         // Make a new bank and perform some transactions
         let bank = {
             let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
+            let bank = Bank::new_from_parent(
+                parent.clone(),
+                SlotLeaders::new_for_tests(*parent.leader()),
+                slot,
+            );
             let bank_scheduler = bank_forks.write().unwrap().insert(bank);
             let bank = bank_scheduler.clone_without_scheduler();
 
@@ -658,7 +670,11 @@ fn test_snapshots_with_background_services(request_fastboot: bool) {
         // Make a new bank and process some transactions
         {
             let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
+            let bank = Bank::new_from_parent(
+                parent.clone(),
+                SlotLeaders::new_for_tests(*parent.leader()),
+                slot,
+            );
             let bank = bank_forks
                 .write()
                 .unwrap()
@@ -838,7 +854,11 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     for slot in 1..=LAST_SLOT {
         // Make a new bank and process some transactions
         let parent_bank = bank_forks.read().unwrap().get(slot - 1).unwrap();
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), *parent_bank.leader(), slot);
+        let child_bank = Bank::new_from_parent(
+            parent_bank.clone(),
+            SlotLeaders::new_for_tests(*parent_bank.leader()),
+            slot,
+        );
         let bank = bank_forks
             .write()
             .unwrap()

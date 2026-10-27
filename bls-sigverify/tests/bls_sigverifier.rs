@@ -39,7 +39,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
+        bank::{Bank, SlotLeader, SlotLeaders},
         bank_forks::{BankForks, SharableBanks},
         genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
     },
@@ -372,7 +372,11 @@ fn test_old_blockstore_certificate_is_filtered() {
         &[0, 1, 2, 3, 4, 5, 6, 7],
     );
     let slot = 6;
-    let root_bank = Bank::new_from_parent(ctx.sharable_banks.root(), SlotLeader::default(), 5);
+    let root_bank = Bank::new_from_parent(
+        ctx.sharable_banks.root(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        5,
+    );
 
     {
         let mut bank_forks = ctx.bank_forks.write().unwrap();
@@ -1095,7 +1099,11 @@ fn test_verify_vote_with_invalid_rank() {
 #[test]
 fn test_verify_old_vote_and_cert() {
     let ctx = TestContext::new();
-    let bank5 = Bank::new_from_parent(ctx.sharable_banks.root(), SlotLeader::default(), 5);
+    let bank5 = Bank::new_from_parent(
+        ctx.sharable_banks.root(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        5,
+    );
     {
         let mut bank_forks = ctx.bank_forks.write().unwrap();
         bank_forks.insert(bank5);
@@ -1673,7 +1681,11 @@ fn genesis_votes_bypass_future_bound_during_migration() {
 #[test]
 fn votes_are_bounded_by_root_before_parent_ready() {
     let ctx = TestContext::new();
-    let bank = Bank::new_from_parent(ctx.sharable_banks.root(), SlotLeader::default(), 500);
+    let bank = Bank::new_from_parent(
+        ctx.sharable_banks.root(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        500,
+    );
     {
         let mut bank_forks = ctx.bank_forks.write().unwrap();
         bank_forks.insert(bank);

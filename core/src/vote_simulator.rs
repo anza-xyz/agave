@@ -22,7 +22,7 @@ use {
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_leader_schedule::SlotLeader,
+    solana_leader_schedule::{SlotLeader, SlotLeaders},
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, BankTestConfig},
@@ -102,7 +102,11 @@ impl VoteSimulator {
             }
             let parent = *walk.get_parent().unwrap().data();
             let parent_bank = self.bank_forks.read().unwrap().get(parent).unwrap();
-            let new_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), slot);
+            let new_bank = Bank::new_from_parent(
+                parent_bank.clone(),
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+                slot,
+            );
             let new_bank = self
                 .bank_forks
                 .write()

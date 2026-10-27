@@ -1472,16 +1472,10 @@ impl Bank {
     }
 
     /// Create a new bank that points to an immutable checkpoint of another bank.
-    ///
-    /// Outside of `dev-context-only-utils` builds `leaders` must be a
-    /// [`SlotLeaders`]; tests may pass a bare [`SlotLeader`].
-    pub fn new_from_parent<L>(parent: Arc<Bank>, leaders: L, slot: Slot) -> Self
-    where
-        SlotLeaders: From<L>,
-    {
+    pub fn new_from_parent(parent: Arc<Bank>, leaders: SlotLeaders, slot: Slot) -> Self {
         Self::_new_from_parent(
             parent,
-            SlotLeaders::from(leaders),
+            leaders,
             slot,
             null_tracer(),
             NewBankOptions::default(),
@@ -2098,13 +2092,10 @@ impl Bank {
     ///   in the past
     /// * Adjusts the new bank's tick height to avoid having to run PoH for millions of slots
     /// * Freezes the new bank, assuming that the user will `Bank::new_from_parent` from this bank
-    pub fn warp_from_parent<L>(parent: Arc<Bank>, leader: L, slot: Slot) -> Self
-    where
-        SlotLeaders: From<L>,
-    {
+    pub fn warp_from_parent(parent: Arc<Bank>, leaders: SlotLeaders, slot: Slot) -> Self {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
-        let mut new = Bank::new_from_parent(parent, leader, slot);
+        let mut new = Bank::new_from_parent(parent, leaders, slot);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot), None);
         new.tick_height.store(new.max_tick_height(), Relaxed);
 
@@ -2460,7 +2451,7 @@ impl Bank {
 
         // Both slots usually share an epoch, so keep the last schedule built.
         let mut schedule = None;
-        SlotLeaders::new(slot, |slot| {
+        SlotLeaders::try_new(slot, |slot| {
             let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(slot);
             if !matches!(schedule, Some((cached_epoch, _)) if cached_epoch == epoch) {
                 schedule = Some((epoch, leader_schedule(epoch)?));
@@ -7279,16 +7270,13 @@ impl Bank {
         )
     }
 
-    pub fn new_from_parent_with_bank_forks<L>(
+    pub fn new_from_parent_with_bank_forks(
         bank_forks: &RwLock<BankForks>,
         parent: Arc<Bank>,
-        leader: L,
+        leaders: SlotLeaders,
         slot: Slot,
-    ) -> Arc<Self>
-    where
-        SlotLeaders: From<L>,
-    {
-        let bank = Bank::new_from_parent(parent, leader, slot);
+    ) -> Arc<Self> {
+        let bank = Bank::new_from_parent(parent, leaders, slot);
         bank_forks
             .write()
             .unwrap()

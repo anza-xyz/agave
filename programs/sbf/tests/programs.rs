@@ -36,7 +36,6 @@ use {
     },
     solana_message::SanitizedMessage,
     solana_runtime::{
-        bank::SlotLeader,
         bank_forks::BankForks,
         genesis_utils::{
             bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
@@ -70,7 +69,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        bank::{Bank, SlotLeaders},
+        bank::{Bank, SlotLeader, SlotLeaders},
         bank_client::BankClient,
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         loader_utils::create_program,
@@ -209,7 +208,11 @@ fn bank_with_feature_activated(
     feature_id: &Pubkey,
 ) -> Arc<Bank> {
     let slot = parent.slot().saturating_add(1);
-    let mut bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
+    let mut bank = Bank::new_from_parent(
+        parent,
+        SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+        slot,
+    );
     bank.activate_feature(feature_id);
     bank_forks
         .write()
@@ -225,7 +228,11 @@ fn bank_with_feature_deactivated(
     feature_id: &Pubkey,
 ) -> Arc<Bank> {
     let slot = parent.slot().saturating_add(1);
-    let mut bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
+    let mut bank = Bank::new_from_parent(
+        parent,
+        SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+        slot,
+    );
     bank.deactivate_feature(feature_id);
     bank_forks
         .write()
@@ -804,7 +811,11 @@ fn test_program_sbf_invoke_sanity() {
         let noop_program_id = create_program(&bank, &bpf_loader_upgradeable::id(), program.3);
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         let argument_keypair = Keypair::new();
@@ -1713,7 +1724,11 @@ fn test_program_sbf_instruction_introspection() {
     );
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     // Passing transaction
@@ -2467,7 +2482,11 @@ fn test_program_sbf_upgrade() {
         "solana_sbf_rust_upgraded",
     );
     bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .expect("Failed to advance the slot");
 
     // Call upgraded program
@@ -2568,7 +2587,11 @@ fn test_program_sbf_upgrade_via_cpi() {
         .send_and_confirm_message(&[&mint_keypair, &new_authority_keypair], message)
         .unwrap();
     bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .expect("Failed to advance the slot");
 
     // Call the upgraded program via CPI
@@ -2647,7 +2670,11 @@ fn test_program_sbf_realloc() {
         );
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         let mut bump = 0;
@@ -3068,7 +3095,11 @@ fn test_program_sbf_realloc_invoke() {
     );
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     let mut bump = 0;
@@ -3725,7 +3756,11 @@ fn test_program_sbf_processed_inner_instruction() {
     );
     let mut bank_client = BankClient::new_shared(bank.clone());
     bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     let instruction2 = Instruction::new_with_bytes(
@@ -3800,7 +3835,11 @@ fn test_program_fees() {
     let program_id = create_program(&bank, &bpf_loader_upgradeable::id(), "solana_sbf_rust_noop");
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     let pre_balance = bank_client.get_balance(&mint_keypair.pubkey()).unwrap();
@@ -3889,7 +3928,11 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
     // unaligned should be allowed once invoke completes
     let mut bank_client = BankClient::new_shared(bank);
     bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeaders::default())
+        .advance_slot(
+            1,
+            bank_forks.as_ref(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .expect("Failed to advance the slot");
     let mut instruction = Instruction::new_with_bytes(
         inner_instruction_alignment_check,
@@ -3943,7 +3986,11 @@ fn test_cpi_account_ownership_writability() {
         );
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         let account_keypair = Keypair::new();
@@ -4121,7 +4168,11 @@ fn test_cpi_account_data_updates() {
         );
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         let account_keypair = Keypair::new();
@@ -4375,7 +4426,11 @@ fn test_cpi_invalid_account_info_pointers() {
 
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     for invoke_program_id in &program_ids {
@@ -4449,7 +4504,11 @@ fn test_cpi_invalid_account_info_rc() {
 
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         for invoke_program_id in &program_ids {
@@ -4504,7 +4563,11 @@ fn test_deplete_cost_meter_with_access_violation() {
     );
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     let account_keypair = Keypair::new();
@@ -4605,7 +4668,11 @@ fn test_deny_access_beyond_current_length() {
         );
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         let account = AccountSharedData::new(42, 0, &invoke_program_id);
@@ -4674,7 +4741,11 @@ fn test_deny_executable_write() {
         );
         let mut bank_client = BankClient::new_shared(bank.clone());
         bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         let account_keypair = Keypair::new();
@@ -4730,7 +4801,11 @@ fn test_update_callee_account() {
         );
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         let account_keypair = Keypair::new();
@@ -5013,7 +5088,11 @@ fn test_clone_account_data() {
         ];
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         // I. clone data and CPI; modify data in callee
@@ -5140,7 +5219,11 @@ fn test_stack_heap_zeroed() {
     );
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     let account_keypair = Keypair::new();
@@ -5206,7 +5289,11 @@ fn test_function_call_args() {
     );
     let mut bank_client = BankClient::new_shared(bank.clone());
     let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeaders::default())
+        .advance_slot(
+            1,
+            &bank_forks,
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     #[derive(BorshSerialize, BorshDeserialize, PartialEq, Eq, Debug)]
@@ -5362,7 +5449,11 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         );
         let mut bank_client = BankClient::new_shared(bank.clone());
         let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeaders::default())
+            .advance_slot(
+                1,
+                &bank_forks,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+            )
             .unwrap();
 
         let mint_pubkey = mint_keypair.pubkey();

@@ -726,7 +726,7 @@ mod test {
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             genesis_utils::{activate_feature, deactivate_features},
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},
         },
@@ -784,7 +784,7 @@ mod test {
         assert!(parent.block_id().is_some());
         Arc::new(Bank::new_from_parent(
             parent.clone(),
-            *parent.leader(),
+            SlotLeaders::new_for_tests(*parent.leader()),
             slot,
         ))
     }
@@ -941,7 +941,7 @@ mod test {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             parent_bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             effective_slot,
         );
         let ticks = create_ticks(1, 0, genesis_config.hash());
@@ -1368,7 +1368,7 @@ mod test {
 
         let bank2 = Arc::new(Bank::new_from_parent(
             bank1.clone(),
-            *bank1.leader(),
+            SlotLeaders::new_for_tests(*bank1.leader()),
             bank1.slot() + 1,
         ));
         let err = standard_broadcast_run

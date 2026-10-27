@@ -775,7 +775,7 @@ pub mod tests {
         solana_poh::poh_recorder::create_test_recorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             bank_forks_controller::BankForksControllerHandle,
         },
         solana_signer::Signer,
@@ -820,7 +820,7 @@ pub mod tests {
         // without a progress entry, and panics.
         let poh_bank = Arc::new(Bank::new_from_parent(
             bank.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         ));
         let (

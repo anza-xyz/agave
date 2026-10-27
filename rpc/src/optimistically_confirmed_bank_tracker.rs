@@ -481,7 +481,11 @@ mod tests {
         super::*,
         crossbeam_channel::bounded,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        solana_runtime::{bank::SlotLeader, commitment::BlockCommitmentCache, dependency_tracker},
+        solana_runtime::{
+            bank::{SlotLeader, SlotLeaders},
+            commitment::BlockCommitmentCache,
+            dependency_tracker,
+        },
         std::sync::atomic::AtomicU64,
     };
 
@@ -518,13 +522,16 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
-        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+        let bank2 =
+            Bank::new_from_parent(bank1, SlotLeaders::new_for_tests(SlotLeader::default()), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
-        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
+        let bank3 =
+            Bank::new_from_parent(bank2, SlotLeaders::new_for_tests(SlotLeader::default()), 3);
         bank_forks.write().unwrap().insert(bank3);
         let bank1_hash = bank_forks.read().unwrap().get(1).unwrap().hash();
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
@@ -640,7 +647,8 @@ mod tests {
 
         // Test higher root will be cached and clear pending_optimistically_confirmed_banks
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
-        let bank4 = Bank::new_from_parent(bank3, SlotLeader::default(), 4);
+        let bank4 =
+            Bank::new_from_parent(bank3, SlotLeaders::new_for_tests(SlotLeader::default()), 4);
         bank_forks.write().unwrap().insert(bank4);
         let bank4_hash = Hash::new_unique();
         OptimisticallyConfirmedBankTracker::process_notification(
@@ -665,7 +673,8 @@ mod tests {
         assert_eq!(highest_confirmed_slot, 3);
 
         let bank4 = bank_forks.read().unwrap().get(4).unwrap();
-        let bank5 = Bank::new_from_parent(bank4, SlotLeader::default(), 5);
+        let bank5 =
+            Bank::new_from_parent(bank4, SlotLeaders::new_for_tests(SlotLeader::default()), 5);
         bank_forks.write().unwrap().insert(bank5);
         let bank5 = bank_forks.read().unwrap().get(5).unwrap();
 
@@ -724,10 +733,12 @@ mod tests {
 
         // Banks <= root do not get added to pending list, even if not frozen
         let bank5 = bank_forks.read().unwrap().get(5).unwrap();
-        let bank6 = Bank::new_from_parent(bank5, SlotLeader::default(), 6);
+        let bank6 =
+            Bank::new_from_parent(bank5, SlotLeaders::new_for_tests(SlotLeader::default()), 6);
         bank_forks.write().unwrap().insert(bank6);
         let bank5 = bank_forks.read().unwrap().get(5).unwrap();
-        let bank7 = Bank::new_from_parent(bank5, SlotLeader::default(), 7);
+        let bank7 =
+            Bank::new_from_parent(bank5, SlotLeaders::new_for_tests(SlotLeader::default()), 7);
         bank_forks.write().unwrap().insert(bank7);
         bank_forks.write().unwrap().set_root(7, None, None);
         let bank6_hash = Hash::new_unique();
@@ -817,7 +828,8 @@ mod tests {
 
             // Test bank will only be cached when frozen
             let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-            let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+            let bank1 =
+                Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
             bank_forks.write().unwrap().insert(bank1);
             let bank1_pending_hash = Hash::new_unique();
 
@@ -910,10 +922,12 @@ mod tests {
         // bank2 freezes, modeling a confirmation that arrives before its
         // bank's Frozen notification while the next slot's confirmation
         // arrives after that bank already froze.
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank2 = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
+        let bank2 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
         bank2.freeze();
@@ -1024,7 +1038,8 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1_pending_hash = Hash::new_unique();
 
@@ -1072,7 +1087,11 @@ mod tests {
         bank1.freeze();
         assert!(pending_optimistically_confirmed_banks.remove(&(1, bank1_pending_hash)));
         pending_optimistically_confirmed_banks.insert((1, bank1.hash()));
-        let bank2 = Bank::new_from_parent(bank1.clone(), SlotLeader::default(), 2);
+        let bank2 = Bank::new_from_parent(
+            bank1.clone(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            2,
+        );
         bank_forks.write().unwrap().insert(bank2);
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
         bank2.freeze();

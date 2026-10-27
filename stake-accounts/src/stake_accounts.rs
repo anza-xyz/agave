@@ -296,7 +296,7 @@ mod tests {
         solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::{Bank, SlotLeader, SlotLeaders},
             bank_client::BankClient,
             bank_forks::BankForks,
         },
@@ -324,7 +324,11 @@ mod tests {
 
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank.squash();
-        let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
+        let bank = Bank::new_from_parent(
+            bank,
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+            1,
+        );
         bank.set_sysvar_for_tests(&EpochRewards::default());
 
         let stake_rent = bank.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of());

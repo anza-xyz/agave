@@ -44,7 +44,12 @@ fn read_test_elf(name: &str) -> Vec<u8> {
 fn next_bank(bank_forks: &RwLock<BankForks>, bank: Arc<Bank>) -> Arc<Bank> {
     let slot = bank.slot() + 1;
     goto_end_of_slot(bank.clone());
-    Bank::new_from_parent_with_bank_forks(bank_forks, bank, SlotLeader::default(), slot)
+    Bank::new_from_parent_with_bank_forks(
+        bank_forks,
+        bank,
+        SlotLeaders::new_for_tests(SlotLeader::default()),
+        slot,
+    )
 }
 
 fn invoke(bank: &Bank, payer: &Keypair, program_id: &Pubkey) -> TransactionResult<()> {
@@ -117,7 +122,11 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     // processed.
     goto_end_of_slot(bank);
     let bank = bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeaders::default())
+        .advance_slot(
+            1,
+            bank_forks.as_ref(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     // Load program file
@@ -283,7 +292,11 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     // Advance the bank so that the program becomes effective
     goto_end_of_slot(bank);
     let bank = bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeaders::default())
+        .advance_slot(
+            1,
+            bank_forks.as_ref(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+        )
         .unwrap();
 
     // Invoke the deployed program

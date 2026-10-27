@@ -629,7 +629,7 @@ mod tests {
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_rent::Rent,
         solana_signer::Signer,
@@ -655,7 +655,11 @@ mod tests {
 
     pub fn new_bank_from_parent(parent_bank: Arc<Bank>, slot: Slot) -> Arc<Bank> {
         let leader = *parent_bank.leader();
-        Arc::new(Bank::new_from_parent(parent_bank, leader, slot))
+        Arc::new(Bank::new_from_parent(
+            parent_bank,
+            SlotLeaders::new_for_tests(leader),
+            slot,
+        ))
     }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {

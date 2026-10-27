@@ -4801,7 +4801,7 @@ pub mod tests {
             filter::MemcmpEncodedBytes,
         },
         solana_runtime::{
-            bank::{BankTestConfig, SlotLeader},
+            bank::{BankTestConfig, SlotLeader, SlotLeaders},
             commitment::{BlockCommitment, CommitmentSlots},
             genesis_utils::{
                 bootstrap_validator_stake_lamports, create_genesis_config_with_tower_leader,
@@ -5248,8 +5248,11 @@ pub mod tests {
 
             let mut parent_bank = self.bank_forks.read().unwrap().working_bank();
             for (i, root) in roots.iter().enumerate() {
-                let new_bank =
-                    Bank::new_from_parent(parent_bank.clone(), *parent_bank.leader(), *root);
+                let new_bank = Bank::new_from_parent(
+                    parent_bank.clone(),
+                    SlotLeaders::new_for_tests(*parent_bank.leader()),
+                    *root,
+                );
                 parent_bank = self
                     .bank_forks
                     .write()
@@ -5268,7 +5271,7 @@ pub mod tests {
             self.blockstore.set_roots(roots.iter()).unwrap();
             let new_bank = Bank::new_from_parent(
                 parent_bank.clone(),
-                *parent_bank.leader(),
+                SlotLeaders::new_for_tests(*parent_bank.leader()),
                 roots.iter().max().unwrap() + 1,
             );
             self.bank_forks.write().unwrap().insert(new_bank);
@@ -5293,7 +5296,8 @@ pub mod tests {
         fn advance_bank_to_confirmed_slot(&self, slot: Slot) -> Arc<Bank> {
             let parent_bank = self.working_bank();
             let leader = *parent_bank.leader();
-            let child_bank = Bank::new_from_parent(parent_bank, leader, slot);
+            let child_bank =
+                Bank::new_from_parent(parent_bank, SlotLeaders::new_for_tests(leader), slot);
             let bank = self
                 .bank_forks
                 .write()
@@ -5548,7 +5552,11 @@ pub mod tests {
     fn test_rpc_rank_map_cache_and_filter() {
         let rpc = RpcHandler::start();
         let stakes = rank_map_test_stakes(&[100, 300, 200]);
-        let mut bank = Bank::new_from_parent(rpc.working_bank(), SlotLeader::default(), 1);
+        let mut bank = Bank::new_from_parent(
+            rpc.working_bank(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            1,
+        );
         bank.set_epoch_stakes_for_test(0, stakes);
         let bank = root_rank_map_bank(&rpc, bank);
         let epoch_stakes = bank.epoch_stakes_from_slot(0).unwrap();
@@ -5581,7 +5589,11 @@ pub mod tests {
         );
 
         // An unrooted fork with different stakes cannot populate or change the cached response.
-        let mut fork = Bank::new_from_parent(Arc::clone(&bank), SlotLeader::default(), 2);
+        let mut fork = Bank::new_from_parent(
+            Arc::clone(&bank),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
+            2,
+        );
         fork.set_epoch_stakes_for_test(0, rank_map_test_stakes(&[400]));
         rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = rpc
             .bank_forks
@@ -5598,7 +5610,10 @@ pub mod tests {
         assert!(Arc::ptr_eq(&first, &rooted.value.unwrap()));
 
         // Slots in the same epoch reuse the map while context advances with the finalized bank.
-        root_rank_map_bank(&rpc, Bank::new_from_parent(bank, SlotLeader::default(), 3));
+        root_rank_map_bank(
+            &rpc,
+            Bank::new_from_parent(bank, SlotLeaders::new_for_tests(SlotLeader::default()), 3),
+        );
         let second = rpc
             .meta
             .runtime
@@ -9719,13 +9734,16 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 =
+            Bank::new_from_parent(bank0, SlotLeaders::new_for_tests(SlotLeader::default()), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
-        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+        let bank2 =
+            Bank::new_from_parent(bank1, SlotLeaders::new_for_tests(SlotLeader::default()), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
-        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
+        let bank3 =
+            Bank::new_from_parent(bank2, SlotLeaders::new_for_tests(SlotLeader::default()), 3);
         bank_forks.write().unwrap().insert(bank3);
         let bank3_pending_hash = Hash::new_unique();
         let bank1_hash = bank_forks.read().unwrap().get(1).unwrap().hash();

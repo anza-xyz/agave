@@ -602,7 +602,7 @@ mod tests {
         assert_matches::assert_matches,
         itertools::Itertools,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::{
             bank::Bank,
@@ -627,7 +627,12 @@ mod tests {
         if slot == 0 {
             bank
         } else {
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), slot)
+            Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                SlotLeaders::new_for_tests(SlotLeader::default()),
+                slot,
+            )
         }
     }
 

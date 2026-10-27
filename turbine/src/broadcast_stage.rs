@@ -651,7 +651,7 @@ pub mod test {
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
+        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader, SlotLeaders},
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
@@ -875,8 +875,11 @@ pub mod test {
         Bank::calculate_and_set_block_id_for_dcou(&root_bank);
         let bank_forks = BankForks::new_rw_arc(root_bank);
         let root_bank = bank_forks.read().unwrap().root_bank();
-        let child_bank =
-            Bank::new_from_parent(root_bank.clone(), *root_bank.leader(), root_bank.slot() + 1);
+        let child_bank = Bank::new_from_parent(
+            root_bank.clone(),
+            SlotLeaders::new_for_tests(*root_bank.leader()),
+            root_bank.slot() + 1,
+        );
         let bank = bank_forks
             .write()
             .unwrap()

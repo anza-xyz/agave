@@ -5,7 +5,7 @@ use {
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_leader_schedule::SlotLeader,
+    solana_leader_schedule::{SlotLeader, SlotLeaders},
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
@@ -39,7 +39,7 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let warp_slot = shred_slot.saturating_sub(10).max(1);
     let root_bank = Arc::new(Bank::warp_from_parent(
         genesis_bank,
-        SlotLeader::default(),
+        SlotLeaders::new_for_tests(SlotLeader::default()),
         warp_slot,
     ));
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);

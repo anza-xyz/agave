@@ -1553,7 +1553,7 @@ mod tests {
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{block_component::VersionedUpdateParent, recorder_message::RecorderMessage},
         solana_keypair::Keypair,
-        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
+        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader, SlotLeaders},
         solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
         solana_poh::{
             poh_recorder::{PohRecorder, Record, WorkingBankMessage},
@@ -2065,10 +2065,10 @@ mod tests {
         let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
         let parent_bank = Bank::new_from_parent(
             root_bank.clone(),
-            SlotLeader {
+            SlotLeaders::new_for_tests(SlotLeader {
                 id: my_pubkey,
                 vote_address: Pubkey::new_unique(),
-            },
+            }),
             1,
         );
         parent_bank.freeze();
@@ -2256,7 +2256,7 @@ mod tests {
         let optimistic_parent = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             root_bank.clone(),
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             optimistic_parent_slot,
         );
         optimistic_parent.register_unique_recent_blockhash_for_test();
@@ -2358,7 +2358,7 @@ mod tests {
         let new_parent = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             root_bank.clone(),
-            SlotLeader::new_unique(),
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
             new_parent_slot,
         );
         new_parent.register_unique_recent_blockhash_for_test();

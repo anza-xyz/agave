@@ -1281,7 +1281,7 @@ mod tests {
         crossbeam_channel::bounded,
         solana_clock::DEFAULT_TICKS_PER_SLOT,
         solana_entry::entry::{self, EntrySlice},
-        solana_leader_schedule::SlotLeader,
+        solana_leader_schedule::{SlotLeader, SlotLeaders},
         solana_ledger::{
             blockstore::Blockstore,
             blockstore_meta::SlotMeta,
@@ -1531,7 +1531,7 @@ mod tests {
         let child = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             parent.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             parent.slot() + 1,
         );
         child.set_hashes_per_tick(None);
@@ -1650,7 +1650,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         );
         // Set a working bank
@@ -1759,7 +1759,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         );
         poh_recorder.set_bank_for_test(bank1.clone());
@@ -1841,7 +1841,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         );
         poh_recorder.set_bank_for_test(bank1.clone());
@@ -1939,7 +1939,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         );
         poh_recorder.set_bank_for_test(bank1);
@@ -2311,7 +2311,7 @@ mod tests {
             bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 bank,
-                leader_a,
+                SlotLeaders::new_for_tests(leader_a),
                 child_slot,
             );
         }
@@ -2335,8 +2335,12 @@ mod tests {
 
         // Simulate generating Leader B's second slot.
         let child_slot = bank.slot() + 1;
-        bank =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, leader_b, child_slot);
+        bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeaders::new_for_tests(leader_b),
+            child_slot,
+        );
 
         // Reset PoH targeting Leader D's slots.
         poh_recorder.reset(bank, Some((leader_d_start_slot, leader_d_end_slot)));
@@ -2449,7 +2453,7 @@ mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         );
         assert_eq!(bank1.slot(), 1);
@@ -2505,7 +2509,7 @@ mod tests {
         let bank2 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank1.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             2,
         );
         poh_recorder.reset(bank2.clone(), Some((4, 4)));
@@ -2523,7 +2527,7 @@ mod tests {
         let bank3 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank2.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             3,
         );
         assert_eq!(bank3.slot(), 3);
@@ -2544,7 +2548,7 @@ mod tests {
         let bank4 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank3.clone(),
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             4,
         );
         poh_recorder.reset(bank4.clone(), Some((5, 5)));
@@ -2665,7 +2669,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             1,
         ); // If we set the working bank, the node should be leader within next 2 slots
         poh_recorder.set_bank_for_test(bank.clone());
@@ -2698,7 +2702,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
-            SlotLeader::default(),
+            SlotLeaders::new_for_tests(SlotLeader::default()),
             2,
         ); // add virtual ticks into poh for slots 0, 1, and 2
         for _ in 0..(bank.ticks_per_slot() * 3) {
