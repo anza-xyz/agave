@@ -21,7 +21,7 @@ fn test_bpf_loader_upgradeable_write() {
     let loader_id = bpf_loader_upgradeable::id();
     let buffer_address = Pubkey::new_unique();
     let mut buffer_account =
-        AccountSharedData::new(1, UpgradeableLoaderState::size_of_buffer(9), &loader_id);
+        AccountSharedData::new_with_data(1, vec![0; UpgradeableLoaderState::size_of_buffer(9)], &loader_id);
     let instruction_accounts = vec![
         AccountMeta {
             pubkey: buffer_address,

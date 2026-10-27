@@ -5,19 +5,19 @@ async fn genesis_accounts() {
     let my_genesis_accounts = [
         (
             Pubkey::new_unique(),
-            Account::new(1, 0, &solana_system_interface::program::id()),
+            Account::new_with_data(1, vec![0; 0], &solana_system_interface::program::id()),
         ),
         (
             Pubkey::new_unique(),
-            Account::new(1, 0, &solana_sdk_ids::config::id()),
+            Account::new_with_data(1, vec![0; 0], &solana_sdk_ids::config::id()),
         ),
         (
             Pubkey::new_unique(),
-            Account::new(1, 0, &solana_sdk_ids::feature::id()),
+            Account::new_with_data(1, vec![0; 0], &solana_sdk_ids::feature::id()),
         ),
         (
             Pubkey::new_unique(),
-            Account::new(1, 0, &solana_stake_interface::program::id()),
+            Account::new_with_data(1, vec![0; 0], &solana_stake_interface::program::id()),
         ),
     ];
 

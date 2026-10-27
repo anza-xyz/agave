@@ -40,7 +40,7 @@ fn bench_write_accounts_file(c: &mut Criterion) {
         let accounts: Vec<_> = std::iter::repeat_with(|| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(lamports, space, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(lamports, vec![0; space], &Pubkey::new_unique()),
             )
         })
         .take(accounts_count)

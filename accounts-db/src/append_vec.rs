@@ -1823,7 +1823,7 @@ mod tests {
             // AppendVec internal buffer size is PAGESIZE).
             let data_len: usize = 2 * PAGE_SIZE;
             let pubkey = Pubkey::default();
-            let account = AccountSharedData::new(100, data_len, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(100, vec![0; data_len], &Pubkey::default());
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(
                 &path,
@@ -1861,7 +1861,7 @@ mod tests {
         for _ in &pubkeys {
             let lamports = rng.random();
             let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
-            let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(lamports, vec![0; data_len], &Pubkey::default());
             accounts.push(account);
             stored_sizes.push(AppendVec::calculate_stored_size(data_len));
         }
@@ -1914,7 +1914,7 @@ mod tests {
         for _ in &pubkeys {
             let lamports = rng.random();
             let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
-            let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(lamports, vec![0; data_len], &Pubkey::default());
             accounts.push(account);
             total_stored_size += AppendVec::calculate_stored_size(data_len);
         }

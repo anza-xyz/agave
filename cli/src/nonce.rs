@@ -1135,14 +1135,14 @@ mod tests {
         let nonce_account = nonce_account::create_account(1).into_inner();
         assert_eq!(account_identity_ok(&nonce_account), Ok(()));
 
-        let system_account = Account::new(1, 0, &system_program::id());
+        let system_account = Account::new_with_data(1, vec![0; 0], &system_program::id());
         assert_eq!(
             account_identity_ok(&system_account),
             Err(Error::UnexpectedDataSize),
         );
 
         let other_program = Pubkey::from([1u8; 32]);
-        let other_account_no_data = Account::new(1, 0, &other_program);
+        let other_account_no_data = Account::new_with_data(1, vec![0; 0], &other_program);
         assert_eq!(
             account_identity_ok(&other_account_no_data),
             Err(Error::InvalidAccountOwner),
@@ -1164,7 +1164,7 @@ mod tests {
             Ok(State::Initialized(data))
         );
 
-        let wrong_data_size_account = Account::new(1, 1, &system_program::id());
+        let wrong_data_size_account = Account::new_with_data(1, vec![0; 1], &system_program::id());
         assert_eq!(
             state_from_account(&wrong_data_size_account),
             Err(Error::InvalidAccountData),

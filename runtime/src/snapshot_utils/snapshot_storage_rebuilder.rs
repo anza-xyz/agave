@@ -423,7 +423,7 @@ mod tests {
                 slot1,
                 slice::from_ref(&(
                     Pubkey::new_unique(),
-                    AccountSharedData::new(42, 0, &Pubkey::default()),
+                    AccountSharedData::empty(42, &Pubkey::default()),
                 )),
             ))
             .unwrap();
@@ -442,7 +442,7 @@ mod tests {
                 slot2,
                 slice::from_ref(&(
                     Pubkey::new_unique(),
-                    AccountSharedData::new(42, 42_000, &Pubkey::default()),
+                    AccountSharedData::new_with_data(42, vec![0; 42_000], &Pubkey::default()),
                 )),
             ))
             .unwrap();
@@ -465,7 +465,7 @@ mod tests {
                 slot3,
                 slice::from_ref(&(
                     Pubkey::new_unique(),
-                    AccountSharedData::new(42, 0, &Pubkey::default()),
+                    AccountSharedData::empty(42, &Pubkey::default()),
                 )),
             ))
             .unwrap();

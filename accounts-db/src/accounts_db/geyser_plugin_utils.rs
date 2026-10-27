@@ -107,7 +107,7 @@ mod tests {
         let mut accounts_db = AccountsDb::default_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
-        let account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(1, &Pubkey::default());
 
         // Account with key1 is updated twice in two different slots, should get notified twice
         // Need to add root and flush write cache for each slot to ensure accounts are written
@@ -188,7 +188,7 @@ mod tests {
         // Account with key3 is updated in slot1, should get notified once
         let key1 = solana_pubkey::new_rand();
         let account1_lamports1: u64 = 1;
-        let account1 = AccountSharedData::new(account1_lamports1, 1, &Pubkey::default());
+        let account1 = AccountSharedData::new_with_data(account1_lamports1, vec![0; 1], &Pubkey::default());
         let slot0 = 0;
         let bank_id0 = BankId::new(100);
         let mut ancestors = Ancestors::from(vec![slot0]);
@@ -201,7 +201,7 @@ mod tests {
 
         let key2 = solana_pubkey::new_rand();
         let account2_lamports: u64 = 200;
-        let account2 = AccountSharedData::new(account2_lamports, 1, &Pubkey::default());
+        let account2 = AccountSharedData::new_with_data(account2_lamports, vec![0; 1], &Pubkey::default());
         accounts.store_accounts(
             (slot0, &[(&key2, &account2)][..]),
             bank_id0,
@@ -213,7 +213,7 @@ mod tests {
         let slot1 = 1;
         let bank_id1 = BankId::new(101);
         ancestors.insert(slot1);
-        let account1 = AccountSharedData::new(account1_lamports2, 1, account1.owner());
+        let account1 = AccountSharedData::new_with_data(account1_lamports2, vec![0; 1], account1.owner());
         accounts.store_accounts(
             (slot1, &[(&key1, &account1)][..]),
             bank_id1,
@@ -223,7 +223,7 @@ mod tests {
 
         let key3 = solana_pubkey::new_rand();
         let account3_lamports: u64 = 300;
-        let account3 = AccountSharedData::new(account3_lamports, 1, &Pubkey::default());
+        let account3 = AccountSharedData::new_with_data(account3_lamports, vec![0; 1], &Pubkey::default());
         accounts.store_accounts(
             (slot1, &[(&key3, &account3)][..]),
             bank_id1,
@@ -276,8 +276,8 @@ mod tests {
 
         let address = solana_pubkey::new_rand();
         let owner = solana_pubkey::new_rand();
-        let account_open = AccountSharedData::new(/*lamports*/ 123, 0, &owner);
-        let account_close = AccountSharedData::new(/*lamports*/ 0, 0, &owner);
+        let account_open = AccountSharedData::empty(123, &owner);
+        let account_close = AccountSharedData::empty(0, &owner);
 
         let slot_open = 6;
         let slot_close = slot_open + 1;

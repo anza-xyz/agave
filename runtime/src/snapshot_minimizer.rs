@@ -470,7 +470,7 @@ mod tests {
 
         let pubkey = solana_pubkey::new_rand();
         let owner_pubkey = solana_pubkey::new_rand();
-        bank.store_account(&pubkey, &AccountSharedData::new(1, 0, &owner_pubkey));
+        bank.store_account(&pubkey, &AccountSharedData::empty(1, &owner_pubkey));
 
         let owner_accounts = DashSet::new();
         owner_accounts.insert(pubkey);
@@ -500,7 +500,7 @@ mod tests {
             programdata_address,
         };
 
-        let non_program_account = AccountSharedData::new(1, 0, &non_program_id);
+        let non_program_account = AccountSharedData::empty(1, &non_program_id);
         let mut program_account =
             AccountSharedData::new_data(40, &program, &bpf_loader_upgradeable::id()).unwrap();
         program_account.set_executable(true);
@@ -554,7 +554,7 @@ mod tests {
             let some_lamport = 223;
             let no_data = 0;
             let owner = *AccountSharedData::default().owner();
-            let account = AccountSharedData::new(some_lamport, no_data, &owner);
+            let account = AccountSharedData::new_with_data(some_lamport, vec![0; no_data], &owner);
 
             current_slot += 1;
 
@@ -605,7 +605,7 @@ mod tests {
 
         let pubkey_keep = Pubkey::new_unique();
         let pubkey_multi = Pubkey::new_unique();
-        let account = AccountSharedData::new(223, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(223, &Pubkey::default());
 
         // pubkey_multi is stored in both slot 1 and slot 2; pubkey_keep keeps slot 1's
         // storage out of the dead slot set
@@ -647,8 +647,8 @@ mod tests {
 
         let zero_lamport_pubkey = Pubkey::new_unique();
         let rewritten_pubkey = Pubkey::new_unique();
-        let open_account = AccountSharedData::new(223, 0, &Pubkey::default());
-        let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let open_account = AccountSharedData::empty(223, &Pubkey::default());
+        let closed_account = AccountSharedData::empty(0, &Pubkey::default());
 
         // zero_lamport_pubkey is live in the first slot and zeroed out in tombstone_slot;
         // rewritten_pubkey's tombstone_slot copy becomes dead bytes that make the storage
@@ -716,8 +716,8 @@ mod tests {
 
         let zero_lamport_pubkey = Pubkey::new_unique();
         let rewritten_pubkey = Pubkey::new_unique();
-        let open_account = AccountSharedData::new(223, 0, &Pubkey::default());
-        let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let open_account = AccountSharedData::empty(223, &Pubkey::default());
+        let closed_account = AccountSharedData::empty(0, &Pubkey::default());
 
         // zero_lamport_pubkey starts out live
         let mut slot = 1;

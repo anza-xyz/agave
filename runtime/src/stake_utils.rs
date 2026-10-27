@@ -33,7 +33,7 @@ pub fn create_stake_account_with_activation_and_deactivation_epochs(
     deactivation_epoch: Epoch,
 ) -> AccountSharedData {
     let mut stake_account =
-        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
+        AccountSharedData::new_with_data(lamports, vec![0; StakeStateV2::size_of()], &stake_program::id());
 
     let vote_state = VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();
     let credits_observed = vote_state.credits();

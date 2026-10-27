@@ -31,7 +31,7 @@ pub fn accounts<'a>(
         let owner = Pubkey::new_from_array(owner);
         (
             owner,
-            AccountSharedData::new(rent.minimum_balance(data_size), data_size, &owner),
+            AccountSharedData::new_with_data(rent.minimum_balance(data_size), vec![0; data_size], &owner),
         )
     })
 }
@@ -66,7 +66,7 @@ pub fn accounts_with_size_limit<'a>(
 
             Some((
                 owner,
-                AccountSharedData::new(rent.minimum_balance(data_size), data_size, &owner),
+                AccountSharedData::new_with_data(rent.minimum_balance(data_size), vec![0; data_size], &owner),
             ))
         }
     })

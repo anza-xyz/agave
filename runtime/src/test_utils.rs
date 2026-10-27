@@ -27,7 +27,7 @@ where
     F: Fn(u64) -> u64,
 {
     let owner = solana_sdk_ids::vote::id();
-    let mut account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &owner);
+    let mut account = AccountSharedData::new_with_data(lamports, vec![0; VoteStateV4::size_of()], &owner);
 
     let bls_pubkey_compressed = set_bls_pubkey.then(|| {
         let bls_pubkey: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();

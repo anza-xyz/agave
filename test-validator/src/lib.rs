@@ -1584,7 +1584,7 @@ mod test {
         let without_deactivate_flag = agave_feature_set::disable_fees_sysvar::id();
 
         let owner = Pubkey::new_unique();
-        let account = || AccountSharedData::new(100_000, 0, &owner);
+        let account = || AccountSharedData::empty(100_000, &owner);
 
         let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
             .deactivate_features(&[with_deactivate_flag]) // Just deactivate one feature.

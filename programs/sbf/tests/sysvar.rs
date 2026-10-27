@@ -98,7 +98,7 @@ fn test_sysvar_syscalls() {
     let dummy_account_key = Pubkey::new_unique();
     bank.store_account(
         &dummy_account_key,
-        &solana_account::AccountSharedData::new(1, 32, &program_id),
+        &solana_account::AccountSharedData::new_with_data(1, vec![0; 32], &program_id),
     );
     bank.freeze();
     let blockhash = bank.last_blockhash();

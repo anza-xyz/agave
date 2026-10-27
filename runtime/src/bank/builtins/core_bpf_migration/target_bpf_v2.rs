@@ -94,7 +94,7 @@ mod tests {
         owner: &Pubkey,
         executable: bool,
     ) {
-        let mut account = AccountSharedData::new(lamports, data.len(), owner);
+        let mut account = AccountSharedData::new_with_data(lamports, vec![0; data.len()], owner);
         account.set_executable(executable);
         account.data_as_mut_slice().copy_from_slice(data);
         bank.store_account_and_update_capitalization(address, &account);

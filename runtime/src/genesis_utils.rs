@@ -473,7 +473,7 @@ pub(crate) fn create_validator(
         stake_lamports,
     );
 
-    let node_account = AccountSharedData::new(node_lamports, 0, &system_program::id());
+    let node_account = AccountSharedData::empty(node_lamports, &system_program::id());
 
     vec![
         (vote_pubkey, vote_account),
@@ -516,7 +516,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
 
     initial_accounts.push((
         *mint_pubkey,
-        AccountSharedData::new(mint_lamports, 0, &system_program::id()),
+        AccountSharedData::empty(mint_lamports, &system_program::id()),
     ));
     let mut validator_accounts = create_validator(
         &rent,
@@ -693,7 +693,7 @@ pub fn create_lockup_stake_account(
     lamports: u64,
 ) -> AccountSharedData {
     let mut stake_account =
-        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
+        AccountSharedData::new_with_data(lamports, vec![0; StakeStateV2::size_of()], &stake_program::id());
 
     let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
     assert!(

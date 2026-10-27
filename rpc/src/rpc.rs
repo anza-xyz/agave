@@ -5308,7 +5308,7 @@ pub mod tests {
             let space = VoteStateV4::size_of();
             let balance = bank.get_minimum_balance_for_rent_exemption(space);
             let mut vote_account =
-                AccountSharedData::new(balance, space, &solana_vote_program::id());
+                AccountSharedData::new_with_data(balance, vec![0; space], &solana_vote_program::id());
             vote_account.set_state(&versioned).unwrap();
             bank.store_account(vote_pubkey, &vote_account);
         }
@@ -6405,7 +6405,7 @@ pub mod tests {
 
         let new_program_id = Pubkey::new_unique();
         let new_program_account_key = Pubkey::new_unique();
-        let new_program_account = AccountSharedData::new(42, 0, &new_program_id);
+        let new_program_account = AccountSharedData::empty(42, &new_program_id);
         bank.store_account(&new_program_account_key, &new_program_account);
 
         let request = create_test_request(

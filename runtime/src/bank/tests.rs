@@ -451,7 +451,7 @@ fn test_bank_capitalization() {
             .map(|_| {
                 (
                     solana_pubkey::new_rand(),
-                    Account::new(42, 0, &Pubkey::default()),
+                    Account::new_with_data(42, vec![0; 0], &Pubkey::default()),
                 )
             })
             .collect(),
@@ -514,7 +514,7 @@ fn test_store_account_and_update_capitalization_missing() {
     let pubkey = solana_pubkey::new_rand();
 
     let some_lamports = 400;
-    let account = AccountSharedData::new(some_lamports, 0, &system_program::id());
+    let account = AccountSharedData::empty(some_lamports, &system_program::id());
 
     assert_capitalization_diff(
         &bank,
@@ -535,7 +535,7 @@ fn test_store_account_and_update_capitalization_increased() {
     let pubkey = mint_keypair.pubkey();
 
     let new_lamports = 500;
-    let account = AccountSharedData::new(new_lamports, 0, &system_program::id());
+    let account = AccountSharedData::empty(new_lamports, &system_program::id());
 
     assert_capitalization_diff(
         &bank,
@@ -556,7 +556,7 @@ fn test_store_account_and_update_capitalization_decreased() {
     let pubkey = mint_keypair.pubkey();
 
     let new_lamports = 100;
-    let account = AccountSharedData::new(new_lamports, 0, &system_program::id());
+    let account = AccountSharedData::empty(new_lamports, &system_program::id());
 
     assert_capitalization_diff(
         &bank,
@@ -576,7 +576,7 @@ fn test_store_account_and_update_capitalization_unchanged() {
     let bank = Bank::new_for_tests(&genesis_config);
     let pubkey = mint_keypair.pubkey();
 
-    let account = AccountSharedData::new(lamports, 1, &system_program::id());
+    let account = AccountSharedData::new_with_data(lamports, vec![0; 1], &system_program::id());
 
     assert_capitalization_diff(
         &bank,
@@ -596,7 +596,7 @@ fn test_store_account_and_update_capitalization_accounts_data_size() {
     let bank = Bank::new_for_tests(&genesis_config);
 
     let data_size = 123;
-    let mut account = AccountSharedData::new(LAMPORTS_PER_SOL, data_size, &system_program::id());
+    let mut account = AccountSharedData::new_with_data(LAMPORTS_PER_SOL, vec![0; data_size], &system_program::id());
     let address = Pubkey::new_unique();
 
     // test 1: store a new account
@@ -758,7 +758,7 @@ where
             .map(|_| {
                 (
                     solana_pubkey::new_rand(),
-                    Account::new(1_000_000_000, 0, &Pubkey::default()),
+                    Account::new_with_data(1_000_000_000, vec![0; 0], &Pubkey::default()),
                 )
             })
             .collect(),
@@ -904,7 +904,7 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
             .map(|_| {
                 (
                     solana_pubkey::new_rand(),
-                    Account::new(1_000_000_000, 0, &Pubkey::default()),
+                    Account::new_with_data(1_000_000_000, vec![0; 0], &Pubkey::default()),
                 )
             })
             .collect(),
@@ -1896,7 +1896,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
     let fee_payer_initial_balance = 10 * genesis_config.rent.minimum_balance(0);
     bank.store_account(
         &fee_payer,
-        &AccountSharedData::new(fee_payer_initial_balance, 0, &system_program::id()),
+        &AccountSharedData::empty(fee_payer_initial_balance, &system_program::id()),
     );
 
     // Use nonce to show that loaded account stats also included loaded
@@ -1983,7 +1983,7 @@ fn test_load_and_execute_commit_transactions_failure() {
     let starting_balance = 2 * genesis_config.rent.minimum_balance(0) + 10_000;
     bank.store_account(
         &fee_payer,
-        &AccountSharedData::new(starting_balance, 0, &system_program::id()),
+        &AccountSharedData::empty(starting_balance, &system_program::id()),
     );
 
     let recipient = Pubkey::new_unique();
@@ -2057,7 +2057,7 @@ fn test_load_and_execute_commit_transactions_success() {
     let starting_balance = 2 * genesis_config.rent.minimum_balance(0) + 10_000;
     bank.store_account(
         &fee_payer,
-        &AccountSharedData::new(starting_balance, 0, &system_program::id()),
+        &AccountSharedData::empty(starting_balance, &system_program::id()),
     );
 
     let recipient = Pubkey::new_unique();
@@ -3513,7 +3513,7 @@ fn test_bank_get_program_accounts() {
     let bank0 = Arc::new(new_from_parent(parent));
     let pubkey0 = solana_pubkey::new_rand();
     let program_id = Pubkey::from([2; 32]);
-    let account0 = AccountSharedData::new(1, 0, &program_id);
+    let account0 = AccountSharedData::empty(1, &program_id);
     bank0.store_account(&pubkey0, &account0);
 
     assert_eq!(
@@ -3538,11 +3538,11 @@ fn test_bank_get_program_accounts() {
 
     let bank2 = Arc::new(new_from_parent(bank1.clone()));
     let pubkey1 = solana_pubkey::new_rand();
-    let account1 = AccountSharedData::new(3, 0, &program_id);
+    let account1 = AccountSharedData::empty(3, &program_id);
     bank2.store_account(&pubkey1, &account1);
     // Accounts with 0 lamports should be filtered out by Accounts::load_by_program()
     let pubkey2 = solana_pubkey::new_rand();
-    let account2 = AccountSharedData::new(0, 0, &program_id);
+    let account2 = AccountSharedData::empty(0, &program_id);
     bank2.store_account(&pubkey2, &account2);
 
     let bank3 = Arc::new(new_from_parent(bank2));
@@ -3572,7 +3572,7 @@ fn test_get_filtered_indexed_accounts_limit_exceeded() {
     let address = Pubkey::new_unique();
     let program_id = Pubkey::new_unique();
     let limit = 100;
-    let account = AccountSharedData::new(1, limit, &program_id);
+    let account = AccountSharedData::new_with_data(1, vec![0; limit], &program_id);
     bank.store_account(&address, &account);
 
     assert!(
@@ -3602,7 +3602,7 @@ fn test_get_filtered_indexed_accounts() {
 
     let address = Pubkey::new_unique();
     let program_id = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &program_id);
+    let account = AccountSharedData::empty(1, &program_id);
     bank.store_account(&address, &account);
 
     let indexed_accounts = bank
@@ -3615,7 +3615,7 @@ fn test_get_filtered_indexed_accounts() {
     // it is still present in the index under the original program id as well. This
     // demonstrates the need for a redundant post-processing filter.
     let another_program_id = Pubkey::new_unique();
-    let new_account = AccountSharedData::new(1, 0, &another_program_id);
+    let new_account = AccountSharedData::empty(1, &another_program_id);
     let bank = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank.clone(),
@@ -4770,9 +4770,9 @@ fn test_collect_balances() {
     let pubkey0 = solana_pubkey::new_rand();
     let pubkey1 = solana_pubkey::new_rand();
     let program_id = Pubkey::from([2; 32]);
-    let keypair_account = AccountSharedData::new(8, 0, &program_id);
-    let account0 = AccountSharedData::new(11, 0, &program_id);
-    let program_account = AccountSharedData::new(1, 10, &Pubkey::default());
+    let keypair_account = AccountSharedData::empty(8, &program_id);
+    let account0 = AccountSharedData::empty(11, &program_id);
+    let program_account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
     bank0.store_account(&keypair.pubkey(), &keypair_account);
     bank0.store_account(&pubkey0, &account0);
     bank0.store_account(&program_id, &program_account);
@@ -4821,9 +4821,9 @@ fn test_pre_post_transaction_balances() {
     let pubkey0 = solana_pubkey::new_rand();
     let pubkey1 = solana_pubkey::new_rand();
     let pubkey2 = solana_pubkey::new_rand();
-    let keypair0_account = AccountSharedData::new(908_000, 0, &Pubkey::default());
-    let keypair1_account = AccountSharedData::new(909_000, 0, &Pubkey::default());
-    let account0 = AccountSharedData::new(911_000, 0, &Pubkey::default());
+    let keypair0_account = AccountSharedData::empty(908_000, &Pubkey::default());
+    let keypair1_account = AccountSharedData::empty(909_000, &Pubkey::default());
+    let account0 = AccountSharedData::empty(911_000, &Pubkey::default());
     bank0.store_account(&keypair0.pubkey(), &keypair0_account);
     bank0.store_account(&keypair1.pubkey(), &keypair1_account);
     bank0.store_account(&pubkey0, &account0);
@@ -4923,8 +4923,8 @@ fn test_transaction_with_duplicate_accounts_in_instruction() {
     let from_pubkey = solana_pubkey::new_rand();
     let to_pubkey = solana_pubkey::new_rand();
     let dup_pubkey = from_pubkey;
-    let from_account = AccountSharedData::new(100 * LAMPORTS_PER_SOL, 1, &mock_program_id);
-    let to_account = AccountSharedData::new(0, 1, &mock_program_id);
+    let from_account = AccountSharedData::new_with_data(100 * LAMPORTS_PER_SOL, vec![0; 1], &mock_program_id);
+    let to_account = AccountSharedData::new_with_data(0, vec![0; 1], &mock_program_id);
     bank.store_account(&from_pubkey, &from_account);
     bank.store_account(&to_pubkey, &to_account);
 
@@ -4962,8 +4962,8 @@ fn test_transaction_with_program_ids_passed_to_programs() {
     let from_pubkey = solana_pubkey::new_rand();
     let to_pubkey = solana_pubkey::new_rand();
     let dup_pubkey = from_pubkey;
-    let from_account = AccountSharedData::new(100, 1, &mock_program_id);
-    let to_account = AccountSharedData::new(0, 1, &mock_program_id);
+    let from_account = AccountSharedData::new_with_data(100, vec![0; 1], &mock_program_id);
+    let to_account = AccountSharedData::new_with_data(0, vec![0; 1], &mock_program_id);
     bank.store_account(&from_pubkey, &from_account);
     bank.store_account(&to_pubkey, &to_account);
 
@@ -5239,7 +5239,7 @@ fn test_fuzz_instructions() {
 
                 let space = rng().random_range(0..10);
                 let owner = Pubkey::default();
-                let account = AccountSharedData::new(lamports, space, &owner);
+                let account = AccountSharedData::new_with_data(lamports, vec![0; space], &owner);
                 bank.store_account(&key, &account);
                 lamports
             } else {
@@ -5377,7 +5377,7 @@ fn test_bank_hash_consistency() {
         creation_time: 0,
         accounts: BTreeMap::from([(
             Pubkey::from([42; 32]),
-            Account::new(1_000_000_000_000, 0, &system_program::id()),
+            Account::new_with_data(1_000_000_000_000, vec![0; 0], &system_program::id()),
         )]),
         cluster_type: ClusterType::MainnetBeta,
         ..GenesisConfig::default()
@@ -5484,7 +5484,7 @@ fn test_bank_hash_consistency() {
     // Exercise multiple stores to the same regular account with both lamports
     // and data changing.
     let stored_account_pubkey = Pubkey::from([84; 32]);
-    let mut stored_account = AccountSharedData::new(123_456, 16, &system_program::id());
+    let mut stored_account = AccountSharedData::new_with_data(123_456, vec![0; 16], &system_program::id());
     bank.store_account_and_update_capitalization(&stored_account_pubkey, &stored_account);
     stored_account.set_lamports(234_567);
     stored_account.set_data_from_slice(&[42; 32]);
@@ -5596,7 +5596,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
             .unwrap()
             .pubkey();
         let account =
-            AccountSharedData::new(1_000 + index as u64, index % 128, &system_program::id());
+            AccountSharedData::new_with_data(1_000 + index as u64, vec![0; index % 128], &system_program::id());
         bank0.store_account_and_update_capitalization(&pubkey, &account);
     }
 
@@ -5841,7 +5841,7 @@ fn test_same_program_id_uses_unique_executable_accounts() {
 
     // Add a new program owned by the first
     let program2_pubkey = solana_pubkey::new_rand();
-    let mut program2_account = AccountSharedData::new(1, 1, &program1_pubkey);
+    let mut program2_account = AccountSharedData::new_with_data(1, vec![0; 1], &program1_pubkey);
     program2_account.set_executable(true);
     bank.store_account(&program2_pubkey, &program2_account);
 
@@ -5872,7 +5872,7 @@ fn test_shrink_candidate_slots_cached() {
     // Make pubkey0 large so any slot containing it is a candidate for shrinking
     let pubkey0_size = 100_000;
 
-    let account0 = AccountSharedData::new(1000, pubkey0_size, &Pubkey::new_unique());
+    let account0 = AccountSharedData::new_with_data(1000, vec![0; pubkey0_size], &Pubkey::new_unique());
     bank0.store_account(&pubkey0, &account0);
 
     goto_end_of_slot(bank0.clone());
@@ -7205,7 +7205,7 @@ fn min_rent_exempt_balance_for_sysvars(bank: &Bank, sysvar_ids: &[Pubkey]) -> u6
 #[test]
 fn test_adjust_sysvar_balance_for_rent() {
     let bank = create_simple_test_bank(0);
-    let mut smaller_sample_sysvar = AccountSharedData::new(1, 0, &Pubkey::default());
+    let mut smaller_sample_sysvar = AccountSharedData::empty(1, &Pubkey::default());
     assert_eq!(smaller_sample_sysvar.lamports(), 1);
     bank.adjust_sysvar_balance_for_rent(&mut smaller_sample_sysvar);
     assert_eq!(
@@ -7213,11 +7213,7 @@ fn test_adjust_sysvar_balance_for_rent() {
         bank.get_minimum_balance_for_rent_exemption(smaller_sample_sysvar.data().len()),
     );
 
-    let mut bigger_sample_sysvar = AccountSharedData::new(
-        1,
-        smaller_sample_sysvar.data().len() + 1,
-        &Pubkey::default(),
-    );
+    let mut bigger_sample_sysvar = AccountSharedData::new_with_data(1, vec![0; smaller_sample_sysvar.data().len() + 1], &Pubkey::default());
     bank.adjust_sysvar_balance_for_rent(&mut bigger_sample_sysvar);
     assert!(smaller_sample_sysvar.lamports() < bigger_sample_sysvar.lamports());
 
@@ -7609,7 +7605,7 @@ fn test_store_scan_consistency<F>(
         .collect();
     let program_id = system_program::id();
     let starting_lamports = 1;
-    let starting_account = AccountSharedData::new(starting_lamports, 0, &program_id);
+    let starting_account = AccountSharedData::empty(starting_lamports, &program_id);
 
     // Write accounts to the store
     for key in &all_pubkeys {
@@ -7785,7 +7781,7 @@ fn test_store_scan_consistency_unrooted() {
                         SlotLeader::new_unique(),
                         slot,
                     ));
-                    let account = AccountSharedData::new(lamports, 0, &program_id);
+                    let account = AccountSharedData::empty(lamports, &program_id);
                     // Write partial updates to each of the banks in the minor fork so if any of them
                     // get cleaned up, there will be keys with the wrong account value/missing.
                     for key in pubkeys_to_modify {
@@ -7811,7 +7807,7 @@ fn test_store_scan_consistency_unrooted() {
                     current_minor_fork_bank.slot() - 1,
                 ));
                 let lamports = current_major_fork_bank.slot() + starting_lamports + 1;
-                let account = AccountSharedData::new(lamports, 0, &program_id);
+                let account = AccountSharedData::empty(lamports, &program_id);
                 for key in pubkeys_to_modify.iter() {
                     // Store rooted updates to these pubkeys such that the minor
                     // fork updates to the same keys will be deleted by clean
@@ -7873,7 +7869,7 @@ fn test_store_scan_consistency_root() {
             let mut prev_bank = bank0;
             loop {
                 let lamports_this_round = current_bank.slot() + starting_lamports + 1;
-                let account = AccountSharedData::new(lamports_this_round, 0, &program_id);
+                let account = AccountSharedData::empty(lamports_this_round, &program_id);
                 for key in pubkeys_to_modify.iter() {
                     current_bank.store_account(key, &account);
                 }
@@ -7953,7 +7949,7 @@ fn setup_banks_on_fork_to_remove(
                 slot,
             ));
             let pubkey_to_modify_starting_index = i * pubkeys_to_modify_per_slot;
-            let account = AccountSharedData::new(lamports_this_round, 0, program_id);
+            let account = AccountSharedData::empty(lamports_this_round, program_id);
             for pubkey_index_to_modify in pubkey_to_modify_starting_index
                 ..pubkey_to_modify_starting_index + pubkeys_to_modify_per_slot
             {
@@ -8765,15 +8761,15 @@ fn test_get_largest_accounts() {
         .collect();
 
     // Initialize accounts; all have larger SOL balances than current Bank built-ins
-    let account0 = AccountSharedData::new(pubkeys_balances[0].1, 0, &Pubkey::default());
+    let account0 = AccountSharedData::empty(pubkeys_balances[0].1, &Pubkey::default());
     bank.store_account(&pubkeys_balances[0].0, &account0);
-    let account1 = AccountSharedData::new(pubkeys_balances[1].1, 0, &Pubkey::default());
+    let account1 = AccountSharedData::empty(pubkeys_balances[1].1, &Pubkey::default());
     bank.store_account(&pubkeys_balances[1].0, &account1);
-    let account2 = AccountSharedData::new(pubkeys_balances[2].1, 0, &Pubkey::default());
+    let account2 = AccountSharedData::empty(pubkeys_balances[2].1, &Pubkey::default());
     bank.store_account(&pubkeys_balances[2].0, &account2);
-    let account3 = AccountSharedData::new(pubkeys_balances[3].1, 0, &Pubkey::default());
+    let account3 = AccountSharedData::empty(pubkeys_balances[3].1, &Pubkey::default());
     bank.store_account(&pubkeys_balances[3].0, &account3);
-    let account4 = AccountSharedData::new(pubkeys_balances[4].1, 0, &Pubkey::default());
+    let account4 = AccountSharedData::empty(pubkeys_balances[4].1, &Pubkey::default());
     bank.store_account(&pubkeys_balances[4].0, &account4);
 
     // Create HashSet to exclude an account
@@ -8978,7 +8974,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
         .unwrap();
     // key5's rooted non-zero-lamport account makes bank2's zero-lamport update reach storage as a
     // kill at flush, so clean has a ref count to decrement in scenario 4
-    bank0.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
+    bank0.store_account(&key5.pubkey(), &AccountSharedData::empty(1, &owner));
     bank0.freeze();
 
     let slot = 1;
@@ -8989,12 +8985,12 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
         .transfer(amount, &mint_keypair, &key1.pubkey())
         .unwrap();
     // Store accounts with lamports to populate the index
-    bank1.store_account(&key4.pubkey(), &AccountSharedData::new(1, 0, &owner));
-    bank1.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
+    bank1.store_account(&key4.pubkey(), &AccountSharedData::empty(1, &owner));
+    bank1.store_account(&key5.pubkey(), &AccountSharedData::empty(1, &owner));
 
     // Then set the accounts to zero lamports
-    bank1.store_account(&key4.pubkey(), &AccountSharedData::new(0, 0, &owner));
-    bank1.store_account(&key5.pubkey(), &AccountSharedData::new(0, 0, &owner));
+    bank1.store_account(&key4.pubkey(), &AccountSharedData::empty(0, &owner));
+    bank1.store_account(&key5.pubkey(), &AccountSharedData::empty(0, &owner));
 
     if let FreezeBank1::Yes = freeze_bank1 {
         bank1.freeze();
@@ -9009,10 +9005,10 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
         .transfer(amount, &mint_keypair, &key3.pubkey())
         .unwrap();
     // Store accounts with lamports to populate the index
-    bank2.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
+    bank2.store_account(&key5.pubkey(), &AccountSharedData::empty(1, &owner));
 
     // Then set the accounts to zero lamports
-    bank2.store_account(&key5.pubkey(), &AccountSharedData::new(0, 0, &owner));
+    bank2.store_account(&key5.pubkey(), &AccountSharedData::empty(0, &owner));
 
     bank2.freeze(); // the freeze here is not strictly necessary, but more for illustration
     bank2.squash();
@@ -10002,7 +9998,7 @@ fn test_accounts_data_size_delta_on_chain_with_deleted_account_transaction() {
                 let balance = rent_exempt_minimum + 1;
                 genesis_config.accounts.insert(
                     deleted_account.pubkey(),
-                    Account::new(balance, account_data_size, &mock_program_id),
+                    Account::new_with_data(balance, vec![0; account_data_size], &mock_program_id),
                 );
                 balance
             }
@@ -10321,11 +10317,7 @@ fn test_rent_state_changes_sysvars() {
 
     genesis_config.accounts.insert(
         validator_pubkey,
-        Account::new(
-            genesis_config.rent.minimum_balance(0),
-            0,
-            &system_program::id(),
-        ),
+        Account::new_with_data(genesis_config.rent.minimum_balance(0), vec![0; 0], &system_program::id()),
     );
     genesis_config.accounts.insert(
         validator_vote_account_pubkey,
@@ -10373,7 +10365,7 @@ fn test_invalid_rent_state_changes_fee_payer() {
     let recipient = Pubkey::new_unique();
     genesis_config.accounts.insert(
         recipient,
-        Account::new(rent_exempt_minimum, 0, &system_program::id()),
+        Account::new_with_data(rent_exempt_minimum, vec![0; 0], &system_program::id()),
     );
 
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -10695,15 +10687,11 @@ fn test_resize_and_rent() {
     let funding_keypair = Keypair::new();
     bank.store_account(
         &funding_keypair.pubkey(),
-        &AccountSharedData::new(1_000_000_000, 0, &mock_program_id),
+        &AccountSharedData::empty(1_000_000_000, &mock_program_id),
     );
 
     let test_pubkey = solana_pubkey::new_rand();
-    let mut rent_paying_account = AccountSharedData::new(
-        rent_exempt_minimum_small,
-        account_data_size_small,
-        &mock_program_id,
-    );
+    let mut rent_paying_account = AccountSharedData::new_with_data(rent_exempt_minimum_small, vec![0; account_data_size_small], &mock_program_id);
     rent_paying_account.set_rent_epoch(1);
 
     // restore program-owned account
@@ -10903,7 +10891,7 @@ fn test_accounts_data_size_and_resize_transactions() {
     let funding_keypair = Keypair::new();
     bank.store_account(
         &funding_keypair.pubkey(),
-        &AccountSharedData::new(10 * LAMPORTS_PER_SOL, 0, &mock_program_id),
+        &AccountSharedData::empty(10 * LAMPORTS_PER_SOL, &mock_program_id),
     );
 
     let mut rng = rand::rng();
@@ -10914,7 +10902,7 @@ fn test_accounts_data_size_and_resize_transactions() {
         let account_balance = LAMPORTS_PER_SOL;
         let account_size =
             rng.random_range(1..MAX_PERMITTED_DATA_LENGTH as usize - MAX_PERMITTED_DATA_INCREASE);
-        let account_data = AccountSharedData::new(account_balance, account_size, &mock_program_id);
+        let account_data = AccountSharedData::new_with_data(account_balance, vec![0; account_size], &mock_program_id);
         bank.store_account(&account_pubkey, &account_data);
 
         let accounts_data_size_before = bank.load_accounts_data_size();
@@ -10943,7 +10931,7 @@ fn test_accounts_data_size_and_resize_transactions() {
         let account_balance = LAMPORTS_PER_SOL;
         let account_size =
             rng.random_range(MAX_PERMITTED_DATA_LENGTH / 2..MAX_PERMITTED_DATA_LENGTH) as usize;
-        let account_data = AccountSharedData::new(account_balance, account_size, &mock_program_id);
+        let account_data = AccountSharedData::new_with_data(account_balance, vec![0; account_size], &mock_program_id);
         bank.store_account(&account_pubkey, &account_data);
 
         let accounts_data_size_before = bank.load_accounts_data_size();
@@ -11273,7 +11261,7 @@ where
     // create the next bank in the current epoch and populate bob's account with some lamports and data
     let slot = bank.slot() + 1;
     let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, leader, slot);
-    let account = AccountSharedData::new(1, len1, &program);
+    let account = AccountSharedData::new_with_data(1, vec![0; len1], &program);
     bank.store_account(&bob_pubkey, &account);
 
     // Root and flush `slot` so bob's account is in storage and the index.
@@ -11284,7 +11272,7 @@ where
     // create the next bank where we will store a zero-lamport account to be cleaned
     let slot = bank.slot() + 1;
     let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, leader, slot);
-    let account = AccountSharedData::new(0, len1, &program);
+    let account = AccountSharedData::new_with_data(0, vec![0; len1], &program);
     bank.store_account(&bob_pubkey, &account);
 
     // transfer some to bogus pubkey just to make previous bank (=slot) really cleanable
@@ -11865,7 +11853,7 @@ fn test_rehash_accounts_unmodified() {
     let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
 
     let lamports = 123_456_789;
-    let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
+    let account = AccountSharedData::empty(lamports, &Pubkey::default());
     let pubkey = Pubkey::new_unique();
     bank.store_account_and_update_capitalization(&pubkey, &account);
 
@@ -11986,7 +11974,7 @@ fn test_temporary_account_execute_and_commit() {
 
     bank.store_account(
         &payer_pubkey,
-        &AccountSharedData::new(initial_payer_balance, 0, &system_program::id()),
+        &AccountSharedData::empty(initial_payer_balance, &system_program::id()),
     );
     let temp_account_rent = bank.get_minimum_balance_for_rent_exemption(0);
     let fee_amount = fee_calculator.lamports_per_signature;
@@ -12057,7 +12045,7 @@ fn test_temporary_account_recreated_execute_and_commit() {
 
     bank.store_account(
         &payer_pubkey,
-        &AccountSharedData::new(initial_payer_balance, 0, &system_program::id()),
+        &AccountSharedData::empty(initial_payer_balance, &system_program::id()),
     );
     let temp_account_rent = bank.get_minimum_balance_for_rent_exemption(0);
     let fee_amount = fee_calculator.lamports_per_signature;
@@ -12348,11 +12336,11 @@ fn test_new_for_txn_tests_system_transfer() {
     let owned_accounts = [
         (
             sender.pubkey(),
-            AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
+            AccountSharedData::empty(1_000_000_000, &system_program::id()),
         ),
         (
             recipient,
-            AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
+            AccountSharedData::empty(1_000_000_000, &system_program::id()),
         ),
         (
             sysvar::clock::id(),
@@ -12525,11 +12513,11 @@ fn test_new_for_block_tests_with_vote_account() {
         (stake_pubkey, stake_account),
         (
             sender.pubkey(),
-            AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
+            AccountSharedData::empty(1_000_000_000, &system_program::id()),
         ),
         (
             recipient,
-            AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
+            AccountSharedData::empty(1_000_000_000, &system_program::id()),
         ),
         (
             sysvar::clock::id(),

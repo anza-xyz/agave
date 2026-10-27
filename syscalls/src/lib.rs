@@ -2886,9 +2886,9 @@ mod tests {
             let transaction_accounts = vec![
                 (
                     $loader_key,
-                    AccountSharedData::new(0, 0, &native_loader::id()),
+                    AccountSharedData::empty(0, &native_loader::id()),
                 ),
-                ($program_key, AccountSharedData::new(0, 0, &$loader_key)),
+                ($program_key, AccountSharedData::empty(0, &$loader_key)),
             ];
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
             $invoke_context
@@ -5109,7 +5109,7 @@ mod tests {
             .map(|_| {
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(0, 0, &bpf_loader::id()),
+                    AccountSharedData::empty(0, &bpf_loader::id()),
                 )
             })
             .collect::<Vec<_>>();
@@ -5329,7 +5329,7 @@ mod tests {
             .map(|_| {
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(0, 0, &bpf_loader::id()),
+                    AccountSharedData::empty(0, &bpf_loader::id()),
                 )
             })
             .collect::<Vec<_>>();
