@@ -1111,6 +1111,7 @@ async fn test_cli_program_deploy_sbpf_v0(disable_sbpf_v0_v1_v2_deployment_enable
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
