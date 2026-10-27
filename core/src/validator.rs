@@ -1655,7 +1655,6 @@ impl Validator {
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
         let (verified_vote_sender, verified_vote_receiver) = EvictingSender::new_bounded(4096);
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
-        let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
 
         let serve_repair_service = ServeRepairService::new(
             serve_repair,
@@ -1701,7 +1700,6 @@ impl Validator {
                 repair: node.sockets.repair.try_clone().unwrap(),
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
-                ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
                 block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
@@ -1728,7 +1726,6 @@ impl Validator {
             replay_vote_sender.clone(),
             completed_data_sets_sender,
             bank_notification_sender.clone(),
-            duplicate_confirmed_slots_receiver,
             TvuConfig {
                 blockstore_cleanup_strategy: config.blockstore_cleanup_strategy,
                 shred_version: node.info.shred_version(),
@@ -1820,7 +1817,6 @@ impl Validator {
             replay_vote_receiver,
             replay_vote_sender,
             bank_notification_sender,
-            duplicate_confirmed_slot_sender,
             tpu_forwarding_client_config,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,

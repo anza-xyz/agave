@@ -8,9 +8,6 @@ use {
             progress_map::{ForkProgress, ProgressMap},
         },
         drop_bank_service::DropBankService,
-        repair::cluster_slot_state_verifier::{
-            DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
-        },
         replay_stage::{ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
@@ -127,12 +124,6 @@ fn test_scheduler_waited_by_drop_bank_service() {
             );
         }
 
-        let duplicate_slots_tracker: DuplicateSlotsTracker =
-            vec![root - 1, root, root + 1].into_iter().collect();
-        let duplicate_confirmed_slots: DuplicateConfirmedSlots = vec![root - 1, root, root + 1]
-            .into_iter()
-            .map(|s| (s, Hash::default()))
-            .collect();
         let unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes =
             UnfrozenGossipVerifiedVoteHashes {
                 votes_per_slot: vec![root - 1, root, root + 1]
@@ -140,16 +131,9 @@ fn test_scheduler_waited_by_drop_bank_service() {
                     .map(|s| (s, HashMap::new()))
                     .collect(),
             };
-        let epoch_slots_frozen_slots: EpochSlotsFrozenSlots = vec![root - 1, root, root + 1]
-            .into_iter()
-            .map(|slot| (slot, Hash::default()))
-            .collect();
         let mut tbft_structs = TowerBFTStructures {
             heaviest_subtree_fork_choice,
-            duplicate_slots_tracker,
-            duplicate_confirmed_slots,
             unfrozen_gossip_verified_vote_hashes,
-            epoch_slots_frozen_slots,
         };
         ReplayStage::handle_new_root(
             &Pubkey::new_unique(),

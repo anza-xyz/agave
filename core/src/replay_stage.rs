@@ -3,14 +3,12 @@ use {
     crate::{
         banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank,
         block_creation_loop::ReplayHighestFrozen,
-        cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
-        },
+        cluster_info_vote_listener::{GossipVerifiedVoteHashReceiver, VoteTracker},
         cluster_slots_service::{ClusterSlotsUpdateSender, cluster_slots::ClusterSlots},
         commitment_service::TowerCommitmentAggregationData,
         consensus::{
             BlockhashStatus, ComputedBankState, SWITCH_FORK_THRESHOLD, Stake, SwitchForkDecision,
-            Tower, TowerError, VotedStakes,
+            Tower, TowerError,
             fork_choice::{ForkChoice, SelectVoteAndResetForkResult, select_vote_and_reset_forks},
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
             latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
@@ -19,17 +17,8 @@ use {
             tower_vote_state::TowerVoteState,
         },
         cost_update_service::CostUpdate,
-        repair::{
-            ancestor_hashes_service::AncestorHashesReplayUpdateSender,
-            cluster_slot_state_verifier::*,
-            duplicate_repair_status::AncestorDuplicateSlotToRepair,
-            repair_service::{
-                AncestorDuplicateSlotsReceiver, DumpedSlotsSender, PopularPrunedForksReceiver,
-            },
-        },
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
         voting_service::VoteOp,
-        window_service::DuplicateSlotReceiver,
     },
     agave_jemalloc::jemalloc::Arena,
     agave_votor::{
@@ -84,7 +73,7 @@ use {
         slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
-        bank::{Bank, BankId, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions, bank_hash_details},
+        bank::{Bank, BankId, MAX_ALPENGLOW_VOTE_ACCOUNTS, NewBankOptions},
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommand, BankForksCommandReceiver, SetRootCommand},
         block_component_processor::BlockComponentProcessorError,
@@ -122,9 +111,7 @@ mod dead_slots;
 mod update_parent;
 
 use {
-    dead_slots::{
-        DeadSlotContext, DeadSlotDuplicateContext, DeadSlotNotifications, mark_replay_dead_slot,
-    },
+    dead_slots::{DeadSlotContext, DeadSlotNotifications, mark_replay_dead_slot},
     update_parent::{
         ChildBankReplayStart, child_bank_replay_start, handle_abandoned_bank,
         handle_update_parent_interrupts, process_soft_dead_slots,
@@ -140,7 +127,6 @@ const ASYNC_VERIFICATION_FREELIST_CAPACITY: usize = 5;
 
 pub(crate) const MAX_VOTE_SIGNATURES: usize = 200;
 const MAX_VOTE_REFRESH_INTERVAL_MILLIS: usize = 5000;
-const MAX_REPAIR_RETRY_LOOP_ATTEMPTS: usize = 10;
 
 // Give at least 4 leaders the chance to pack our vote
 const REFRESH_VOTE_BLOCKHEIGHT: usize = 16;
@@ -277,7 +263,6 @@ struct ProcessActiveBanksContext {
     slot_status_notifier: Option<SlotStatusNotifier>,
     cluster_slots_update_sender: ClusterSlotsUpdateSender,
     cost_update_sender: Sender<CostUpdate>,
-    ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     votor_event_sender: VotorEventSender,
     replay_mode: ForkReplayMode,
@@ -310,23 +295,9 @@ impl ProcessActiveBanksContext {
 
     /// Build the full context needed when a replay error must become a hard or
     /// soft dead-slot transition.
-    fn dead_slot_context<'a>(
-        &'a self,
-        duplicate_slots_to_repair: &'a mut DuplicateSlotsToRepair,
-        purge_repair_slot_counter: &'a mut PurgeRepairSlotCounter,
-        tbft_structs: Option<&'a mut TowerBFTStructures>,
-    ) -> DeadSlotContext<'a> {
-        let root = self.bank_forks.read().unwrap().root();
-
+    fn dead_slot_context(&self) -> DeadSlotContext<'_> {
         DeadSlotContext {
             notifications: self.dead_slot_notifications(),
-            duplicate: DeadSlotDuplicateContext {
-                root,
-                duplicate_slots_to_repair,
-                ancestor_hashes_replay_update_sender: &self.ancestor_hashes_replay_update_sender,
-                purge_repair_slot_counter,
-                tbft_structs,
-            },
             migration_status: self.migration_status.as_ref(),
         }
     }
@@ -369,10 +340,7 @@ struct SkippedSlotsInfo {
 
 pub struct TowerBFTStructures {
     pub heaviest_subtree_fork_choice: HeaviestSubtreeForkChoice,
-    pub duplicate_slots_tracker: DuplicateSlotsTracker,
-    pub duplicate_confirmed_slots: DuplicateConfirmedSlots,
     pub unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes,
-    pub epoch_slots_frozen_slots: EpochSlotsFrozenSlots,
 }
 
 struct PartitionInfo {
@@ -470,7 +438,6 @@ pub struct ReplaySenders {
     pub transaction_status_sender: Option<TransactionStatusSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
-    pub ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     pub retransmit_slots_sender: Sender<u64>,
     pub replay_vote_sender: ReplayVoteSender,
     pub cluster_slots_update_sender: Sender<Vec<u64>>,
@@ -479,7 +446,6 @@ pub struct ReplaySenders {
     pub bls_sender: Sender<BLSOp>,
     pub drop_bank_sender: Sender<Vec<BankWithScheduler>>,
     pub block_metadata_notifier: Option<BlockMetadataNotifierArc>,
-    pub dumped_slots_sender: Sender<Vec<(u64, Hash)>>,
     pub votor_event_sender: VotorEventSender,
     pub own_votes_sender: EvictingSender<VoteMessage>,
     pub footer_certs_sender: Sender<SmallVec<[Certificate; 2]>>,
@@ -492,11 +458,7 @@ pub struct ReplayReceivers {
     pub ledger_signal_receiver: Receiver<bool>,
     pub update_parent_receiver: UpdateParentReceiver,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
-    pub duplicate_slots_receiver: Receiver<u64>,
-    pub ancestor_duplicate_slots_receiver: Receiver<AncestorDuplicateSlotToRepair>,
-    pub duplicate_confirmed_slots_receiver: Receiver<Vec<(u64, Hash)>>,
     pub gossip_verified_vote_hash_receiver: Receiver<(Pubkey, u64, Hash)>,
-    pub popular_pruned_forks_receiver: Receiver<Vec<u64>>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
     pub latest_switch_request: LatestSwitchRequest,
 }
@@ -515,19 +477,13 @@ struct ReplayLoopTiming {
     generate_vote_us: u64,
     update_commitment_cache_us: u64,
     select_forks_elapsed_us: u64,
-    compute_slot_stats_elapsed_us: u64,
     generate_new_bank_forks_elapsed_us: u64,
     replay_active_banks_elapsed_us: u64,
     wait_receive_elapsed_us: u64,
     heaviest_fork_failures_elapsed_us: u64,
     bank_count: u64,
-    process_ancestor_hashes_duplicate_slots_elapsed_us: u64,
-    process_duplicate_confirmed_slots_elapsed_us: u64,
-    process_duplicate_slots_elapsed_us: u64,
     process_unfrozen_gossip_verified_vote_hashes_elapsed_us: u64,
-    process_popular_pruned_forks_elapsed_us: u64,
     process_switch_bank_events_elapsed_us: u64,
-    repair_correct_slots_elapsed_us: u64,
     retransmit_not_propagated_elapsed_us: u64,
     generate_new_bank_forks_read_lock_us: Saturating<u64>,
     generate_new_bank_forks_get_slots_since_us: Saturating<u64>,
@@ -546,15 +502,9 @@ impl ReplayLoopTiming {
         reset_bank_elapsed_us: u64,
         voting_elapsed_us: u64,
         select_forks_elapsed_us: u64,
-        compute_slot_stats_elapsed_us: u64,
         heaviest_fork_failures_elapsed_us: u64,
         bank_count: u64,
-        process_ancestor_hashes_duplicate_slots_elapsed_us: u64,
-        process_duplicate_confirmed_slots_elapsed_us: u64,
         process_unfrozen_gossip_verified_vote_hashes_elapsed_us: u64,
-        process_popular_pruned_forks_elapsed_us: u64,
-        process_duplicate_slots_elapsed_us: u64,
-        repair_correct_slots_elapsed_us: u64,
         retransmit_not_propagated_elapsed_us: u64,
         start_leader_elapsed_us: u64,
     ) {
@@ -564,18 +514,10 @@ impl ReplayLoopTiming {
         self.reset_bank_elapsed_us += reset_bank_elapsed_us;
         self.voting_elapsed_us += voting_elapsed_us;
         self.select_forks_elapsed_us += select_forks_elapsed_us;
-        self.compute_slot_stats_elapsed_us += compute_slot_stats_elapsed_us;
         self.heaviest_fork_failures_elapsed_us += heaviest_fork_failures_elapsed_us;
         self.bank_count += bank_count;
-        self.process_ancestor_hashes_duplicate_slots_elapsed_us +=
-            process_ancestor_hashes_duplicate_slots_elapsed_us;
-        self.process_duplicate_confirmed_slots_elapsed_us +=
-            process_duplicate_confirmed_slots_elapsed_us;
         self.process_unfrozen_gossip_verified_vote_hashes_elapsed_us +=
             process_unfrozen_gossip_verified_vote_hashes_elapsed_us;
-        self.process_popular_pruned_forks_elapsed_us += process_popular_pruned_forks_elapsed_us;
-        self.process_duplicate_slots_elapsed_us += process_duplicate_slots_elapsed_us;
-        self.repair_correct_slots_elapsed_us += repair_correct_slots_elapsed_us;
         self.retransmit_not_propagated_elapsed_us += retransmit_not_propagated_elapsed_us;
         self.start_leader_elapsed_us += start_leader_elapsed_us;
     }
@@ -654,11 +596,6 @@ impl ReplayLoopTiming {
                     i64
                 ),
                 (
-                    "compute_slot_stats_elapsed_us",
-                    self.compute_slot_stats_elapsed_us as i64,
-                    i64
-                ),
-                (
                     "generate_new_bank_forks_elapsed_us",
                     self.generate_new_bank_forks_elapsed_us as i64,
                     i64
@@ -669,23 +606,8 @@ impl ReplayLoopTiming {
                     i64
                 ),
                 (
-                    "process_ancestor_hashes_duplicate_slots_elapsed_us",
-                    self.process_ancestor_hashes_duplicate_slots_elapsed_us as i64,
-                    i64
-                ),
-                (
-                    "process_duplicate_confirmed_slots_elapsed_us",
-                    self.process_duplicate_confirmed_slots_elapsed_us as i64,
-                    i64
-                ),
-                (
                     "process_unfrozen_gossip_verified_vote_hashes_elapsed_us",
                     self.process_unfrozen_gossip_verified_vote_hashes_elapsed_us as i64,
-                    i64
-                ),
-                (
-                    "process_popular_pruned_forks_elapsed_us",
-                    self.process_popular_pruned_forks_elapsed_us as i64,
                     i64
                 ),
                 (
@@ -704,16 +626,6 @@ impl ReplayLoopTiming {
                     i64
                 ),
                 ("bank_count", self.bank_count as i64, i64),
-                (
-                    "process_duplicate_slots_elapsed_us",
-                    self.process_duplicate_slots_elapsed_us as i64,
-                    i64
-                ),
-                (
-                    "repair_correct_slots_elapsed_us",
-                    self.repair_correct_slots_elapsed_us as i64,
-                    i64
-                ),
                 (
                     "retransmit_not_propagated_elapsed_us",
                     self.retransmit_not_propagated_elapsed_us as i64,
@@ -792,7 +704,6 @@ impl ReplayStage {
             transaction_status_sender,
             entry_notification_sender,
             bank_notification_sender,
-            ancestor_hashes_replay_update_sender,
             retransmit_slots_sender,
             replay_vote_sender,
             cluster_slots_update_sender,
@@ -801,7 +712,6 @@ impl ReplayStage {
             bls_sender,
             drop_bank_sender,
             block_metadata_notifier,
-            dumped_slots_sender,
             votor_event_sender,
             optimistic_parent_sender,
             lockouts_sender,
@@ -814,11 +724,7 @@ impl ReplayStage {
             ledger_signal_receiver,
             update_parent_receiver,
             optimistic_parent_receiver,
-            duplicate_slots_receiver,
-            ancestor_duplicate_slots_receiver,
-            duplicate_confirmed_slots_receiver,
             gossip_verified_vote_hash_receiver,
-            popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
             latest_switch_request,
         } = receivers;
@@ -884,11 +790,6 @@ impl ReplayStage {
             let mut partition_info = PartitionInfo::new();
             let mut skipped_slots_info = SkippedSlotsInfo::default();
             let mut replay_timing = ReplayLoopTiming::default();
-            let duplicate_slots_tracker = DuplicateSlotsTracker::default();
-            let duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
-            let epoch_slots_frozen_slots = EpochSlotsFrozenSlots::default();
-            let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
-            let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
             let unfrozen_gossip_verified_vote_hashes = UnfrozenGossipVerifiedVoteHashes::default();
             let mut latest_validator_votes_for_frozen_banks =
                 LatestValidatorVotesForFrozenBanks::default();
@@ -903,10 +804,7 @@ impl ReplayStage {
             let mut last_vat_status_check = Instant::now();
             let mut tbft_structs = TowerBFTStructures {
                 heaviest_subtree_fork_choice,
-                duplicate_slots_tracker,
-                duplicate_confirmed_slots,
                 unfrozen_gossip_verified_vote_hashes,
-                epoch_slots_frozen_slots,
             };
             // AsyncVerificationProgress does a large allocation for its internal channel, so we
             // keep a free list to avoid doing one of those for each slot
@@ -942,7 +840,6 @@ impl ReplayStage {
                 slot_status_notifier: slot_status_notifier.clone(),
                 cluster_slots_update_sender: cluster_slots_update_sender.clone(),
                 cost_update_sender: cost_update_sender.clone(),
-                ancestor_hashes_replay_update_sender: ancestor_hashes_replay_update_sender.clone(),
                 block_metadata_notifier: block_metadata_notifier.clone(),
                 votor_event_sender: votor_event_sender.clone(),
                 replay_mode,
@@ -1046,8 +943,6 @@ impl ReplayStage {
                     &mut progress,
                     &mut async_verification_freelist,
                     &mut latest_validator_votes_for_frozen_banks,
-                    &mut duplicate_slots_to_repair,
-                    &mut purge_repair_slot_counter,
                     (!migration_status.is_alpenglow_enabled()).then_some(&mut tbft_structs),
                     &my_pubkey,
                     &vote_account,
@@ -1091,14 +986,8 @@ impl ReplayStage {
                 }
 
                 if migration_status.is_alpenglow_enabled() {
-                    // These channels feed Tower-only state machines below. Their producers are
-                    // disabled when Alpenglow is enabled, but drain anything queued before the
-                    // transition (or raced with it) so the old state is not retained forever.
-                    for _ in ancestor_duplicate_slots_receiver.try_iter() {}
-                    for _ in duplicate_confirmed_slots_receiver.try_iter() {}
+                    // Drain any Tower gossip votes queued before the Alpenglow transition.
                     for _ in gossip_verified_vote_hash_receiver.try_iter() {}
-                    for _ in popular_pruned_forks_receiver.try_iter() {}
-                    for _ in duplicate_slots_receiver.try_iter() {}
 
                     if my_pubkey != cluster_info.id() {
                         identity_keypair = cluster_info.keypair();
@@ -1170,47 +1059,6 @@ impl ReplayStage {
                     drop(descendants);
                 } else {
                     let forks_root = bank_forks.read().unwrap().root();
-                    // Process cluster-agreed versions of duplicate slots for which we potentially
-                    // have the wrong version. Our version was dead or pruned.
-                    // Signalled by ancestor_hashes_service.
-                    let mut process_ancestor_hashes_duplicate_slots_time =
-                        Measure::start("process_ancestor_hashes_duplicate_slots");
-                    Self::process_ancestor_hashes_duplicate_slots(
-                        &my_pubkey,
-                        &blockstore,
-                        &ancestor_duplicate_slots_receiver,
-                        &mut tbft_structs.duplicate_slots_tracker,
-                        &tbft_structs.duplicate_confirmed_slots,
-                        &mut tbft_structs.epoch_slots_frozen_slots,
-                        &progress,
-                        &mut tbft_structs.heaviest_subtree_fork_choice,
-                        &bank_forks,
-                        &mut duplicate_slots_to_repair,
-                        &ancestor_hashes_replay_update_sender,
-                        &mut purge_repair_slot_counter,
-                    );
-                    process_ancestor_hashes_duplicate_slots_time.stop();
-
-                    // Check for any newly duplicate confirmed slots detected from gossip / replay
-                    // Note: since this is tracked using both gossip & replay votes, stake is not
-                    // rolled up from descendants.
-                    let mut process_duplicate_confirmed_slots_time =
-                        Measure::start("process_duplicate_confirmed_slots");
-                    Self::process_duplicate_confirmed_slots(
-                        &duplicate_confirmed_slots_receiver,
-                        &blockstore,
-                        &mut tbft_structs.duplicate_slots_tracker,
-                        &mut tbft_structs.duplicate_confirmed_slots,
-                        &mut tbft_structs.epoch_slots_frozen_slots,
-                        &bank_forks,
-                        &progress,
-                        &mut tbft_structs.heaviest_subtree_fork_choice,
-                        &mut duplicate_slots_to_repair,
-                        &ancestor_hashes_replay_update_sender,
-                        &mut purge_repair_slot_counter,
-                    );
-                    process_duplicate_confirmed_slots_time.stop();
-
                     // Ingest any new verified votes from gossip. Important for fork choice
                     // and switching proofs because these may be votes that haven't yet been
                     // included in a block, so we may not have yet observed these votes just
@@ -1226,44 +1074,6 @@ impl ReplayStage {
                     for _ in gossip_verified_vote_hash_receiver.try_iter() {}
                     process_unfrozen_gossip_verified_vote_hashes_time.stop();
 
-                    let mut process_popular_pruned_forks_time =
-                        Measure::start("process_popular_pruned_forks_time");
-                    // Check for "popular" (52+% stake aggregated across versions/descendants) forks
-                    // that are pruned, which would not be detected by normal means.
-                    // Signalled by `repair_service`.
-                    Self::process_popular_pruned_forks(
-                        &popular_pruned_forks_receiver,
-                        &blockstore,
-                        &mut tbft_structs.duplicate_slots_tracker,
-                        &mut tbft_structs.epoch_slots_frozen_slots,
-                        &bank_forks,
-                        &mut tbft_structs.heaviest_subtree_fork_choice,
-                        &mut duplicate_slots_to_repair,
-                        &ancestor_hashes_replay_update_sender,
-                        &mut purge_repair_slot_counter,
-                    );
-                    process_popular_pruned_forks_time.stop();
-
-                    // Check to remove any duplicated slots from fork choice
-                    let mut process_duplicate_slots_time =
-                        Measure::start("process_duplicate_slots");
-                    if !tpu_has_bank {
-                        Self::process_duplicate_slots(
-                            &blockstore,
-                            &duplicate_slots_receiver,
-                            &mut tbft_structs.duplicate_slots_tracker,
-                            &tbft_structs.duplicate_confirmed_slots,
-                            &mut tbft_structs.epoch_slots_frozen_slots,
-                            &bank_forks,
-                            &progress,
-                            &mut tbft_structs.heaviest_subtree_fork_choice,
-                            &mut duplicate_slots_to_repair,
-                            &ancestor_hashes_replay_update_sender,
-                            &mut purge_repair_slot_counter,
-                        );
-                    }
-                    process_duplicate_slots_time.stop();
-
                     let mut collect_frozen_banks_time = Measure::start("frozen_banks");
                     let mut frozen_banks: Vec<_> = bank_forks
                         .read()
@@ -1275,7 +1085,7 @@ impl ReplayStage {
                     collect_frozen_banks_time.stop();
 
                     let mut compute_bank_stats_time = Measure::start("compute_bank_stats");
-                    let newly_computed_slot_stats = Self::compute_bank_stats(
+                    Self::compute_bank_stats(
                         &vote_account,
                         &ancestors,
                         &mut frozen_banks,
@@ -1307,33 +1117,6 @@ impl ReplayStage {
                     {
                         last_genesis_vote_refresh_time = Instant::now();
                     }
-
-                    let mut compute_slot_stats_time = Measure::start("compute_slot_stats_time");
-                    for slot in newly_computed_slot_stats {
-                        let fork_stats = progress.get_fork_stats(slot).unwrap();
-                        let duplicate_confirmed_forks = Self::tower_duplicate_confirmed_forks(
-                            &tower,
-                            &fork_stats.voted_stakes,
-                            fork_stats.total_stake,
-                            &progress,
-                            &bank_forks,
-                        );
-
-                        Self::mark_slots_duplicate_confirmed(
-                            &duplicate_confirmed_forks,
-                            &blockstore,
-                            &bank_forks,
-                            &mut progress,
-                            &mut tbft_structs.duplicate_slots_tracker,
-                            &mut tbft_structs.heaviest_subtree_fork_choice,
-                            &mut tbft_structs.epoch_slots_frozen_slots,
-                            &mut duplicate_slots_to_repair,
-                            &ancestor_hashes_replay_update_sender,
-                            &mut purge_repair_slot_counter,
-                            &mut tbft_structs.duplicate_confirmed_slots,
-                        );
-                    }
-                    compute_slot_stats_time.stop();
 
                     let mut select_forks_time = Measure::start("select_forks_time");
                     let (heaviest_bank, heaviest_bank_on_same_voted_fork) = tbft_structs
@@ -1534,33 +1317,6 @@ impl ReplayStage {
                     reset_bank_time.stop();
 
                     let mut start_leader_time = Measure::start("start_leader_time");
-                    let mut dump_then_repair_correct_slots_time =
-                        Measure::start("dump_then_repair_correct_slots_time");
-                    // Used for correctness check
-                    let poh_bank = poh_shared_leader_state
-                        .load()
-                        .working_bank()
-                        .map(Arc::clone);
-                    // Dump any duplicate slots that have been confirmed by the network in
-                    // anticipation of repairing the confirmed version of the slot.
-                    //
-                    // Has to be before `maybe_start_leader()`. Otherwise, `ancestors` and `descendants`
-                    // will be outdated, and we cannot assume `poh_bank` will be in either of these maps.
-                    Self::dump_then_repair_correct_slots(
-                        &mut duplicate_slots_to_repair,
-                        &mut ancestors,
-                        &mut descendants,
-                        &mut progress,
-                        &bank_forks,
-                        &blockstore,
-                        poh_bank.map(|bank| bank.slot()),
-                        &mut purge_repair_slot_counter,
-                        &dumped_slots_sender,
-                        &my_pubkey,
-                        &leader_schedule_cache,
-                    );
-                    dump_then_repair_correct_slots_time.stop();
-
                     let mut retransmit_not_propagated_time =
                         Measure::start("retransmit_not_propagated_time");
                     Self::retransmit_latest_unpropagated_leader_slot(
@@ -1607,17 +1363,11 @@ impl ReplayStage {
                         reset_bank_time.as_us(),
                         voting_time.as_us(),
                         select_forks_time.as_us(),
-                        compute_slot_stats_time.as_us(),
                         heaviest_fork_failures_time.as_us(),
                         u64::try_from(new_frozen_slots.len()).expect(
                             "something is very wrong, froze more than u64::MAX banks at once",
                         ),
-                        process_ancestor_hashes_duplicate_slots_time.as_us(),
-                        process_duplicate_confirmed_slots_time.as_us(),
                         process_unfrozen_gossip_verified_vote_hashes_time.as_us(),
-                        process_popular_pruned_forks_time.as_us(),
-                        process_duplicate_slots_time.as_us(),
-                        dump_then_repair_correct_slots_time.as_us(),
                         retransmit_not_propagated_time.as_us(),
                         start_leader_time.as_us(),
                     );
@@ -2100,217 +1850,6 @@ impl ReplayStage {
         (progress, heaviest_subtree_fork_choice)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn dump_then_repair_correct_slots(
-        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-        ancestors: &mut HashMap<Slot, HashSet<Slot>>,
-        descendants: &mut HashMap<Slot, HashSet<Slot>>,
-        progress: &mut ProgressMap,
-        bank_forks: &RwLock<BankForks>,
-        blockstore: &Blockstore,
-        poh_bank_slot: Option<Slot>,
-        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
-        dumped_slots_sender: &DumpedSlotsSender,
-        my_pubkey: &Pubkey,
-        leader_schedule_cache: &LeaderScheduleCache,
-    ) {
-        if duplicate_slots_to_repair.is_empty() {
-            return;
-        }
-
-        let root_bank = bank_forks.read().unwrap().root_bank();
-        let mut dumped = vec![];
-        // TODO: handle if alternate version of descendant also got confirmed after ancestor was
-        // confirmed, what happens then? Should probably keep track of dumped list and skip things
-        // in `duplicate_slots_to_repair` that have already been dumped. Add test.
-        duplicate_slots_to_repair.retain(|duplicate_slot, correct_hash| {
-            // Should not dump duplicate slots if there is currently a poh bank building
-            // on top of that slot, as BankingStage might still be referencing/touching that state
-            // concurrently.
-            // Luckily for us, because the fork choice rule removes duplicate slots from fork
-            // choice, and this function is called after:
-            // 1) We have picked a bank to reset to in `select_vote_and_reset_forks()`
-            // 2) And also called `reset_poh_recorder()`
-            // Then we should have reset to a fork that doesn't include the duplicate block,
-            // which means any working bank in PohRecorder that was built on that duplicate fork
-            // should have been cleared as well. However, if there is some violation of this guarantee,
-            // then log here
-            let is_poh_building_on_duplicate_fork = poh_bank_slot
-                .map(|poh_bank_slot| {
-                    ancestors
-                        .get(&poh_bank_slot)
-                        .expect("Poh bank should exist in BankForks and thus in ancestors map")
-                        .contains(duplicate_slot)
-                })
-                .unwrap_or(false);
-
-            let did_dump_repair = {
-                if !is_poh_building_on_duplicate_fork {
-                    let frozen_hash = bank_forks.read().unwrap().bank_hash(*duplicate_slot);
-                    if let Some(frozen_hash) = frozen_hash {
-                        if frozen_hash == *correct_hash {
-                            warn!(
-                                "Trying to dump slot {} with correct_hash {}",
-                                *duplicate_slot, *correct_hash
-                            );
-                            return false;
-                        } else if frozen_hash == Hash::default()
-                            && !progress.is_dead(*duplicate_slot).expect(
-                                "If slot exists in BankForks must exist in the progress map",
-                            )
-                        {
-                            warn!(
-                                "Trying to dump unfrozen slot {} that is not dead",
-                                *duplicate_slot
-                            );
-                            return false;
-                        }
-                    } else {
-                        warn!(
-                            "Dumping slot {} which does not exist in bank forks (possibly pruned)",
-                            *duplicate_slot
-                        );
-                    }
-
-                    // Should not dump slots for which we were the leader
-                    if Some(*my_pubkey)
-                        == leader_schedule_cache
-                            .slot_leader_at(*duplicate_slot, None)
-                            .map(|leader| leader.id)
-                    {
-                        if let Some(bank) = bank_forks.read().unwrap().get(*duplicate_slot) {
-                            bank_hash_details::write_bank_hash_details_file(&bank)
-                                .map_err(|err| {
-                                    warn!("Unable to write bank hash details file: {err}");
-                                })
-                                .ok();
-                        } else {
-                            warn!(
-                                "Unable to get bank for slot {duplicate_slot} from bank forks \
-                                 while attempting to write bank hash details file"
-                            );
-                        }
-                        panic!(
-                            "We are attempting to dump a block that we produced. This indicates \
-                             that we are producing duplicate blocks, or that there is a bug in \
-                             our runtime/replay code which causes us to compute different bank \
-                             hashes than the rest of the cluster. We froze slot {duplicate_slot} \
-                             with hash {frozen_hash:?} while the cluster hash is {correct_hash}"
-                        );
-                    }
-
-                    let attempt_no = purge_repair_slot_counter
-                        .entry(*duplicate_slot)
-                        .and_modify(|x| *x += 1)
-                        .or_insert(1);
-                    if *attempt_no > MAX_REPAIR_RETRY_LOOP_ATTEMPTS {
-                        panic!(
-                            "We have tried to repair duplicate slot: {duplicate_slot} more than \
-                             {MAX_REPAIR_RETRY_LOOP_ATTEMPTS} times and are unable to freeze a \
-                             block with bankhash {correct_hash}, instead we have a block with \
-                             bankhash {frozen_hash:?}. This is most likely a bug in the runtime. \
-                             At this point manual intervention is needed to make progress. Exiting"
-                        );
-                    }
-
-                    Self::purge_unconfirmed_slot(
-                        *duplicate_slot,
-                        ancestors,
-                        descendants,
-                        progress,
-                        &root_bank,
-                        bank_forks,
-                        blockstore,
-                    );
-
-                    dumped.push((*duplicate_slot, *correct_hash));
-
-                    warn!(
-                        "Notifying repair service to repair duplicate slot: {}, attempt {}",
-                        *duplicate_slot, *attempt_no,
-                    );
-                    true
-                } else {
-                    warn!(
-                        "PoH bank for slot {} is building on duplicate slot {}",
-                        poh_bank_slot.unwrap(),
-                        duplicate_slot
-                    );
-                    false
-                }
-            };
-
-            // If we dumped/repaired, then no need to keep the slot in the set of pending work
-            !did_dump_repair
-        });
-
-        // Notify repair of the dumped slots along with the correct hash
-        trace!("Dumped {} slots", dumped.len());
-        dumped_slots_sender.send(dumped).unwrap();
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn process_ancestor_hashes_duplicate_slots(
-        pubkey: &Pubkey,
-        blockstore: &Blockstore,
-        ancestor_duplicate_slots_receiver: &AncestorDuplicateSlotsReceiver,
-        duplicate_slots_tracker: &mut DuplicateSlotsTracker,
-        duplicate_confirmed_slots: &DuplicateConfirmedSlots,
-        epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
-        progress: &ProgressMap,
-        fork_choice: &mut HeaviestSubtreeForkChoice,
-        bank_forks: &RwLock<BankForks>,
-        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-        ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
-        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
-    ) {
-        let root = bank_forks.read().unwrap().root();
-        for AncestorDuplicateSlotToRepair {
-            slot_to_repair: (epoch_slots_frozen_slot, epoch_slots_frozen_hash),
-            request_type,
-        } in ancestor_duplicate_slots_receiver.try_iter()
-        {
-            warn!(
-                "{} ReplayStage notified of duplicate slot from ancestor hashes service but we \
-                 observed as {}: {:?}",
-                pubkey,
-                if request_type.is_pruned() {
-                    "pruned"
-                } else {
-                    "dead"
-                },
-                (epoch_slots_frozen_slot, epoch_slots_frozen_hash),
-            );
-            let epoch_slots_frozen_state = EpochSlotsFrozenState::new_from_state(
-                epoch_slots_frozen_slot,
-                epoch_slots_frozen_hash,
-                duplicate_confirmed_slots,
-                fork_choice,
-                || progress.is_dead(epoch_slots_frozen_slot).unwrap_or(false),
-                || {
-                    bank_forks
-                        .read()
-                        .unwrap()
-                        .get(epoch_slots_frozen_slot)
-                        .map(|b| b.hash())
-                },
-                request_type.is_pruned(),
-            );
-            check_slot_agrees_with_cluster(
-                epoch_slots_frozen_slot,
-                root,
-                blockstore,
-                duplicate_slots_tracker,
-                epoch_slots_frozen_slots,
-                fork_choice,
-                duplicate_slots_to_repair,
-                ancestor_hashes_replay_update_sender,
-                purge_repair_slot_counter,
-                SlotStateUpdate::EpochSlotsFrozen(epoch_slots_frozen_state),
-            );
-        }
-    }
-
     fn purge_unconfirmed_slot(
         slot_to_purge: Slot,
         ancestors: &mut HashMap<Slot, HashSet<Slot>>,
@@ -2771,97 +2310,10 @@ impl ReplayStage {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn process_popular_pruned_forks(
-        popular_pruned_forks_receiver: &PopularPrunedForksReceiver,
-        blockstore: &Blockstore,
-        duplicate_slots_tracker: &mut DuplicateSlotsTracker,
-        epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
-        bank_forks: &RwLock<BankForks>,
-        fork_choice: &mut HeaviestSubtreeForkChoice,
-        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-        ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
-        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
-    ) {
-        let root = bank_forks.read().unwrap().root();
-        for new_popular_pruned_slots in popular_pruned_forks_receiver.try_iter() {
-            for new_popular_pruned_slot in new_popular_pruned_slots {
-                if new_popular_pruned_slot <= root {
-                    continue;
-                }
-                check_slot_agrees_with_cluster(
-                    new_popular_pruned_slot,
-                    root,
-                    blockstore,
-                    duplicate_slots_tracker,
-                    epoch_slots_frozen_slots,
-                    fork_choice,
-                    duplicate_slots_to_repair,
-                    ancestor_hashes_replay_update_sender,
-                    purge_repair_slot_counter,
-                    SlotStateUpdate::PopularPrunedFork,
-                );
-            }
-        }
-    }
-
     // Check for any newly duplicate confirmed slots by the cluster.
     // This only tracks duplicate slot confirmations on the exact
     // single slots and does not account for votes on their descendants. Used solely
     // for duplicate slot recovery.
-    #[allow(clippy::too_many_arguments)]
-    fn process_duplicate_confirmed_slots(
-        duplicate_confirmed_slots_receiver: &DuplicateConfirmedSlotsReceiver,
-        blockstore: &Blockstore,
-        duplicate_slots_tracker: &mut DuplicateSlotsTracker,
-        duplicate_confirmed_slots: &mut DuplicateConfirmedSlots,
-        epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
-        bank_forks: &RwLock<BankForks>,
-        progress: &ProgressMap,
-        fork_choice: &mut HeaviestSubtreeForkChoice,
-        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-        ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
-        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
-    ) {
-        let root = bank_forks.read().unwrap().root();
-        for new_duplicate_confirmed_slots in duplicate_confirmed_slots_receiver.try_iter() {
-            for (confirmed_slot, duplicate_confirmed_hash) in new_duplicate_confirmed_slots {
-                if confirmed_slot <= root {
-                    continue;
-                } else if let Some(prev_hash) =
-                    duplicate_confirmed_slots.insert(confirmed_slot, duplicate_confirmed_hash)
-                {
-                    // This assertion is intentional - it is not possible to split the cluster to get 52% on two versions
-                    // without a massive turbine failure
-                    assert_eq!(
-                        prev_hash, duplicate_confirmed_hash,
-                        "Additional duplicate confirmed notification for slot {confirmed_slot} \
-                         with a different hash"
-                    );
-                    // Already processed this signal
-                    continue;
-                }
-
-                let duplicate_confirmed_state = DuplicateConfirmedState::new_from_state(
-                    duplicate_confirmed_hash,
-                    || progress.is_dead(confirmed_slot).unwrap_or(false),
-                    || bank_forks.read().unwrap().bank_hash(confirmed_slot),
-                );
-                check_slot_agrees_with_cluster(
-                    confirmed_slot,
-                    root,
-                    blockstore,
-                    duplicate_slots_tracker,
-                    epoch_slots_frozen_slots,
-                    fork_choice,
-                    duplicate_slots_to_repair,
-                    ancestor_hashes_replay_update_sender,
-                    purge_repair_slot_counter,
-                    SlotStateUpdate::DuplicateConfirmed(duplicate_confirmed_state),
-                );
-            }
-        }
-    }
 
     fn process_gossip_verified_vote_hashes(
         gossip_verified_vote_hash_receiver: &GossipVerifiedVoteHashReceiver,
@@ -2883,53 +2335,6 @@ impl ReplayStage {
     }
 
     // Checks for and handle forks with duplicate slots.
-    #[allow(clippy::too_many_arguments)]
-    fn process_duplicate_slots(
-        blockstore: &Blockstore,
-        duplicate_slots_receiver: &DuplicateSlotReceiver,
-        duplicate_slots_tracker: &mut DuplicateSlotsTracker,
-        duplicate_confirmed_slots: &DuplicateConfirmedSlots,
-        epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
-        bank_forks: &RwLock<BankForks>,
-        progress: &ProgressMap,
-        fork_choice: &mut HeaviestSubtreeForkChoice,
-        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-        ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
-        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
-    ) {
-        let new_duplicate_slots: Vec<Slot> = duplicate_slots_receiver.try_iter().collect();
-        let (root_slot, bank_hashes) = {
-            let r_bank_forks = bank_forks.read().unwrap();
-            let bank_hashes: Vec<Option<Hash>> = new_duplicate_slots
-                .iter()
-                .map(|duplicate_slot| r_bank_forks.bank_hash(*duplicate_slot))
-                .collect();
-
-            (r_bank_forks.root(), bank_hashes)
-        };
-        for (duplicate_slot, bank_hash) in new_duplicate_slots.into_iter().zip(bank_hashes) {
-            // WindowService should only send the signal once per slot
-            let duplicate_state = DuplicateState::new_from_state(
-                duplicate_slot,
-                duplicate_confirmed_slots,
-                fork_choice,
-                || progress.is_dead(duplicate_slot).unwrap_or(false),
-                || bank_hash,
-            );
-            check_slot_agrees_with_cluster(
-                duplicate_slot,
-                root_slot,
-                blockstore,
-                duplicate_slots_tracker,
-                epoch_slots_frozen_slots,
-                fork_choice,
-                duplicate_slots_to_repair,
-                ancestor_hashes_replay_update_sender,
-                purge_repair_slot_counter,
-                SlotStateUpdate::Duplicate(duplicate_state),
-            );
-        }
-    }
 
     fn log_leader_change(
         my_pubkey: &Pubkey,
@@ -4060,8 +3465,6 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
-        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         mut tbft_structs: Option<&mut TowerBFTStructures>,
         replay_result_vec: &[ReplaySlotFromBlockstore],
         my_pubkey: &Pubkey,
@@ -4094,9 +3497,6 @@ impl ReplayStage {
                             bank_forks,
                             progress,
                             async_verification_freelist,
-                            duplicate_slots_to_repair,
-                            purge_repair_slot_counter,
-                            tbft_structs.as_deref_mut(),
                         )?;
                         continue;
                     }
@@ -4119,11 +3519,7 @@ impl ReplayStage {
                             bank,
                             err,
                             progress,
-                            &mut process_active_banks_context.dead_slot_context(
-                                duplicate_slots_to_repair,
-                                purge_repair_slot_counter,
-                                tbft_structs.as_deref_mut(),
-                            ),
+                            &mut process_active_banks_context.dead_slot_context(),
                         );
 
                         // don't try to run the below logic to check if the bank is completed
@@ -4151,11 +3547,7 @@ impl ReplayStage {
                             bank,
                             &err,
                             progress,
-                            &mut process_active_banks_context.dead_slot_context(
-                                duplicate_slots_to_repair,
-                                purge_repair_slot_counter,
-                                tbft_structs.as_deref_mut(),
-                            ),
+                            &mut process_active_banks_context.dead_slot_context(),
                         );
                         // don't try to run the remaining normal processing for the completed bank
                         continue;
@@ -4219,11 +3611,7 @@ impl ReplayStage {
                             computed_hash,
                         ),
                         progress,
-                        &mut process_active_banks_context.dead_slot_context(
-                            duplicate_slots_to_repair,
-                            purge_repair_slot_counter,
-                            tbft_structs.as_deref_mut(),
-                        ),
+                        &mut process_active_banks_context.dead_slot_context(),
                     );
 
                     continue;
@@ -4266,69 +3654,14 @@ impl ReplayStage {
 
                 assert_ne!(bank.hash(), Hash::default());
                 bank_progress.fork_stats.bank_hash = Some(bank.hash());
-                if let Some(TowerBFTStructures {
-                    heaviest_subtree_fork_choice,
-                    duplicate_slots_tracker,
-                    duplicate_confirmed_slots,
-                    epoch_slots_frozen_slots,
-                    ..
-                }) = &mut tbft_structs
-                {
-                    // Needs to be updated before `check_slot_agrees_with_cluster()` so that
-                    // any updates in `check_slot_agrees_with_cluster()` on fork choice take
-                    // effect
-                    heaviest_subtree_fork_choice.add_new_leaf_slot(
+                if let Some(tbft_structs) = &mut tbft_structs {
+                    tbft_structs.heaviest_subtree_fork_choice.add_new_leaf_slot(
                         (bank.slot(), bank.hash()),
                         Some((bank.parent_slot(), bank.parent_hash())),
                     );
-                    heaviest_subtree_fork_choice.maybe_print_state();
-                    let bank_frozen_state = BankFrozenState::new_from_state(
-                        bank.slot(),
-                        bank.hash(),
-                        duplicate_slots_tracker,
-                        duplicate_confirmed_slots,
-                        heaviest_subtree_fork_choice,
-                        epoch_slots_frozen_slots,
-                    );
-                    check_slot_agrees_with_cluster(
-                        bank.slot(),
-                        bank_forks.read().unwrap().root(),
-                        &process_active_banks_context.blockstore,
-                        duplicate_slots_tracker,
-                        epoch_slots_frozen_slots,
-                        heaviest_subtree_fork_choice,
-                        duplicate_slots_to_repair,
-                        &process_active_banks_context.ancestor_hashes_replay_update_sender,
-                        purge_repair_slot_counter,
-                        SlotStateUpdate::BankFrozen(bank_frozen_state),
-                    );
-                    // If we previously marked this slot as duplicate in blockstore, let the state machine know
-                    if !duplicate_slots_tracker.contains(&bank.slot())
-                        && process_active_banks_context
-                            .blockstore
-                            .get_duplicate_slot(bank.slot())
-                            .is_some()
-                    {
-                        let duplicate_state = DuplicateState::new_from_state(
-                            bank.slot(),
-                            duplicate_confirmed_slots,
-                            heaviest_subtree_fork_choice,
-                            || false,
-                            || Some(bank.hash()),
-                        );
-                        check_slot_agrees_with_cluster(
-                            bank.slot(),
-                            bank_forks.read().unwrap().root(),
-                            &process_active_banks_context.blockstore,
-                            duplicate_slots_tracker,
-                            epoch_slots_frozen_slots,
-                            heaviest_subtree_fork_choice,
-                            duplicate_slots_to_repair,
-                            &process_active_banks_context.ancestor_hashes_replay_update_sender,
-                            purge_repair_slot_counter,
-                            SlotStateUpdate::Duplicate(duplicate_state),
-                        );
-                    }
+                    tbft_structs
+                        .heaviest_subtree_fork_choice
+                        .maybe_print_state();
                 }
 
                 // For leader banks:
@@ -4439,8 +3772,6 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
-        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         tbft_structs: Option<&mut TowerBFTStructures>,
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
@@ -4473,8 +3804,6 @@ impl ReplayStage {
             progress,
             async_verification_freelist,
             latest_validator_votes_for_frozen_banks,
-            duplicate_slots_to_repair,
-            purge_repair_slot_counter,
             tbft_structs,
             &replay_result_vec,
             my_pubkey,
@@ -5085,106 +4414,6 @@ impl ReplayStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn mark_slots_duplicate_confirmed(
-        confirmed_slots: &[(Slot, Hash)],
-        blockstore: &Blockstore,
-        bank_forks: &RwLock<BankForks>,
-        progress: &mut ProgressMap,
-        duplicate_slots_tracker: &mut DuplicateSlotsTracker,
-        fork_choice: &mut HeaviestSubtreeForkChoice,
-        epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
-        duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-        ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
-        purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
-        duplicate_confirmed_slots: &mut DuplicateConfirmedSlots,
-    ) {
-        let root_slot = bank_forks.read().unwrap().root();
-        for (slot, frozen_hash) in confirmed_slots.iter() {
-            assert!(*frozen_hash != Hash::default());
-
-            if *slot <= root_slot {
-                continue;
-            }
-
-            progress.set_duplicate_confirmed_hash(*slot, *frozen_hash);
-            if let Some(prev_hash) = duplicate_confirmed_slots.insert(*slot, *frozen_hash) {
-                assert_eq!(
-                    prev_hash, *frozen_hash,
-                    "Additional duplicate confirmed notification for slot {slot} with a different \
-                     hash"
-                );
-                // Already processed this signal
-                continue;
-            }
-
-            let duplicate_confirmed_state = DuplicateConfirmedState::new_from_state(
-                *frozen_hash,
-                || false,
-                || Some(*frozen_hash),
-            );
-            check_slot_agrees_with_cluster(
-                *slot,
-                root_slot,
-                blockstore,
-                duplicate_slots_tracker,
-                epoch_slots_frozen_slots,
-                fork_choice,
-                duplicate_slots_to_repair,
-                ancestor_hashes_replay_update_sender,
-                purge_repair_slot_counter,
-                SlotStateUpdate::DuplicateConfirmed(duplicate_confirmed_state),
-            );
-        }
-    }
-
-    fn tower_duplicate_confirmed_forks(
-        tower: &Tower,
-        voted_stakes: &VotedStakes,
-        total_stake: Stake,
-        progress: &ProgressMap,
-        bank_forks: &RwLock<BankForks>,
-    ) -> Vec<(Slot, Hash)> {
-        let mut duplicate_confirmed_forks = vec![];
-        for (slot, prog) in progress.iter() {
-            if prog.fork_stats.duplicate_confirmed_hash.is_some() {
-                continue;
-            }
-            let Some(bank) = bank_forks.read().unwrap().get(*slot) else {
-                continue;
-            };
-            let duration = prog
-                .replay_stats
-                .read()
-                .unwrap()
-                .started
-                .elapsed()
-                .as_millis();
-            if !bank.is_frozen() {
-                continue;
-            }
-            if tower.is_slot_duplicate_confirmed(*slot, voted_stakes, total_stake) {
-                info!(
-                    "validator fork duplicate confirmed {} {}ms",
-                    *slot, duration
-                );
-                datapoint_info!(
-                    "validator-duplicate-confirmation",
-                    ("duration_ms", duration, i64)
-                );
-                duplicate_confirmed_forks.push((*slot, bank.hash()));
-            } else {
-                debug!(
-                    "validator fork not confirmed {} {}ms {:?}",
-                    *slot,
-                    duration,
-                    voted_stakes.get(slot)
-                );
-            }
-        }
-        duplicate_confirmed_forks
-    }
-
-    #[allow(clippy::too_many_arguments)]
     /// A wrapper around `root_utils::check_and_handle_new_root` which:
     /// - calls into `root_utils::set_bank_forks_root`
     /// - Executes `set_progress_and_tower_bft_root` to cleanup tower bft structs and the progress map
@@ -5266,22 +4495,11 @@ impl ReplayStage {
         progress.handle_new_root(bank_forks);
         let TowerBFTStructures {
             heaviest_subtree_fork_choice,
-            duplicate_slots_tracker,
-            duplicate_confirmed_slots,
             unfrozen_gossip_verified_vote_hashes,
-            epoch_slots_frozen_slots,
-            ..
         } = tbft_structs;
         heaviest_subtree_fork_choice.set_tree_root((new_root, bank_forks.root_bank().hash()));
-        *duplicate_slots_tracker = duplicate_slots_tracker.split_off(&new_root);
-        // duplicate_slots_tracker now only contains entries >= `new_root`
-
-        *duplicate_confirmed_slots = duplicate_confirmed_slots.split_off(&new_root);
-        // gossip_confirmed_slots now only contains entries >= `new_root`
 
         unfrozen_gossip_verified_vote_hashes.set_root(new_root);
-        *epoch_slots_frozen_slots = epoch_slots_frozen_slots.split_off(&new_root);
-        // epoch_slots_frozen_slots now only contains entries >= `new_root`
     }
 
     #[allow(clippy::too_many_arguments)]

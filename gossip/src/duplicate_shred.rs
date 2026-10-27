@@ -100,8 +100,6 @@ pub enum Error {
     BlockstoreInsertFailed(#[from] BlockstoreError),
     #[error("data chunk mismatch")]
     DataChunkMismatch,
-    #[error("unable to send duplicate slot to state machine")]
-    DuplicateSlotSenderFailure,
     #[error("invalid chunk_index: {chunk_index}, num_chunks: {num_chunks}")]
     InvalidChunkIndex { chunk_index: u8, num_chunks: u8 },
     #[error("invalid duplicate shreds")]
@@ -151,7 +149,6 @@ impl Error {
             | Self::InvalidErasureMetaConflict => true,
             Self::BlockstoreInsertFailed(_)
             | Self::DataChunkMismatch
-            | Self::DuplicateSlotSenderFailure
             | Self::InvalidChunkIndex { .. }
             | Self::InvalidDuplicateSlotProof
             | Self::InvalidSizeLimit

@@ -5,9 +5,7 @@ use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         block_creation_loop::ReplayHighestFrozen,
-        cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
-        },
+        cluster_info_vote_listener::{GossipVerifiedVoteHashReceiver, VoteTracker},
         cluster_slots_service::{ClusterSlotsService, cluster_slots::ClusterSlots},
         commitment_service::AggregateCommitmentService,
         completed_data_sets_service::CompletedDataSetsSender,
@@ -142,7 +140,6 @@ pub struct TvuSockets {
     pub fetch: Vec<UdpSocket>,
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
-    pub ancestor_hashes_requests: UdpSocket,
     pub block_id_repair: UdpSocket,
 }
 
@@ -249,7 +246,6 @@ impl Tvu {
         replay_vote_sender: ReplayVoteSender,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
-        duplicate_confirmed_slots_receiver: DuplicateConfirmedSlotsReceiver,
         tvu_config: TvuConfig,
         max_slots: &Arc<MaxSlots>,
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
@@ -268,7 +264,6 @@ impl Tvu {
             repair: repair_socket,
             fetch: fetch_sockets,
             retransmit: retransmit_sockets,
-            ancestor_hashes_requests: ancestor_hashes_socket,
             block_id_repair,
         } = sockets;
 
@@ -381,7 +376,6 @@ impl Tvu {
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
 
         let repair_socket = Arc::new(repair_socket);
-        let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
         let block_id_repair_socket = Arc::new(block_id_repair);
         let fetch_sockets: Vec<Arc<UdpSocket>> = fetch_sockets.into_iter().map(Arc::new).collect();
         let fetch_stage = ShredFetchStage::new(
@@ -433,14 +427,6 @@ impl Tvu {
             votor_event_sender.clone(),
         );
 
-        let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
-        // This channel is used by both gossip and window service. Gossip will not fill this
-        // beyond 50%, while window_service will perform a blocking send.
-        let (duplicate_slots_sender, duplicate_slots_receiver) = bounded(2048);
-        let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =
-            unbounded();
-        let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
-        let (popular_pruned_forks_sender, popular_pruned_forks_receiver) = unbounded();
         // Create repair event channel for BlockIdRepairService
         let (repair_event_sender, repair_event_receiver) = bounded(100);
 
@@ -467,30 +453,22 @@ impl Tvu {
             let repair_info = RepairInfo {
                 bank_forks: bank_forks.clone(),
                 epoch_schedule,
-                ancestor_duplicate_slots_sender,
                 repair_validators: tvu_config.repair_validators,
                 repair_whitelist: tvu_config.repair_whitelist,
                 cluster_info: cluster_info.clone(),
                 cluster_slots: cluster_slots.clone(),
             };
-            let repair_service_channels = RepairServiceChannels::new(
-                verified_voter_slots_receiver,
-                dumped_slots_receiver,
-                popular_pruned_forks_sender,
-                ancestor_hashes_replay_update_receiver,
-            );
+            let repair_service_channels = RepairServiceChannels::new(verified_voter_slots_receiver);
             let window_service_channels = WindowServiceChannels::new(
                 verified_receiver,
                 retransmit_sender,
                 completed_data_sets_sender,
-                duplicate_slots_sender.clone(),
                 repair_service_channels,
                 block_id_repair_channels,
             );
             WindowService::new(
                 blockstore.clone(),
                 repair_socket,
-                ancestor_hashes_socket,
                 block_id_repair_socket,
                 exit.clone(),
                 repair_info,
@@ -567,7 +545,6 @@ impl Tvu {
             transaction_status_sender,
             entry_notification_sender,
             bank_notification_sender,
-            ancestor_hashes_replay_update_sender,
             retransmit_slots_sender,
             replay_vote_sender,
             cluster_slots_update_sender,
@@ -576,7 +553,6 @@ impl Tvu {
             bls_sender,
             drop_bank_sender,
             block_metadata_notifier,
-            dumped_slots_sender,
             votor_event_sender,
             own_votes_sender,
             footer_certs_sender,
@@ -589,11 +565,7 @@ impl Tvu {
             ledger_signal_receiver,
             update_parent_receiver,
             optimistic_parent_receiver,
-            duplicate_slots_receiver,
-            ancestor_duplicate_slots_receiver,
-            duplicate_confirmed_slots_receiver,
             gossip_verified_vote_hash_receiver,
-            popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
             latest_switch_request,
         };
@@ -664,7 +636,6 @@ impl Tvu {
                 blockstore,
                 leader_schedule_cache.clone(),
                 epoch_specs,
-                duplicate_slots_sender,
                 tvu_config.shred_version,
                 migration_status,
             ),
@@ -836,7 +807,6 @@ pub mod tests {
         let (verified_voter_slots_sender, verified_voter_slots_receiver) =
             EvictingSender::new_bounded(1024);
         let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let (_, gossip_confirmed_slots_receiver) = bounded(1024);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
@@ -877,7 +847,6 @@ pub mod tests {
                 repair: target1.sockets.repair,
                 retransmit: target1.sockets.retransmit_sockets,
                 fetch: target1.sockets.tvu,
-                ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
                 block_id_repair: target1.sockets.block_id_repair,
             },
             blockstore,
@@ -910,7 +879,6 @@ pub mod tests {
             replay_vote_sender,
             None, // completed_data_sets_sender
             None, // bank_notification_sender
-            gossip_confirmed_slots_receiver,
             TvuConfig::default(),
             &Arc::new(MaxSlots::default()),
             None, // block_metadata_notifier

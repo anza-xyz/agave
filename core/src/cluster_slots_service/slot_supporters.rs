@@ -59,11 +59,6 @@ impl SlotSupporters {
         self.total_support
             .load(std::sync::atomic::Ordering::Relaxed)
     }
-    /// Total staked amount for this slot
-    ///   #[inline]
-    pub(crate) fn total_stake(&self) -> Stake {
-        self.total_stake
-    }
     #[inline]
     pub(crate) fn is_frozen(&self) -> bool {
         let slot_weight_f64 = self.total_support() as f64;
