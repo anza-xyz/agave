@@ -77,7 +77,7 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     let (packet_s, packet_r) = bounded(1024);
     let (verified_s, verified_r) = banking_channels::channel_for_test();
     let (forward_stage_s, _forward_stage_r) = bounded(1024);
-    let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+    let stage = SigVerifyStage::new(
         packet_r,
         verified_s,
         forward_stage_s,
@@ -119,7 +119,6 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     });
     // This will wait for all packets to make it through sigverify.
     drop(packet_s);
-    drop(gossip_sigverify_handle);
     stage.join().unwrap();
 }
 

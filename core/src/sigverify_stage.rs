@@ -6,17 +6,13 @@
 use {
     crate::{
         banking_channels::BankingPacketSender,
-        sigverify::{
-            GossipSigVerifier, GossipVerifiedVoteBatch, SigVerifyWorkerPool,
-            SigVerifyWorkerSenders, SigVerifyWorkerState, SigVerifyWorkerStats,
-        },
+        sigverify::{SigVerifyWorkerPool, SigVerifyWorkerState, SigVerifyWorkerStats},
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
     core::time::Duration,
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crossbeam_channel::{Receiver, Sender},
     solana_perf::{deduper::Deduper, packet::PacketBatch},
     solana_runtime::bank_forks::SharableBanks,
-    solana_transaction::Transaction,
     std::{
         num::NonZeroUsize,
         sync::{
@@ -26,14 +22,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::Instant,
     },
-    thiserror::Error,
 };
-
-#[derive(Error, Debug)]
-pub enum SigVerifyServiceError {
-    #[error("sigverify worker queue closed")]
-    WorkerQueueClosed,
-}
 
 const DEDUPER_NUM_BITS: u64 = 63_999_979;
 const MAX_DEDUPER_AGE: Duration = Duration::from_secs(2);
@@ -44,11 +33,6 @@ pub struct SigVerifyStage {
     servicer_thread_hdl: Option<JoinHandle<()>>,
     // pool held so workers stay alive. If dropped, workers in pool shut down.
     _worker_pool: SigVerifyWorkerPool,
-}
-
-pub struct GossipSigVerifyHandle {
-    verifier: GossipSigVerifier,
-    verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
 }
 
 #[derive(Default)]
@@ -154,8 +138,7 @@ impl SigVerifyStage {
         forward_non_votes: bool,
         sharable_banks: SharableBanks,
         scheduler_priority_floor: Option<Arc<SchedulerPriorityFloor>>,
-    ) -> (Self, GossipSigVerifyHandle) {
-        let (gossip_verified_vote_sender, verified_vote_receiver) = unbounded();
+    ) -> Self {
         let non_vote_stats = SigVerifierStats::default();
         let exit = Arc::new(AtomicBool::new(false));
         let mut rng = rand::rng();
@@ -163,10 +146,7 @@ impl SigVerifyStage {
         let worker_pool = SigVerifyWorkerPool::new(
             num_workers,
             packet_receiver,
-            SigVerifyWorkerSenders {
-                gossip_verified_vote_sender,
-                forward_stage_sender,
-            },
+            forward_stage_sender,
             forward_non_votes,
             sharable_banks,
             SigVerifyWorkerState::new(
@@ -199,19 +179,12 @@ impl SigVerifyStage {
                 stats: non_vote_stats,
             },
         );
-        let gossip_sigverify_handle = GossipSigVerifyHandle {
-            verifier: worker_pool.gossip_verifier(),
-            verified_vote_receiver,
-        };
 
-        (
-            Self {
-                exit,
-                servicer_thread_hdl: Some(servicer_thread_hdl),
-                _worker_pool: worker_pool,
-            },
-            gossip_sigverify_handle,
-        )
+        Self {
+            exit,
+            servicer_thread_hdl: Some(servicer_thread_hdl),
+            _worker_pool: worker_pool,
+        }
     }
 
     pub fn join(mut self) -> thread::Result<()> {
@@ -257,52 +230,6 @@ impl Drop for SigVerifyStage {
         if let Err(err) = self.join_servicer_thread() {
             error!("sigverify servicer encountered unexpected error: {err:?}");
         }
-    }
-}
-
-impl GossipSigVerifyHandle {
-    #[cfg(test)]
-    pub(crate) fn new_for_tests(
-        worker_sender: Sender<crate::sigverify::GossipVerifyTask>,
-        verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
-    ) -> Self {
-        Self {
-            verifier: GossipSigVerifier::new_for_tests(worker_sender),
-            verified_vote_receiver,
-        }
-    }
-
-    /// Submit gossip votes for signature verification and collect the corresponding responses.
-    ///
-    /// This takes `&mut self` because responses for all submitted gossip tasks share one receiver.
-    /// Allowing concurrent callers would make it possible for one caller to consume another caller's
-    /// verification results.
-    pub(crate) fn verify_and_receive_votes(
-        &mut self,
-        votes: Vec<Transaction>,
-        packet_batches: Vec<PacketBatch>,
-    ) -> std::result::Result<(Vec<Transaction>, Vec<PacketBatch>), crossbeam_channel::RecvError>
-    {
-        let num_batches = match self
-            .verifier
-            .send_votes_to_worker_pool(votes, packet_batches)
-        {
-            Ok(num_batches) => num_batches,
-            Err(err) => {
-                error!("gossip sigverify enqueue failed: {err:?}");
-                return Ok((Vec::new(), Vec::new()));
-            }
-        };
-        let mut verified_vote_txs = Vec::with_capacity(num_batches);
-        let mut verified_packet_batches = Vec::with_capacity(num_batches);
-
-        for _ in 0..num_batches {
-            let verified_vote_batch = self.verified_vote_receiver.recv()?;
-            verified_vote_txs.push(verified_vote_batch.transaction);
-            verified_packet_batches.push(verified_vote_batch.packet_batch);
-        }
-
-        Ok((verified_vote_txs, verified_packet_batches))
     }
 }
 
@@ -374,7 +301,7 @@ mod tests {
         let (packet_s, packet_r) = bounded(1024);
         let (verified_s, verified_r) = banking_channels::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
-        let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        let stage = SigVerifyStage::new(
             packet_r,
             verified_s,
             forward_stage_s,
@@ -422,7 +349,6 @@ mod tests {
         } else {
             assert_eq!(valid_received, total_packets);
         }
-        drop(gossip_sigverify_handle);
         stage.join().unwrap();
     }
 
@@ -435,7 +361,7 @@ mod tests {
         let (packet_s, packet_r) = bounded(1024);
         let (verified_s, verified_r) = banking_channels::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
-        let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        let stage = SigVerifyStage::new(
             packet_r,
             verified_s,
             forward_stage_s,
@@ -470,7 +396,6 @@ mod tests {
         );
 
         drop(packet_s);
-        drop(gossip_sigverify_handle);
         stage.join().unwrap();
     }
 }

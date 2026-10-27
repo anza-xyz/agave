@@ -202,8 +202,8 @@ impl Tpu {
             non_vote_receiver,
             tpu_vote_sender: _,
             tpu_vote_receiver: _,
-            gossip_vote_sender,
-            gossip_vote_receiver,
+            gossip_vote_sender: _,
+            gossip_vote_receiver: _,
         } = banking_channels;
 
         // Streamer for Votes:
@@ -280,7 +280,7 @@ impl Tpu {
         // below-floor packets ahead of signature verification.
         let scheduler_priority_floor = Arc::new(SchedulerPriorityFloor::new());
 
-        let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        let sigverify_stage = SigVerifyStage::new(
             packet_receiver,
             non_vote_sender,
             forward_stage_sender.clone(),
@@ -292,9 +292,6 @@ impl Tpu {
 
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
-            cluster_info.clone(),
-            gossip_sigverify_handle,
-            gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
             subscriptions,
@@ -311,9 +308,9 @@ impl Tpu {
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
-            // TPU votes are not ingested. A disconnected receiver would shut down banking stage.
+            // Votes are not ingested. A disconnected receiver would shut down banking stage.
             crossbeam_channel::never(),
-            gossip_vote_receiver,
+            crossbeam_channel::never(),
             banking_control_receiver,
             block_production_num_workers,
             block_production_scheduler_config,
