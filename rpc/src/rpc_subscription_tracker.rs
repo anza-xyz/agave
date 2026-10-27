@@ -15,7 +15,10 @@ use {
     solana_signature::Signature,
     solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
     std::{
-        collections::hash_map::{Entry, HashMap},
+        collections::{
+            HashSet,
+            hash_map::{Entry, HashMap},
+        },
         fmt,
         sync::{
             Arc, RwLock, Weak,
@@ -545,6 +548,21 @@ impl SubscriptionsTracker {
         &self.by_signature
     }
 
+    pub fn invalidate_accounts(&self, slots: &HashSet<Slot>) {
+        for subscription in self.commitment_watchers.values() {
+            if let SubscriptionParams::Account(params) = subscription.params()
+                && params.commitment.is_processed()
+            {
+                let mut last_notified_slot = subscription.last_notified_slot.write().unwrap();
+                if slots.contains(&*last_notified_slot) {
+                    // A replacement bank can write the account at the same slot. Force its next
+                    // notification even when the last-modified slot has not changed.
+                    *last_notified_slot = Slot::MAX;
+                }
+            }
+        }
+    }
+
     pub fn commitment_watchers(&self) -> &HashMap<SubscriptionId, Arc<SubscriptionInfo>> {
         &self.commitment_watchers
     }
@@ -737,6 +755,83 @@ mod tests {
         // log-only; the only entry should be the Subscribed from the recreate).
         while receiver.try_recv().is_ok() {}
         drop(token);
+    }
+
+    #[test]
+    fn test_invalidate_accounts_only_for_removed_processed_slots() {
+        let bank_forks = BankForks::new_rw_arc(solana_runtime::bank::Bank::new_for_tests(
+            &solana_runtime::genesis_utils::create_genesis_config(100).genesis_config,
+        ));
+        let mut tracker = SubscriptionsTracker::new(bank_forks);
+        let pubkey = Pubkey::new_unique();
+        for (id, commitment) in [
+            (0, CommitmentConfig::processed()),
+            (1, CommitmentConfig::confirmed()),
+            (2, CommitmentConfig::finalized()),
+        ] {
+            tracker.subscribe(
+                SubscriptionParams::Account(AccountSubscriptionParams {
+                    pubkey,
+                    commitment,
+                    encoding: UiAccountEncoding::Base64,
+                    data_slice: None,
+                }),
+                SubscriptionId::from(id),
+                || 7,
+            );
+        }
+        tracker.subscribe(
+            SubscriptionParams::Account(AccountSubscriptionParams {
+                pubkey: Pubkey::new_unique(),
+                commitment: CommitmentConfig::processed(),
+                encoding: UiAccountEncoding::Base64,
+                data_slice: None,
+            }),
+            SubscriptionId::from(3),
+            || 6,
+        );
+        tracker.subscribe(
+            SubscriptionParams::Program(ProgramSubscriptionParams {
+                pubkey,
+                filters: vec![],
+                commitment: CommitmentConfig::processed(),
+                encoding: UiAccountEncoding::Base64,
+                data_slice: None,
+                with_context: false,
+            }),
+            SubscriptionId::from(4),
+            || 7,
+        );
+        tracker.subscribe(
+            SubscriptionParams::Logs(LogsSubscriptionParams {
+                kind: LogsSubscriptionKind::All,
+                commitment: CommitmentConfig::processed(),
+            }),
+            SubscriptionId::from(5),
+            || 7,
+        );
+        tracker.invalidate_accounts(&HashSet::new());
+        assert_eq!(
+            *tracker.commitment_watchers[&SubscriptionId::from(0)]
+                .last_notified_slot
+                .read()
+                .unwrap(),
+            7
+        );
+        tracker.invalidate_accounts(&HashSet::from([7, 8]));
+        tracker.invalidate_accounts(&HashSet::from([7, 8]));
+        for (&id, subscription) in tracker
+            .commitment_watchers
+            .iter()
+            .chain(&tracker.gossip_watchers)
+        {
+            let expected = match u64::from(id) {
+                0 => Slot::MAX,
+                3 => 6,
+                _ => 7,
+            };
+            assert_eq!(*subscription.last_notified_slot.read().unwrap(), expected);
+        }
     }
 
     #[test]

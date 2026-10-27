@@ -1007,6 +1007,7 @@ impl ReplayStage {
                     migration_status.as_ref(),
                     entry_notification_sender.as_ref(),
                     transaction_status_sender.as_ref(),
+                    rpc_subscriptions.as_deref(),
                 ) {
                     error!("ReplayStage is stopping because: {err}");
                     break;
@@ -1090,6 +1091,7 @@ impl ReplayStage {
                         &mut progress,
                         &replay_highest_frozen,
                         &mut new_frozen_slots,
+                        rpc_subscriptions.as_deref(),
                     );
                 }
 
@@ -1159,6 +1161,7 @@ impl ReplayStage {
                             &mut progress,
                             &mut async_verification_freelist,
                             transaction_status_sender.as_ref(),
+                            rpc_subscriptions.as_deref(),
                         )
                     {
                         error!("ReplayStage is stopping because: {err}");
@@ -1561,6 +1564,7 @@ impl ReplayStage {
                         &dumped_slots_sender,
                         &my_pubkey,
                         &leader_schedule_cache,
+                        rpc_subscriptions.as_deref(),
                     );
                     dump_then_repair_correct_slots_time.stop();
 
@@ -1741,6 +1745,7 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         replay_highest_frozen: &ReplayHighestFrozen,
         new_frozen_slots: &mut Vec<Slot>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
     ) {
         let root_bank = bank_forks.read().unwrap().root_bank();
 
@@ -1799,6 +1804,7 @@ impl ReplayStage {
                 root_bank.as_ref(),
                 bank_forks,
                 blockstore,
+                rpc_subscriptions,
             );
         }
 
@@ -2117,6 +2123,7 @@ impl ReplayStage {
         dumped_slots_sender: &DumpedSlotsSender,
         my_pubkey: &Pubkey,
         leader_schedule_cache: &LeaderScheduleCache,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
     ) {
         if duplicate_slots_to_repair.is_empty() {
             return;
@@ -2225,6 +2232,7 @@ impl ReplayStage {
                         &root_bank,
                         bank_forks,
                         blockstore,
+                        rpc_subscriptions,
                     );
 
                     dumped.push((*duplicate_slot, *correct_hash));
@@ -2323,6 +2331,7 @@ impl ReplayStage {
         root_bank: &Bank,
         bank_forks: &RwLock<BankForks>,
         blockstore: &Blockstore,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
     ) {
         warn!("purging slot {slot_to_purge}");
 
@@ -2377,6 +2386,10 @@ impl ReplayStage {
         // BankForks, allowing the Bank::drop() purging to run and not race with the
         // `remove_unrooted_slots()` call.
         drop(removed_banks);
+
+        if let Some(rpc_subscriptions) = rpc_subscriptions {
+            rpc_subscriptions.notify_slots_removed(slots_to_purge.iter().map(|(slot, _)| *slot));
+        }
 
         for (slot, bank_id) in slots_to_purge {
             // Clear the slot signatures from status cache for this slot.
@@ -2490,6 +2503,7 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
         transaction_status_sender: Option<&TransactionStatusSender>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
     ) -> Result<(), ReplayStageError> {
         let root = bank_forks.read().unwrap().root();
 
@@ -2619,6 +2633,7 @@ impl ReplayStage {
                     TransactionHistoryPurgeInput::SwitchBank,
                 )
             }),
+            rpc_subscriptions,
         )?;
 
         // Banks are clear, move shreds in blockstore
@@ -2656,6 +2671,7 @@ impl ReplayStage {
             TransactionHistoryPurgeSource,
             TransactionHistoryPurgeInput,
         )>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
     ) -> Result<(), ReplayStageError> {
         let (slots_to_purge, banks_to_clear) =
             bank_forks.read().unwrap().slots_to_clear(slots_to_clear);
@@ -2713,6 +2729,10 @@ impl ReplayStage {
         // `remove_unrooted_slots()` call.
         drop(banks_to_clear);
         drop(removed_banks);
+
+        if let Some(rpc_subscriptions) = rpc_subscriptions {
+            rpc_subscriptions.notify_slots_removed(slots_to_purge.iter().copied());
+        }
 
         // Clear the shared caches even for requested slots whose banks were already removed.
         // Those slots can be revived by an Alpenglow switch, and stale entries from the old block
@@ -5455,6 +5475,7 @@ impl ReplayStage {
                     progress,
                     async_verification_freelist,
                     None,
+                    context.rpc_subscriptions.as_deref(),
                 ) else {
                     unreachable!("clearing a bank without a transaction-history purge cannot fail")
                 };
