@@ -7,8 +7,9 @@
 //!
 //! The thread alone owns the set of outstanding pubkeys, so the set needs no lock.
 //!
-//! On io_uring the thread has a core to itself and never sleeps: it polls its queue and the ring
-//! in a loop, so a batch or a completion is handled at once and a sender has nothing to wake.
+//! With nothing in flight, the thread blocks on its queue, so a batch starts at once, at the
+//! cost of the sender waking it. With reads in flight it waits on the ring instead, so a sender
+//! has nothing to wake: the batch waits for the next completion or a short timeout.
 
 #[cfg(target_os = "linux")]
 mod ring_prefetcher;
@@ -29,10 +30,6 @@ use {
 
 /// Batches waiting for the prefetch thread; once full, new batches are dropped
 const MAX_QUEUED_BATCHES: usize = 64;
-/// The core the prefetch thread and its io_uring workers are pinned to, so that neither waits
-/// out a busy thread's time slice
-#[cfg(target_os = "linux")]
-const PREFETCH_CPU: usize = 46;
 
 type Outstanding = HashSet<Pubkey, PubkeyHasherBuilder>;
 
@@ -95,8 +92,6 @@ impl AccountsPrefetcher {
 
 fn run_prefetcher(accounts_db: Weak<AccountsDb>, batch_receiver: Receiver<Vec<Pubkey>>) {
     #[cfg(target_os = "linux")]
-    pin_to_prefetch_cpu();
-    #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
         match ring_prefetcher::RingPrefetcher::new(accounts_db.clone()) {
             Ok(ring_prefetcher) => return ring_prefetcher.run(batch_receiver),
@@ -104,28 +99,6 @@ fn run_prefetcher(accounts_db: Weak<AccountsDb>, batch_receiver: Receiver<Vec<Pu
         }
     }
     run_blocking_prefetcher(accounts_db, batch_receiver)
-}
-
-#[cfg(target_os = "linux")]
-fn prefetch_cpu_set() -> libc::cpu_set_t {
-    // SAFETY: cpu_set_t is plain data, and PREFETCH_CPU is below CPU_SETSIZE
-    unsafe {
-        let mut cpu_set: libc::cpu_set_t = std::mem::zeroed();
-        libc::CPU_SET(PREFETCH_CPU, &mut cpu_set);
-        cpu_set
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn pin_to_prefetch_cpu() {
-    let cpu_set = prefetch_cpu_set();
-    // SAFETY: `cpu_set` is a valid cpu_set_t of the size passed
-    if unsafe { libc::sched_setaffinity(0, std::mem::size_of_val(&cpu_set), &cpu_set) } != 0 {
-        log::warn!(
-            "prefetch thread is not pinned to cpu {PREFETCH_CPU}: {}",
-            std::io::Error::last_os_error()
-        );
-    }
 }
 
 /// Reads one account at a time, blocking on each

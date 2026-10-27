@@ -1,15 +1,14 @@
-//! The prefetch thread on io_uring. Each pass of its loop does two things, without waiting on
-//! either:
-//! - dispatch: takes queued batches and, for each pubkey worth reading, looks up where the
+//! The prefetch thread on io_uring. Each pass of its loop does two things:
+//! - dispatch: takes incoming batches and, for each pubkey worth reading, looks up where the
 //!   account is stored and pushes a read of it onto the ring
-//! - reap: handles completed reads; each stores its account in the read cache, or reads the
-//!   account again, whole, when it continues past what was read
+//! - reap: waits briefly for reads to complete; each completion stores its account in the read
+//!   cache, or reads the account again, whole, when it continues past what was read
 //!
 //! An account's size is unknown until its header is read, so the first read is a page; nearly
 //! every account fits.
 
 use {
-    super::{DispatchCounts, Outstanding, PrefetchAccountsStats, Read, prefetch_cpu_set},
+    super::{DispatchCounts, Outstanding, PrefetchAccountsStats, Read},
     crate::{
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsDb, LoadedAccountAccessor},
@@ -17,7 +16,7 @@ use {
         append_vec::{AccountFromPage, AppendVec, PAGE_SIZE, file_offset_from_logical},
     },
     agave_io_uring::{Completion, Ring, RingAccess, RingOp},
-    crossbeam_channel::{Receiver, TryRecvError},
+    crossbeam_channel::Receiver,
     io_uring::{IoUring, opcode, squeue, types},
     log::*,
     solana_account::AccountSharedData,
@@ -27,7 +26,7 @@ use {
         io, mem,
         os::fd::AsRawFd,
         sync::{Arc, Weak, atomic::Ordering},
-        time::Instant,
+        time::{Duration, Instant},
     },
 };
 
@@ -38,6 +37,8 @@ const SUBMISSION_QUEUE_SIZE: u32 = 64;
 /// Kernel workers for reads that cannot complete from the page cache and that the filesystem
 /// cannot wait on asynchronously
 const MAX_IOWQ_WORKERS: u32 = 8;
+/// While reads are in flight, how long to wait for one to complete before taking new batches
+const COMPLETION_WAIT: Duration = Duration::from_micros(200);
 /// Reads at least this slow are logged
 const SLOW_READ_US: u64 = 5_000;
 /// Dispatch passes, and the handling of single completions, at least this slow are logged: their
@@ -211,10 +212,6 @@ impl RingPrefetcher {
         // [bounded, unbounded] workers; reads are bounded work
         ring.submitter()
             .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 1])?;
-        // workers cannot be pinned from outside the process
-        if let Err(err) = ring.submitter().register_iowq_aff(&prefetch_cpu_set()) {
-            warn!("prefetch io_uring workers are not pinned: {err}");
-        }
         let state = PrefetchState {
             accounts_db,
             outstanding: Outstanding::default(),
@@ -240,7 +237,17 @@ impl RingPrefetcher {
 
     fn do_run(&mut self, batch_receiver: &Receiver<Vec<Pubkey>>) -> io::Result<()> {
         loop {
-            if !self.dispatch(batch_receiver)? {
+            // nothing in flight, so nothing to reap: block until there is work. With reads in
+            // flight, `reap` waits on the ring instead, and new batches wait for it.
+            let first_batch = if self.ring.context().num_in_flight == 0 {
+                let Ok(pubkeys) = batch_receiver.recv() else {
+                    return Ok(());
+                };
+                Some(pubkeys)
+            } else {
+                None
+            };
+            if !self.dispatch(first_batch, batch_receiver)? {
                 return Ok(());
             }
             self.reap()?;
@@ -252,15 +259,14 @@ impl RingPrefetcher {
         }
     }
 
-    /// Takes queued batches and, for each pubkey worth reading, looks up where the account is
-    /// stored and pushes a read of it. Returns false once the batches' sender or `accounts_db` is
+    /// Takes `first_batch` and any queued batches and, for each pubkey worth reading, looks up
+    /// where the account is stored and pushes a read of it. Returns false once `accounts_db` is
     /// gone.
-    fn dispatch(&mut self, batch_receiver: &Receiver<Vec<Pubkey>>) -> io::Result<bool> {
-        let pubkeys = match batch_receiver.try_recv() {
-            Ok(pubkeys) => pubkeys,
-            Err(TryRecvError::Empty) => return Ok(true),
-            Err(TryRecvError::Disconnected) => return Ok(false),
-        };
+    fn dispatch(
+        &mut self,
+        first_batch: Option<Vec<Pubkey>>,
+        batch_receiver: &Receiver<Vec<Pubkey>>,
+    ) -> io::Result<bool> {
         let Some(accounts_db) = self.ring.context().accounts_db.upgrade() else {
             return Ok(false);
         };
@@ -269,7 +275,7 @@ impl RingPrefetcher {
         let mut num_batches = 0;
         let mut counts = DispatchCounts::default();
         // a full ring makes `push` reap completions until there is room
-        for pubkeys in std::iter::once(pubkeys).chain(batch_receiver.try_iter()) {
+        for pubkeys in first_batch.into_iter().chain(batch_receiver.try_iter()) {
             num_batches += 1;
             for pubkey in pubkeys {
                 let outstanding = &mut self.ring.context_mut().outstanding;
@@ -296,16 +302,13 @@ impl RingPrefetcher {
         Ok(true)
     }
 
-    /// Handles completed reads; each finishes its read or reads more
+    /// Waits briefly for reads to complete; each completion finishes its read or reads more
     fn reap(&mut self) -> io::Result<()> {
         if self.ring.context().num_in_flight == 0 {
             return Ok(());
         }
-        let num_completions_before = self.ring.context().num_completions;
+        self.ring.submit_and_wait(1, Some(COMPLETION_WAIT))?;
         self.ring.process_completions()?;
-        if self.ring.context().num_completions == num_completions_before {
-            return Ok(());
-        }
         // submit the whole-account reads completions queued, rather than after the next dispatch
         self.submit()
     }

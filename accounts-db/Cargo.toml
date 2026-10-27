@@ -115,7 +115,6 @@ test-case = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 agave-io-uring = { workspace = true }
 io-uring = { workspace = true }
-libc = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
