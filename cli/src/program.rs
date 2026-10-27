@@ -158,6 +158,7 @@ pub enum ProgramCliCommand {
         buffer_pubkey: Pubkey,
         buffer_authority_index: Option<SignerIndex>,
         new_buffer_authority: Pubkey,
+        use_legacy_tx: bool,
     },
     SetUpgradeAuthority {
         program_pubkey: Pubkey,
@@ -480,7 +481,12 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .value_name("NEW_BUFFER_AUTHORITY")
                                 .required(true),
                             "New buffer authority."
-                        )),
+                        ))
+                        .arg(
+                            Arg::with_name("use_legacy_tx")
+                                .long("use-legacy-tx")
+                                .help("Use legacy transactions instead of V1 transactions"),
+                        ),
                 )
                 .subcommand(
                     SubCommand::with_name("set-upgrade-authority")
@@ -911,6 +917,7 @@ pub fn parse_program_subcommand(
                     buffer_pubkey,
                     buffer_authority_index: signer_info.index_of(buffer_authority_pubkey),
                     new_buffer_authority,
+                    use_legacy_tx: matches.is_present("use_legacy_tx"),
                 }),
                 signers: signer_info.signers,
             }
@@ -1171,6 +1178,7 @@ pub async fn process_program_subcommand(
             buffer_pubkey,
             buffer_authority_index,
             new_buffer_authority,
+            use_legacy_tx,
         } => {
             process_set_authority(
                 &rpc_client,
@@ -1182,7 +1190,7 @@ pub async fn process_program_subcommand(
                 false,
                 false,
                 &BlockhashQuery::default(),
-                true,
+                *use_legacy_tx,
             )
             .await
         }
@@ -4532,6 +4540,28 @@ mod tests {
 
         let buffer_pubkey = Pubkey::new_unique();
         let new_authority_pubkey = Pubkey::new_unique();
+        let legacy_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "set-buffer-authority",
+            &buffer_pubkey.to_string(),
+            "--new-buffer-authority",
+            &new_authority_pubkey.to_string(),
+            "--use-legacy-tx",
+        ]);
+        assert_eq!(
+            parse_command(&legacy_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::SetBufferAuthority {
+                    buffer_pubkey,
+                    buffer_authority_index: Some(0),
+                    new_buffer_authority: new_authority_pubkey,
+                    use_legacy_tx: true,
+                }),
+                signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
+            }
+        );
+
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
             "program",
@@ -4547,6 +4577,7 @@ mod tests {
                     buffer_pubkey,
                     buffer_authority_index: Some(0),
                     new_buffer_authority: new_authority_pubkey,
+                    use_legacy_tx: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -4571,6 +4602,7 @@ mod tests {
                     buffer_pubkey,
                     buffer_authority_index: Some(0),
                     new_buffer_authority: new_authority_keypair.pubkey(),
+                    use_legacy_tx: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }

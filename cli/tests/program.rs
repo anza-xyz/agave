@@ -2711,8 +2711,10 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
     }
 }
 
+#[test_case(false; "v1")]
+#[test_case(true; "legacy")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_cli_program_set_buffer_authority() {
+async fn test_cli_program_set_buffer_authority(use_legacy_tx: bool) {
     agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2789,6 +2791,7 @@ async fn test_cli_program_set_buffer_authority() {
         buffer_pubkey: buffer_keypair.pubkey(),
         buffer_authority_index: Some(0),
         new_buffer_authority: new_buffer_authority.pubkey(),
+        use_legacy_tx,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;
@@ -2812,6 +2815,35 @@ async fn test_cli_program_set_buffer_authority() {
         assert_eq!(authority_address, Some(new_buffer_authority.pubkey()));
     } else {
         panic!("not a buffer account");
+    }
+
+    // The new authority appears in its first transaction when control is transferred.
+    let signature = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let signatures = rpc_client
+                .get_signatures_for_address_with_config(
+                    &new_buffer_authority.pubkey(),
+                    GetConfirmedSignaturesForAddress2Config {
+                        commitment: Some(CommitmentConfig::confirmed()),
+                        limit: Some(1),
+                        ..GetConfirmedSignaturesForAddress2Config::default()
+                    },
+                )
+                .await
+                .unwrap();
+            if let Some(status) = signatures.first() {
+                return Signature::from_str(&status.signature).unwrap();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .expect("buffer authority transaction was not confirmed");
+    let tx = fetch_and_decode_versioned_transaction(&rpc_client, &signature).await;
+    if use_legacy_tx {
+        assert_matches!(tx.message, VersionedMessage::Legacy(_));
+    } else {
+        assert_matches!(tx.message, VersionedMessage::V1(_));
     }
 
     // Attempt to deploy program from buffer using previous authority (should fail)
@@ -2852,6 +2884,7 @@ async fn test_cli_program_set_buffer_authority() {
         buffer_pubkey: buffer_keypair.pubkey(),
         buffer_authority_index: Some(1),
         new_buffer_authority: buffer_keypair.pubkey(),
+        use_legacy_tx,
     });
     let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -3629,6 +3662,7 @@ async fn create_buffer_with_offline_authority<'a>(
         buffer_pubkey: buffer_signer.pubkey(),
         buffer_authority_index: Some(0),
         new_buffer_authority: offline_signer.pubkey(),
+        use_legacy_tx: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(config).await.unwrap();
