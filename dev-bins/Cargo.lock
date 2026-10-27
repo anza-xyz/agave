@@ -5891,6 +5891,7 @@ dependencies = [
  "dashmap",
  "io-uring",
  "itertools 0.15.0",
+ "libc",
  "log",
  "modular-bitfield",
  "num_cpus",
