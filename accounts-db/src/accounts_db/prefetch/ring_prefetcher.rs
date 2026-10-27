@@ -5,7 +5,8 @@
 //!   cache, or reads the account again, whole, when it continues past what was read
 //!
 //! An account's size is unknown until its header is read, so the first read is a page; nearly
-//! every account fits.
+//! every account fits. The read of a whole account goes to a kernel worker: even from the page
+//! cache, copying a large account would stall every other read for milliseconds.
 
 use {
     super::{DispatchCounts, Outstanding, PrefetchAccountsStats, Read},
@@ -19,7 +20,7 @@ use {
     crossbeam_channel::Receiver,
     io_uring::{IoUring, opcode, squeue, types},
     log::*,
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
@@ -34,8 +35,8 @@ use {
 const MAX_IN_FLIGHT: u32 = 256;
 /// Submission queue entries; a full queue is submitted to the kernel to make room
 const SUBMISSION_QUEUE_SIZE: u32 = 64;
-/// Kernel workers for reads that cannot complete from the page cache and that the filesystem
-/// cannot wait on asynchronously
+/// Kernel workers for reads of whole accounts, and for reads that cannot complete from the page
+/// cache and that the filesystem cannot wait on asynchronously
 const MAX_IOWQ_WORKERS: u32 = 8;
 /// While reads are in flight, how long to wait for one to complete before taking new batches
 const COMPLETION_WAIT: Duration = Duration::from_micros(200);
@@ -45,6 +46,8 @@ const SLOW_READ_US: u64 = 5_000;
 /// time counts against the reads waiting on them
 const SLOW_DISPATCH_US: u64 = 1_000;
 const SLOW_COMPLETION_US: u64 = 1_000;
+/// Reads of whole accounts with at least this much data are logged
+const LARGE_ACCOUNT_DATA_LEN: usize = 1024 * 1024;
 
 pub(super) struct RingPrefetcher {
     ring: Ring<PrefetchState, ReadOp>,
@@ -123,9 +126,15 @@ impl ReadOp {
 impl RingOp<PrefetchState> for ReadOp {
     fn entry(&mut self) -> squeue::Entry {
         let fd = types::Fd(self.append_vec().file().as_raw_fd());
-        opcode::Read::new(fd, self.buf.as_mut_ptr(), self.len as u32)
+        let entry = opcode::Read::new(fd, self.buf.as_mut_ptr(), self.len as u32)
             .offset(self.offset)
-            .build()
+            .build();
+        if self.len > PAGE_SIZE {
+            // copy on a worker, not on this thread during submit
+            entry.flags(squeue::Flags::ASYNC)
+        } else {
+            entry
+        }
     }
 
     fn complete(
@@ -144,60 +153,73 @@ impl RingOp<PrefetchState> for ReadOp {
         }
         state.read_counts.read_us += read_us;
         state.read_counts.max_read_us = state.read_counts.max_read_us.max(read_us);
+        let from_page = match &res {
+            Err(_) => None,
+            Ok(bytes_read) => {
+                // SAFETY: the read initialized the first `bytes_read` bytes of spare capacity
+                unsafe { self.buf.set_len(*bytes_read as usize) };
+                AppendVec::account_from_page(self.offset, &self.buf)
+            }
+        };
         if read_us >= SLOW_READ_US {
+            let data_len = match &from_page {
+                Some(AccountFromPage::Complete(account)) => Some(account.data().len()),
+                Some(AccountFromPage::Partial { data_len, .. }) => Some(*data_len),
+                None => None,
+            };
             info!(
-                "slow prefetch read: pubkey {}, slot {}, {} bytes, {read_us}us, {:?}, page cache \
-                 {}, {} in flight",
+                "slow prefetch read: pubkey {}, slot {}, account data {data_len:?} bytes, \
+                 {read_us}us, {:?}, page cache {}, {} in flight",
                 self.pubkey,
                 self.slot,
-                self.len,
                 res.as_ref().map_err(|err| err.kind()),
                 state.reaping_submitted,
                 state.num_in_flight,
             );
         }
 
-        let account = match res {
-            Err(_) => None,
-            Ok(bytes_read) => {
-                // SAFETY: the read initialized the first `bytes_read` bytes of spare capacity
-                unsafe { self.buf.set_len(bytes_read as usize) };
-                match AppendVec::account_from_page(self.offset, &self.buf) {
-                    Some(AccountFromPage::Complete(account)) => Some(account),
-                    Some(AccountFromPage::Partial {
-                        data_offset,
-                        data_len,
-                        ..
-                    }) => {
-                        let len = (data_offset - self.offset) as usize + data_len;
-                        if self.offset + len as u64 <= self.append_vec().len() as u64 {
-                            // still in flight: the read of the whole account finishes it
-                            return completion.push(ReadOp {
-                                pubkey: self.pubkey,
-                                slot: self.slot,
-                                storage: Arc::clone(&self.storage),
-                                offset: self.offset,
-                                buf: Vec::with_capacity(len),
-                                len,
-                                pushed: Instant::now(),
-                            });
-                        }
-                        // data past the end of the file
-                        None
-                    }
-                    None => None,
+        let account = match from_page {
+            Some(AccountFromPage::Complete(account)) => Some(account),
+            Some(AccountFromPage::Partial {
+                data_offset,
+                data_len,
+                ..
+            }) => {
+                let len = (data_offset - self.offset) as usize + data_len;
+                if data_len >= LARGE_ACCOUNT_DATA_LEN {
+                    info!(
+                        "prefetch reading large account: pubkey {}, slot {}, account data \
+                         {data_len} bytes",
+                        self.pubkey, self.slot,
+                    );
                 }
+                if self.offset + len as u64 <= self.append_vec().len() as u64 {
+                    // still in flight: the read of the whole account finishes it
+                    return completion.push(ReadOp {
+                        pubkey: self.pubkey,
+                        slot: self.slot,
+                        storage: Arc::clone(&self.storage),
+                        offset: self.offset,
+                        buf: Vec::with_capacity(len),
+                        len,
+                        pushed: Instant::now(),
+                    });
+                }
+                // data past the end of the file
+                None
             }
+            None => None,
         };
+        let data_len = account.as_ref().map(|account| account.data().len());
         completion
             .context_mut()
             .finish(self.pubkey, self.slot, account);
         let completion_us = started.elapsed().as_micros() as u64;
         if completion_us >= SLOW_COMPLETION_US {
             info!(
-                "slow prefetch completion: pubkey {}, {} bytes, {completion_us}us",
+                "slow prefetch completion: pubkey {}, account data {data_len:?} bytes, \
+                 {completion_us}us",
                 self.pubkey,
-                self.buf.len(),
             );
         }
         Ok(())
