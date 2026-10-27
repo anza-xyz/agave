@@ -175,7 +175,10 @@ where
             ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
         }
         let shred = Shred::new_from_serialized_shred(shred).ok()?;
-        Some((Cow::Owned(shred), repair, block_location))
+        // Compute the Merkle root here while in the thread pool so the serial insertion
+        // path can reuse it.
+        let merkle_root = shred.merkle_root().ok();
+        Some((Cow::Owned(shred), repair, block_location, merkle_root))
     };
     let now = Instant::now();
     let shreds: Vec<_> = thread_pool.install(|| {

@@ -802,15 +802,11 @@ impl ErasureMeta {
 }
 
 impl MerkleRootMeta {
-    pub(crate) fn from_shred(shred: &Shred) -> Self {
+    // `merkle_root` is the shred's Merkle root, optionally precomputed by the caller.
+    // A `None` means that merkle root will be computed by this function.
+    pub(crate) fn from_shred(shred: &Shred, merkle_root: Option<Hash>) -> Self {
         Self {
-            // An error here after the shred has already sigverified
-            // can only indicate that the leader is sending
-            // legacy or malformed shreds. We should still store
-            // `None` for those cases in blockstore, as a later
-            // shred that contains a proper merkle root would constitute
-            // a valid duplicate shred proof.
-            merkle_root: shred.merkle_root().ok(),
+            merkle_root: merkle_root.or_else(|| shred.merkle_root().ok()),
             first_received_shred_index: shred.index(),
             first_received_shred_type: shred.shred_type(),
         }
