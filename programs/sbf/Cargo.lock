@@ -686,7 +686,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -3800,9 +3800,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.18.5"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"
+checksum = "4a9f71e3591c7ec44d3e563e87bf14ddc2bada8519dca046e5b0e560cd004e2d"
 dependencies = [
  "hashbrown 0.17.0",
 ]
@@ -4035,7 +4035,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -5184,7 +5184,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -5242,7 +5242,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -5716,7 +5716,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -7253,7 +7253,7 @@ dependencies = [
  "itertools 0.15.0",
  "lazy-lru",
  "log",
- "lru 0.18.5",
+ "lru 0.19.0",
  "mockall",
  "num_cpus",
  "num_enum",
@@ -7968,7 +7968,7 @@ dependencies = [
  "jsonrpc-pubsub",
  "libc",
  "log",
- "lru 0.18.5",
+ "lru 0.19.0",
  "rayon",
  "regex",
  "serde",
@@ -9816,7 +9816,7 @@ dependencies = [
  "futures-util",
  "itertools 0.15.0",
  "log",
- "lru 0.18.5",
+ "lru 0.19.0",
  "quinn",
  "rustls",
  "solana-clock",
@@ -9965,7 +9965,7 @@ dependencies = [
  "itertools 0.15.0",
  "lazy-lru",
  "log",
- "lru 0.18.5",
+ "lru 0.19.0",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
@@ -10686,10 +10686,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.1",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
