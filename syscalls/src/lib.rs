@@ -1104,13 +1104,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePointValid
                     Ok(1)
                 }
             }
-            _ => {
-                if invoke_context.get_feature_set().abort_on_invalid_curve {
-                    Err(SyscallError::InvalidAttribute.into())
-                } else {
-                    Ok(1)
-                }
-            }
+            _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
 }
@@ -1383,13 +1377,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                         Ok(1)
                     }
                 }
-                _ => {
-                    if invoke_context.get_feature_set().abort_on_invalid_curve {
-                        Err(SyscallError::InvalidAttribute.into())
-                    } else {
-                        Ok(1)
-                    }
-                }
+                _ => Err(SyscallError::InvalidAttribute.into()),
             },
 
             CURVE25519_RISTRETTO => match group_op {
@@ -1485,13 +1473,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                         Ok(1)
                     }
                 }
-                _ => {
-                    if invoke_context.get_feature_set().abort_on_invalid_curve {
-                        Err(SyscallError::InvalidAttribute.into())
-                    } else {
-                        Ok(1)
-                    }
-                }
+                _ => Err(SyscallError::InvalidAttribute.into()),
             },
 
             BLS12_381_G1_LE | BLS12_381_G1_BE => {
@@ -1826,23 +1808,11 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                             Ok(1)
                         }
                     }
-                    _ => {
-                        if invoke_context.get_feature_set().abort_on_invalid_curve {
-                            Err(SyscallError::InvalidAttribute.into())
-                        } else {
-                            Ok(1)
-                        }
-                    }
+                    _ => Err(SyscallError::InvalidAttribute.into()),
                 }
             }
 
-            _ => {
-                if invoke_context.get_feature_set().abort_on_invalid_curve {
-                    Err(SyscallError::InvalidAttribute.into())
-                } else {
-                    Ok(1)
-                }
-            }
+            _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
 }
@@ -2038,13 +2008,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscala
                 }
             }
 
-            _ => {
-                if invoke_context.get_feature_set().abort_on_invalid_curve {
-                    Err(SyscallError::InvalidAttribute.into())
-                } else {
-                    Ok(1)
-                }
-            }
+            _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
 }
