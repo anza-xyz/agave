@@ -78,9 +78,11 @@ Release channels have their own copy of this changelog:
   `which cargo-build-sbf` to confirm which copy you're using. Releases are
   published in the
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
-* `solana program deploy` no longer generates an ephemeral program ID when neither `--program-id`
-  nor the default program keypair is available. Use `--generate-ephemeral-program-id` to opt in to
-  the previous behavior.
+* **`solana program deploy` no longer generates an ephemeral keypair signer as a
+  default fallback**. Users must explicitly call `--generate-ephemeral-program-id`
+  if this behavior is desired. This affects both `solana program deploy` and `solana
+  program deploy --buffer <BUFFER>`. This prevents users from creating keypairs they
+  can no longer recover unless they opt in.
 
 #### Changes
 
