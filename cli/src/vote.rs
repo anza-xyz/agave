@@ -5,11 +5,9 @@ use {
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
             log_instruction_custom_error, message_into_signed_transaction,
         },
-        compute_budget::{
-            ComputeUnitConfig, WithComputeUnitConfig, simulate_and_update_compute_unit_limit,
-        },
+        compute_budget::{ComputeUnitConfig, simulate_and_update_compute_unit_limit},
         feature::get_feature_is_active,
-        memo::WithMemo,
+        message_builder::MessageBuilder,
         nonce::check_nonce_account,
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
         stake::check_current_authority,
@@ -38,7 +36,6 @@ use {
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
-    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
@@ -1266,7 +1263,7 @@ pub async fn process_create_vote_account(
             )
         };
 
-        let ixs = ixs
+        let ixs = MessageBuilder::new(ixs)
             .with_memo(memo)
             .with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
@@ -1274,14 +1271,10 @@ pub async fn process_create_vote_account(
             });
 
         if let Some(nonce_account) = &nonce_account {
-            VersionedMessage::Legacy(Message::new_with_nonce(
-                ixs,
-                Some(&fee_payer.pubkey()),
-                nonce_account,
-                &nonce_authority.pubkey(),
-            ))
+            ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+                .build(Some(&fee_payer.pubkey()))
         } else {
-            VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
+            ixs.build(Some(&fee_payer.pubkey()))
         }
     };
 
@@ -1503,7 +1496,7 @@ pub async fn process_vote_authorize(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_ix]
+    let ixs = MessageBuilder::new(vec![vote_ix])
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
@@ -1518,14 +1511,10 @@ pub async fn process_vote_authorize(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        VersionedMessage::Legacy(Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        ))
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(Some(&fee_payer.pubkey()))
     } else {
-        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
+        ixs.build(Some(&fee_payer.pubkey()))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
@@ -1598,11 +1587,11 @@ pub async fn process_vote_update_validator(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_instruction::update_validator_identity(
+    let ixs = MessageBuilder::new(vec![vote_instruction::update_validator_identity(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         &new_identity_pubkey,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -1612,14 +1601,10 @@ pub async fn process_vote_update_validator(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        VersionedMessage::Legacy(Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        ))
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(Some(&fee_payer.pubkey()))
     } else {
-        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
+        ixs.build(Some(&fee_payer.pubkey()))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
 
@@ -1686,11 +1671,11 @@ pub async fn process_vote_update_commission(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_instruction::update_commission(
+    let ixs = MessageBuilder::new(vec![vote_instruction::update_commission(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         commission,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -1700,14 +1685,10 @@ pub async fn process_vote_update_commission(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        VersionedMessage::Legacy(Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        ))
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(Some(&fee_payer.pubkey()))
     } else {
-        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
+        ixs.build(Some(&fee_payer.pubkey()))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let tx =
@@ -1793,12 +1774,12 @@ pub async fn process_vote_update_commission_bps(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_instruction::update_commission_bps(
+    let ixs = MessageBuilder::new(vec![vote_instruction::update_commission_bps(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         commission_kind,
         commission_bps,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -1808,14 +1789,10 @@ pub async fn process_vote_update_commission_bps(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        VersionedMessage::Legacy(Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        ))
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(Some(&fee_payer.pubkey()))
     } else {
-        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
+        ixs.build(Some(&fee_payer.pubkey()))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let tx =
@@ -1894,12 +1871,12 @@ pub async fn process_vote_update_commission_collector(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_instruction::update_commission_collector(
+    let ixs = MessageBuilder::new(vec![vote_instruction::update_commission_collector(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         new_collector,
         commission_kind,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -1909,14 +1886,10 @@ pub async fn process_vote_update_commission_collector(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        VersionedMessage::Legacy(Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        ))
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(Some(&fee_payer.pubkey()))
     } else {
-        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
+        ixs.build(Some(&fee_payer.pubkey()))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let tx =
@@ -2113,12 +2086,12 @@ pub async fn process_withdraw_from_vote_account(
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
     let build_message = |lamports| {
-        let ixs = vec![withdraw(
+        let ixs = MessageBuilder::new(vec![withdraw(
             vote_account_pubkey,
             &withdraw_authority.pubkey(),
             lamports,
             destination_account_pubkey,
-        )]
+        )])
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
@@ -2126,14 +2099,10 @@ pub async fn process_withdraw_from_vote_account(
         });
 
         if let Some(nonce_account) = &nonce_account {
-            VersionedMessage::Legacy(Message::new_with_nonce(
-                ixs,
-                Some(&fee_payer.pubkey()),
-                nonce_account,
-                &nonce_authority.pubkey(),
-            ))
+            ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+                .build(Some(&fee_payer.pubkey()))
         } else {
-            VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
+            ixs.build(Some(&fee_payer.pubkey()))
         }
     };
 
@@ -2240,19 +2209,19 @@ pub async fn process_close_vote_account(
     let current_balance = rpc_client.get_balance(vote_account_pubkey).await?;
 
     let compute_unit_limit = ComputeUnitLimit::Simulated;
-    let ixs = vec![withdraw(
+    let ixs = MessageBuilder::new(vec![withdraw(
         vote_account_pubkey,
         &withdraw_authority.pubkey(),
         current_balance,
         destination_account_pubkey,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
         compute_unit_limit,
     });
 
-    let mut message = VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())));
+    let mut message = ixs.build(Some(&fee_payer.pubkey()));
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
     let tx = message_into_signed_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(

@@ -2,9 +2,7 @@ use {
     solana_borsh::v1::try_from_slice_unchecked,
     solana_clap_utils::compute_budget::ComputeUnitLimit,
     solana_compute_budget_interface::{self as compute_budget, ComputeBudgetInstruction},
-    solana_instruction::Instruction,
     solana_message::{VersionedMessage, compiled_instruction::CompiledInstruction},
-    solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSimulateTransactionConfig,
@@ -120,34 +118,4 @@ pub(crate) fn set_compute_unit_limit(message: &mut VersionedMessage, limit: u32)
 pub(crate) struct ComputeUnitConfig {
     pub(crate) compute_unit_price: Option<u64>,
     pub(crate) compute_unit_limit: ComputeUnitLimit,
-}
-
-pub(crate) trait WithComputeUnitConfig {
-    fn with_compute_unit_config(self, config: &ComputeUnitConfig) -> Self;
-}
-
-impl WithComputeUnitConfig for Vec<Instruction> {
-    fn with_compute_unit_config(mut self, config: &ComputeUnitConfig) -> Self {
-        if let Some(compute_unit_price) = config.compute_unit_price {
-            self.push(ComputeBudgetInstruction::set_compute_unit_price(
-                compute_unit_price,
-            ));
-            match config.compute_unit_limit {
-                ComputeUnitLimit::Default => {}
-                ComputeUnitLimit::Static(compute_unit_limit) => {
-                    self.push(ComputeBudgetInstruction::set_compute_unit_limit(
-                        compute_unit_limit,
-                    ));
-                }
-                ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtraPercentage(_) => {
-                    // Default to the max compute unit limit because later transactions will be
-                    // simulated to get the exact compute units consumed.
-                    self.push(ComputeBudgetInstruction::set_compute_unit_limit(
-                        MAX_COMPUTE_UNIT_LIMIT,
-                    ));
-                }
-            }
-        }
-        self
-    }
 }

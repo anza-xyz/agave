@@ -5,6 +5,7 @@ use {
             log_instruction_custom_error, log_instruction_custom_error_to_str,
             message_into_signed_transaction,
         },
+        message_builder::MessageBuilder,
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
     agave_feature_set::FEATURE_NAMES,
@@ -26,7 +27,6 @@ use {
         Feature, activate_with_lamports, error::FeatureGateError, from_account,
         instruction::revoke_pending_activation,
     },
-    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
@@ -1033,10 +1033,12 @@ async fn process_activate(
         &fee_payer.pubkey(),
         ComputeUnitLimit::Default,
         |lamports| {
-            VersionedMessage::Legacy(Message::new(
-                &activate_with_lamports(&feature_id, &fee_payer.pubkey(), lamports),
-                Some(&fee_payer.pubkey()),
+            MessageBuilder::new(activate_with_lamports(
+                &feature_id,
+                &fee_payer.pubkey(),
+                lamports,
             ))
+            .build(Some(&fee_payer.pubkey()))
         },
         config.commitment,
     )
@@ -1089,10 +1091,8 @@ async fn process_revoke(
         &fee_payer.pubkey(),
         ComputeUnitLimit::Default,
         |_lamports| {
-            VersionedMessage::Legacy(Message::new(
-                &[revoke_pending_activation(&feature_id)],
-                Some(&fee_payer.pubkey()),
-            ))
+            MessageBuilder::new(vec![revoke_pending_activation(&feature_id)])
+                .build(Some(&fee_payer.pubkey()))
         },
         config.commitment,
     )

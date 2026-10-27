@@ -6,10 +6,10 @@ use {
             log_instruction_custom_error, message_into_signed_transaction,
         },
         compute_budget::{
-            ComputeUnitConfig, WithComputeUnitConfig, set_compute_unit_limit,
-            simulate_and_update_compute_unit_limit,
+            ComputeUnitConfig, set_compute_unit_limit, simulate_and_update_compute_unit_limit,
         },
         feature::{CliFeatureStatus, status_from_account},
+        message_builder::MessageBuilder,
     },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
     bip39::{Language, Mnemonic},
@@ -46,7 +46,7 @@ use {
         instruction::{self as loader_v3_instruction, MINIMUM_EXTEND_PROGRAM_BYTES},
         state::UpgradeableLoaderState,
     },
-    solana_message::{Message, VersionedMessage},
+    solana_message::VersionedMessage,
     solana_net_utils::bind_to_unspecified,
     solana_packet::PACKET_DATA_SIZE,
     solana_program_runtime::{
@@ -1624,16 +1624,14 @@ async fn process_program_upgrade(
     let blockhash = blockhash_query
         .get_blockhash(&rpc_client, config.commitment)
         .await?;
-    let message = VersionedMessage::Legacy(Message::new_with_blockhash(
-        &[loader_v3_instruction::upgrade(
-            &program_id,
-            &buffer_pubkey,
-            &upgrade_authority_signer.pubkey(),
-            &fee_payer_signer.pubkey(),
-        )],
-        Some(&fee_payer_signer.pubkey()),
-        &blockhash,
-    ));
+    let message = MessageBuilder::new(vec![loader_v3_instruction::upgrade(
+        &program_id,
+        &buffer_pubkey,
+        &upgrade_authority_signer.pubkey(),
+        &fee_payer_signer.pubkey(),
+    )])
+    .with_blockhash(blockhash)
+    .build(Some(&fee_payer_signer.pubkey()));
 
     let signers = &[fee_payer_signer, upgrade_authority_signer];
     let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
@@ -1795,24 +1793,20 @@ async fn process_set_authority(
         .await?;
 
     let message = if let Some(ref pubkey) = program_pubkey {
-        VersionedMessage::Legacy(Message::new(
-            &[loader_v3_instruction::set_upgrade_authority(
-                pubkey,
-                &authority_signer.pubkey(),
-                new_authority.as_ref(),
-            )],
-            Some(&config.signers[0].pubkey()),
-        ))
+        MessageBuilder::new(vec![loader_v3_instruction::set_upgrade_authority(
+            pubkey,
+            &authority_signer.pubkey(),
+            new_authority.as_ref(),
+        )])
+        .build(Some(&config.signers[0].pubkey()))
     } else if let Some(pubkey) = buffer_pubkey {
         if let Some(ref new_authority) = new_authority {
-            VersionedMessage::Legacy(Message::new(
-                &[loader_v3_instruction::set_buffer_authority(
-                    &pubkey,
-                    &authority_signer.pubkey(),
-                    new_authority,
-                )],
-                Some(&config.signers[0].pubkey()),
-            ))
+            MessageBuilder::new(vec![loader_v3_instruction::set_buffer_authority(
+                &pubkey,
+                &authority_signer.pubkey(),
+                new_authority,
+            )])
+            .build(Some(&config.signers[0].pubkey()))
         } else {
             return Err("Buffer authority cannot be None".into());
         }
@@ -1873,14 +1867,12 @@ async fn process_set_authority_checked(
         .get_blockhash(rpc_client, config.commitment)
         .await?;
 
-    let message = VersionedMessage::Legacy(Message::new(
-        &[loader_v3_instruction::set_upgrade_authority_checked(
-            &program_pubkey,
-            &authority_signer.pubkey(),
-            &new_authority_signer.pubkey(),
-        )],
-        Some(&config.signers[0].pubkey()),
-    ));
+    let message = MessageBuilder::new(vec![loader_v3_instruction::set_upgrade_authority_checked(
+        &program_pubkey,
+        &authority_signer.pubkey(),
+        &new_authority_signer.pubkey(),
+    )])
+    .build(Some(&config.signers[0].pubkey()));
 
     let signers = &[config.signers[0], authority_signer, new_authority_signer];
     let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
@@ -2250,15 +2242,13 @@ async fn close(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let blockhash = rpc_client.get_latest_blockhash().await?;
 
-    let message = VersionedMessage::Legacy(Message::new(
-        &[loader_v3_instruction::close_any(
-            account_pubkey,
-            recipient_pubkey,
-            Some(&authority_signer.pubkey()),
-            program_pubkey,
-        )],
-        Some(&config.signers[0].pubkey()),
-    ));
+    let message = MessageBuilder::new(vec![loader_v3_instruction::close_any(
+        account_pubkey,
+        recipient_pubkey,
+        Some(&authority_signer.pubkey()),
+        program_pubkey,
+    )])
+    .build(Some(&config.signers[0].pubkey()));
 
     let tx = message_into_signed_transaction(
         message,
@@ -2522,7 +2512,7 @@ async fn process_extend_program(
         Some(&payer_pubkey),
         additional_bytes,
     );
-    let message = VersionedMessage::Legacy(Message::new(&[instruction], Some(&fee_payer_pubkey)));
+    let message = MessageBuilder::new(vec![instruction]).build(Some(&fee_payer_pubkey));
 
     let tx = message_into_signed_transaction(
         message,
@@ -2612,14 +2602,15 @@ async fn do_process_program_deploy(
         };
 
     let initial_message = if !initial_instructions.is_empty() {
-        Some(VersionedMessage::Legacy(Message::new_with_blockhash(
-            &initial_instructions.with_compute_unit_config(&ComputeUnitConfig {
-                compute_unit_price,
-                compute_unit_limit,
-            }),
-            Some(&fee_payer_signer.pubkey()),
-            &blockhash,
-        )))
+        Some(
+            MessageBuilder::new(initial_instructions)
+                .with_compute_unit_config(&ComputeUnitConfig {
+                    compute_unit_price,
+                    compute_unit_limit,
+                })
+                .with_blockhash(blockhash)
+                .build(Some(&fee_payer_signer.pubkey())),
+        )
     } else {
         None
     };
@@ -2633,15 +2624,14 @@ async fn do_process_program_deploy(
             bytes,
         );
 
-        let instructions = vec![instruction].with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit,
-        });
-        VersionedMessage::Legacy(Message::new_with_blockhash(
-            &instructions,
-            Some(&fee_payer_signer.pubkey()),
-            &blockhash,
-        ))
+        let instructions =
+            MessageBuilder::new(vec![instruction]).with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit,
+            });
+        instructions
+            .with_blockhash(blockhash)
+            .build(Some(&fee_payer_signer.pubkey()))
     };
 
     let mut write_messages = vec![];
@@ -2656,7 +2646,7 @@ async fn do_process_program_deploy(
     // Create and add final message
     let final_message = {
         #[allow(deprecated)]
-        let instructions = loader_v3_instruction::deploy_with_max_program_len(
+        let instructions = MessageBuilder::new(loader_v3_instruction::deploy_with_max_program_len(
             &fee_payer_signer.pubkey(),
             &program_signers[0].pubkey(),
             buffer_pubkey,
@@ -2665,17 +2655,17 @@ async fn do_process_program_deploy(
                 .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
                 .await?,
             program_data_max_len,
-        )?
+        )?)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
             compute_unit_limit,
         });
 
-        Some(VersionedMessage::Legacy(Message::new_with_blockhash(
-            &instructions,
-            Some(&fee_payer_signer.pubkey()),
-            &blockhash,
-        )))
+        Some(
+            instructions
+                .with_blockhash(blockhash)
+                .build(Some(&fee_payer_signer.pubkey())),
+        )
     };
 
     if !skip_fee_check {
@@ -2752,14 +2742,15 @@ async fn do_process_write_buffer(
         };
 
     let initial_message = if !initial_instructions.is_empty() {
-        Some(VersionedMessage::Legacy(Message::new_with_blockhash(
-            &initial_instructions.with_compute_unit_config(&ComputeUnitConfig {
-                compute_unit_price,
-                compute_unit_limit,
-            }),
-            Some(&fee_payer_signer.pubkey()),
-            &blockhash,
-        )))
+        Some(
+            MessageBuilder::new(initial_instructions)
+                .with_compute_unit_config(&ComputeUnitConfig {
+                    compute_unit_price,
+                    compute_unit_limit,
+                })
+                .with_blockhash(blockhash)
+                .build(Some(&fee_payer_signer.pubkey())),
+        )
     } else {
         None
     };
@@ -2773,15 +2764,14 @@ async fn do_process_write_buffer(
             bytes,
         );
 
-        let instructions = vec![instruction].with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit,
-        });
-        VersionedMessage::Legacy(Message::new_with_blockhash(
-            &instructions,
-            Some(&fee_payer_signer.pubkey()),
-            &blockhash,
-        ))
+        let instructions =
+            MessageBuilder::new(vec![instruction]).with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit,
+            });
+        instructions
+            .with_blockhash(blockhash)
+            .build(Some(&fee_payer_signer.pubkey()))
     };
 
     let mut write_messages = vec![];
@@ -2882,14 +2872,15 @@ async fn do_process_program_upgrade(
             }
 
             let initial_message = if !initial_instructions.is_empty() {
-                Some(VersionedMessage::Legacy(Message::new_with_blockhash(
-                    &initial_instructions.with_compute_unit_config(&ComputeUnitConfig {
-                        compute_unit_price,
-                        compute_unit_limit: ComputeUnitLimit::Simulated,
-                    }),
-                    Some(&fee_payer_signer.pubkey()),
-                    &blockhash,
-                )))
+                Some(
+                    MessageBuilder::new(initial_instructions)
+                        .with_compute_unit_config(&ComputeUnitConfig {
+                            compute_unit_price,
+                            compute_unit_limit: ComputeUnitLimit::Simulated,
+                        })
+                        .with_blockhash(blockhash)
+                        .build(Some(&fee_payer_signer.pubkey())),
+                )
             } else {
                 None
             };
@@ -2897,21 +2888,19 @@ async fn do_process_program_upgrade(
             let buffer_signer_pubkey = buffer_signer.pubkey();
             let upgrade_authority_pubkey = upgrade_authority.pubkey();
             let create_msg = |offset: u32, bytes: Vec<u8>| {
-                let instructions = vec![loader_v3_instruction::write(
+                let instructions = MessageBuilder::new(vec![loader_v3_instruction::write(
                     &buffer_signer_pubkey,
                     &upgrade_authority_pubkey,
                     offset,
                     bytes,
-                )]
+                )])
                 .with_compute_unit_config(&ComputeUnitConfig {
                     compute_unit_price,
                     compute_unit_limit,
                 });
-                VersionedMessage::Legacy(Message::new_with_blockhash(
-                    &instructions,
-                    Some(&fee_payer_signer.pubkey()),
-                    &blockhash,
-                ))
+                instructions
+                    .with_blockhash(blockhash)
+                    .build(Some(&fee_payer_signer.pubkey()))
             };
 
             // Create and add write messages
@@ -2930,21 +2919,19 @@ async fn do_process_program_upgrade(
         };
 
     // Create and add final message
-    let final_instructions = vec![loader_v3_instruction::upgrade(
+    let final_instructions = MessageBuilder::new(vec![loader_v3_instruction::upgrade(
         program_id,
         buffer_pubkey,
         &upgrade_authority.pubkey(),
         &fee_payer_signer.pubkey(),
-    )]
+    )])
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
         compute_unit_limit,
     });
-    let final_message = VersionedMessage::Legacy(Message::new_with_blockhash(
-        &final_instructions,
-        Some(&fee_payer_signer.pubkey()),
-        &blockhash,
-    ));
+    let final_message = final_instructions
+        .with_blockhash(blockhash)
+        .build(Some(&fee_payer_signer.pubkey()));
     let final_message = Some(final_message);
 
     if !skip_fee_check {
