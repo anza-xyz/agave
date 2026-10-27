@@ -251,10 +251,10 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("program_id")
                                 .long("program-id")
                                 .value_name("PROGRAM_ID"),
-                            "Executable program; if provided, must be a signer for initial deploys or an \
-                             address for upgrades; if not provided, uses default keypair at \
-                             /path/to/program-keypair.json; to override and use ephemeral keypair instead for \
-                             initial deploys, omit this flag, and use --generate-ephemeral-program-id"
+                            "Executable program; Executable program. For initial deployments, \ 
+                             this must be a signer unless `--generate-ephemeral-program-id` was \ 
+                             passed. For upgrades, can be an address or path to a keypair, but \ 
+                             is not required to sign."
                         ))
                         .arg(
                             Arg::with_name("generate_ephemeral_program_id")
