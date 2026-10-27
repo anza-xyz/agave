@@ -22,6 +22,7 @@ use {
         map_inner_instructions,
     },
     std::{
+        collections::BTreeSet,
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -51,6 +52,38 @@ enum Error {
     NonFrozenBank(Slot),
 }
 type Result<T> = std::result::Result<T, Error>;
+
+// Work ids are reserved before batches are sent, so parallel senders can enqueue
+// them out of order. Only advance the shared tracker over a completed prefix.
+struct TransactionStatusDependencies {
+    tracker: Arc<DependencyTracker>,
+    next_work_id: u64,
+    completed_out_of_order: BTreeSet<u64>,
+}
+
+impl TransactionStatusDependencies {
+    fn new(tracker: Arc<DependencyTracker>) -> Self {
+        Self {
+            tracker,
+            next_work_id: 1,
+            completed_out_of_order: BTreeSet::new(),
+        }
+    }
+
+    fn mark_processed(&mut self, work_id: u64) {
+        if work_id != self.next_work_id {
+            self.completed_out_of_order.insert(work_id);
+            return;
+        }
+
+        self.next_work_id += 1;
+        while self.completed_out_of_order.remove(&self.next_work_id) {
+            self.next_work_id += 1;
+        }
+        self.tracker
+            .mark_this_and_all_previous_work_processed(self.next_work_id - 1);
+    }
+}
 
 struct Metrics {
     /// The number of transaction status messages received
@@ -110,7 +143,7 @@ impl TransactionStatusService {
         transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: Arc<Blockstore>,
         enable_extended_tx_metadata_storage: bool,
-        depenency_tracker: Option<Arc<DependencyTracker>>,
+        dependency_tracker: Option<Arc<DependencyTracker>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let thread_hdl = Builder::new()
@@ -119,6 +152,8 @@ impl TransactionStatusService {
                 let transaction_status_receiver = transaction_status_receiver.clone();
                 move || {
                     let mut metrics = Metrics::new();
+                    let mut dependency_tracker =
+                        dependency_tracker.map(TransactionStatusDependencies::new);
                     info!("{} has started", Self::SERVICE_NAME);
                     loop {
                         if exit.load(Ordering::Relaxed) {
@@ -149,7 +184,7 @@ impl TransactionStatusService {
                             transaction_notifier.clone(),
                             &blockstore,
                             enable_extended_tx_metadata_storage,
-                            depenency_tracker.clone(),
+                            dependency_tracker.as_mut(),
                         ) {
                             Ok(bank_frozen) => {
                                 // Only check for metrics submissions when a
@@ -184,7 +219,7 @@ impl TransactionStatusService {
         transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: &Blockstore,
         enable_extended_tx_metadata_storage: bool,
-        dependency_tracker: Option<Arc<DependencyTracker>>,
+        dependency_tracker: Option<&mut TransactionStatusDependencies>,
     ) -> Result</*bank_frozen:*/ bool> {
         match transaction_status_message {
             TransactionStatusMessage::Batch((
@@ -319,10 +354,10 @@ impl TransactionStatusService {
                     blockstore.write_batch(batch)?;
                 }
 
-                if let Some(dependency_tracker) = dependency_tracker.as_ref()
+                if let Some(dependency_tracker) = dependency_tracker
                     && let Some(work_id) = work_id
                 {
-                    dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
+                    dependency_tracker.mark_processed(work_id);
                 }
 
                 Ok(false)
@@ -452,7 +487,14 @@ impl TransactionStatusService {
 pub(crate) mod tests {
     use {
         super::*,
-        crate::transaction_notifier_interface::TransactionNotifier,
+        crate::{
+            optimistically_confirmed_bank_tracker::{
+                BankNotification, OptimisticallyConfirmedBank, OptimisticallyConfirmedBankTracker,
+                SlotNotification,
+            },
+            rpc_subscriptions::RpcSubscriptions,
+            transaction_notifier_interface::TransactionNotifier,
+        },
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::bounded,
         dashmap::DashMap,
@@ -470,7 +512,8 @@ pub(crate) mod tests {
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::{Bank, BankId, TransactionBalancesSet},
+            bank::{Bank, BankId, SlotLeader, TransactionBalancesSet},
+            commitment::BlockCommitmentCache,
             transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
         },
         solana_signature::Signature,
@@ -486,7 +529,7 @@ pub(crate) mod tests {
             TransactionStatusMeta, TransactionTokenBalance,
             token_balances::TransactionTokenBalancesSet,
         },
-        std::sync::{Arc, atomic::AtomicBool},
+        std::sync::{Arc, RwLock, atomic::AtomicBool},
     };
 
     #[derive(Eq, Hash, PartialEq)]
@@ -504,12 +547,14 @@ pub(crate) mod tests {
 
     struct TestTransactionNotifier {
         notifications: DashMap<TestNotifierKey, TestNotification>,
+        pause_before_index: Option<(usize, crossbeam_channel::Sender<()>, Receiver<()>)>,
     }
 
     impl TestTransactionNotifier {
         pub fn new() -> Self {
             Self {
                 notifications: DashMap::default(),
+                pause_before_index: None,
             }
         }
     }
@@ -526,6 +571,12 @@ pub(crate) mod tests {
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &VersionedTransaction,
         ) {
+            if let Some((index, entered, resume)) = &self.pause_before_index
+                && transaction_index == *index
+            {
+                entered.send(()).unwrap();
+                resume.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
             self.notifications.insert(
                 TestNotifierKey {
                     slot,
@@ -546,6 +597,135 @@ pub(crate) mod tests {
         let pubkey1 = keypair1.pubkey();
         let zero = Hash::default();
         system_transaction::transfer(&keypair1, &pubkey1, 42, zero)
+    }
+
+    #[test_case::test_case(false; "without_rpc_history")]
+    #[test_case::test_case(true; "with_rpc_history")]
+    fn test_frozen_notification_waits_for_out_of_order_transactions(rpc_history: bool) {
+        let genesis_config = create_genesis_config(100).genesis_config;
+        let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 1);
+        bank.freeze();
+        bank_forks.write().unwrap().insert(bank);
+        let bank = bank_forks.read().unwrap().get(1).unwrap();
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let exit = Arc::new(AtomicBool::new(false));
+        let dependency_tracker = Arc::new(DependencyTracker::default());
+        let work_ids = std::array::from_fn::<_, 3, _>(|_| dependency_tracker.declare_work());
+        let (entered_sender, entered_receiver) = bounded(1);
+        let (resume_sender, resume_receiver) = bounded(1);
+        let notifier = Arc::new(TestTransactionNotifier {
+            pause_before_index: Some((0, entered_sender, resume_receiver)),
+            ..TestTransactionNotifier::new()
+        });
+        let (transaction_sender, transaction_receiver) = bounded(3);
+        let max_complete_slot = Arc::new(AtomicU64::default());
+        let transaction_service = TransactionStatusService::new(
+            transaction_receiver,
+            max_complete_slot.clone(),
+            rpc_history,
+            Some(notifier.clone()),
+            blockstore,
+            false,
+            Some(dependency_tracker.clone()),
+            exit.clone(),
+        );
+
+        let confirmed_bank = OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
+            exit.clone(),
+            max_complete_slot,
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::default())),
+            confirmed_bank.clone(),
+        ));
+        let (bank_sender, bank_receiver) = bounded(1);
+        let (slot_sender, slot_receiver) = bounded(1);
+        let bank_tracker = OptimisticallyConfirmedBankTracker::new(
+            bank_receiver,
+            exit.clone(),
+            bank_forks,
+            confirmed_bank,
+            subscriptions,
+            Some(Arc::new(RwLock::new(vec![slot_sender]))),
+            None,
+            Some(dependency_tracker),
+        );
+
+        // All three batches are sent before the frozen notification, but ids 2 and 3
+        // arrive first. Pause id 1 before delivering its transaction notification.
+        for index in [1, 2, 0] {
+            let transaction = SanitizedTransaction::try_create(
+                VersionedTransaction::from(build_test_transaction_legacy()),
+                MessageHash::Compute,
+                None,
+                SimpleAddressLoader::Disabled,
+                &ReservedAccountKeys::empty_key_set(),
+            )
+            .unwrap();
+            transaction_sender
+                .send(TransactionStatusMessage::Batch((
+                    TransactionStatusBatch {
+                        slot: bank.slot(),
+                        bank_id: bank.bank_id(),
+                        transactions: vec![transaction],
+                        commit_results: vec![Ok(CommittedTransaction {
+                            status: Ok(()),
+                            log_messages: None,
+                            inner_instructions: None,
+                            return_data: None,
+                            executed_units: 0,
+                            fee_details: FeeDetails::default(),
+                            loaded_account_stats: TransactionLoadedAccountsStats::default(),
+                            fee_payer_post_balance: Some(0),
+                        })],
+                        balances: TransactionBalancesSet {
+                            pre_balances: vec![vec![100]],
+                            post_balances: vec![vec![100]],
+                        },
+                        token_balances: TransactionTokenBalancesSet {
+                            pre_token_balances: vec![vec![]],
+                            post_token_balances: vec![vec![]],
+                        },
+                        costs: vec![None],
+                        transaction_indexes: vec![index],
+                    },
+                    Some(work_ids[index]),
+                )))
+                .unwrap();
+        }
+        entered_receiver
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(notifier.notifications.len(), 2);
+        bank_sender
+            .send((BankNotification::Frozen(bank.clone()), Some(work_ids[2])))
+            .unwrap();
+        let premature_notification = slot_receiver.recv_timeout(Duration::from_millis(200));
+
+        // Release the callback and stop both services before asserting the ordering,
+        // so a regression cannot leave the test's worker blocked.
+        resume_sender.send(()).unwrap();
+        let final_notification = premature_notification
+            .clone()
+            .or_else(|_| slot_receiver.recv_timeout(Duration::from_secs(10)));
+        drop(transaction_sender);
+        transaction_service.join().unwrap();
+        exit.store(true, Ordering::Relaxed);
+        drop(bank_sender);
+        bank_tracker.join().unwrap();
+
+        assert!(
+            matches!(premature_notification, Err(RecvTimeoutError::Timeout)),
+            "slot notification arrived before the missing transaction: {premature_notification:?}"
+        );
+        assert!(matches!(
+            final_notification.unwrap(),
+            SlotNotification::Frozen((1, 0, bank_id)) if bank_id == bank.bank_id()
+        ));
+        assert_eq!(notifier.notifications.len(), 3);
     }
 
     #[test]
@@ -766,7 +946,7 @@ pub(crate) mod tests {
             Some(dependency_tracker.clone()),
             exit.clone(),
         );
-        let work_id = 345;
+        let work_id = dependency_tracker.declare_work();
         transaction_status_sender
             .send(TransactionStatusMessage::Batch((
                 transaction_status_batch,
