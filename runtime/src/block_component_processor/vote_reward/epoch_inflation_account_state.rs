@@ -282,7 +282,7 @@ mod tests {
         ] {
             let mut bank_epoch_0 = Bank::new_for_tests(&genesis_config);
             if activate_slot_time_feature {
-                bank_epoch_0.activate_feature(&feature_set::reduce_slot_time_to_350ms::id());
+                bank_epoch_0.activate_feature(&feature_set::reduce_slot_time_to_250ms::id());
             }
             let bank_forks = BankForks::new_rw_arc(bank_epoch_0);
             let bank_epoch_0 = bank_forks.read().unwrap().root_bank();

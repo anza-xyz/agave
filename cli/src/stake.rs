@@ -3,7 +3,7 @@ use {
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error,
+            log_instruction_custom_error, message_into_signed_transaction,
         },
         compute_budget::{
             ComputeUnitConfig, WithComputeUnitConfig, simulate_and_update_compute_unit_limit,
@@ -35,7 +35,7 @@ use {
     solana_clock::{Clock, Epoch, SECONDS_PER_DAY, UnixTimestamp},
     solana_commitment_config::CommitmentConfig,
     solana_epoch_schedule::EpochSchedule,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_native_token::Sol,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -62,7 +62,6 @@ use {
         tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
     },
     solana_system_interface::{error::SystemError, instruction as system_instruction},
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
     std::{ops::Deref, rc::Rc},
 };
 
@@ -1455,14 +1454,14 @@ pub async fn process_create_stake_account(
             compute_unit_limit,
         });
         if let Some(nonce_account) = &nonce_account {
-            Message::new_with_nonce(
+            VersionedMessage::Legacy(Message::new_with_nonce(
                 ixs,
                 Some(&fee_payer.pubkey()),
                 nonce_account,
                 &nonce_authority.pubkey(),
-            )
+            ))
         } else {
-            Message::new(&ixs, Some(&fee_payer.pubkey()))
+            VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
         }
     };
 
@@ -1534,9 +1533,9 @@ pub async fn process_create_stake_account(
         }
     }
 
-    let mut tx = Transaction::new_unsigned(message);
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1545,7 +1544,6 @@ pub async fn process_create_stake_account(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         let result = rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
@@ -1653,20 +1651,20 @@ pub async fn process_stake_authorize(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
+        VersionedMessage::Legacy(Message::new_with_nonce(
             ixs,
             Some(&fee_payer.pubkey()),
             nonce_account,
             &nonce_authority.pubkey(),
-        )
+        ))
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
 
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1675,7 +1673,6 @@ pub async fn process_stake_authorize(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -1686,7 +1683,6 @@ pub async fn process_stake_authorize(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.static_account_keys()[0],
@@ -1824,20 +1820,20 @@ pub async fn process_deactivate_stake_account(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
+        VersionedMessage::Legacy(Message::new_with_nonce(
             ixs,
             Some(&fee_payer.pubkey()),
             nonce_account,
             &nonce_authority.pubkey(),
-        )
+        ))
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
 
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1846,7 +1842,6 @@ pub async fn process_deactivate_stake_account(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -1857,7 +1852,6 @@ pub async fn process_deactivate_stake_account(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.static_account_keys()[0],
@@ -1930,14 +1924,14 @@ pub async fn process_withdraw_stake(
         });
 
         if let Some(nonce_account) = &nonce_account {
-            Message::new_with_nonce(
+            VersionedMessage::Legacy(Message::new_with_nonce(
                 ixs,
                 Some(&fee_payer.pubkey()),
                 nonce_account,
                 &nonce_authority.pubkey(),
-            )
+            ))
         } else {
-            Message::new(&ixs, Some(&fee_payer.pubkey()))
+            VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
         }
     };
 
@@ -1954,10 +1948,9 @@ pub async fn process_withdraw_stake(
     )
     .await?;
 
-    let mut tx = Transaction::new_unsigned(message);
-
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1966,7 +1959,6 @@ pub async fn process_withdraw_stake(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -1977,7 +1969,6 @@ pub async fn process_withdraw_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.static_account_keys()[0],
@@ -2149,20 +2140,20 @@ pub async fn process_split_stake(
     let nonce_authority = config.signers[nonce_authority];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
+        VersionedMessage::Legacy(Message::new_with_nonce(
             ixs,
             Some(&fee_payer.pubkey()),
             nonce_account,
             &nonce_authority.pubkey(),
-        )
+        ))
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
 
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -2171,7 +2162,6 @@ pub async fn process_split_stake(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -2182,7 +2172,6 @@ pub async fn process_split_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.static_account_keys()[0],
@@ -2275,20 +2264,20 @@ pub async fn process_merge_stake(
     let nonce_authority = config.signers[nonce_authority];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
+        VersionedMessage::Legacy(Message::new_with_nonce(
             ixs,
             Some(&fee_payer.pubkey()),
             nonce_account,
             &nonce_authority.pubkey(),
-        )
+        ))
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
 
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -2297,7 +2286,6 @@ pub async fn process_merge_stake(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -2308,7 +2296,6 @@ pub async fn process_merge_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.static_account_keys()[0],
@@ -2387,20 +2374,20 @@ pub async fn process_stake_set_lockup(
     }
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
+        VersionedMessage::Legacy(Message::new_with_nonce(
             ixs,
             Some(&fee_payer.pubkey()),
             nonce_account,
             &nonce_authority.pubkey(),
-        )
+        ))
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
 
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -2409,7 +2396,6 @@ pub async fn process_stake_set_lockup(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -2420,7 +2406,6 @@ pub async fn process_stake_set_lockup(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.static_account_keys()[0],
@@ -2951,20 +2936,20 @@ pub async fn process_delegate_stake(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
+        VersionedMessage::Legacy(Message::new_with_nonce(
             ixs,
             Some(&fee_payer.pubkey()),
             nonce_account,
             &nonce_authority.pubkey(),
-        )
+        ))
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
     };
     simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
 
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -2973,7 +2958,6 @@ pub async fn process_delegate_stake(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -2984,7 +2968,6 @@ pub async fn process_delegate_stake(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.static_account_keys()[0],

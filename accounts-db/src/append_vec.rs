@@ -680,19 +680,24 @@ impl AppendVec {
         reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfo<'local>),
     ) -> Result<()> {
-        self.scan_accounts_stored_meta_with(reader, |stored_account_meta| {
+        Self::scan_accounts_stored_meta_with(reader, |stored_account_meta| {
             // SAFETY: The offset in stored_account_meta is required to be a valid/aligned offset
             // for an AppendVec entry/account, thus it is also a valid logical offset.
             let logical_offset = logical_offset_from_file(stored_account_meta.offset()).unwrap();
-            let account = StoredAccountInfo {
-                pubkey: stored_account_meta.pubkey(),
-                lamports: stored_account_meta.lamports(),
-                owner: stored_account_meta.owner(),
-                data: stored_account_meta.data(),
-                executable: stored_account_meta.executable(),
-                rent_epoch: stored_account_meta.rent_epoch(),
-            };
-            callback(logical_offset, account);
+            callback(logical_offset, stored_account_from(stored_account_meta));
+        })
+    }
+
+    /// Iterate over all accounts on `reader` and call `callback` with each.
+    ///
+    /// `callback` parameters:
+    /// * StoredAccountInfo: the account itself, with account data
+    pub(crate) fn scan_reader<'a>(
+        reader: &mut impl RequiredLenBufFileRead<'a>,
+        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>),
+    ) -> Result<()> {
+        Self::scan_accounts_stored_meta_with(reader, |stored_account_meta| {
+            callback(stored_account_from(stored_account_meta));
         })
     }
 
@@ -707,7 +712,7 @@ impl AppendVec {
     ) -> Result<()> {
         let mut reader = crate::accounts_file::new_scan_accounts_reader();
         reader.set_file(&self.file, self.len() as FileSize)?;
-        self.scan_accounts_stored_meta_with(&mut reader, callback)
+        Self::scan_accounts_stored_meta_with(&mut reader, callback)
     }
 
     /// See [`scan_accounts_stored_meta`] for documentation.
@@ -715,7 +720,6 @@ impl AppendVec {
     /// This fn does not call `FileBufRead::set_file()` first, before scanning.
     /// The *caller* is responsible for setting the file.
     fn scan_accounts_stored_meta_with<'a>(
-        &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
@@ -1092,6 +1096,18 @@ impl<W: io::Write> AppendVecAccountWriter<W> {
     }
 }
 
+/// Helper fn to return a StoredAccountInfo from a StoredAccountMeta.
+fn stored_account_from<'a>(stored_account_meta: StoredAccountMeta<'a>) -> StoredAccountInfo<'a> {
+    StoredAccountInfo {
+        pubkey: stored_account_meta.pubkey(),
+        lamports: stored_account_meta.lamports(),
+        owner: &stored_account_meta.account_meta.owner,
+        data: stored_account_meta.data(),
+        executable: stored_account_meta.executable(),
+        rent_epoch: stored_account_meta.rent_epoch(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -1199,8 +1215,11 @@ mod tests {
     /// Note that `sample`=0 returns a fully default account with a default pubkey.
     fn create_test_account(sample: usize) -> (Pubkey, AccountSharedData) {
         let data_len = sample % 256;
-        let mut account = AccountSharedData::new(sample as u64, 0, &Pubkey::default());
-        account.set_data_from_slice(&vec![data_len as u8; data_len]);
+        let account = AccountSharedData::new_with_data(
+            sample as u64,
+            vec![data_len as u8; data_len],
+            &Pubkey::default(),
+        );
         (Pubkey::default(), account)
     }
 
@@ -1356,12 +1375,12 @@ mod tests {
         let mut create_account = |data_len: usize| -> (Pubkey, AccountSharedData) {
             let pubkey = Pubkey::new_from_array(rng.random());
             let owner = Pubkey::new_from_array(rng.random());
-            let mut account = AccountSharedData::new(rng.random(), data_len, &owner);
+            let lamports = rng.random();
             // Ensure we actually have some unique data to compare against when checking correctness
             let data = std::iter::from_fn(|| Some(rng.random::<u8>()))
                 .take(data_len)
                 .collect::<Vec<_>>();
-            account.set_data_from_slice(&data);
+            let account = AccountSharedData::new_with_data(lamports, data, &owner);
             (pubkey, account)
         };
 
@@ -1571,8 +1590,7 @@ mod tests {
             let pubkey = solana_pubkey::new_rand();
             let owner = Pubkey::default();
             let data_len = 3_u64;
-            let mut account = AccountSharedData::new(0, data_len as usize, &owner);
-            account.set_data_from_slice(b"abc");
+            let account = AccountSharedData::new_with_data(0, b"abc".to_vec(), &owner);
             let stored_meta = StoredMeta {
                 write_version: 0,
                 pubkey,

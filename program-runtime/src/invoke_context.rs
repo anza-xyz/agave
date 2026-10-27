@@ -1161,7 +1161,7 @@ mod tests {
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
-        solana_account::{Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount},
+        solana_account::{Account, ReadableAccount},
         solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_keypair::{Address, Keypair},
         solana_message::AccountKeys,
@@ -1693,7 +1693,7 @@ mod tests {
 
     #[test]
     fn test_prepare_instruction_maximum_accounts() {
-        const MAX_ACCOUNTS_REFERENCED: usize = u16::MAX as usize;
+        const MAX_ACCOUNTS_REFERENCED: usize = MAX_ACCOUNTS_PER_INSTRUCTION;
         let mut transaction_accounts: Vec<KeyedAccountSharedData> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
         let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_REFERENCED);
@@ -1712,20 +1712,11 @@ mod tests {
         transaction_accounts.push((program_id, program_account));
         account_metas.push(AccountMeta::new_readonly(program_id, false));
 
-        for i in 2..MAX_ACCOUNTS_REFERENCED {
-            // Let's reference 256 unique accounts, and the rest is repeated.
-            if i < MAX_ACCOUNTS_PER_TRANSACTION {
-                let key = Pubkey::new_unique();
-                transaction_accounts
-                    .push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
-                account_metas.push(AccountMeta::new_readonly(key, false));
-            } else {
-                let repeated_key = transaction_accounts
-                    .get(i % MAX_ACCOUNTS_PER_TRANSACTION)
-                    .unwrap()
-                    .0;
-                account_metas.push(AccountMeta::new_readonly(repeated_key, false));
-            }
+        // Reference the maximum number of instruction accounts.
+        for _ in 2..MAX_ACCOUNTS_REFERENCED {
+            let key = Pubkey::new_unique();
+            transaction_accounts.push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
+            account_metas.push(AccountMeta::new_readonly(key, false));
         }
 
         with_mock_invoke_context!(invoke_context, transaction_context, 2, transaction_accounts);
@@ -1759,19 +1750,8 @@ mod tests {
                 let other_ix_index = instruction_context
                     .get_index_of_account_in_instruction(index_in_transaction)
                     .unwrap();
-                if (index_in_instruction as usize) < MAX_ACCOUNTS_PER_TRANSACTION {
-                    assert_eq!(index_in_instruction, index_in_transaction);
-                    assert_eq!(index_in_instruction, other_ix_index);
-                } else {
-                    assert_eq!(
-                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
-                        index_in_transaction as usize
-                    );
-                    assert_eq!(
-                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
-                        other_ix_index as usize
-                    );
-                }
+                assert_eq!(index_in_instruction, index_in_transaction);
+                assert_eq!(index_in_instruction, other_ix_index);
             }
         }
 
@@ -1792,17 +1772,8 @@ mod tests {
                     (MAX_ACCOUNTS_REFERENCED as u16)
                         .saturating_sub(index_in_instruction)
                         .saturating_sub(1)
-                        .overflowing_rem(MAX_ACCOUNTS_PER_TRANSACTION as u16)
-                        .0
                 );
-                if (index_in_instruction as usize) < MAX_ACCOUNTS_PER_TRANSACTION {
-                    assert_eq!(index_in_instruction, other_ix_index);
-                } else {
-                    assert_eq!(
-                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
-                        other_ix_index as usize
-                    );
-                }
+                assert_eq!(index_in_instruction, other_ix_index);
             }
         }
 
@@ -1984,6 +1955,22 @@ mod tests {
         result
     }
 
+    #[test]
+    fn test_native_invoke_signed_instruction_account_limit() {
+        let instruction = Instruction::new_with_wincode(
+            TEST_CALLEE_PROGRAM_ID,
+            &MockInstruction::NoopSuccess,
+            vec![
+                AccountMeta::new_readonly(TEST_ACCOUNT_KEY, false);
+                MAX_ACCOUNTS_PER_INSTRUCTION + 1
+            ],
+        );
+        assert_eq!(
+            run_native_invoke_signed_test(TEST_ACCOUNT_KEY, false, instruction, &[]),
+            Err(InstructionError::MaxAccountsExceeded),
+        );
+    }
+
     // Valid PDA seeds grant signer privilege to the derived address.
     #[test]
     fn test_native_invoke_signed_with_valid_pda_signer() {
@@ -2111,18 +2098,48 @@ mod tests {
     impl InvokeContextCallback for MockCallback {}
 
     fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
-        let (lamports, rent_epoch) = DUMMY_INHERITABLE_ACCOUNT_FIELDS;
         AccountSharedData::from(Account {
-            lamports,
+            lamports: 1,
             owner: native_loader::id(),
             data: name.as_bytes().to_vec(),
             executable: true,
-            rent_epoch,
+            rent_epoch: u64::MAX,
         })
     }
 
     fn new_sanitized_message(message: Message) -> SanitizedMessage {
         SanitizedMessage::try_from_legacy_message(message, &HashSet::new()).unwrap()
+    }
+
+    #[test]
+    fn test_reject_instruction_with_more_than_255_accounts() {
+        let payer = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
+        let program_id = Pubkey::new_unique();
+        let mut instruction_accounts = vec![0; 256];
+        instruction_accounts.push(1);
+        let message = new_sanitized_message(Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![payer, other_account, program_id],
+            Hash::default(),
+            vec![solana_message::compiled_instruction::CompiledInstruction {
+                program_id_index: 2,
+                accounts: instruction_accounts,
+                data: vec![],
+            }],
+        ));
+        let accounts = vec![
+            (payer, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
+            (program_id, create_loadable_account_for_test("noop")),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, accounts);
+        assert_eq!(
+            invoke_context.prepare_top_level_instructions(&message),
+            Err((0, InstructionError::MaxAccountsExceeded)),
+        );
     }
 
     #[test]

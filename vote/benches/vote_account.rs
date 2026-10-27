@@ -1,7 +1,7 @@
 use {
     bencher::{Bencher, benchmark_group, benchmark_main},
     rand::Rng,
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_pubkey::Pubkey,
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
@@ -27,13 +27,12 @@ fn new_rand_vote_account<R: Rng>(
         unix_timestamp: rng.random(),
     };
     let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
-    let data = wincode::serialize(&VoteStateVersions::new_v4(vote_state.clone())).unwrap();
-    let mut account = AccountSharedData::new(
+    let account = AccountSharedData::new_data(
         rng.random(), // lamports
-        data.len(),
+        &VoteStateVersions::new_v4(vote_state.clone()),
         &solana_sdk_ids::vote::id(), // owner
-    );
-    account.set_data_from_slice(&data);
+    )
+    .unwrap();
     (account, vote_state)
 }
 

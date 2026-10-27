@@ -19,13 +19,13 @@ const STATS_INTERVAL_MS: u64 = 10_000;
 
 #[derive(Debug, Default)]
 pub struct Stats {
-    pub get_mem_us: AtomicU64,
+    pub get_mem_ns: AtomicU64,
     pub gets_from_mem: AtomicU64,
-    pub get_missing_us: AtomicU64,
+    pub get_missing_ns: AtomicU64,
     pub gets_missing: AtomicU64,
-    pub entry_mem_us: AtomicU64,
+    pub entry_mem_ns: AtomicU64,
     pub entries_from_mem: AtomicU64,
-    pub entry_missing_us: AtomicU64,
+    pub entry_missing_ns: AtomicU64,
     pub entries_missing: AtomicU64,
     pub load_disk_found_count: AtomicU64,
     pub load_disk_found_us: AtomicU64,
@@ -295,8 +295,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "get_mem_us",
-                    self.get_mem_us.swap(0, Ordering::Relaxed),
+                    "get_mem_ns",
+                    self.get_mem_ns.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -305,8 +305,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "get_missing_us",
-                    self.get_missing_us.swap(0, Ordering::Relaxed),
+                    "get_missing_ns",
+                    self.get_missing_ns.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -315,8 +315,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "entry_mem_us",
-                    self.entry_mem_us.swap(0, Ordering::Relaxed),
+                    "entry_mem_ns",
+                    self.entry_mem_ns.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -345,8 +345,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "entry_missing_us",
-                    self.entry_missing_us.swap(0, Ordering::Relaxed),
+                    "entry_missing_ns",
+                    self.entry_missing_ns.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -552,8 +552,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "get_mem_us",
-                    self.get_mem_us.swap(0, Ordering::Relaxed),
+                    "get_mem_ns",
+                    self.get_mem_ns.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -562,8 +562,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "get_missing_us",
-                    self.get_missing_us.swap(0, Ordering::Relaxed),
+                    "get_missing_ns",
+                    self.get_missing_ns.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -572,8 +572,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "entry_mem_us",
-                    self.entry_mem_us.swap(0, Ordering::Relaxed),
+                    "entry_mem_ns",
+                    self.entry_mem_ns.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -582,8 +582,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "entry_missing_us",
-                    self.entry_missing_us.swap(0, Ordering::Relaxed),
+                    "entry_missing_ns",
+                    self.entry_missing_ns.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (

@@ -361,15 +361,20 @@ impl<'a> AccountStoragesOrderer<'a> {
         small_to_large_ratio: (usize, usize),
     ) -> Self {
         let len_range = 0..storages.len();
-        let mut indices: Vec<_> = len_range.clone().collect();
-        indices.sort_unstable_by_key(|i| storages[*i].num_stored_bytes());
-        indices.iter_mut().for_each(|i| {
-            *i = select_from_range_with_start_end_rates(len_range.clone(), *i, small_to_large_ratio)
-        });
-        Self {
-            storages,
-            indices: indices.into_boxed_slice(),
-        }
+        let mut sorted_indices: Vec<_> = len_range.clone().collect();
+        sorted_indices.sort_unstable_by_key(|i| storages[*i].num_stored_bytes());
+        let indices = len_range
+            .clone()
+            .map(|position| {
+                let sorted_position = select_from_range_with_start_end_rates(
+                    len_range.clone(),
+                    position,
+                    small_to_large_ratio,
+                );
+                sorted_indices[sorted_position]
+            })
+            .collect();
+        Self { storages, indices }
     }
 
     /// Create randomizing orderer.
@@ -879,5 +884,29 @@ mod tests {
             .map(|i| select_from_range_with_start_end_rates(1..14, i, (2, 3)))
             .collect();
         assert_eq!(interleaved, vec![1, 2, 13, 12, 11, 3, 4, 10, 9, 8, 5, 6, 7]);
+    }
+
+    #[test]
+    fn test_with_small_to_large_ratio() {
+        let common_store_path = TempDir::new().unwrap();
+        let storages: Vec<_> = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10]
+            .into_iter()
+            .enumerate()
+            .map(|(id, size)| {
+                let entry = AccountStorageEntry::new(
+                    common_store_path.path(),
+                    0,
+                    id as AccountsFileId,
+                    4096,
+                    AccountsFileProvider::AppendVec,
+                );
+                entry.add_accounts(1, size);
+                Arc::new(entry)
+            })
+            .collect();
+
+        let orderer = AccountStoragesOrderer::with_small_to_large_ratio(&storages, (4, 1));
+        let ordered_sizes: Vec<_> = orderer.iter().map(|s| s.num_stored_bytes()).collect();
+        assert_eq!(ordered_sizes, vec![10, 20, 30, 40, 100, 50, 60, 70, 80, 90]);
     }
 }

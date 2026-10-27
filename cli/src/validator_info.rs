@@ -1,6 +1,9 @@
 use {
     crate::{
-        cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
+        cli::{
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            message_into_signed_transaction,
+        },
         compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
@@ -24,12 +27,11 @@ use {
         state::{ConfigKeys, get_config_data},
     },
     solana_keypair::Keypair,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_transaction::Transaction,
     std::{error, rc::Rc},
     wincode::serialized_size,
 };
@@ -396,7 +398,10 @@ pub async fn process_publish_validator_info(
                 keys,
                 &validator_info,
             )]);
-            Message::new(&instructions, Some(&config.signers[0].pubkey()))
+            VersionedMessage::Legacy(Message::new(
+                &instructions,
+                Some(&config.signers[0].pubkey()),
+            ))
         } else {
             let instructions = vec![config_instruction::store(
                 &info_pubkey,
@@ -408,7 +413,10 @@ pub async fn process_publish_validator_info(
                 compute_unit_price,
                 compute_unit_limit,
             });
-            Message::new(&instructions, Some(&config.signers[0].pubkey()))
+            VersionedMessage::Legacy(Message::new(
+                &instructions,
+                Some(&config.signers[0].pubkey()),
+            ))
         }
     };
 
@@ -425,8 +433,7 @@ pub async fn process_publish_validator_info(
         config.commitment,
     )
     .await?;
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&signers, latest_blockhash)?;
+    let tx = message_into_signed_transaction(message, &signers, latest_blockhash, false)?;
     let signature_str = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,

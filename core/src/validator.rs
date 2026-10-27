@@ -1337,7 +1337,6 @@ impl Validator {
                 block_commitment_cache: block_commitment_cache.clone(),
                 blockstore: blockstore.clone(),
                 cluster_info: cluster_info.clone(),
-                poh_recorder: Some(poh_recorder.clone()),
                 genesis_hash: genesis_config.hash(),
                 ledger_path: ledger_path.to_path_buf(),
                 validator_exit: config.validator_exit.clone(),
@@ -3220,25 +3219,22 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         .collect();
     let my_id = cluster_info.id();
 
-    for (activated_stake, vote_account) in bank.vote_accounts().values() {
+    let staked_nodes = bank
+        .epoch_staked_nodes(bank.epoch())
+        .expect("epoch stakes for the current epoch must exist");
+
+    for (node_pubkey, activated_stake) in staked_nodes.iter() {
         let activated_stake = *activated_stake;
         total_activated_stake += activated_stake;
 
-        if activated_stake == 0 {
-            continue;
-        }
-        let vote_state_node_pubkey = *vote_account.node_pubkey();
-
-        if peers.contains_key(&vote_state_node_pubkey) {
-            trace!(
-                "observed {vote_state_node_pubkey} in gossip, (activated_stake={activated_stake})"
-            );
+        if peers.contains_key(node_pubkey) {
+            trace!("observed {node_pubkey} in gossip, (activated_stake={activated_stake})");
             online_stake += activated_stake;
-        } else if vote_state_node_pubkey == my_id {
+        } else if *node_pubkey == my_id {
             online_stake += activated_stake; // This node is online
         } else {
             offline_stake += activated_stake;
-            offline_nodes.push((activated_stake, vote_state_node_pubkey));
+            offline_nodes.push((activated_stake, *node_pubkey));
         }
     }
 

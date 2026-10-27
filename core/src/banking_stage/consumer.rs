@@ -21,7 +21,7 @@ use {
         StaticMessageWithMeta, TransactionWithMeta,
     },
     solana_svm::{
-        account_loader::{TransactionCheckResult, validate_fee_payer},
+        account_loader::{TransactionCheckResult, fee_payer_load_filter, validate_fee_payer},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
@@ -567,8 +567,8 @@ impl Consumer {
             bank.fee_features(),
         );
         let mut fee_payer_account = bank
-            .get_account_with_fixed_root(fee_payer)
-            .ok_or(TransactionError::AccountNotFound)?;
+            .get_account_if(fee_payer, fee_payer_load_filter)
+            .ok_or(TransactionError::InvalidAccountForFee)?;
 
         validate_fee_payer(
             &mut fee_payer_account,
@@ -776,9 +776,8 @@ mod tests {
         address_lookup_table: AddressLookupTable<'static>,
     ) -> AccountSharedData {
         let data = address_lookup_table.serialize_for_tests().unwrap();
-        let mut account =
-            AccountSharedData::new(1, data.len(), &address_lookup_table::program::id());
-        account.set_data_from_slice(&data);
+        let account =
+            AccountSharedData::new_with_data(1, data, &address_lookup_table::program::id());
         bank.store_account(&account_address, &account);
 
         account
@@ -1149,7 +1148,7 @@ mod tests {
         assert_eq!(
             commit_transactions_result.ok(),
             Some(vec![CommitTransactionDetails::NotCommitted(
-                TransactionError::AccountNotFound
+                TransactionError::InvalidAccountForFee
             )])
         );
 

@@ -15,9 +15,7 @@ use {
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry, SlotListWriteGuard},
     accounts_index_storage::AccountsIndexStorage,
     bucket_map_holder::Age,
-    in_mem_accounts_index::{
-        ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
-    },
+    in_mem_accounts_index::{InMemAccountsIndex, InsertNewEntryResults, StartupStats},
     iter::AccountsIndexPubkeyIterator,
     log::*,
     rand::{Rng, rng},
@@ -89,8 +87,6 @@ pub(crate) struct InsertNewIfMissingIntoPrimaryIndexInfo {
     pub num_did_not_exist: u64,
     /// Number of accounts added to the index that already existed, and were in-mem
     pub num_existed_in_mem: u64,
-    /// Number of accounts added to the index that already existed, and were on-disk
-    pub num_existed_on_disk: u64,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -752,19 +748,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             let new_entry = PreAllocatedAccountMapEntry::new(slot, account_info, storage, false);
             match r_account_maps.insert_new_entry_if_missing_with_lock(pubkey, new_entry) {
                 InsertNewEntryResults::DidNotExist => info.num_did_not_exist += 1,
-                InsertNewEntryResults::Existed {
-                    other_slot,
-                    location,
-                } => {
+                InsertNewEntryResults::Existed { other_slot, .. } => {
                     let duplicates = other_slot
                         .map(|other_slot| (other_slot, pubkey))
                         .into_iter()
                         .chain([(slot, pubkey)]);
                     r_account_maps.startup_update_duplicates_from_in_memory_only(duplicates);
-                    match location {
-                        ExistedLocation::InMem => info.num_existed_in_mem += 1,
-                        ExistedLocation::OnDisk => info.num_existed_on_disk += 1,
-                    }
+                    info.num_existed_in_mem += 1;
                 }
             }
         }

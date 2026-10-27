@@ -1155,7 +1155,7 @@ fn main() {
                 .validator(is_url_or_moniker)
                 .conflicts_with("entrypoint")
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]",
                 ),
         )
@@ -1515,7 +1515,7 @@ pub mod test {
             ..ClusterConfig::default()
         };
 
-        let cluster = LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified);
+        let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
         let iterations = 100;
         let maybe_space = None;
         let batch_size = 20;

@@ -40,6 +40,12 @@ pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: NonZeroU32 =
     NonZeroU32::new(64 * 1024 * 1024).unwrap();
 
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+    solana_transaction_context::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SVMTransactionExecutionBudget {
     /// Number of compute units that a transaction or individual instruction is
@@ -202,6 +208,22 @@ pub struct SVMTransactionExecutionCost {
     pub bls12_381_one_pair_cost: u64,
     /// Incremental number of compute units consumed per pair in a bls12_381 pairing.
     pub bls12_381_additional_pair_cost: u64,
+    /// Number of compute units consumed to add two secp256r1 points
+    pub secp256r1_add_cost: u64,
+    /// Number of compute units consumed to subtract two secp256r1 points
+    pub secp256r1_subtract_cost: u64,
+    /// Number of compute units consumed to multiply a secp256r1 point
+    pub secp256r1_multiply_cost: u64,
+    /// Number of compute units consumed for a multiscalar multiplication (msm) of secp256r1 points.
+    /// The total cost is calculated as `msm_base_cost + (length - 1) * msm_incremental_cost`.
+    pub secp256r1_msm_base_cost: u64,
+    /// Number of compute units consumed for a multiscalar multiplication (msm) of secp256r1 points.
+    /// The total cost is calculated as `msm_base_cost + (length - 1) * msm_incremental_cost`.
+    pub secp256r1_msm_incremental_cost: u64,
+    /// Number of compute units consumed to validate a secp256r1 point.
+    pub secp256r1_validate_cost: u64,
+    /// Number of compute units consumed to decompress a secp256r1 point.
+    pub secp256r1_decompress_cost: u64,
 }
 
 impl Default for SVMTransactionExecutionCost {
@@ -258,6 +280,13 @@ impl Default for SVMTransactionExecutionCost {
             bls12_381_g2_validate_cost: 1_968,
             bls12_381_one_pair_cost: 25_445,
             bls12_381_additional_pair_cost: 13_023,
+            secp256r1_add_cost: 520,
+            secp256r1_subtract_cost: 520,
+            secp256r1_multiply_cost: 9_000,
+            secp256r1_msm_base_cost: 9_000,
+            secp256r1_msm_incremental_cost: 3_800,
+            secp256r1_validate_cost: 20,
+            secp256r1_decompress_cost: 610,
         }
     }
 }

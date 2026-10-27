@@ -191,7 +191,6 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("ci/do-audit.sh")
                         || file.ends_with("ci/check-install-all.sh")
                         || file.ends_with("scripts/spl-token-cli-version.sh")
-                        || file.ends_with("scripts/cargo-build-sbf-version.sh")
                 }),
             release_check: trigger_all
                 || rust_changed
@@ -409,7 +408,7 @@ fn default_sanity_step() -> buildkite::Step {
 fn default_shellcheck_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("shellcheck"),
-        command: String::from("ci/shellcheck.sh"),
+        command: String::from("ci/docker-run-default-image.sh ci/shellcheck.sh"),
         agents: Some(queue_agents()),
         timeout_in_minutes: Some(5),
         ..Default::default()
@@ -581,10 +580,12 @@ fn default_localnet_step() -> buildkite::Step {
 }
 
 fn default_xdp_test_step() -> buildkite::Step {
+    let mut agents = queue_agents();
+    agents.insert(String::from("kernel"), String::from("host"));
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("xdp-test"),
         command: String::from("ci/docker-run-default-image.sh ci/test-xdp.sh"),
-        agents: Some(queue_agents()),
+        agents: Some(agents),
         timeout_in_minutes: Some(25),
         env: Some(HashMap::from([
             (

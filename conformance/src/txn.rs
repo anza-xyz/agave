@@ -111,7 +111,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         None,
         &Ancestors::default(),
     );
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(bank_id);
 
     // Dummy epoch stakes with the provided total stake at the current and next epoch.
     let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();
@@ -426,8 +426,8 @@ mod tests {
             TxnContext as ProtoTxnContext, acct_state::DataRepr,
         },
         solana_account::{
-            AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount, WincodeConfig,
-            WritableAccount, state_traits::StateMutWincode as _,
+            AccountSharedData, ReadableAccount, WincodeConfig, WritableAccount,
+            state_traits::StateMutWincode as _,
         },
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
@@ -441,7 +441,7 @@ mod tests {
             v0::{self, MessageAddressTableLookup},
         },
         solana_pubkey::Pubkey,
-        solana_runtime::sysvar_account::create_account,
+        solana_runtime::sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, create_account},
         solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
         solana_signature::Signature,
         solana_slot_hashes::SlotHashes,
@@ -617,7 +617,7 @@ mod tests {
     {
         (
             T::id(),
-            create_account(sysvar, DUMMY_INHERITABLE_ACCOUNT_FIELDS),
+            create_account(sysvar, RENT_UNADJUSTED_INITIAL_BALANCE),
         )
     }
 

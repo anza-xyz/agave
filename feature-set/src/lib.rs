@@ -19,7 +19,6 @@ use {
 pub struct FeatureSnapshot {
     pub blake3_syscall_enabled: bool,
     pub disable_fees_sysvar: bool,
-    pub curve25519_syscall_enabled: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
     pub increase_tx_account_lock_limit: bool,
@@ -34,7 +33,6 @@ pub struct FeatureSnapshot {
     pub enable_poseidon_syscall: bool,
     pub remaining_compute_units_syscall_enabled: bool,
     pub enable_alt_bn128_compression_syscall: bool,
-    pub abort_on_invalid_curve: bool,
     pub get_sysvar_syscall_enabled: bool,
     pub enable_get_epoch_stake_syscall: bool,
     pub move_stake_and_move_lamports_ixs: bool,
@@ -64,7 +62,6 @@ pub struct FeatureSnapshot {
     pub enable_alt_bn128_g2_syscalls: bool,
     pub commission_rate_in_basis_points: bool,
     pub custom_commission_collector: bool,
-    pub enable_bls12_381_syscall: bool,
     pub set_lamports_per_byte_to_6333: bool,
     pub set_lamports_per_byte_to_5080: bool,
     pub set_lamports_per_byte_to_2575: bool,
@@ -72,15 +69,15 @@ pub struct FeatureSnapshot {
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
-    pub upgrade_bpf_stake_program_to_v5: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
-    pub define_ltds_fee_only_semantics: bool,
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
+    pub pass_input_metadata_in_vm_r3_r5: bool,
+    pub secp256r1_syscall_enabled: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -89,7 +86,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
         Self {
             blake3_syscall_enabled: is_active(&blake3_syscall_enabled::ID),
             disable_fees_sysvar: is_active(&disable_fees_sysvar::ID),
-            curve25519_syscall_enabled: is_active(&curve25519_syscall_enabled::ID),
             stake_raise_minimum_delegation_to_1_sol: is_active(
                 &stake_raise_minimum_delegation_to_1_sol::ID,
             ),
@@ -118,7 +114,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_alt_bn128_compression_syscall: is_active(
                 &enable_alt_bn128_compression_syscall::ID,
             ),
-            abort_on_invalid_curve: is_active(&abort_on_invalid_curve::ID),
             get_sysvar_syscall_enabled: is_active(&get_sysvar_syscall_enabled::ID),
             enable_get_epoch_stake_syscall: is_active(&enable_get_epoch_stake_syscall::ID),
             move_stake_and_move_lamports_ixs: is_active(&move_stake_and_move_lamports_ixs::ID),
@@ -160,7 +155,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_alt_bn128_g2_syscalls: is_active(&enable_alt_bn128_g2_syscalls::ID),
             commission_rate_in_basis_points: is_active(&commission_rate_in_basis_points::ID),
             custom_commission_collector: is_active(&custom_commission_collector::ID),
-            enable_bls12_381_syscall: is_active(&enable_bls12_381_syscall::ID),
             set_lamports_per_byte_to_6333: is_active(&set_lamports_per_byte_to_6333::ID),
             set_lamports_per_byte_to_5080: is_active(&set_lamports_per_byte_to_5080::ID),
             set_lamports_per_byte_to_2575: is_active(&set_lamports_per_byte_to_2575::ID),
@@ -170,10 +164,8 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             direct_account_pointers_in_program_input: is_active(
                 &direct_account_pointers_in_program_input::ID,
             ),
-            upgrade_bpf_stake_program_to_v5: is_active(&upgrade_bpf_stake_program_to_v5::ID),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
-            define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
             remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
             loader_v3_set_program_data_to_elf_length: is_active(
@@ -183,6 +175,8 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &early_instruction_trace_overflow_detection::ID,
             ),
             unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
+            pass_input_metadata_in_vm_r3_r5: is_active(&pass_input_metadata_in_vm_r3_r5::ID),
+            secp256r1_syscall_enabled: is_active(&secp256r1_syscall_enabled::ID),
         }
     }
 }
@@ -295,9 +289,7 @@ impl FeatureSet {
             enable_bpf_loader_set_authority_checked_ix: snapshot
                 .enable_bpf_loader_set_authority_checked_ix,
             deplete_cu_meter_on_vm_failure: snapshot.deplete_cu_meter_on_vm_failure,
-            abort_on_invalid_curve: snapshot.abort_on_invalid_curve,
             blake3_syscall_enabled: snapshot.blake3_syscall_enabled,
-            curve25519_syscall_enabled: snapshot.curve25519_syscall_enabled,
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
             enable_alt_bn128_syscall: snapshot.enable_alt_bn128_syscall,
@@ -332,20 +324,20 @@ impl FeatureSet {
             enable_alt_bn128_g2_syscalls: snapshot.enable_alt_bn128_g2_syscalls,
             commission_rate_in_basis_points: snapshot.commission_rate_in_basis_points,
             custom_commission_collector: snapshot.custom_commission_collector,
-            enable_bls12_381_syscall: snapshot.enable_bls12_381_syscall,
             block_revenue_sharing: snapshot.block_revenue_sharing,
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot
                 .direct_account_pointers_in_program_input,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
-            define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
             loader_v3_set_program_data_to_elf_length: snapshot
                 .loader_v3_set_program_data_to_elf_length,
             early_instruction_trace_overflow_detection: snapshot
                 .early_instruction_trace_overflow_detection,
             unbound_loader_v3_instruction_data: snapshot.unbound_loader_v3_instruction_data,
+            pass_input_metadata_in_vm_r3_r5: snapshot.pass_input_metadata_in_vm_r3_r5,
+            secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
         }
     }
 }
@@ -1473,10 +1465,6 @@ pub mod loader_v3_minimum_extend_program_size {
 
 pub mod upgrade_bpf_stake_program_to_v5 {
     solana_pubkey::declare_id!("STk5Xj8hdAx3sTzmtJ3QysKkq6X2A3yj73JtxttiRyk");
-
-    pub mod buffer {
-        solana_pubkey::declare_id!("4EBQBjw1kqF1dqUBb6fc5Ji4tCEQgNf9ESGGX3smwXwh");
-    }
 }
 
 pub mod enable_sha512_syscall {
@@ -1549,6 +1537,14 @@ pub mod early_instruction_trace_overflow_detection {
 
 pub mod unbound_loader_v3_instruction_data {
     solana_pubkey::declare_id!("UPbPFtaUVoKZuMEJsDxLfvCNuKavoVapghnzepr1e26");
+}
+
+pub mod pass_input_metadata_in_vm_r3_r5 {
+    solana_pubkey::declare_id!("r3r5hXFhEZLB2VCDXmUysuDZj4oMbtW8JRVUqvQSgqE");
+}
+
+pub mod secp256r1_syscall_enabled {
+    solana_pubkey::declare_id!("SeRjtX7Abiq5hQYbzdCny266oveDseHZh9tnrs2cdVC");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2652,6 +2648,14 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             unbound_loader_v3_instruction_data::id(),
             "SIMD-0648: Unbound LoaderV3 Instruction Data",
+        ),
+        (
+            pass_input_metadata_in_vm_r3_r5::id(),
+            "SIMD-0683: Pass ABIv1 input metadata via registers r3-r5",
+        ),
+        (
+            secp256r1_syscall_enabled::id(),
+            "SIMD-0565: Enable secp256r1 syscalls",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

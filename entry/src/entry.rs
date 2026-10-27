@@ -770,10 +770,7 @@ mod tests {
         },
         solana_perf::test_tx::test_tx,
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::{
-            runtime_transaction::{ReplayTransaction, RuntimeTransaction},
-            sanitize_config::sanitize_config,
-        },
+        solana_runtime_transaction::runtime_transaction::{ReplayTransaction, RuntimeTransaction},
         solana_sha256_hasher::hash,
         solana_signature::Signature,
         solana_signer::Signer,
@@ -869,7 +866,7 @@ mod tests {
         let verify_transaction = {
             move |unsanitized: UnsanitizedTransactionView<Bytes>| -> Result<ReplayTransaction> {
                 let sanitized = unsanitized
-                    .sanitize(&sanitize_config())
+                    .sanitize()
                     .map_err(|_| TransactionError::SanitizeFailure)?;
                 let statically_loaded =
                     RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
@@ -904,7 +901,7 @@ mod tests {
         let validate_and_hash_transaction =
             move |unsanitized: UnsanitizedTransactionView<Bytes>| -> Result<ReplayTransaction> {
                 let sanitized = unsanitized
-                    .sanitize(&sanitize_config())
+                    .sanitize()
                     .map_err(|_| TransactionError::SanitizeFailure)?;
                 let statically_loaded =
                     RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(

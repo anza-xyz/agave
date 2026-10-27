@@ -221,6 +221,20 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     );
     add_arg!(
         // deprecated in v4.5.0
+        Arg::with_name("tpu_max_connections_per_peer")
+            .long("tpu-max-connections-per-peer")
+            .takes_value(true)
+            .validator(is_parsable::<u32>)
+            .help(
+                "Controls the max concurrent connections per IpAddr or staked identity. Overrides \
+                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
+            ),
+        usage_warning: "It still overrides --tpu-max-connections-per-unstaked-peer and \
+                        --tpu-max-connections-per-staked-peer, but will be removed in a future \
+                        release. Set both of those instead.",
+    );
+    add_arg!(
+        // deprecated in v4.5.0
         Arg::with_name("vote_use_quic")
             .long("vote-use-quic")
             .takes_value(true)
@@ -427,7 +441,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]",
                 ),
         )

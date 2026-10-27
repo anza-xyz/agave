@@ -3402,8 +3402,8 @@ fn test_program_sbf_realloc_invoke() {
     // Invoke, dealloc, and assign
     let pre_len = 100;
     let new_len = pre_len * 2;
-    let mut invoke_account = AccountSharedData::new(START_BALANCE, pre_len, &realloc_program_id);
-    invoke_account.set_data_from_slice(&vec![1; pre_len]);
+    let invoke_account =
+        AccountSharedData::new_with_data(START_BALANCE, vec![1; pre_len], &realloc_program_id);
     bank.store_account(&invoke_pubkey, &invoke_account);
     let mut instruction_data = vec![];
     instruction_data.extend_from_slice(&[INVOKE_DEALLOC_AND_ASSIGN, 1]);
@@ -3519,8 +3519,11 @@ fn test_program_sbf_realloc_invoke() {
     }
 
     // Realloc shrink, then CPI, then realloc extend
-    let mut invoke_account = AccountSharedData::new(100_000_000, 10, &realloc_invoke_program_id);
-    invoke_account.set_data_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    let invoke_account = AccountSharedData::new_with_data(
+        100_000_000,
+        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        &realloc_invoke_program_id,
+    );
     bank.store_account(&invoke_pubkey, &invoke_account);
     let mut instruction_data = vec![];
     instruction_data.extend_from_slice(&[INVOKE_REALLOC_SHRINK_THEN_CPI_THEN_REALLOC_EXTEND, 1]);
@@ -4150,8 +4153,8 @@ fn test_cpi_account_data_updates() {
         // This tests the case where a caller extends an account beyond the original
         // data length. The callee should see the extended data (asserted in the
         // callee program, not here).
-        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data_from_slice(b"foo");
+        let account =
+            AccountSharedData::new_with_data(42, b"foo".to_vec(), &account_metas[3].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS];
         instruction_data.extend_from_slice(b"bar");
@@ -4184,8 +4187,8 @@ fn test_cpi_account_data_updates() {
         // data length. The caller should see the extended data where the realloc
         // region contains the new data. In this test the callee owns the account,
         // the caller can't write but the CPI glue still updates correctly.
-        let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
-        account.set_data_from_slice(b"foo");
+        let account =
+            AccountSharedData::new_with_data(42, b"foo".to_vec(), &account_metas[2].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_GROWS];
         instruction_data.extend_from_slice(b"bar");
@@ -4217,8 +4220,8 @@ fn test_cpi_account_data_updates() {
         // be zeroed (zeroing is checked in the invoked program not here). Same as
         // above, the callee owns the account but the changes are still reflected in
         // the caller even if things are readonly from the caller's POV.
-        let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
-        account.set_data_from_slice(b"foobar");
+        let account =
+            AccountSharedData::new_with_data(42, b"foobar".to_vec(), &account_metas[2].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
@@ -4259,8 +4262,8 @@ fn test_cpi_account_data_updates() {
         // still larger than the original size. The account data must be set to the
         // correct value in the caller frame, and the realloc region must be zeroed
         // (again tested in the invoked program).
-        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data_from_slice(b"foo");
+        let account =
+            AccountSharedData::new_with_data(42, b"foo".to_vec(), &account_metas[3].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
@@ -4296,8 +4299,8 @@ fn test_cpi_account_data_updates() {
         // Similar to the test above, but this time the nested invocation shrinks to
         // _below_ the original data length. Both the spare capacity in the account
         // data _end_ the realloc region must be zeroed.
-        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data_from_slice(b"foo");
+        let account =
+            AccountSharedData::new_with_data(42, b"foo".to_vec(), &account_metas[3].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
@@ -4744,9 +4747,8 @@ fn test_update_callee_account() {
         ];
 
         // I. do CPI with account in read only (separate code path with virtual_address_space_adjustments)
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -4791,9 +4793,8 @@ fn test_update_callee_account() {
         });
 
         // II. do CPI with account with resize to smaller and write
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4833,9 +4834,8 @@ fn test_update_callee_account() {
         });
 
         // III. do CPI with account with resize to larger and write
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4874,9 +4874,8 @@ fn test_update_callee_account() {
         });
 
         // IV. do CPI with account with resize to larger and write
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4925,9 +4924,8 @@ fn test_update_callee_account() {
         });
 
         // V. clone data, modify and CPI
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5017,9 +5015,8 @@ fn test_clone_account_data() {
             .unwrap();
 
         // I. clone data and CPI; modify data in callee
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id2);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5053,9 +5050,8 @@ fn test_clone_account_data() {
         }
 
         // II. clone data, modify and then CPI
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id2);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5082,9 +5078,8 @@ fn test_clone_account_data() {
         );
 
         // III. Clone data, call, modifiy in callee and then make the same change in the caller
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id2);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -5448,6 +5443,65 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
     agave_logger::setup();
 
     let program_elf = load_program_elf("solana_sbf_rust_direct_account_pointers");
+    let program_id = Pubkey::new_unique();
+
+    let feature_set = SVMFeatureSet::all_enabled();
+
+    let mut program_cache =
+        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
+    let sysvar_cache = default_sysvar_cache();
+
+    let mut accounts = Vec::new();
+    let mut account_metas = Vec::new();
+
+    for i in 0..num_accounts {
+        let pubkey = Pubkey::new_unique();
+
+        // Mixed account sizes.
+        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
+
+        // Mixed account roles.
+        if i % 2 == 0 {
+            account_metas.push(AccountMeta::new(pubkey, false));
+        } else {
+            account_metas.push(AccountMeta::new_readonly(pubkey, false));
+        }
+    }
+
+    // Add `num_accounts` duplicated accounts.
+    for i in 0..num_accounts {
+        let pubkey = accounts[i].0;
+        account_metas.push(AccountMeta::new(pubkey, false));
+    }
+
+    accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
+
+    let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
+
+    let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
+
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
+
+    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+
+    assert!(effects.result.is_none());
+    // `num_accounts * 2` will be added as return data.
+    assert_eq!(
+        (num_accounts * 2).to_le_bytes().to_vec(),
+        effects.return_data
+    );
+}
+
+#[test_matrix(
+    [0, 1, 2, 5, 10, 15, 20, 32],
+    [1, 10, 50, 100, 255, 500, 1000, 1024]
+)]
+#[allow(clippy::arithmetic_side_effects)]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_rust_input_metadata_r3_r5(num_accounts: usize, input_data_len: usize) {
+    agave_logger::setup();
+
+    let program_elf = load_program_elf("solana_sbf_rust_input_metadata_r3_r5");
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();

@@ -33,16 +33,14 @@ shuttle-test = [
 svm-internal = []
 
 [dependencies]
-bincode = { workspace = true }
 qualifier_attr = { workspace = true }
 shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true }
-solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["serde", "wincode"] }
-solana-packet = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
+solana-packet = { workspace = true, features = ["wincode"] }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
@@ -67,7 +65,7 @@ solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["serde", "wincode"] }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-program-runtime = { path = "../../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true, features = ["wincode"] }

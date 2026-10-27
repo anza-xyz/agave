@@ -18,8 +18,8 @@ fn load_program_account_from_elf(loader_id: &Pubkey, path: &str) -> AccountShare
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
     let rent = Rent::default();
-    let mut program_account = AccountSharedData::new(rent.minimum_balance(elf.len()), 0, loader_id);
-    program_account.set_data_from_slice(&elf);
+    let mut program_account =
+        AccountSharedData::new_with_data(rent.minimum_balance(elf.len()), elf, loader_id);
     program_account.set_executable(true);
     program_account
 }
@@ -191,23 +191,23 @@ fn test_bpf_loader_serialize_aligned() {
 }
 /// fuzzing utility function
 fn fuzz<F>(
-    bytes: &[u8],
+    bytes: Vec<u8>,
     outer_iters: usize,
     inner_iters: usize,
     offset: Range<usize>,
     value: Range<u8>,
     work: F,
 ) where
-    F: Fn(&mut [u8]),
+    F: Fn(Vec<u8>),
 {
     let mut rng = rand::rng();
     for _ in 0..outer_iters {
-        let mut mangled_bytes = bytes.to_vec();
+        let mut mangled_bytes = bytes.clone();
         for _ in 0..inner_iters {
             let offset = rng.random_range(offset.start..offset.end);
             let value = rng.random_range(value.start..value.end);
             *mangled_bytes.get_mut(offset).unwrap() = value;
-            work(&mut mangled_bytes);
+            work(mangled_bytes.clone());
         }
     }
 }
@@ -221,17 +221,17 @@ fn test_fuzz() {
     let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
+    let elf_len = elf.len();
 
     // Mangle the whole file
     fuzz(
-        &elf,
+        elf,
         1_000_000_000,
         100,
-        0..elf.len(),
+        0..elf_len,
         0..255,
-        |bytes: &mut [u8]| {
-            let mut program_account = AccountSharedData::new(1, 0, &loader_id);
-            program_account.set_data_from_slice(bytes);
+        |bytes: Vec<u8>| {
+            let mut program_account = AccountSharedData::new_with_data(1, bytes, &loader_id);
             program_account.set_executable(true);
             process_instruction(
                 &program_id,

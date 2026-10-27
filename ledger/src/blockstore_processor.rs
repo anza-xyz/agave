@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use solana_entry::entry::{Entry, entry_views_for_tests};
 use {
@@ -81,9 +83,6 @@ use {
     },
     thiserror::Error,
 };
-#[cfg(feature = "dev-context-only-utils")]
-use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
-
 struct ReplayEntry {
     entry: EntryType<ReplayTransaction>,
     starting_index: usize,
@@ -360,8 +359,6 @@ pub struct ProcessOptions {
     /// This is useful for debugging.
     pub run_final_accounts_hash_calc: bool,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
-    #[cfg(feature = "dev-context-only-utils")]
-    pub hash_overrides: Option<HashOverrides>,
     pub abort_on_invalid_block: bool,
     pub no_block_cost_limits: bool,
 }
@@ -429,11 +426,6 @@ pub fn process_blockstore_from_root(
         // Starting slot must be a root, and thus has no parents
         assert_eq!(bank_forks.read().unwrap().banks().len(), 1);
         let bank = bank_forks.read().unwrap().root_bank();
-        #[cfg(feature = "dev-context-only-utils")]
-        if let Some(hash_overrides) = &opts.hash_overrides {
-            info!("Will override following slots' hashes: {hash_overrides:#?}");
-            bank.set_hash_overrides(hash_overrides.clone());
-        }
         if opts.no_block_cost_limits {
             warn!("setting block cost limits to MAX");
             bank.write_cost_tracker().unwrap().set_limits_max();
@@ -2140,8 +2132,13 @@ fn load_frozen_forks(
                 timing,
                 &migration_status,
             ) {
-                assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
+                // Match steady state replay's clear_slots() before removing the failed bank.
+                let _ = progress.wait_for_all_verification_results(&mut 0, &mut 0);
+                bank.quiesce_transaction_execution();
+                let _ = bank.wait_for_completed_scheduler();
+
                 if error.is_alpenglow_migration_transition() {
+                    assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
                     assert!(migration_status.is_ready_to_enable());
                     // This was the first Alpenglow block. Enable Alpenglow and replay it with
                     // Alpenglow rules. Handle the transition even when `abort_on_invalid_block`
@@ -2164,6 +2161,8 @@ fn load_frozen_forks(
                     )?;
                     continue;
                 }
+
+                bank_forks.write().unwrap().clear_bank(bank.slot(), false);
 
                 if opts.abort_on_invalid_block {
                     return Err(error);
@@ -2838,6 +2837,19 @@ pub mod tests {
             blockstore_access_type.clone(),
         );
         assert_eq!(frozen_bank_slots(&bank_forks.read().unwrap()), vec![0]);
+
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let replacement_key = Pubkey::new_unique();
+        let replacement_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), slot);
+        replacement_bank.store_account(
+            &replacement_key,
+            &AccountSharedData::new(1, 0, &Pubkey::new_unique()),
+        );
+        assert_eq!(replacement_bank.get_balance(&replacement_key), 1);
+        let replacement_bank = bank_forks.write().unwrap().insert(replacement_bank);
+        let (result, _) = replacement_bank.wait_for_completed_scheduler().unwrap();
+        result.unwrap();
+        assert_eq!(replacement_bank.get_balance(&replacement_key), 1);
 
         let dead_slots: Vec<Slot> = blockstore.dead_slots_iterator(0).unwrap().collect();
         match blockstore_access_type {
@@ -4313,7 +4325,7 @@ pub mod tests {
             assert_matches!(
                 res,
                 Err(BlockstoreProcessorError::InvalidTransaction(
-                    TransactionError::AccountNotFound
+                    TransactionError::InvalidAccountForFee
                 ))
             );
         }
@@ -5396,9 +5408,7 @@ pub mod tests {
                     transaction_hash_verify_thread_pool(),
                     |unsanitized: UnsanitizedTransactionView<Bytes>| {
                         let sanitized = unsanitized
-                            .sanitize(
-                                &solana_runtime_transaction::sanitize_config::sanitize_config(),
-                            )
+                            .sanitize()
                             .map_err(|_| TransactionError::SanitizeFailure)?;
                         let statically_loaded = RuntimeTransaction::<
                             SanitizedTransactionView<Bytes>,
@@ -5759,7 +5769,7 @@ pub mod tests {
 
         let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::default(),
         });
         let header_component = BlockComponent::new_block_marker(header);
 

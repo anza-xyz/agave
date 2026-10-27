@@ -535,9 +535,9 @@ impl Accounts {
         accounts_db.store_accounts_unfrozen(accounts, bank_id, ancestors);
     }
 
-    /// Add a slot to root.  Root slots cannot be purged
-    pub fn add_root(&self, slot: Slot) -> AccountsAddRootTiming {
-        self.accounts_db.add_root(slot)
+    /// Root a bank.  Rooted banks cannot be purged
+    pub fn add_root(&self, bank_id: BankId) -> AccountsAddRootTiming {
+        self.accounts_db.add_root(bank_id)
     }
 }
 
@@ -1092,7 +1092,7 @@ mod tests {
         /// useful to adapt tests written prior to introduction of the write cache
         /// to use the write cache
         pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
-            self.add_root(slot);
+            self.accounts_db.add_root_for_tests(slot);
             self.accounts_db.flush_accounts_cache_slot_for_tests(slot);
         }
     }
